@@ -69,7 +69,7 @@ func publishStatementCommit(ctx context.Context) {
 // scan and procedure contracts distinguish writes from reads containing words
 // such as 'CREATE'. The conservative analyzer flags alone cannot establish that.
 func (e *StorageExecutor) publishDirectStatementCommit(ctx context.Context, query string) {
-	permissions := QueryPermissionRequirements(context.Background(), query)
+	permissions := QueryPermissionRequirements(context.Background(), query, AcceptedSource)
 	if permissions.Write || permissions.Schema {
 		publishStatementCommit(ctx)
 	}

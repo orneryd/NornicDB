@@ -46,12 +46,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	cypherpkg "github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 )
 
@@ -602,10 +602,10 @@ func (p *WatcherPlugin) actionQuery(ctx heimdall.ActionContext) (*heimdall.Actio
 			Message: "query too long (max 10000 characters)",
 		}, nil
 	}
-	if err := validateReadOnlyCypher(cypher); err != nil {
+	if err := cypherpkg.AuthorizeReadOnlyQuery(ctx.Context, cypher); err != nil {
 		return &heimdall.ActionResult{
 			Success: false,
-			Message: err.Error(),
+			Message: "query must be valid read-only Cypher",
 		}, nil
 	}
 	dbName := getDatabaseParam(ctx.Params)
@@ -1559,27 +1559,6 @@ func (p *WatcherPlugin) configSnapshotLocked() map[string]interface{} {
 		result[k] = v
 	}
 	return result
-}
-
-var readOnlyCypherPattern = regexp.MustCompile(`(?i)\b(CREATE|MERGE|SET|DELETE|REMOVE|FOREACH|DETACH\s+DELETE|LOAD\s+CSV|DROP|ALTER|GRANT|DENY|REVOKE)\b`)
-
-func validateReadOnlyCypher(cypher string) error {
-	cleaned := stripCypherComments(cypher)
-	if readOnlyCypherPattern.MatchString(cleaned) {
-		return fmt.Errorf("query contains write operations; heimdall_watcher_query only allows read-only Cypher")
-	}
-	return nil
-}
-
-func stripCypherComments(query string) string {
-	lines := strings.Split(query, "\n")
-	for i, line := range lines {
-		if idx := strings.Index(line, "//"); idx >= 0 {
-			line = line[:idx]
-		}
-		lines[i] = line
-	}
-	return strings.Join(lines, "\n")
 }
 
 func dedupeFacts(facts []string) []string {

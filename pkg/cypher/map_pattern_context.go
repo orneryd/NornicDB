@@ -1,6 +1,9 @@
 package cypher
 
-import "sort"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"sort"
+)
 
 // mapDelimiter records the syntactic owner of one still-open delimiter.
 // Only the nearest owner controls a brace: a function/list expression inside
@@ -29,13 +32,13 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 				continue
 			}
 		}
-		if isCypherWhitespace(c) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			continue
 		}
 		if len(stack) > 0 && stack[len(stack)-1].kind == '(' && stack[len(stack)-1].pattern && matchKeywordAt(query, index, "WHERE") {
 			parent := &stack[len(stack)-1]
 			label := previous >= 0 && (query[previous] == ':' || query[previous] == '|' || query[previous] == '&' || query[previous] == '!' || equalFoldASCII(wordBefore(query, previous+1), "IS"))
-			next := mapDelimiterTail(query, index+len("WHERE")-1)
+			next := queryGapEnd(query, index+len("WHERE"))
 			namedWhere := previous == parent.open && (next >= len(query) || query[next] == ':' || query[next] == '{' || query[next] == ')' || matchKeywordAt(query, next, "WHERE"))
 			if !label && !namedWhere {
 				parent.pattern = false
@@ -84,7 +87,7 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 	}
 	close := context.close(open)
 	if close >= 0 {
-		next := mapDelimiterTail(query, close)
+		next := queryGapEnd(query, close+1)
 		// Property/index access after a grouped value is an expression,
 		// including a group following arithmetic subtraction.
 		if next < len(query) && (query[next] == '.' || query[next] == '[') {
@@ -139,24 +142,6 @@ func mapClauseBefore(query string) string {
 	return clause
 }
 
-func mapDelimiterTail(query string, close int) int {
-	next := close + 1
-	for next < len(query) {
-		if isCypherWhitespace(query[next]) {
-			next++
-			continue
-		}
-		if query[next] == '/' {
-			if end := queryCommentEnd(query, next); end > next {
-				next = end
-				continue
-			}
-		}
-		break
-	}
-	return next
-}
-
 func mapRelationshipDelimiter(query string, open, previous int, context *mapPatternContext) bool {
 	if previous < 0 || query[previous] != '-' {
 		return false
@@ -165,13 +150,13 @@ func mapRelationshipDelimiter(query string, open, previous int, context *mapPatt
 	if close < 0 {
 		return false
 	}
-	next := mapDelimiterTail(query, close)
+	next := queryGapEnd(query, close+1)
 	if next >= len(query) || query[next] != '-' {
 		return false
 	}
-	next = mapDelimiterTail(query, next)
+	next = queryGapEnd(query, next+1)
 	if next < len(query) && query[next] == '>' {
-		next = mapDelimiterTail(query, next)
+		next = queryGapEnd(query, next+1)
 	}
 	return next < len(query) && query[next] == '('
 }
@@ -226,7 +211,7 @@ func newMapPatternContext(query string) *mapPatternContext {
 			index += size - 1
 			continue
 		}
-		if isIdentStartByte(c) && (index == 0 || !isIdentByte(query[index-1])) && previous >= 0 && query[previous] == '.' {
+		if cyphertext.NameStartAt(query, index) && (index == 0 || !cyphertext.NamePartAt(query, index-1)) && previous >= 0 && query[previous] == '.' {
 			context.qualified[index] = true
 		}
 		if c == '{' && subqueryExpressionAfterLiveByte(query, index, previous) {
@@ -291,7 +276,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 				continue
 			}
 		}
-		if !isIdentStartByte(c) || index > start && isIdentByte(query[index-1]) {
+		if !cyphertext.NameStartAt(query, index) || index > start && cyphertext.NamePartAt(query, index-1) {
 			continue
 		}
 		if prefix, ok, _ := scanPathPatternPrefix(query, index, end); ok && scope.pattern(prefix.end) {

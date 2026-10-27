@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -30,7 +31,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
 	if names != nil {
-		cacheKey = names.original
+		cacheKey = names.Original
 	}
 	cacheKey = semanticCacheKey(cacheKey, cypher25)
 	// A text cached under its own key passed every check here, the lexical
@@ -142,12 +143,13 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				}
 				projectionItems, _ := cutDistinct(strings.TrimSpace(items))
 				for _, item := range splitTopLevelComma(projectionItems) {
-					expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+					itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+					expression := itemSource.expression
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err
 					}
-					if aliasIndex := projectionAliasIndex(ctx, item); aliasIndex >= 0 {
-						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
+					if itemSource.as >= 0 {
+						alias := itemSource.rawAlias
 						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && isCypherBacktickByte(alias[0]) && isCypherBacktickByte(alias[len(alias)-1])) {
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
 						}
@@ -274,7 +276,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 						clause, _ := leadingWithClause(branch)
 						projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
 						for _, item := range splitTopLevelComma(projection) {
-							expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+							expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 							for _, variable := range expressionFreeVariables(expression) {
 								if !isSemanticLiteralWord(variable) {
 									return createUndefinedVariableError(variable)
@@ -335,17 +337,15 @@ func hasUnexpectedIdentifierAfterNumber(expression string) bool {
 			index = end - 1
 			continue
 		}
-		if expression[index] < '0' || expression[index] > '9' || (index > 0 && isIdentByte(expression[index-1])) {
+		if !cyphertext.NumberStartsAt(expression, index) {
 			continue
 		}
-		end := index + 1
-		for end < len(expression) && (expression[end] >= '0' && expression[end] <= '9' || expression[end] == '.') {
-			end++
-		}
+		token, _ := cyphertext.ScanNumber(expression, index)
+		end := token.TailEnd
 		next := skipSpaces(expression, end)
 		if next > end {
-			if name, _, ok := scanIdentifierToken(expression, next); ok {
-				switch upperASCII(name) {
+			if name, ok := cyphertext.ScanIdentifier(expression, next); ok {
+				switch upperASCII(name.Value) {
 				case "AND", "OR", "XOR", "IN", "IS", "THEN", "ELSE", "END", "AS", "STARTS", "ENDS", "CONTAINS", "ORDER", "SKIP", "LIMIT", "UNION":
 				default:
 					return true
@@ -359,16 +359,16 @@ func hasUnexpectedIdentifierAfterNumber(expression string) bool {
 
 func containsMalformedCreateClauseToken(expression string) bool {
 	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		if strings.EqualFold(name, "CREAT") {
-			cursor := skipSpaces(expression, next)
+		if strings.EqualFold(name.Value, "CREAT") {
+			cursor := skipSpaces(expression, name.End)
 			return cursor < len(expression) && expression[cursor] == '('
 		}
-		index = next
+		index = name.End
 	}
 	return false
 }
@@ -390,7 +390,7 @@ func validatePatternExpressionPlacement(ctx context.Context, cypher string) erro
 				keyword = "WITH"
 			}
 			for _, item := range splitTopLevelComma(projectionSemanticBody(clause.text, keyword)) {
-				expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 				if containsIllegalProjectedPatternExpression(maskPredicatePatterns(expression)) {
 					return invalidPatternExpressionPlacementError()
 				}
@@ -526,15 +526,15 @@ func maskPredicatePatterns(expression string) string {
 // end), with grouping parentheses around it allowed. A whole projection that
 // is only the pattern is a value.
 func patternInBooleanPosition(expression string, start, end int) bool {
-	before := strings.TrimRight(expression[:start], " \t\r\n")
-	after := strings.TrimLeft(expression[end:], " \t\r\n")
+	before := strings.TrimRightFunc(expression[:start], cyphertext.IsWhitespace)
+	after := strings.TrimLeftFunc(expression[end:], cyphertext.IsWhitespace)
 	for strings.HasSuffix(before, "(") && strings.HasPrefix(after, ")") {
-		call := strings.TrimRight(before[:len(before)-1], " \t\r\n")
+		call := strings.TrimRightFunc(before[:len(before)-1], cyphertext.IsWhitespace)
 		if name := trailingIdentifier(call); name != "" && !isBooleanKeyword(name) {
 			return strings.EqualFold(name, "exists")
 		}
 		before = call
-		after = strings.TrimLeft(after[1:], " \t\r\n")
+		after = strings.TrimLeftFunc(after[1:], cyphertext.IsWhitespace)
 	}
 	leftKeyword := ""
 	switch name := trailingIdentifier(before); {
@@ -572,7 +572,7 @@ func isBooleanKeyword(name string) bool {
 func trailingIdentifier(text string) string {
 	end := len(text)
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	return text[start:end]
@@ -604,7 +604,8 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 		}
 		body := strings.TrimSpace(cypher[position+len("RETURN") : end])
 		if names != nil {
-			body = strings.TrimSpace(names.originalText(position+len("RETURN"), end))
+			originalText, _ := names.OriginalText(cyphertext.Span{Start: position + len("RETURN"), End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
+			body = strings.TrimSpace(originalText)
 		}
 		seen := make(map[string]struct{})
 		for _, item := range e.parseReturnItems(ctx, body) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
@@ -251,7 +252,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
-			rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, matchBody, nil)
+			rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, matchBody, nil)
 			if prepareErr != nil {
 				return nil, prepareErr
 			}
@@ -480,7 +481,7 @@ func prefixUnionBranches(ctx context.Context, prefix, body string) string {
 // is that node's variable.
 func callSeedIsFirstNode(pattern, variable string, callImportVars []string, subqueryBody string) bool {
 	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || pattern[0] != '(' || findMatchingDelimiter(pattern, 0, '(', ')') != len(pattern)-1 {
+	if pattern == "" || pattern[0] != '(' || cyphertext.FindMatchingDelimiter(pattern, 0, '(', ')', cyphertext.OpeningDelimiter) != len(pattern)-1 {
 		return false
 	}
 	imports := callImportVars
@@ -685,13 +686,11 @@ func leadingWithClause(text string) (clause string, followed bool) {
 			}
 			continue
 		}
-		if depth > 0 || !isIdentStartByte(text[index]) || isIdentByte(text[index-1]) {
+		if depth > 0 || !cyphertext.NameStartAt(text, index) || cyphertext.NamePartAt(text, index-1) {
 			continue
 		}
 		end := index + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(text, end)
 		previous := text[index-1]
 		if previous != '.' && previous != '$' && previous != ':' && isLeadingWithFollower(text[index:end]) &&
 			!(equalFoldASCII(text[index:end], "with") && isOperatorWith(text, index)) {
@@ -853,7 +852,7 @@ func firstVariableOccurrence(text, variable string) int {
 			continue
 		}
 		end := index + len(variable)
-		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
+		if (index > 0 && cyphertext.NamePartAt(text, index-1)) || (end < len(text) && cyphertext.NamePartAt(text, end)) {
 			continue
 		}
 		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
@@ -893,11 +892,11 @@ func isPatternVariableAt(text string, index, length int) bool {
 // skipped), "" when another character comes first.
 func wordBefore(text string, index int) string {
 	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	return text[start:end]
@@ -912,17 +911,17 @@ func isPatternClauseKeyword(word string) bool {
 // precededByAS reports whether the word at index follows the keyword AS.
 func precededByAS(text string, index int) bool {
 	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentByte(text[end-3])
+	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !cyphertext.NamePartAt(text, end-3)
 }
 
 // previousNonSpace is the last non-space byte before index, 0 at the start.
 func previousNonSpace(text string, index int) byte {
 	for index > 0 {
 		index--
-		if !isASCIISpace(text[index]) {
+		if !cyphertext.IsWhitespaceAt(text, index) {
 			return text[index]
 		}
 	}
@@ -932,7 +931,7 @@ func previousNonSpace(text string, index int) byte {
 // nextNonSpace is the first non-space byte at or after index, 0 at the end.
 func nextNonSpace(text string, index int) byte {
 	for ; index < len(text); index++ {
-		if !isASCIISpace(text[index]) {
+		if !cyphertext.IsWhitespaceAt(text, index) {
 			return text[index]
 		}
 	}
@@ -1070,7 +1069,7 @@ func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok
 func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass bool, handled bool) {
 	expr := strings.TrimSpace(whereExpr)
 	// Accept optional wrapping parentheses.
-	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+	for strings.HasPrefix(expr, "(") && cyphertext.FindMatchingDelimiter(expr, 0, '(', ')', cyphertext.OpeningDelimiter) == len(expr)-1 {
 		inner := strings.TrimSpace(expr[1 : len(expr)-1])
 		if inner == expr {
 			break
@@ -1078,19 +1077,43 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 		expr = inner
 	}
 
-	// Case-insensitive single-variable null checks only.
-	// Examples:
-	//   t IS NULL
-	//   t IS NOT NULL
-	m := variableNullCheckPattern.FindStringSubmatch(expr)
-	if len(m) != 3 {
+	name, present := cyphertext.ScanIdentifier(expr, 0)
+	if !present {
 		return false, false
 	}
+	index, unclosed := cyphertext.GapEnd(expr, name.End)
+	if unclosed >= 0 {
+		return false, false
+	}
+	next := keywordEndAt(expr, index, "IS")
+	if next == index {
+		return false, false
+	}
+	index = next
+	index, unclosed = cyphertext.GapEnd(expr, index)
+	if unclosed >= 0 {
+		return false, false
+	}
+	isNot := false
+	if end := keywordEndAt(expr, index, "NOT"); end > index {
+		isNot = true
+		index, unclosed = cyphertext.GapEnd(expr, end)
+	}
+	if unclosed >= 0 {
+		return false, false
+	}
+	next = keywordEndAt(expr, index, "NULL")
+	if next == index {
+		return false, false
+	}
+	index = next
+	index, unclosed = cyphertext.GapEnd(expr, index)
+	if unclosed >= 0 || index != len(expr) {
+		return false, false
+	}
+	value, exists := vars[name.Value]
+	isNull := !exists || value == nil
 
-	varName := m[1]
-	_, exists := vars[varName]
-	isNull := !exists || vars[varName] == nil
-	isNot := strings.TrimSpace(upperASCII(m[2])) == "NOT"
 	if isNot {
 		return !isNull, true
 	}
@@ -1236,11 +1259,11 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 		return nil, false, nil
 	}
 
-	matchVar, matchProp, otherWhere, ok := extractCallSubqueryCorrelationWhere(wherePart, importCol)
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere(wherePart, importCol, splitTopLevelAndConjuncts, splitTopLevelEqualityCallSubquery, parseCallSubqueryVarProp, isSimpleIdentifier)
 	if !ok || matchVar == "" || matchProp == "" {
 		return nil, false, nil
 	}
-	if sanitized, ok := sanitizeCallSubqueryOtherWhere(otherWhere, importCol); ok {
+	if sanitized, ok := cyphertext.FilterImportConjuncts(otherWhere, importCol, cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts); ok {
 		otherWhere = sanitized
 	} else {
 		return nil, false, nil
@@ -1249,6 +1272,11 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	projection, modifiers := splitTopLevelResultModifiersCallSubquery(returnPart)
 	projection = strings.TrimSpace(projection)
 	if projection == "" {
+		return nil, false, nil
+	}
+	if _, distinct := cutDistinct(projection); distinct || projection == "*" || strings.TrimSpace(modifiers) != "" {
+		// A window belongs to each correlated invocation, not the shared key
+		// lookup. Let the ordinary CALL row stream execute that projection.
 		return nil, false, nil
 	}
 
@@ -1401,47 +1429,6 @@ func normalizeCallSubqueryLookupString(s string) string {
 	return strings.Trim(s, `"`)
 }
 
-func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
-	terms := splitTopLevelAndConjuncts(whereClause)
-	if len(terms) == 0 {
-		return "", "", "", false
-	}
-	correlationIdx := -1
-	for i, term := range terms {
-		lhs, rhs, isEq := splitTopLevelEqualityCallSubquery(term)
-		if !isEq {
-			continue
-		}
-		leftVar, leftProp, leftOK := parseCallSubqueryVarProp(lhs)
-		rightVar, rightProp, rightOK := parseCallSubqueryVarProp(rhs)
-		switch {
-		case leftOK && isSimpleIdentifier(strings.TrimSpace(rhs)) && strings.EqualFold(strings.TrimSpace(rhs), importCol):
-			matchVar, matchProp = leftVar, leftProp
-			correlationIdx = i
-		case rightOK && isSimpleIdentifier(strings.TrimSpace(lhs)) && strings.EqualFold(strings.TrimSpace(lhs), importCol):
-			matchVar, matchProp = rightVar, rightProp
-			correlationIdx = i
-		}
-		if correlationIdx >= 0 {
-			break
-		}
-	}
-	if correlationIdx < 0 || matchVar == "" || matchProp == "" {
-		return "", "", "", false
-	}
-	remaining := make([]string, 0, len(terms)-1)
-	for i, term := range terms {
-		if i == correlationIdx {
-			continue
-		}
-		t := strings.TrimSpace(term)
-		if t != "" {
-			remaining = append(remaining, t)
-		}
-	}
-	return matchVar, matchProp, strings.Join(remaining, " AND "), true
-}
-
 func parseCallSubqueryVarProp(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
 	dot := strings.Index(expr, ".")
@@ -1454,49 +1441,6 @@ func parseCallSubqueryVarProp(expr string) (string, string, bool) {
 		return "", "", false
 	}
 	return v, p, true
-}
-
-func sanitizeCallSubqueryOtherWhere(otherWhere string, importCol string) (string, bool) {
-	if strings.TrimSpace(otherWhere) == "" {
-		return "", true
-	}
-	terms := splitTopLevelAndConjuncts(otherWhere)
-	if len(terms) == 0 {
-		return "", true
-	}
-	kept := make([]string, 0, len(terms))
-	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
-			continue
-		}
-		if isCallSubqueryImportNotNullGuardTerm(term, importCol) {
-			continue
-		}
-		if containsStandaloneIdentifier(term, importCol) {
-			return "", false
-		}
-		kept = append(kept, term)
-	}
-	if len(kept) == 0 {
-		return "", true
-	}
-	return strings.Join(kept, " AND "), true
-}
-
-func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
-	parts := strings.Fields(strings.TrimSpace(term))
-	if len(parts) != 4 {
-		return false
-	}
-	left := strings.TrimSpace(parts[0])
-	left = strings.Trim(left, "`")
-	if !strings.EqualFold(left, strings.TrimSpace(importCol)) {
-		return false
-	}
-	return strings.EqualFold(parts[1], "IS") &&
-		strings.EqualFold(parts[2], "NOT") &&
-		strings.EqualFold(parts[3], "NULL")
 }
 
 func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
@@ -1611,59 +1555,7 @@ func callSubqueryQueryIsWrite(query string) bool {
 }
 
 func isSimpleIdentifier(s string) bool {
-	s = strings.TrimSpace(strings.Trim(s, "`"))
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if i == 0 {
-			if !isIdentStartByte(ch) {
-				return false
-			}
-			continue
-		}
-		if !isIdentByte(ch) {
-			return false
-		}
-	}
-	return true
-}
-
-func containsStandaloneIdentifier(expr, ident string) bool {
-	ident = strings.TrimSpace(strings.Trim(ident, "`"))
-	if ident == "" {
-		return false
-	}
-	isWord := func(b byte) bool {
-		return isIdentByte(b)
-	}
-	for i := 0; i < len(expr); i++ {
-		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
-			i = end - 1
-			continue
-		}
-		if i+len(ident) > len(expr) {
-			break
-		}
-		if !strings.EqualFold(expr[i:i+len(ident)], ident) {
-			continue
-		}
-		if i > 0 {
-			prev := expr[i-1]
-			if isWord(prev) || prev == '.' {
-				continue
-			}
-		}
-		if i+len(ident) < len(expr) {
-			next := expr[i+len(ident)]
-			if isWord(next) || next == '.' {
-				continue
-			}
-		}
-		return true
-	}
-	return false
+	return cyphertext.IsIdentifier(strings.TrimSpace(strings.Trim(s, "`")))
 }
 
 func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
@@ -2113,6 +2005,4 @@ func selectTopKRowsForOrder(rows [][]interface{}, colIdx int, descending bool, k
 var (
 	// callPropertyAccessPattern is a variable.property reference in a CALL.
 	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
-	// variableNullCheckPattern is "variable IS [NOT] NULL".
-	variableNullCheckPattern = regexp.MustCompile(`(?i)^([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL$`)
 )

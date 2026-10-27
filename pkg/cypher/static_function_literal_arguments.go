@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -80,7 +81,7 @@ func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) 
 // reads x and y or latitude and longitude).
 func visitStaticMapLiteralKeys(expression string, visit func(key string)) bool {
 	expression = strings.TrimSpace(expression)
-	if !strings.HasPrefix(expression, "{") || findMatchingDelimiter(expression, 0, '{', '}') != len(expression)-1 {
+	if !strings.HasPrefix(expression, "{") || cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 {
 		return false
 	}
 	var buffer [8]string

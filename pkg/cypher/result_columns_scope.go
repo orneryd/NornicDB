@@ -43,7 +43,7 @@ var projectionFactsCache = newBoundedCache[projectionFactsKey, *projectedScopeFa
 // semantic/type walk or depending on header consumers.
 func (e *StorageExecutor) ProjectedScopeAfterClause(clause string, incoming []string, cypher25 bool) resultmetadata.Names {
 	names := resultmetadata.Unknown()
-	e.StatementFacts(clause, resultmetadata.KnownScope(incoming), cypher25).Visit(func(statement resultmetadata.Statement) {
+	e.StatementFacts(clause, resultmetadata.KnownScope(incoming), cypher25, AcceptedSource).Visit(func(statement resultmetadata.Statement) {
 		statement.After.Visit(func(known []string) { names = resultmetadata.Known(known) }, func() { names = resultmetadata.Unknown() })
 	}, func() { names = resultmetadata.Unknown() }, func(resultmetadata.Unresolved) { names = resultmetadata.Unknown() })
 	return names

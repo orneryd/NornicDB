@@ -119,9 +119,9 @@ func TestDecayFlipsRefreshSearch(t *testing.T) {
 func TestDropDatabaseResetsSearchForEveryPath(t *testing.T) {
 	ctx := context.Background()
 	db, _ := openConsumerDB(t, false)
-	manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), nil)
 	require.NoError(t, err)
-	require.NoError(t, manager.CreateDatabase("tenant"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}))
 	tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 	_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alphaword"}})
 	require.NoError(t, err)
@@ -129,8 +129,8 @@ func TestDropDatabaseResetsSearchForEveryPath(t *testing.T) {
 	require.NoError(t, err)
 	requireIndexed(t, svc, 1, "the tenant node is indexed")
 
-	require.NoError(t, manager.DropDatabase("tenant"))
-	require.NoError(t, manager.CreateDatabase("tenant"))
+	require.NoError(t, manager.DropDatabase(t.Context(), "tenant"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}))
 	svc, err = db.EnsureSearchIndexesBuilt(ctx, "tenant", storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant"))
 	require.NoError(t, err)
 	requireIndexed(t, svc, 0, "a recreated database inherited the dropped one's index")

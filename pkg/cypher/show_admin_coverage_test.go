@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"strings"
 	"testing"
@@ -152,7 +154,7 @@ func TestShowDatabasesListsAliases(t *testing.T) {
 		mockDatabaseManager: newMockDatabaseManager(t),
 		aliases:             map[string]map[string]string{"nornic": {"zeta": "nornic", "alpha": "nornic"}},
 	}
-	require.NoError(t, manager.CreateDatabase("nornic"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}))
 	exec.SetDatabaseManager(manager)
 	result, err := exec.Execute(context.Background(), "SHOW DATABASES YIELD name, aliases WHERE name = 'nornic'", nil)
 	require.NoError(t, err)

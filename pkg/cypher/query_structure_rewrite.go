@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,7 @@ type structureRewriter struct {
 // (StorageExecutor.StatementResultColumnsContext). An interface, not a method value, so
 // Execute passes the executor to desugarQueryStructure without allocating.
 type statementColumner interface {
-	StatementResultColumnsContext(ctx context.Context, query string) ([]string, error)
+	StatementResultColumnsContext(ctx context.Context, query string, stage SourceStage) ([]string, error)
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
@@ -129,15 +130,15 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 			}
 		case c == '(' || c == '[' || c == '{':
 			closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(q[:end], i, rune(c), closer); close >= 0 {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), closer, cyphertext.OpeningDelimiter); close >= 0 {
 				i = close
 			}
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > start && (isIdentByte(q[i-1]) || q[i-1] == '$' || q[i-1] == '.') {
+		case cyphertext.NamePartAt(q, i) && !isDigitByte(c):
+			if i > start && (cyphertext.NamePartAt(q, i-1) || q[i-1] == '$' || q[i-1] == '.') {
 				continue
 			}
 			j := i
-			for j < end && isIdentByte(q[j]) {
+			for j < end && cyphertext.NamePartAt(q, j) {
 				j++
 			}
 			words = append(words, topLevelWord{start: i, end: j, upper: strings.ToUpper(q[i:j])})
@@ -199,7 +200,7 @@ func (r *structureRewriter) startsQueryPart(from, end int) bool {
 }
 
 func skipBackSpaces(q string, end int) int {
-	for end > 0 && isASCIISpace(q[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(q, end-1) {
 		end--
 	}
 	return end
@@ -247,7 +248,7 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 	for _, p := range parts {
 		open := skipASCIISpaces(r.query, p.start, p.end)
 		close := skipBackSpaces(r.query, p.end) - 1
-		if open < p.end && r.query[open] == '{' && findMatchingDelimiter(r.query[:p.end], open, '{', '}') == close {
+		if open < p.end && r.query[open] == '{' && cyphertext.FindMatchingDelimiter(r.query[:p.end], open, '{', '}', cyphertext.OpeningDelimiter) == close {
 			wrap := outerAll && r.hasDistinctUnion(open+1, close)
 			// Dropped braces put the part's UNIONs in this union; braces
 			// around a single query hold no UNION to change.
@@ -256,7 +257,7 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 				return err
 			}
 			if wrap {
-				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit))
+				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit), AcceptedSource)
 				if err != nil {
 					return err
 				}
@@ -298,7 +299,7 @@ func (r *structureRewriter) subqueries(start, end int) error {
 			if !opener.opensSubquery(i) {
 				continue
 			}
-			close := findMatchingDelimiter(r.query[:end], i, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(r.query[:end], i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -333,7 +334,7 @@ func (r *structureRewriter) conditional(start, end int) error {
 		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
-		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
+		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit), AcceptedSource)
 		if err != nil {
 			return err
 		}

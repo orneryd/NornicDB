@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -112,16 +113,16 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 // variable (`r r`) is returned as written.
 func extractRelationshipVariables(matchClause string) []string {
 	var vars []string
-	for i, end := nextRelationshipBracket(matchClause, 0); i >= 0; i, end = nextRelationshipBracket(matchClause, end+1) {
+	for i, end := readRelationshipBracket(matchClause, 0, requireClosedRelationship); i >= 0; i, end = readRelationshipBracket(matchClause, end+1, requireClosedRelationship) {
 		j := i + 1
-		for j < len(matchClause) && isWhitespace(matchClause[j]) {
+		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
 		}
 		name, next, ok := scanSymbolicName(matchClause, j)
 		if !ok {
 			continue
 		}
-		for next < len(matchClause) && isWhitespace(matchClause[next]) {
+		for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
 			next++
 		}
 		if next < len(matchClause) &&
@@ -156,7 +157,7 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	}
 
 	rest := pattern[closeIdx+1:]
-	if relOpen, relClose := firstRelationshipBracket(rest); relOpen >= 0 {
+	if relOpen, relClose := readRelationshipBracket(rest, 0, requireClosedRelationship); relOpen >= 0 {
 		// The arrows around the relationship give the direction.
 		if strings.HasSuffix(strings.TrimSpace(rest[:relOpen]), "<-") {
 			eps.direction = "in"
@@ -263,24 +264,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 // (letters, digits, underscores; not starting with a digit). Used to gate the
 // projection fast path so any richer expression falls back to the full
 // evaluator.
-func isSimpleTraversalIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
-		case c >= '0' && c <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
+func isSimpleTraversalIdentifier(s string) bool { return cyphertext.IsIdentifier(s) }
 
 // fastTraversalExprValue resolves the two hot projection shapes — "var.prop"
 // and a bare bound variable — without walking the full expression evaluator's

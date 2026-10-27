@@ -71,9 +71,9 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 		switch {
 		case c == '$':
 			// $param: names are interchangeable for structural validity.
-			if i+1 < len(s) && (isASCIIDigit(s[i+1]) || isIdentByte(s[i+1])) {
+			if i+1 < len(s) && (isASCIIDigit(s[i+1]) || cyphertext.NamePartAt(s, i+1)) {
 				j := i + 1
-				for j < len(s) && (isASCIIDigit(s[j]) || isIdentByte(s[j])) {
+				for j < len(s) && (isASCIIDigit(s[j]) || cyphertext.NamePartAt(s, j)) {
 					j++
 				}
 				flushAt(i)
@@ -85,60 +85,22 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 			}
 			// $( ... ) dynamic label expressions are copied verbatim.
 			if i+1 < len(s) && s[i+1] == '(' {
-				closing := findMatchingDelimiter(s, i+1, '(', ')')
+				closing := cyphertext.FindMatchingDelimiter(s, i+1, '(', ')', cyphertext.OpeningDelimiter)
 				if closing > 0 {
 					i = closing
 					flushAt(i + 1)
 					continue
 				}
 			}
-		case c >= '0' && c <= '9':
-			if i > 0 && (isIdentByte(s[i-1]) || s[i-1] == '$' || isCypherBacktickByte(s[i-1])) {
-				continue
-			}
-			j := i + 1
-			if s[i] == '0' && j < len(s) && (s[j] == 'x' || s[j] == 'X') {
-				// A bare 0x is not a number; only consume it as hex
-				// when at least one hex digit follows.
-				k := j + 1
-				digits := 0
-				for k < len(s) && isHexDigit(s[k]) {
-					k++
-					digits++
-				}
-				if digits > 0 {
-					j = k
-				}
-			}
-			if j == i+1 {
-				for j < len(s) && isASCIIDigit(s[j]) {
-					j++
-				}
-				if j < len(s) && s[j] == '.' && j+1 < len(s) && isASCIIDigit(s[j+1]) {
-					j++
-					for j < len(s) && isASCIIDigit(s[j]) {
-						j++
-					}
-				}
-				if j < len(s) && (s[j] == 'e' || s[j] == 'E') {
-					k := j + 1
-					if k < len(s) && (s[k] == '+' || s[k] == '-') {
-						k++
-					}
-					if k < len(s) && isASCIIDigit(s[k]) {
-						j = k
-						for j < len(s) && isASCIIDigit(s[j]) {
-							j++
-						}
-					}
-				}
-			}
+		case cyphertext.NumberStartsAt(s, i):
+			number, _ := cyphertext.ScanNumber(s, i)
+			j := number.TailEnd
 			flushAt(i)
 			// Only normalize numbers whose value cannot change validity:
 			// out-of-range integers and leading-zero forms keep their text
 			// so their canonical form stays distinct from valid ones.
-			if normNumberSafe(s[i:j]) {
-				if strings.ContainsAny(s[i:j], ".eE") && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
+			if !number.Invalid && !number.Grouped && number.Suffix == 0 && normNumberSafe(s[i:j]) {
+				if number.Fraction || number.Exponent {
 					out.WriteString(normFloatMarker)
 				} else {
 					out.WriteString(normIntMarker)
@@ -196,7 +158,3 @@ const (
 	normFloatMarker  = "\x00F"
 	normParamMarker  = "\x00P"
 )
-
-func isHexDigit(c byte) bool {
-	return isASCIIDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-}

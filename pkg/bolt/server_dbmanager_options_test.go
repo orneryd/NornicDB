@@ -1,25 +1,16 @@
 package bolt
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/testutil"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
-// The Bolt adapter forwards database options to the manager (#937).
 func TestBoltAdapterForwardsDatabaseOptions(t *testing.T) {
-	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = engine.Close() })
-	manager, err := multidb.NewDatabaseManager(engine, nil)
-	require.NoError(t, err)
-	require.NoError(t, manager.CreateDatabase("opts"))
-	adapter := &boltDatabaseManagerAdapter{manager: manager}
-	require.NoError(t, adapter.SetDatabaseOption("opts", multidb.OptionTxLogEnrichment, "FULL"))
-	options, err := adapter.DatabaseOptions("opts")
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{multidb.OptionTxLogEnrichment: "FULL"}, options)
+	testutil.RequireCatalogOptionContext(t, func(manager *multidb.DatabaseManager) cypher.DatabaseOptionsManager {
+		return &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: manager}}
+	})
 }

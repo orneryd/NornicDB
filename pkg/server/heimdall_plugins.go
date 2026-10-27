@@ -10,6 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // initHeimdallPluginsWithoutInference loads configured plugins without starting a
@@ -43,28 +44,36 @@ func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.
 	}
 	manager := heimdall.GetSubsystemManager()
 	s.heimdallSubsystem = manager
+	diagnosticCredentials := observability.ClientCredentials(ctx.Config.APIURL, ctx.Config.APIKey)
+	diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(s.config.PluginsDir)...)
+	diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(s.config.HeimdallPluginsDir)...)
+	pluginContext := ctx
+	pluginContext.Config.APIURL = observability.RedactText(ctx.Config.APIURL, diagnosticCredentials...)
+	pluginContext.Config.APIKey = ""
+	pluginsDir := observability.RedactText(s.config.PluginsDir, diagnosticCredentials...)
+	heimdallPluginsDir := observability.RedactText(s.config.HeimdallPluginsDir, diagnosticCredentials...)
 	if router, ok := ctx.Database.(*heimdallDBRouter); ok {
 		s.heimdallCacheRouter = router
 	}
-	manager.SetContext(ctx)
+	manager.SetContext(pluginContext)
 	if dir := s.config.PluginsDir; dir != "" {
-		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(dir))
-		if err := nornicdb.LoadPluginsFromDir(dir, &ctx); err != nil {
-			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(dir, err))
+		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(pluginsDir))
+		if err := nornicdb.LoadPluginsFromDir(dir, &pluginContext); err != nil {
+			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(pluginsDir, observability.RedactError(err, diagnosticCredentials...)))
 		}
 	}
 	if dir := s.config.HeimdallPluginsDir; dir != "" && dir != s.config.PluginsDir {
-		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(dir))
-		if err := nornicdb.LoadPluginsFromDir(dir, &ctx); err != nil {
-			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(dir, err))
+		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(heimdallPluginsDir))
+		if err := nornicdb.LoadPluginsFromDir(dir, &pluginContext); err != nil {
+			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(heimdallPluginsDir, observability.RedactError(err, diagnosticCredentials...)))
 		}
 	}
 	if s.config.HeimdallPluginsDir == "" {
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryEmptyEvent())
 	} else if s.config.HeimdallPluginsDir == s.config.PluginsDir {
-		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryDuplicateEvent(s.config.HeimdallPluginsDir, s.config.PluginsDir))
+		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryDuplicateEvent(heimdallPluginsDir, pluginsDir))
 	}
-	registerHeimdallMCPTools(server, manager, ctx.Database, ctx.Metrics, ctx.Bifrost)
+	registerHeimdallMCPTools(server, manager, pluginContext.Database, pluginContext.Metrics, pluginContext.Bifrost)
 }
 
 // stopHeimdallPlugins serializes cleanup with both plugin-only and async startup.
@@ -73,7 +82,7 @@ func (s *Server) stopHeimdallPlugins() error {
 	defer s.heimdallPluginsMu.Unlock()
 	var err error
 	if manager := s.heimdallSubsystem; manager != nil {
-		err = errors.Join(manager.StopAll(), manager.ShutdownAll())
+		err = observability.RedactError(errors.Join(manager.StopAll(), manager.ShutdownAll()))
 		s.heimdallSubsystem = nil
 	}
 	if s.heimdallCacheRouter != nil {

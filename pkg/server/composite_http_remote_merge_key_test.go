@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -46,7 +47,7 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 	}
 	require.Empty(t, autocommit("CREATE CONSTRAINT hk_u FOR (u:U) REQUIRE u.k IS UNIQUE").Errors)
 
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -55,13 +56,13 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp_h", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_h", []multidb.ConstituentRef{
 		{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: httpRemote.URL, AuthMode: "oidc_forwarding"},
 	}))
 	cmpStore, err := mgr.GetStorageWithAuth("cmp_h", token)
 	require.NoError(t, err)
 	exec := cypher.NewStorageExecutor(cmpStore)
-	exec.SetDatabaseManager(&databaseManagerAdapter{manager: mgr})
+	exec.SetDatabaseManager(&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}})
 	ctx := cypher.WithAuthToken(context.Background(), token)
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)

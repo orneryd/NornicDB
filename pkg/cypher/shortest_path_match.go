@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -428,13 +429,11 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 			at = skipCypherQuotedText(text, at, text[at]) - 1
 			continue
 		}
-		if !isIdentStartByte(text[at]) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
+		if !cyphertext.NameStartAt(text, at) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
 			continue
 		}
 		end := at + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(text, end)
 		word := text[at:end]
 		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
 			_, pattern, index, ok := extractShortestPathCall(text[at:])

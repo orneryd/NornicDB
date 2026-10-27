@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -17,7 +18,7 @@ import (
 //  3. Verify migrated data is accessible through default database
 //  4. Verify all properties and relationships are preserved
 func TestMigration_LegacyDataMigration(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Step 1: Create unprefixed data (simulate old version)
 	// Directly create nodes/edges without namespace prefix
@@ -55,7 +56,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 2: Create DatabaseManager (simulates upgrade to multi-db version)
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -108,10 +109,10 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 // TestMigration_NoUnprefixedData verifies that migration is skipped
 // when there's no unprefixed data (fresh installation).
 func TestMigration_NoUnprefixedData(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create DatabaseManager with fresh storage (no unprefixed data)
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -138,7 +139,7 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 // TestMigration_AlreadyPrefixedData verifies that migration doesn't
 // affect data that already has namespace prefixes (already migrated).
 func TestMigration_AlreadyPrefixedData(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create data with namespace prefix (simulating already-migrated data)
 	prefixedNode := &storage.Node{
@@ -152,7 +153,7 @@ func TestMigration_AlreadyPrefixedData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create DatabaseManager
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -172,7 +173,7 @@ func TestMigration_AlreadyPrefixedData(t *testing.T) {
 
 // TestMigration_MixedData verifies migration handles mix of prefixed and unprefixed data.
 func TestMigration_MixedData(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create mix of prefixed and unprefixed data
 	unprefixedNode := &storage.Node{
@@ -196,7 +197,7 @@ func TestMigration_MixedData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create DatabaseManager
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -228,7 +229,7 @@ func TestMigration_MixedData(t *testing.T) {
 // TestMigration_NoMigrationOnSecondStart verifies that migration
 // doesn't run again if already completed (idempotency).
 func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// First startup - create unprefixed data and migrate
 	oldNode := &storage.Node{
@@ -241,13 +242,13 @@ func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
 	_, err := inner.CreateNode(oldNode)
 	require.NoError(t, err)
 
-	manager1, err := NewDatabaseManager(inner, nil)
+	manager1, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	assert.True(t, manager1.isMigrationComplete())
 	// Don't close manager1 - just create a new one with the same storage
 
 	// Second startup - migration should be skipped
-	manager2, err := NewDatabaseManager(inner, nil)
+	manager2, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager2.Close()
 
@@ -266,7 +267,7 @@ func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
 // TestMigration_EdgeRelationshipsPreserved verifies that edge relationships
 // are correctly maintained after migration (both start and end nodes prefixed).
 func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create unprefixed nodes and edge
 	node1 := &storage.Node{
@@ -293,7 +294,7 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Migrate
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -323,7 +324,7 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 // TestMigration_LabelIndexesPreserved verifies that label indexes
 // are correctly maintained after migration.
 func TestMigration_LabelIndexesPreserved(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create unprefixed nodes with labels
 	node1 := &storage.Node{
@@ -347,7 +348,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Migrate
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -375,7 +376,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 // TestMigration_CustomDefaultDatabase verifies migration works with
 // custom default database names.
 func TestMigration_CustomDefaultDatabase(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := newLegacyTestEngine(t)
 
 	// Create unprefixed data
 	oldNode := &storage.Node{
@@ -392,7 +393,7 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 		MaxDatabases:     0,
 		AllowDropDefault: false,
 	}
-	manager, err := NewDatabaseManager(inner, config)
+	manager, err := NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -409,84 +410,37 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 }
 
 // TestMigration_DoesNotInjectDbProperty verifies migration keeps user properties clean.
-func TestMigration_DoesNotInjectDbProperty(t *testing.T) {
-	inner := newLegacyTestEngine()
-
-	// Create unprefixed node (simulating pre-multi-db data)
-	oldNode := &storage.Node{
-		ID:     storage.NodeID("legacy-node"),
-		Labels: []string{"Legacy"},
-		Properties: map[string]any{
-			"name": "Legacy Node",
-			// No db property
-		},
+// Both ingestion stages must preserve user properties without injected metadata.
+func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
+	for _, legacy := range []bool{true, false} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			inner := newLegacyTestEngine(t)
+			id, name, label := "test-node", "Test Node", "Test"
+			if legacy {
+				id, name, label = "legacy-node", "Legacy Node", "Legacy"
+			}
+			node := &storage.Node{ID: storage.NodeID(id), Labels: []string{label}, Properties: map[string]any{"name": name}}
+			if legacy {
+				_, err := inner.CreateNode(node)
+				require.NoError(t, err)
+			}
+			manager, err := NewDatabaseManager(t.Context(), inner, &Config{DefaultDatabase: "nornic", SystemDatabase: "system", MaxDatabases: 0, AllowDropDefault: false})
+			require.NoError(t, err)
+			defer manager.Close()
+			if legacy {
+				assert.True(t, manager.isMigrationComplete())
+			}
+			store, err := manager.GetStorage("nornic")
+			require.NoError(t, err)
+			if !legacy {
+				_, err = store.CreateNode(node)
+				require.NoError(t, err)
+			}
+			retrieved, err := store.GetNode(storage.NodeID(id))
+			require.NoError(t, err)
+			assert.Equal(t, id, string(retrieved.ID))
+			_, exists := retrieved.Properties["db"]
+			assert.False(t, exists, "node should not have injected db property")
+		})
 	}
-	_, err := inner.CreateNode(oldNode)
-	require.NoError(t, err)
-
-	// Create DatabaseManager - this should trigger migration
-	config := &Config{
-		DefaultDatabase:  "nornic",
-		SystemDatabase:   "system",
-		MaxDatabases:     0,
-		AllowDropDefault: false,
-	}
-	manager, err := NewDatabaseManager(inner, config)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Verify migration completed
-	assert.True(t, manager.isMigrationComplete())
-
-	// Get default database storage
-	store, err := manager.GetStorage("nornic")
-	require.NoError(t, err)
-
-	// Retrieve migrated node
-	retrieved, err := store.GetNode(storage.NodeID("legacy-node"))
-	require.NoError(t, err)
-	assert.Equal(t, "legacy-node", string(retrieved.ID))
-
-	// Verify migration does not inject db metadata into user properties.
-	_, exists := retrieved.Properties["db"]
-	assert.False(t, exists, "migrated node should not have injected db property")
-}
-
-// TestMigration_NewNodesDoNotRequireDbProperty verifies default-db nodes work without db metadata.
-func TestMigration_NewNodesDoNotRequireDbProperty(t *testing.T) {
-	inner := newLegacyTestEngine()
-
-	config := &Config{
-		DefaultDatabase:  "nornic",
-		SystemDatabase:   "system",
-		MaxDatabases:     0,
-		AllowDropDefault: false,
-	}
-	manager, err := NewDatabaseManager(inner, config)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Get default database storage
-	store, err := manager.GetStorage("nornic")
-	require.NoError(t, err)
-
-	// Create a node without db property (simulating old data)
-	node := &storage.Node{
-		ID:     storage.NodeID("test-node"),
-		Labels: []string{"Test"},
-		Properties: map[string]any{
-			"name": "Test Node",
-			// No db property
-		},
-	}
-	_, err = store.CreateNode(node)
-	require.NoError(t, err)
-
-	// Retrieve the node
-	retrieved, err := store.GetNode(storage.NodeID("test-node"))
-	require.NoError(t, err)
-
-	// Verify no db property injection is required.
-	_, exists := retrieved.Properties["db"]
-	assert.False(t, exists, "node should not have injected db property")
 }

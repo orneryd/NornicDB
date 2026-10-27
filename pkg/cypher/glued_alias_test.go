@@ -50,13 +50,13 @@ func TestAliasGluedToClosingBracket(t *testing.T) {
 		require.Equal(t, want, result.Columns, query)
 	}
 
-	require.True(t, gluedAliasKeywordAt(")AS x", 1))
-	require.True(t, gluedAliasKeywordAt(")as", 1))
-	require.False(t, gluedAliasKeywordAt(")ASC", 1))
-	require.False(t, gluedAliasKeywordAt(")A", 1))
-	require.True(t, aliasKeywordEndsAt(" AS`", 3))
-	require.False(t, aliasKeywordEndsAt("HAS`", 3))
-	require.False(t, aliasKeywordEndsAt("S`", 1))
+	require.True(t, aliasKeywordAt(")AS x", 1, aliasAfterValue))
+	require.True(t, aliasKeywordAt(")as", 1, aliasAfterValue))
+	require.False(t, aliasKeywordAt(")ASC", 1, aliasAfterValue))
+	require.False(t, aliasKeywordAt(")A", 1, aliasAfterValue))
+	require.True(t, aliasKeywordAt(" AS`", 3, aliasBeforeQuotedName))
+	require.False(t, aliasKeywordAt("HAS`", 3, aliasBeforeQuotedName))
+	require.False(t, aliasKeywordAt("S`", 1, aliasBeforeQuotedName))
 	require.True(t, queryMayNeedCanonicalRewrite("RETURN 1 AS`n`"))
 	// Each spacing is memoized like the other canonical rewrites: the
 	// second read of a statement returns the first's rewrite.
@@ -73,4 +73,30 @@ func TestAliasGluedToClosingBracket(t *testing.T) {
 	}
 	require.True(t, queryMayNeedCanonicalRewrite("RETURN [1][0]AS w"))
 	require.False(t, queryMayNeedCanonicalRewrite("RETURN [1][0] AS w ORDER BY (w)ASC"))
+}
+
+func TestAliasKeywordBoundaryPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		query    string
+		at       int
+		position aliasKeywordPosition
+		want     bool
+	}{
+		{name: "after value folded keyword", query: ")as x", at: 1, position: aliasAfterValue, want: true},
+		{name: "after value unicode whitespace", query: ")AS\u00a0x", at: 1, position: aliasAfterValue, want: true},
+		{name: "after value quoted name", query: ")AS`x`", at: 1, position: aliasAfterValue, want: true},
+		{name: "after value keyword end", query: ")AS", at: 1, position: aliasAfterValue, want: true},
+		{name: "after value rejects name suffix", query: ")ASC", at: 1, position: aliasAfterValue},
+		{name: "after value preceding token is caller owned", query: "HAS x", at: 1, position: aliasAfterValue, want: true},
+		{name: "before name folded keyword", query: " as`x`", at: 3, position: aliasBeforeQuotedName, want: true},
+		{name: "before name at source start", query: "AS`x`", at: 2, position: aliasBeforeQuotedName, want: true},
+		{name: "before name rejects name prefix", query: "HAS`x`", at: 3, position: aliasBeforeQuotedName},
+		{name: "before name quote is caller owned", query: " ASx", at: 3, position: aliasBeforeQuotedName, want: true},
+		{name: "before name incomplete keyword", query: "S`x`", at: 1, position: aliasBeforeQuotedName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, aliasKeywordAt(tc.query, tc.at, tc.position))
+		})
+	}
 }

@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // singleNodePatternComprehension rejects node-only comprehensions. Both parser
 // frontends require a relationship; ordinary nested lists remain expressions.
@@ -34,7 +37,7 @@ func classifyPatternComprehensions(query string) (pattern, singleton bool) {
 				continue
 			}
 		}
-		if isASCIISpace(c) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			continue
 		}
 		switch c {
@@ -43,7 +46,7 @@ func classifyPatternComprehensions(query string) (pattern, singleton bool) {
 			if candidate && previous > 0 {
 				before := query[previous-1]
 				// Adjacent atom[(...)] is a subscript, not a comprehension.
-				candidate = isASCIISpace(before) || !(isIdentByte(before) || before == ']' || before == ')' || isCypherQuoteByte(before) || before == '$')
+				candidate = cyphertext.IsWhitespaceAt(query, previous-1) || !(cyphertext.NamePartAt(query, previous-1) || before == ']' || before == ')' || isCypherQuoteByte(before) || before == '$')
 			}
 			parents = append(parents, candidate)
 		case ')':

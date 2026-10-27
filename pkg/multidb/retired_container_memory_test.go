@@ -15,7 +15,7 @@ import (
 func TestRetiredDatabaseReferencesCollectible(t *testing.T) {
 	for _, constituent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "alias", true: "constituent"}[constituent], func(t *testing.T) {
-			owner, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+			owner, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = owner.Close() })
 			reference := func() weak.Pointer[byte] {
@@ -23,10 +23,10 @@ func TestRetiredDatabaseReferencesCollectible(t *testing.T) {
 				ref := weak.Make(unsafe.StringData(key))
 				if constituent {
 					owner.databases["owned"] = &DatabaseInfo{Name: "owned", Type: "composite", Constituents: []ConstituentRef{{Alias: key}}}
-					require.NoError(t, owner.RemoveConstituent("owned", key))
+					require.NoError(t, owner.RemoveConstituent(t.Context(), "owned", key))
 				} else {
 					owner.databases["owned"] = &DatabaseInfo{Name: "owned", Aliases: []string{key}}
-					require.NoError(t, owner.DropAlias(key))
+					require.NoError(t, owner.DropAlias(t.Context(), key))
 				}
 				return ref
 			}()

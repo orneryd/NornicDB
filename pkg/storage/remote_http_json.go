@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"strconv"
 	"strings"
 )
@@ -17,15 +17,29 @@ import (
 // unmarshalRemoteHTTPJSON decodes HTTP API JSON into out with every number
 // read by remoteHTTPNumber.
 func unmarshalRemoteHTTPJSON(data []byte, out interface{}) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(out); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		// Same rejection as json.Unmarshal for text after the value.
-		var probe interface{}
-		return json.Unmarshal(data, &probe)
+	switch target := out.(type) {
+	case *interface{}:
+		value, err := jsontext.UnmarshalValue(data)
+		if err != nil {
+			return err
+		}
+		*target = value
+	case *map[string]interface{}:
+		value, err := jsontext.UnmarshalValue(data)
+		if err != nil {
+			return err
+		}
+		if value == nil {
+			*target = nil
+			return nil
+		}
+		object, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("remote HTTP JSON object required")
+		}
+		*target = object
+	default:
+		return jsontext.Unmarshal(data, out)
 	}
 	return nil
 }

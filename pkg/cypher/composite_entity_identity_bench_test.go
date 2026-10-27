@@ -18,17 +18,17 @@ func BenchmarkCompositeEntityIdentity(b *testing.B) {
 		{"distinct", "UNWIND [n,m,n] AS x RETURN count(DISTINCT x)"},
 	} {
 		b.Run(query.name, func(b *testing.B) {
-			mgr, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
+			mgr, err := multidb.NewDatabaseManager(b.Context(), runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = mgr.Close() })
 			for _, database := range []string{"one", "two"} {
-				require.NoError(b, mgr.CreateDatabase(database))
+				require.NoError(b, mgr.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: database}))
 				store, err := mgr.GetStorage(database)
 				require.NoError(b, err)
 				_, err = store.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}})
 				require.NoError(b, err)
 			}
-			require.NoError(b, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
+			require.NoError(b, mgr.CreateCompositeDatabase(b.Context(), "comp", []multidb.ConstituentRef{
 				{Alias: "one", DatabaseName: "one", Type: "local", AccessMode: "read_write"},
 				{Alias: "two", DatabaseName: "two", Type: "local", AccessMode: "read_write"},
 			}))

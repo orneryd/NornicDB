@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"net/http"
 	"net/http/httptest"
@@ -1290,41 +1291,41 @@ func TestSplitTopLevelEquality_AllBranches(t *testing.T) {
 }
 
 func TestContainsStandaloneIdentifier(t *testing.T) {
-	if !containsStandaloneIdentifier("a = textKey128", "textKey128") {
+	if cyphertext.FindIdentifier("a = textKey128", "textKey128", 0, cyphertext.IdentifierExact) < 0 {
 		t.Fatal("expected standalone identifier to be found")
 	}
-	if containsStandaloneIdentifier("a = textKey1289", "textKey128") {
+	if cyphertext.FindIdentifier("a = textKey1289", "textKey128", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected partial match to be rejected")
 	}
-	if containsStandaloneIdentifier("a = xtextKey128", "textKey128") {
+	if cyphertext.FindIdentifier("a = xtextKey128", "textKey128", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected prefix-attached match to be rejected")
 	}
 	// Inside single-quoted string.
-	if containsStandaloneIdentifier("'textKey128'", "textKey128") {
+	if cyphertext.FindIdentifier("'textKey128'", "textKey128", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected identifier inside single quotes to be ignored")
 	}
 	// Inside double-quoted string.
-	if containsStandaloneIdentifier(`"textKey128"`, "textKey128") {
+	if cyphertext.FindIdentifier(`"textKey128"`, "textKey128", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected identifier inside double quotes to be ignored")
 	}
 	// Inside backtick string.
-	if containsStandaloneIdentifier("`textKey128`", "textKey128") {
+	if cyphertext.FindIdentifier("`textKey128`", "textKey128", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected identifier inside backticks to be ignored")
 	}
 	// Empty identifier.
-	if containsStandaloneIdentifier("abc", "") {
+	if cyphertext.FindIdentifier("abc", "", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected empty identifier to return false")
 	}
 	// String shorter than identifier.
-	if containsStandaloneIdentifier("ab", "abc") {
+	if cyphertext.FindIdentifier("ab", "abc", 0, cyphertext.IdentifierExact) >= 0 {
 		t.Fatal("expected short string to return false")
 	}
 	// At start.
-	if !containsStandaloneIdentifier("textKey128 = 1", "textKey128") {
+	if cyphertext.FindIdentifier("textKey128 = 1", "textKey128", 0, cyphertext.IdentifierExact) < 0 {
 		t.Fatal("expected identifier at start to match")
 	}
 	// At end.
-	if !containsStandaloneIdentifier("x = textKey128", "textKey128") {
+	if cyphertext.FindIdentifier("x = textKey128", "textKey128", 0, cyphertext.IdentifierExact) < 0 {
 		t.Fatal("expected identifier at end to match")
 	}
 }
@@ -1332,11 +1333,11 @@ func TestContainsStandaloneIdentifier(t *testing.T) {
 func TestParticipantKeyFromLocation_UnknownType(t *testing.T) {
 	// Location marker interface with no implementation beyond Local/Remote
 	// should produce an "unknown:" prefix.
-	key := participantKeyFromLocation(&LocationLocal{DBName: "db1"})
+	key := ParticipantKeyFromLocation(&LocationLocal{DBName: "db1"})
 	if key != "local:db1" {
 		t.Fatalf("expected local:db1, got %q", key)
 	}
-	key = participantKeyFromLocation(&LocationRemote{URI: "bolt://r:7687", DBName: "db2"})
+	key = ParticipantKeyFromLocation(&LocationRemote{URI: "bolt://r:7687", DBName: "db2"})
 	if key != "remote:bolt://r:7687|db2" {
 		t.Fatalf("expected remote key, got %q", key)
 	}
@@ -1474,27 +1475,6 @@ func TestValueAtRowIndex_OutOfBounds(t *testing.T) {
 	}
 	if valueAtRowIndex(row, 0) != 1 {
 		t.Fatal("expected value at valid index")
-	}
-}
-
-func TestIsSimpleIdentifier(t *testing.T) {
-	if isSimpleIdentifier("") {
-		t.Fatal("empty string should not be identifier")
-	}
-	if isSimpleIdentifier("1abc") {
-		t.Fatal("starting with digit should not be identifier")
-	}
-	if !isSimpleIdentifier("abc") {
-		t.Fatal("abc should be identifier")
-	}
-	if !isSimpleIdentifier("_abc") {
-		t.Fatal("_abc should be identifier")
-	}
-	if isSimpleIdentifier("abc.def") {
-		t.Fatal("dotted name should not be simple identifier")
-	}
-	if !isSimpleIdentifier("abc123") {
-		t.Fatal("abc123 should be identifier")
 	}
 }
 
@@ -2133,46 +2113,6 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 	}
 	if len(result.Rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-}
-
-func TestParseSimpleBatchedLookupReturnItems(t *testing.T) {
-	items, ok := parseSimpleBatchedLookupReturnItems("n.name AS name, n.age AS age", "n")
-	if !ok {
-		t.Fatal("expected valid return items")
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
-	}
-	if items[0].prop != "name" || items[0].alias != "name" {
-		t.Fatalf("unexpected first item: %+v", items[0])
-	}
-	if items[1].prop != "age" || items[1].alias != "age" {
-		t.Fatalf("unexpected second item: %+v", items[1])
-	}
-
-	// Wrong match var.
-	_, ok = parseSimpleBatchedLookupReturnItems("m.name AS name", "n")
-	if ok {
-		t.Fatal("expected wrong match var to fail")
-	}
-
-	// Empty return.
-	_, ok = parseSimpleBatchedLookupReturnItems("", "n")
-	if ok {
-		t.Fatal("expected empty return to fail")
-	}
-
-	// Non-simple alias.
-	_, ok = parseSimpleBatchedLookupReturnItems("n.name AS n.alias", "n")
-	if ok {
-		t.Fatal("expected non-simple alias to fail")
-	}
-
-	// No AS, expression without dot.
-	_, ok = parseSimpleBatchedLookupReturnItems("justName", "n")
-	if ok {
-		t.Fatal("expected expression without dot to fail")
 	}
 }
 
@@ -3029,7 +2969,7 @@ func TestSubstituteVarsWithParams_EmptyVar(t *testing.T) {
 
 func TestExtractApplyCorrelationWhere_RHSVarProp(t *testing.T) {
 	// Reversed: importCol on LHS, var.prop on RHS.
-	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere("textKey128 = tt.translationId", "textKey128")
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("textKey128 = tt.translationId", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if !ok {
 		t.Fatal("expected correlation extraction to succeed")
 	}
@@ -3042,14 +2982,14 @@ func TestExtractApplyCorrelationWhere_RHSVarProp(t *testing.T) {
 }
 
 func TestExtractApplyCorrelationWhere_NoCorrelation(t *testing.T) {
-	_, _, _, ok := extractApplyCorrelationWhere("a = b", "textKey128")
+	_, _, _, ok := cyphertext.ExtractCorrelationWhere("a = b", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if ok {
 		t.Fatal("expected no correlation when import col not found")
 	}
 }
 
 func TestExtractApplyCorrelationWhere_WithExtraTerms(t *testing.T) {
-	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere("tt.translationId = textKey128 AND tt.language = 'es'", "textKey128")
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("tt.translationId = textKey128 AND tt.language = 'es'", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if !ok {
 		t.Fatal("expected extraction to succeed")
 	}
@@ -3329,20 +3269,6 @@ func TestTryExecuteApplyBatchedCountLookup_WriteQueryNotHandled(t *testing.T) {
 	}
 }
 
-func TestParseSimpleBatchedCountReturnItems(t *testing.T) {
-	items, ok := parseSimpleBatchedCountReturnItems("count(*) AS c, count(tt) AS n, count(tt.id) AS ids")
-	if !ok {
-		t.Fatal("expected parse success")
-	}
-	if len(items) != 3 || items[0].alias != "c" || items[1].alias != "n" || items[2].alias != "ids" {
-		t.Fatalf("unexpected parsed items: %#v", items)
-	}
-
-	if _, ok := parseSimpleBatchedCountReturnItems("sum(tt.x) AS s"); ok {
-		t.Fatal("expected parse failure for non-count aggregate")
-	}
-}
-
 func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -3360,7 +3286,7 @@ func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := sanitizeOtherWhereForImportColumn(tc.where, tc.importCol)
+			got, ok := cyphertext.FilterImportConjuncts(tc.where, tc.importCol, cyphertext.IdentifierExact, splitTopLevelAnd)
 			if ok != tc.ok {
 				t.Fatalf("ok mismatch: got %v want %v", ok, tc.ok)
 			}
@@ -3679,17 +3605,6 @@ func TestExecuteExec_RemoteWithTransaction(t *testing.T) {
 	}
 	if err := tx.Commit(nil, nil); err != nil {
 		t.Fatalf("commit failed: %v", err)
-	}
-}
-
-func TestRemoteFragmentExecutor_Execute_ConnectError(t *testing.T) {
-	re := NewRemoteFragmentExecutor()
-	defer func() { _ = re.Close() }()
-
-	loc := &LocationRemote{URI: "http://127.0.0.1:1", DBName: "db"}
-	_, err := re.Execute(context.Background(), loc, "RETURN 1", nil, "tok")
-	if err == nil {
-		t.Fatal("expected connection error")
 	}
 }
 
@@ -4173,7 +4088,7 @@ func TestExecuteApply_PerRowProjectionFastPath(t *testing.T) {
 }
 
 func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *testing.T) {
-	spec, ok := parseApplyCorrelatedLookupSubquery(
+	spec, ok := parseApplyCorrelatedLookupSubquery(t.Context(),
 		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1",
 	)
 	if !ok {
@@ -4198,7 +4113,7 @@ func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *tes
 		t.Fatalf("unexpected return modifiers: %q", spec.returnModifiers)
 	}
 
-	spec, ok = parseApplyCorrelatedLookupSubquery(
+	spec, ok = parseApplyCorrelatedLookupSubquery(t.Context(),
 		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) RETURN tt.language AS language",
 	)
 	if !ok {
@@ -4445,4 +4360,121 @@ func TestRemoteImportStatementNamesAndScope(t *testing.T) {
 	dropResultColumns(res, scoped)
 	require.Equal(t, []string{"v"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(11)}}, res.Rows)
+}
+
+func TestBatchedReturnItemReaders(t *testing.T) {
+	type parserSelector int
+	const (
+		parseProperties parserSelector = iota
+		parseCounts
+	)
+
+	tests := []struct {
+		name        string
+		parser      parserSelector
+		text        string
+		matchVar    string
+		wantOK      bool
+		wantLen     int
+		wantAliases []string // nil means aliases are not asserted
+		wantProps   []string // nil means props are not asserted; element checked only when non-empty
+	}{
+		{
+			name:        "lookup success",
+			parser:      parseProperties,
+			text:        "n.name AS name, n.age AS age",
+			matchVar:    "n",
+			wantOK:      true,
+			wantLen:     2,
+			wantAliases: []string{"name", "age"},
+			wantProps:   []string{"name", "age"},
+		},
+		{
+			name:     "lookup wrong match variable",
+			parser:   parseProperties,
+			text:     "m.name AS name",
+			matchVar: "n",
+			wantOK:   false,
+		},
+		{
+			name:     "lookup empty return",
+			parser:   parseProperties,
+			text:     "",
+			matchVar: "n",
+			wantOK:   false,
+		},
+		{
+			name:     "lookup non-simple alias",
+			parser:   parseProperties,
+			text:     "n.name AS n.alias",
+			matchVar: "n",
+			wantOK:   false,
+		},
+		{
+			name:     "lookup expression without dot",
+			parser:   parseProperties,
+			text:     "justName",
+			matchVar: "n",
+			wantOK:   false,
+		},
+		{
+			name:        "count success",
+			parser:      parseCounts,
+			text:        "count(*) AS c, count(tt) AS n, count(tt.id) AS ids",
+			wantOK:      true,
+			wantLen:     3,
+			wantAliases: []string{"c", "n", "ids"},
+		},
+		{
+			name:   "count non-count aggregate",
+			parser: parseCounts,
+			text:   "sum(tt.x) AS s",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var aliases, props []string
+			var ok bool
+			switch tt.parser {
+			case parseProperties:
+				items, parsed := readPropertyReturnItems(tt.text, tt.matchVar)
+				ok = parsed
+				for _, item := range items {
+					aliases = append(aliases, item.alias)
+					props = append(props, item.prop)
+				}
+			case parseCounts:
+				items, parsed := readCountReturnItems(tt.text)
+				ok = parsed
+				for _, item := range items {
+					aliases = append(aliases, item.alias)
+				}
+			}
+
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !tt.wantOK {
+				return
+			}
+			if len(aliases) != tt.wantLen {
+				t.Fatalf("len(aliases) = %d, want %d", len(aliases), tt.wantLen)
+			}
+			for index, want := range tt.wantAliases {
+				if aliases[index] != want {
+					t.Fatalf("items[%d].alias = %q, want %q", index, aliases[index], want)
+				}
+			}
+
+			if tt.wantProps != nil {
+				for i, want := range tt.wantProps {
+					if props[i] != want {
+						t.Fatalf("items[%d].prop = %q, want %q", i, props[i], want)
+					}
+				}
+			}
+		})
+	}
 }

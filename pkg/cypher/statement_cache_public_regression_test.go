@@ -13,14 +13,14 @@ import (
 // transitive and concurrent owners; Execute itself makes the USE/Fabric clones.
 func TestReview1477R2PublicColdFamily(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.CreateDatabase("review_leaf"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "review_leaf"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.CreateCompositeDatabase("review_comp", []multidb.ConstituentRef{
+	if err := manager.CreateCompositeDatabase(t.Context(), "review_comp", []multidb.ConstituentRef{
 		{Alias: "leaf", DatabaseName: "review_leaf", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatal(err)
@@ -78,19 +78,19 @@ func TestReview1477R2LiveUseOwnerSurvivesRemoval(t *testing.T) {
 	for _, removal := range []string{"database", "alias", "constituent"} {
 		t.Run(removal, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
-			manager, err := multidb.NewDatabaseManager(store, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"review_live", "review_drop"} {
-				if err := manager.CreateDatabase(name); err != nil {
+				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := manager.CreateAlias("review_alias", "review_drop"); err != nil {
+			if err := manager.CreateAlias(t.Context(), "review_alias", "review_drop"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("review_comp", []multidb.ConstituentRef{
+			if err := manager.CreateCompositeDatabase(t.Context(), "review_comp", []multidb.ConstituentRef{
 				{Alias: "gone", DatabaseName: "review_drop", Type: "local", AccessMode: "read_write"},
 			}); err != nil {
 				t.Fatal(err)
@@ -116,11 +116,11 @@ func TestReview1477R2LiveUseOwnerSurvivesRemoval(t *testing.T) {
 			}
 			switch removal {
 			case "database":
-				err = manager.DropDatabase("review_drop")
+				err = manager.DropDatabase(t.Context(), "review_drop")
 			case "alias":
-				err = manager.DropAlias("review_alias")
+				err = manager.DropAlias(t.Context(), "review_alias")
 			case "constituent":
-				err = manager.RemoveConstituent("review_comp", "gone")
+				err = manager.RemoveConstituent(t.Context(), "review_comp", "gone")
 			}
 			if err != nil {
 				t.Fatal(err)

@@ -12,7 +12,7 @@ func BenchmarkSelectedAliasAdmission(b *testing.B) {
 	s, _ := setupTestServer(b)
 	const role = "alias-bench-reader"
 	ctx := context.Background()
-	if err := s.dbManager.CreateAlias("selected_alias", "nornic"); err != nil {
+	if err := s.dbManager.CreateAlias(b.Context(), "selected_alias", "nornic"); err != nil {
 		b.Fatal(err)
 	}
 	if err := s.roleStore.CreateRole(ctx, role); err != nil {

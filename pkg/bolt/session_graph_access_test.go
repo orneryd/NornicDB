@@ -16,17 +16,17 @@ import (
 // alias needs itself and its database); without one (no server, or a
 // manager that is not a *multidb.DatabaseManager) it needs only its name.
 func TestSessionGraphAccessDataDatabase(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))
-	require.NoError(t, mgr.CreateAlias("alias_b", "db"))
+	require.NoError(t, mgr.CreateAlias(t.Context(), "alias_b", "db"))
 
 	session := &Session{server: &Server{dbManager: mgr}}
 	for graph, want := range map[string]string{
@@ -58,17 +58,17 @@ func TestSessionGraphAccessDataDatabase(t *testing.T) {
 // its composite and its target database are, and without a multidb manager
 // only the name itself is checked.
 func TestSessionCanAccessGraph(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))
-	require.NoError(t, mgr.CreateAlias("alias_b", "db"))
+	require.NoError(t, mgr.CreateAlias(t.Context(), "alias_b", "db"))
 
 	editor := []string{string(auth.RoleEditor)}
 	withComposite := auth.NewAllowlistDatabaseAccessMode(map[string][]string{string(auth.RoleEditor): {"da", "cmp"}}, editor)

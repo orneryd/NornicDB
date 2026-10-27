@@ -49,7 +49,7 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 		afterPlan, err := exec.buildExecutionPlan(query)
 		require.NoError(t, err)
 		require.Equal(t, plan, afterPlan, "header facts must not alter planning")
-		require.NoError(t, exec.validateSyntax(ctx, query, false))
+		require.NoError(t, exec.validateSyntax(ctx, query, false, syntaxStatement))
 		require.NoError(t, exec.validateSemanticScopes(ctx, query))
 		for _, prefix := range []string{"", "PROFILE "} {
 			result, err := exec.Execute(ctx, prefix+query, nil)
@@ -248,7 +248,7 @@ func TestResultHeaderExecutionCacheOnly(t *testing.T) {
 	}
 	require.Equal(t, []string{"label", "r73CacheOnly"}, exec.StatementColumns(query))
 	exec.CachedResultColumns(ctx, query, nil).Visit(func(names []string) { require.Equal(t, []string{"label", "r73CacheOnly"}, names) }, func() { t.Fatal("owner did not populate the statement cache") })
-	exec.ResultProjection(context.Background(), "RETURN 1 AS cheapProjection", nil)
+	exec.ResultProjection(context.Background(), "RETURN 1 AS cheapProjection", nil, RawSource)
 	present := projectionKey("RETURN 1 AS cheapProjection", resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 	if program, found := projectionFactsCache.get(present); !found || !program.complete {
 		t.Fatal("execution projection did not use the shared owner program")
@@ -264,7 +264,7 @@ func TestResultHeaderExecutionCacheOnly(t *testing.T) {
 		{"WITH 1 AS coldNoWalk RETURN *", []string{"coldNoWalk"}},
 		{"CALL { RETURN 1 AS cold } CREATE (:NoOutput)", []string{}},
 	} {
-		columns, err := exec.StatementResultColumns(tc.query)
+		columns, err := exec.StatementResultColumns(tc.query, RawSource)
 		require.NoError(t, err)
 		require.Equal(t, tc.names, columns)
 		key := projectionKey(tc.query, resultmetadata.Known(nil), resultmetadata.Known(nil), false)
@@ -299,7 +299,7 @@ func TestResultHeaderSharedExecutionProjection(t *testing.T) {
 		{"RETURN value AS kept SKIP 1 LIMIT 0", []string{"value"}, []string{"value"}, []string{"kept"}, true, false, "SKIP 1 LIMIT 0"},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			projection := exec.ResultProjection(context.Background(), tc.query, tc.incoming)
+			projection := exec.ResultProjection(context.Background(), tc.query, tc.incoming, RawSource)
 			require.Equal(t, tc.expressions, projection.Expressions)
 			require.Equal(t, tc.standalone, projection.Standalone)
 			require.Equal(t, tc.distinct, projection.Distinct)
@@ -312,7 +312,7 @@ func TestResultHeaderSharedExecutionProjection(t *testing.T) {
 				}
 			}, func() { require.Nil(t, tc.names, "known projection became unknown") })
 			if tc.names != nil {
-				exec.ResultProjection(context.Background(), tc.query, tc.incoming).Names.Visit(func(names []string) {
+				exec.ResultProjection(context.Background(), tc.query, tc.incoming, RawSource).Names.Visit(func(names []string) {
 					require.Equal(t, tc.names, names)
 				}, func() { t.Fatal("projection was mutated") })
 			}
@@ -335,7 +335,7 @@ func TestCachedHeadersPreserveDeclaredProcedureShapes(t *testing.T) {
 		{"SHOW CURRENT USER", showUsersColumns},
 	} {
 		t.Run(sample.query, func(t *testing.T) {
-			exec.StatementFacts(sample.query, resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) {}, func() { t.Fatal("missing procedure facts") }, func(reason resultmetadata.Unresolved) { t.Fatalf("unresolved: %+v", reason) })
+			exec.StatementFacts(sample.query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {}, func() { t.Fatal("missing procedure facts") }, func(reason resultmetadata.Unresolved) { t.Fatalf("unresolved: %+v", reason) })
 			exec.CachedResultColumns(ctx, sample.query, nil).Visit(func(header []string) {
 				require.NotNil(t, sample.header, "a conditional procedure cannot supply one fixed header")
 				require.Equal(t, sample.header, header)

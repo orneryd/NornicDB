@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -179,7 +180,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return value, ok, err
 	}
 
-	if function, argument, ok := parseFunctionCallWS(expr); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok {
+		function, argument := callFacts1.name, callFacts1.inner
+
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
 			temporalContext = context.Background()
@@ -660,7 +664,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return value, ok, nil
 		}
 	}
-	return e.rowValueFallback(expr, values)
+	return e.evaluateRowFallback(expr, values, rowFallbackValue)
 }
 
 // splitRowArithmeticTier splits at the rightmost top-level operator in one
@@ -724,14 +728,14 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 
 func rowArithmeticSignIsUnary(expr string, index int) bool {
 	previous := index - 1
-	for previous >= 0 && isASCIIWhitespace(expr[previous]) {
+	for previous >= 0 && cyphertext.IsWhitespaceAt(expr, previous) {
 		previous--
 	}
 	if previous < 0 {
 		return true
 	}
 	if (expr[previous] == 'e' || expr[previous] == 'E') && previous > 0 && index+1 < len(expr) &&
-		expr[previous-1] >= '0' && expr[previous-1] <= '9' && expr[index+1] >= '0' && expr[index+1] <= '9' {
+		cyphertext.IsDigit(expr[previous-1]) && cyphertext.IsDigit(expr[index+1]) {
 		return true
 	}
 	return strings.ContainsRune("([{,:+-*/%^=<>|", rune(expr[previous]))
@@ -1113,7 +1117,9 @@ type rowValueEvaluator func(expr string, values map[string]interface{}) (interfa
 // row, each predicate evaluated by evaluate with x bound; matched is false for
 // any other expression.
 func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, bool, error) {
-	function, inner, isFunction := parseFunctionCallWS(expr)
+	var callFacts2 functionCallFacts
+	isFunction := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts2)
+	function, inner := callFacts2.name, callFacts2.inner
 	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
@@ -1183,7 +1189,7 @@ func isQualifiedFunctionCall(expr string) bool {
 		}
 		end, segments = next, segments+1
 	}
-	for end < len(expr) && isASCIIWhitespace(expr[end]) {
+	for end < len(expr) && cyphertext.IsWhitespaceAt(expr, end) {
 		end++
 	}
 	return segments > 0 && end < len(expr) && expr[end] == '(' && findMatchingParen(expr, end) == len(expr)-1
@@ -1283,10 +1289,10 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 
 // stripEnclosingRowDelimiter returns the inside of expr when expr is one
 // open … close group: its first delimiter closes at its end, matched by
-// findMatchingDelimiter (quoted text, escaped quotes and comments skipped).
+// cyphertext.FindMatchingDelimiter (quoted text, escaped quotes and comments skipped).
 // For '[' it is isListLiteral.
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
-	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
+	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || cyphertext.FindMatchingDelimiter(expr, 0, rune(open), rune(close), cyphertext.OpeningDelimiter) != len(expr)-1 {
 		return "", false
 	}
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
@@ -1690,7 +1696,9 @@ func normalizeRowIdentityComparison(leftExpr, rightExpr string, leftValue, right
 }
 
 func isRowIdentityExpression(expression string) bool {
-	name, _, ok := parseFunctionCallWS(strings.TrimSpace(expression))
+	var callFacts3 functionCallFacts
+	ok := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", &callFacts3)
+	name := callFacts3.name
 	return ok && (strings.EqualFold(name, "id") || strings.EqualFold(name, "elementId"))
 }
 

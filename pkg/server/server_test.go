@@ -79,6 +79,9 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	// by the overwrite-in-place update path.
 	config.Database.MVCCRetentionMaxVersions = 100
 
+	// Set encryption key for remote credential tests.
+	t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
+
 	db, err := nornicdb.Open(tmpDir, config)
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
@@ -105,9 +108,6 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	if err != nil {
 		t.Fatalf("failed to create reader user: %v", err)
 	}
-
-	// Set encryption key for remote credential tests.
-	t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
 
 	// Create server config
 	serverConfig := DefaultConfig()
@@ -916,7 +916,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 			_ = engine.Close()
 		}
 	})
-	dbManager, err := multidb.NewDatabaseManager(server.db.GetBaseStorageForManager(), &multidb.Config{
+	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -927,7 +927,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateCompositeDatabase("comp_remote", []multidb.ConstituentRef{
+	require.NoError(t, dbManager.CreateCompositeDatabase(t.Context(), "comp_remote", []multidb.ConstituentRef{
 		{
 			Alias:        "r1",
 			DatabaseName: "remote_db",
@@ -956,14 +956,14 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 	server, auth := setupTestServer(t)
 	token := getAuthToken(t, auth, "admin")
 
-	dbManager, err := multidb.NewDatabaseManager(server.db.GetBaseStorageForManager(), &multidb.Config{
+	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateDatabase("shard_a"))
-	require.NoError(t, dbManager.CreateDatabase("shard_b"))
-	require.NoError(t, dbManager.CreateCompositeDatabase("cmp_tx_code", []multidb.ConstituentRef{
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_b"}))
+	require.NoError(t, dbManager.CreateCompositeDatabase(t.Context(), "cmp_tx_code", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "shard_b", Type: "local", AccessMode: "read_write"},
 	}))
@@ -1009,7 +1009,7 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 func TestServerNew_ConfiguresDefaultRemoteEngineFactory(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("comp_remote_default", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "comp_remote_default", []multidb.ConstituentRef{
 		{
 			Alias:        "r1",
 			DatabaseName: "remote_db",
@@ -1022,7 +1022,7 @@ func TestServerNew_ConfiguresDefaultRemoteEngineFactory(t *testing.T) {
 	_, err := server.dbManager.GetStorageWithAuth("comp_remote_default", "Bearer token")
 	require.NoError(t, err)
 
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("comp_remote_default_basic", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "comp_remote_default_basic", []multidb.ConstituentRef{
 		{
 			Alias:        "r1",
 			DatabaseName: "remote_db",
@@ -1057,7 +1057,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 			_ = engine.Close()
 		}
 	})
-	dbManager, err := multidb.NewDatabaseManager(server.db.GetBaseStorageForManager(), &multidb.Config{
+	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -1068,7 +1068,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateCompositeDatabase("comp_remote_exec", []multidb.ConstituentRef{
+	require.NoError(t, dbManager.CreateCompositeDatabase(t.Context(), "comp_remote_exec", []multidb.ConstituentRef{
 		{
 			Alias:        "r1",
 			DatabaseName: "remote_db",
@@ -1087,7 +1087,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 	require.Equal(t, "Bearer remote", tokenSeen)
 
 	// Factory error propagation path.
-	badManager, err := multidb.NewDatabaseManager(server.db.GetBaseStorageForManager(), &multidb.Config{
+	badManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, _ string) (storage.Engine, error) {
@@ -1095,7 +1095,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, badManager.CreateCompositeDatabase("comp_remote_bad", []multidb.ConstituentRef{
+	require.NoError(t, badManager.CreateCompositeDatabase(t.Context(), "comp_remote_bad", []multidb.ConstituentRef{
 		{
 			Alias:        "r1",
 			DatabaseName: "remote_db",
@@ -1900,7 +1900,7 @@ func TestHandleSearch_FiltersParameter(t *testing.T) {
 func TestStartupSearchReconcile_InitializesMetadataOnlyDatabase(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.NoError(t, server.dbManager.CreateDatabase("animals"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "animals"}))
 
 	// Deterministically run the reconcile pass (the background ticker does this too).
 	server.ensureSearchBuildStartedForKnownDatabases()
@@ -1914,8 +1914,8 @@ func TestStartupSearchReconcile_InitializesMetadataOnlyDatabase(t *testing.T) {
 func TestStartupSearchReconcile_SkipsCompositeDatabases(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.NoError(t, server.dbManager.CreateDatabase("animals_cov"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("animals_cmp_cov", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "animals_cov"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "animals_cmp_cov", []multidb.ConstituentRef{
 		{
 			Alias:        "a",
 			DatabaseName: "animals_cov",
@@ -1924,7 +1924,7 @@ func TestStartupSearchReconcile_SkipsCompositeDatabases(t *testing.T) {
 		},
 	}))
 	t.Cleanup(func() {
-		_ = server.dbManager.DropCompositeDatabase("animals_cmp_cov")
+		_ = server.dbManager.DropCompositeDatabase(t.Context(), "animals_cmp_cov")
 	})
 
 	server.ensureSearchBuildStartedForKnownDatabases()
@@ -2455,7 +2455,7 @@ func TestGPUHandlers_SuccessPathsWithManager(t *testing.T) {
 	// disable happy path
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/disable", nil)
 	rec = httptest.NewRecorder()
-	server.handleGPUDisable(rec, req)
+	server.handleGPUControl(rec, req, gpuControlDisable)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// test handler success with mode auto and cpu
@@ -2474,7 +2474,7 @@ func TestHandleSearch_LongChunkedBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.auth = nil // Full DB access for branch-focused direct handler tests
 
-	require.NoError(t, server.dbManager.CreateDatabase("translations"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "translations"}))
 	st, err := server.dbManager.GetStorage("translations")
 	require.NoError(t, err)
 
@@ -3282,55 +3282,6 @@ func TestIsMutationQuery(t *testing.T) {
 	}
 }
 
-func TestIsCreateDatabaseStatement(t *testing.T) {
-	tests := []struct {
-		stmt     string
-		expected bool
-	}{
-		{"CREATE DATABASE foo", true},
-		{"CREATE DATABASE foo IF NOT EXISTS", true},
-		{"create database bar", true},
-		{"CREATE COMPOSITE DATABASE comp ALIAS a FOR DATABASE db1", true},
-		{"CREATE (n:Node)", false},
-		{"MATCH (n) RETURN n", false},
-		{"SHOW DATABASES", false},
-		{"  CREATE DATABASE x  ", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.stmt, func(t *testing.T) {
-			got := isCreateDatabaseStatement(tt.stmt)
-			if got != tt.expected {
-				t.Errorf("isCreateDatabaseStatement(%q) = %v, want %v", tt.stmt, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestParseCreatedDatabaseName(t *testing.T) {
-	tests := []struct {
-		stmt     string
-		wantName string
-		wantOk   bool
-	}{
-		{"CREATE DATABASE foo", "foo", true},
-		{"CREATE DATABASE foo IF NOT EXISTS", "foo", true},
-		{"create database bar", "bar", true},
-		{"CREATE DATABASE `backtick-db`", "backtick-db", true},
-		{"CREATE COMPOSITE DATABASE comp ALIAS a FOR DATABASE db1", "comp", true},
-		{"CREATE COMPOSITE DATABASE my_comp", "my_comp", true},
-		{"CREATE (n:Node)", "", false},
-		{"CREATE DATABASE ", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.stmt, func(t *testing.T) {
-			gotName, gotOk := parseCreatedDatabaseName(tt.stmt)
-			if gotOk != tt.wantOk || gotName != tt.wantName {
-				t.Errorf("parseCreatedDatabaseName(%q) = (%q, %v), want (%q, %v)", tt.stmt, gotName, gotOk, tt.wantName, tt.wantOk)
-			}
-		})
-	}
-}
-
 func TestParseIntQuery(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -3522,15 +3473,21 @@ func TestHandleGDPRDelete(t *testing.T) {
 func TestHandleBackup(t *testing.T) {
 	server, auth := setupTestServer(t)
 	token := getAuthToken(t, auth, "admin")
-
+	path := filepath.Join(t.TempDir(), "backup.bin")
 	resp := makeRequest(t, server, "POST", "/admin/backup", map[string]interface{}{
-		"path": "/tmp/backup",
+		"path": path,
 	}, "Bearer "+token)
-
-	// May succeed or fail depending on implementation
-	if resp.Code != http.StatusOK && resp.Code != http.StatusInternalServerError && resp.Code != http.StatusMethodNotAllowed {
-		t.Errorf("unexpected status %d", resp.Code)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	var payload struct {
+		Status string `json:"status"`
+		Path   string `json:"path"`
 	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &payload))
+	require.NotEmpty(t, payload.Status)
+	require.Equal(t, path, payload.Path)
+	artifact, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Positive(t, artifact.Size())
 }
 
 func TestHandleRestore(t *testing.T) {
@@ -4427,21 +4384,23 @@ func TestRequestTimeoutMiddleware_TxRoute_UsesConfigAndOverride(t *testing.T) {
 		t.Fatalf("expected 200 for tx route without override, got %d body=%q", rr.Code, rr.Body.String())
 	}
 
-	// Env override should be honored for tx timeout, enabling short deterministic limits in tests.
+	// The execution timeout should return promptly before terminal COMMIT admission.
 	t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "5ms")
 	s2 := &Server{config: &Config{WriteTimeout: 10 * time.Second}}
 	slowTimeout := s2.requestTimeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(30 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		_, bounded := r.Context().Deadline()
+		require.True(t, bounded)
+		<-r.Context().Done()
+		http.Error(w, r.Context().Err().Error(), http.StatusGatewayTimeout)
 	}))
 	req2 := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", nil)
 	rr2 := httptest.NewRecorder()
 	slowTimeout.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when tx timeout override expires, got %d", rr2.Code)
+		t.Fatalf("expected pre-admission timeout response when execution deadline expires, got %d", rr2.Code)
 	}
-	if !strings.Contains(rr2.Body.String(), "request timeout: transaction busy") {
-		t.Fatalf("expected tx timeout body, got %q", rr2.Body.String())
+	if !strings.Contains(rr2.Body.String(), `"errors"`) {
+		t.Fatalf("expected a transaction-shaped timeout response, got %q", rr2.Body.String())
 	}
 }
 
@@ -4481,7 +4440,7 @@ func TestRequestTimeoutMiddleware_TxRoute_TracksActiveTxRequests(t *testing.T) {
 
 func TestTransactionHandlers_AdditionalErrorBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
-	_ = server.dbManager.CreateDatabase("private")
+	_ = server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private"})
 
 	adminCtx := context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{
 		Username: "admin",
@@ -4538,7 +4497,7 @@ func TestDbConfigStatusAndHeimdallRoutes_AdditionalBranches(t *testing.T) {
 	server.handlePutDbConfig(rec, req, "nornic")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	require.NoError(t, server.dbManager.CreateDatabase("status_db"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "status_db"}))
 	st, err := server.dbManager.GetStorage("status_db")
 	require.NoError(t, err)
 	_, _ = st.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Doc"}})
@@ -4803,9 +4762,9 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 			Type:         "local",
 			AccessMode:   "read_write",
 		}
-		require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_search_cov", []multidb.ConstituentRef{ref}))
+		require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_search_cov", []multidb.ConstituentRef{ref}))
 		server.ensureSearchBuildStartedForKnownDatabases()
-		require.NoError(t, server.dbManager.DropCompositeDatabase("cmp_search_cov"))
+		require.NoError(t, server.dbManager.DropCompositeDatabase(t.Context(), "cmp_search_cov"))
 	})
 
 	t.Run("auth utility minor gaps", func(t *testing.T) {
@@ -4924,9 +4883,6 @@ func TestVoyageRerankTruncationSetting(t *testing.T) {
 }
 
 func TestUIAndStringHelpers_AdditionalBranches(t *testing.T) {
-	require.Equal(t, "value", getString(map[string]interface{}{"k": "value"}, "k"))
-	require.Equal(t, "", getString(map[string]interface{}{"k": 42}, "k"))
-	require.Equal(t, "", getString(map[string]interface{}{}, "missing"))
 
 	origEnabled := UIEnabled
 	origAssets := UIAssets

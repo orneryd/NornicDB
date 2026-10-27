@@ -109,9 +109,9 @@ func TestWholeSubqueryItemsWithOrderBy(t *testing.T) {
 	}
 }
 
-// TestProjectionAliasIndexIsTopLevel: the alias AS of a projection item is the
+// TestProjectionSourceAliasIsTopLevel: the alias AS of a projection item is the
 // one outside strings and nested expressions (#652, #547).
-func TestProjectionAliasIndexIsTopLevel(t *testing.T) {
+func TestProjectionSourceAliasIsTopLevel(t *testing.T) {
 	for item, want := range map[string][2]string{
 		"n.id AS id":                            {"n.id", "id"},
 		"'a AS b' AS s":                         {"'a AS b'", "s"},
@@ -120,7 +120,8 @@ func TestProjectionAliasIndexIsTopLevel(t *testing.T) {
 		"[x IN [1] | x] AS `my list`":                        {"[x IN [1] | x]", "my list"},
 		"n.alias":                                            {"n.alias", "n.alias"},
 	} {
-		expr, alias := parseProjectionExprAlias(t.Context(), item)
+		itemSource := readProjectionItemSource(t.Context(), item, projectionAdmitted)
+		expr, alias := itemSource.expression, itemSource.alias
 		require.Equal(t, want, [2]string{expr, alias}, item)
 	}
 }

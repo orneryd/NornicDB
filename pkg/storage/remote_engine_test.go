@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,8 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // Compile-time interface assertion (also in remote_engine.go, duplicated here per project convention).
@@ -45,7 +45,7 @@ func TestRemoteHTTPValueDecoding(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			index := 0
-			value, err := decodeRemoteHTTPValue(json.RawMessage(testCase.raw), testCase.metadata, &index, testCase.entities)
+			value, err := decodeRemoteHTTPValue(json.RawMessage(testCase.raw), nil, testCase.metadata, &index, testCase.entities, remoteHTTPAuto)
 			if (err != nil) != testCase.wantError {
 				t.Fatalf("error: %v", err)
 			}
@@ -66,12 +66,16 @@ func (e *errReadCloser) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read
 func (e *errReadCloser) Close() error               { return nil }
 
 type fakeRemoteTransport struct {
+	queryModeFn  func(context.Context, string, map[string]interface{}, RemoteAccessMode) ([]string, [][]interface{}, error)
 	queryFn      func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
 	queryBatchFn func(context.Context, []remoteStatement) error
 	closeFn      func() error
 }
 
-func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}, mode RemoteAccessMode) ([]string, [][]interface{}, error) {
+	if f.queryModeFn != nil {
+		return f.queryModeFn(ctx, statement, params, mode)
+	}
 	if f.queryFn != nil {
 		return f.queryFn(ctx, statement, params)
 	}
@@ -378,7 +382,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		schema: NewSchemaManager(),
 	}
 	ctx := context.Background()
-	if _, _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}); err == nil {
+	if _, _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}, RemoteAccessRead); err == nil {
 		t.Fatalf("expected marshal error")
 	}
 
@@ -391,7 +395,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		},
 		schema: NewSchemaManager(),
 	}
-	if _, _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected bad URL error")
 	}
 
@@ -399,7 +403,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	eDoErr := makeEngineWithTransport(t, "http://host", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("network down")
 	})
-	if _, _, err := eDoErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDoErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected network error")
 	}
 
@@ -411,7 +415,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, _, err := eReadErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eReadErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected read body error")
 	}
 
@@ -423,7 +427,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected decode error")
 	}
 
@@ -437,7 +441,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header: make(http.Header),
 		}, nil
 	})
-	if _, _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil); err == nil || !strings.Contains(err.Error(), "bad statement") {
+	if _, _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil || !strings.Contains(err.Error(), "bad statement") {
 		t.Fatalf("expected cypher error, got: %v", err)
 	}
 
@@ -452,7 +456,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	_, rows, err := eOK.transport.query(ctx, "RETURN 1", nil)
+	_, rows, err := eOK.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -490,7 +494,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating basic auth remote engine: %v", err)
 	}
-	if _, _, err := eBasic.transport.query(ctx, "RETURN 1", nil); err != nil {
+	if _, _, err := eBasic.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err != nil {
 		t.Fatalf("unexpected error from basic auth query: %v", err)
 	}
 }
@@ -500,7 +504,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRemoteEngineHelperConversions(t *testing.T) {
-	if got := quoteIdent("a`b"); got != "`a``b`" {
+	if got := cyphertext.PrintIdentifier("a`b", nil, cyphertext.RawSource); got != "`a``b`" {
 		t.Fatalf("unexpected quoteIdent: %s", got)
 	}
 	if got := labelsExpr([]string{"Person", "", "User"}); got != ":`Person`:`User`" {
@@ -580,32 +584,6 @@ func TestNormalizeBoltValue(t *testing.T) {
 	}
 	if v := normalizeBoltValue("hello"); v != "hello" {
 		t.Fatalf("expected passthrough for string")
-	}
-}
-
-func TestAccessModeForStatement(t *testing.T) {
-	tests := []struct {
-		name      string
-		statement string
-		wantWrite bool
-	}{
-		{name: "read", statement: "MATCH (n) RETURN n", wantWrite: false},
-		{name: "create", statement: "CREATE (n:Person)", wantWrite: true},
-		{name: "merge", statement: "MERGE (n:Person {id: 1})", wantWrite: true},
-		{name: "delete", statement: "MATCH (n) DELETE n", wantWrite: true},
-		{name: "set", statement: "MATCH (n) SET n.x = 1", wantWrite: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := accessModeForStatement(tt.statement)
-			if tt.wantWrite && got != neo4j.AccessModeWrite {
-				t.Fatalf("expected write access mode, got %v", got)
-			}
-			if !tt.wantWrite && got != neo4j.AccessModeRead {
-				t.Fatalf("expected read access mode, got %v", got)
-			}
-		})
 	}
 }
 
@@ -1303,7 +1281,7 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 	})
 
 	var nilCtx context.Context
-	cols, rows, err := engine.QueryCypher(nilCtx, "RETURN 42 AS n", nil)
+	cols, rows, err := engine.QueryCypher(nilCtx, "RETURN 42 AS n", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("QueryCypher with nil context failed: %v", err)
 	}
@@ -1422,7 +1400,7 @@ func TestRemoteEngineHTTPQueryCypher_EmptyResultsBranches(t *testing.T) {
 		}
 	})
 
-	cols, rows, err := engine.QueryCypher(context.Background(), "RETURN 1", nil)
+	cols, rows, err := engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("QueryCypher failed: %v", err)
 	}

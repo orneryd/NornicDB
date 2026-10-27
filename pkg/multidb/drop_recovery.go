@@ -1,6 +1,9 @@
 package multidb
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // transitionPendingDrop is the only writer of the durable catalog DROP intent.
 // The caller holds m.mu, or is constructing an unpublished manager.
@@ -26,9 +29,9 @@ func (m *DatabaseManager) syncDropMetadata() error {
 
 // recoverPendingDrops uses the same DROP owner before writable startup admits
 // traffic. A read-only replica retains the intent and refuses that database.
-func (m *DatabaseManager) recoverPendingDrops() error {
+func (m *DatabaseManager) recoverPendingDrops(ctx context.Context) error {
 	for name := range m.pendingDrops {
-		if err := m.DropDatabase(name); err != nil {
+		if err := m.DropDatabase(ctx, name); err != nil {
 			return err
 		}
 	}

@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,23 +16,6 @@ import (
 type deletedEntities struct {
 	nodes map[storage.NodeID]struct{}
 	edges map[storage.EdgeID]struct{}
-}
-
-type deletedEntitiesKey struct{}
-
-// withDeletedEntities gives the statement a deletedEntities, unless ctx has
-// one: a subquery, FOREACH or row-at-a-time run shares the statement's.
-func withDeletedEntities(ctx context.Context) context.Context {
-	if deletedEntitiesOf(ctx) != nil {
-		return ctx
-	}
-	return context.WithValue(ctx, deletedEntitiesKey{}, &deletedEntities{})
-}
-
-// deletedEntitiesOf is the statement's deletedEntities, nil when it has none.
-func deletedEntitiesOf(ctx context.Context) *deletedEntities {
-	deleted, _ := ctx.Value(deletedEntitiesKey{}).(*deletedEntities)
-	return deleted
 }
 
 // pipelineClausesMayDelete reports whether clauses can delete: a DELETE, or
@@ -223,15 +206,13 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 			index = end
 			continue
 		}
-		switch character := expression[index]; {
-		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
+		switch {
+		case !cyphertext.NamePartAt(expression, index) || (index > 0 && (cyphertext.NamePartAt(expression, index-1) || expression[index-1] == '.')):
 			index++
 			continue
 		}
 		start := index
-		for index < len(expression) && isIdentByte(expression[index]) {
-			index++
-		}
+		index = cyphertext.NamePartEnd(expression, index)
 		word := expression[start:index]
 		next := skipSpaceIndex(expression, index)
 		switch {
@@ -242,9 +223,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
-				argumentEnd++
-			}
+			argumentEnd = cyphertext.NamePartEnd(expression, argumentEnd)
 			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
 				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
 			}
@@ -254,7 +233,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 }
 
 func skipSpaceIndex(text string, index int) int {
-	for index < len(text) && isASCIISpace(text[index]) {
+	for index < len(text) && cyphertext.IsWhitespaceAt(text, index) {
 		index++
 	}
 	return index
@@ -302,16 +281,14 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 // index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
 // entity's property for null without an error (it has none).
 func propertyNullTestFollows(expression string, index int) bool {
-	for index < len(expression) && isIdentByte(expression[index]) {
-		index++
-	}
+	index = cyphertext.NamePartEnd(expression, index)
 	rest := expression[skipSpaceIndex(expression, index):]
 	if !startsWithKeywordFold(rest, "IS") {
 		return false
 	}
-	rest = strings.TrimLeft(rest[len("IS"):], " \t\r\n")
+	rest = strings.TrimLeftFunc(rest[len("IS"):], cyphertext.IsWhitespace)
 	if startsWithKeywordFold(rest, "NOT") {
-		rest = strings.TrimLeft(rest[len("NOT"):], " \t\r\n")
+		rest = strings.TrimLeftFunc(rest[len("NOT"):], cyphertext.IsWhitespace)
 	}
 	return startsWithKeywordFold(rest, "NULL")
 }
@@ -321,7 +298,7 @@ func propertyNullTestFollows(expression string, index int) bool {
 // | …)), "" when variable iterates no row variable.
 func iterationSourceVariable(clause, variable string) string {
 	for offset := 0; offset < len(clause); {
-		index := indexIdentifierFold(clause[offset:], variable)
+		index := cyphertext.FindIdentifier(clause[offset:], variable, 0, cyphertext.IdentifierFold)
 		if index < 0 {
 			return ""
 		}
@@ -331,37 +308,14 @@ func iterationSourceVariable(clause, variable string) string {
 		if !startsWithKeywordFold(rest, "IN") {
 			continue
 		}
-		rest = strings.TrimLeft(rest[len("IN"):], " \t\r\n")
+		rest = strings.TrimLeftFunc(rest[len("IN"):], cyphertext.IsWhitespace)
 		end := 0
-		for end < len(rest) && isIdentByte(rest[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(rest, end)
 		if end > 0 {
 			return rest[:end]
 		}
 	}
 	return ""
-}
-
-// indexIdentifierFold is the index of identifier in text as a whole word
-// outside string literals, -1 when it isn't there.
-func indexIdentifierFold(text, identifier string) int {
-	for index := 0; index+len(identifier) <= len(text); {
-		if end, quoted := skipCypherLexicalToken(text, index); quoted {
-			index = end
-			continue
-		}
-		if (index > 0 && isIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier) {
-			index++
-			continue
-		}
-		if end := index + len(identifier); end < len(text) && isIdentByte(text[end]) {
-			index++
-			continue
-		}
-		return index
-	}
-	return -1
 }
 
 // deletedEntityReadText is the part of clause that reads values, for

@@ -63,7 +63,7 @@ func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query s
 // "Schema modification", "Administration command".
 func statementTypeError(ctx context.Context, query, kind, previousKind string, transaction any) error {
 	requested := "Read query"
-	permissions := QueryPermissionRequirements(ctx, query)
+	permissions := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	if permissions.Write {
 		requested = "Write query"
 	}

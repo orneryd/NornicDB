@@ -71,7 +71,7 @@ func warnDeprecatedMemorySetting(language string, message localization.Message) 
 	if err == nil {
 		manager, managerErr := localization.NewManager(preferences.Preferences, nil)
 		if managerErr == nil {
-			if rendered, _, renderErr := manager.Render(context.Background(), message); renderErr == nil {
+			if rendered, _, renderErr := manager.Render(context.Background(), localization.MessageRequest(message)); renderErr == nil {
 				slog.Warn(rendered)
 				return
 			}
@@ -116,6 +116,10 @@ type StorageRuntimeConfig struct {
 }
 
 type Config struct {
+	// generatedJWTSecret identifies the process-local default, which cannot be
+	// used as a durable credential key. Explicit YAML/env assignment clears it.
+	generatedJWTSecret string
+
 	// Authentication (NORNICDB_AUTH format: "username/password" or "none")
 	Auth AuthConfig
 
@@ -1994,6 +1998,7 @@ func LoadDefaults() *Config {
 	config.Auth.MinPasswordLength = 8
 	config.Auth.TokenExpiry = 24 * time.Hour
 	config.Auth.JWTSecret = generateDefaultSecret()
+	config.generatedJWTSecret = config.Auth.JWTSecret
 
 	// Database defaults
 	config.Database.DataDir = "./data"
@@ -2288,6 +2293,7 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnv("NORNICDB_AUTH_JWT_SECRET", ""); v != "" {
 		config.Auth.JWTSecret = v
+		config.generatedJWTSecret = ""
 	}
 
 	// Database settings
@@ -3747,6 +3753,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		yamlCfg.Auth.JWTSecret != "[stored-in-keychain]" &&
 		!strings.Contains(yamlCfg.Auth.JWTSecret, "stored-in-keychain") {
 		config.Auth.JWTSecret = yamlCfg.Auth.JWTSecret
+		config.generatedJWTSecret = ""
 	}
 
 	// === Per-DB search index master switches and warming triggers ===

@@ -1,0 +1,93 @@
+[
+  {
+    "source": "RETURN ';';RETURN 2;",
+    "statements": [
+      "RETURN ';'",
+      "RETURN 2",
+      ""
+    ]
+  },
+  {
+    "source": "RETURN 'a\\';b';RETURN 2",
+    "statements": [
+      "RETURN 'a\\';b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN \"a\\\";b\";RETURN 2",
+    "statements": [
+      "RETURN \"a\\\";b\"",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN `a``;b`;RETURN 2",
+    "statements": [
+      "RETURN `a``;b`",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 // ;\r\n;RETURN 2",
+    "statements": [
+      "RETURN 1 // ;\r\n",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 /* ; */;RETURN 2",
+    "statements": [
+      "RETURN 1 /* ; */",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1--2;RETURN 3",
+    "statements": [
+      "RETURN 1--2",
+      "RETURN 3"
+    ]
+  },
+  {
+    "source": "RETURN 'a'';b';RETURN 2",
+    "statements": [
+      "RETURN 'a'';b'",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 'unterminated;RETURN 2",
+    "statements": [
+      "RETURN 'unterminated;RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 1 /* unfinished;RETURN 2",
+    "statements": [
+      "RETURN 1 /* unfinished;RETURN 2"
+    ]
+  },
+  {
+    "source": "RETURN 'a；b'；RETURN 2；",
+    "statements": [
+      "RETURN 'a；b'",
+      "RETURN 2",
+      ""
+    ]
+  },
+  {
+    "source": "/​/ comment; RETURN 1；RETURN 2",
+    "statements": [
+      "/​/ comment; RETURN 1",
+      "RETURN 2"
+    ]
+  },
+  {
+    "source": "​RETURN 1‌;﻿RETURN 2",
+    "statements": [
+      "RETURN 1",
+      "RETURN 2"
+    ]
+  }
+]

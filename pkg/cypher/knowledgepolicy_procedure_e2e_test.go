@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
@@ -370,7 +371,7 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 		},
 	}
 	var parsedPolicy knowledgepolicy.PromotionPolicyDef
-	require.NoError(t, parsePolicyApplyBlock(formatPromotionPolicyApply(policy), &parsedPolicy))
+	require.NoError(t, parsePolicyApplyBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), formatPromotionPolicyApply(policy), cyphertext.RawSource), original: true}, &parsedPolicy))
 	assert.Equal(t, policy.OnAccess, parsedPolicy.OnAccess)
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }

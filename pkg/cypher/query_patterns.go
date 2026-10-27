@@ -13,6 +13,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -159,7 +160,7 @@ func extractMatchClause(query string) string {
 func countRelationshipPatterns(s string) int {
 	count := 0
 	for from := 0; from < len(s); {
-		_, close := nextRelationshipBracket(s, from)
+		_, close := readRelationshipBracket(s, from, requireClosedRelationship)
 		if close < 0 {
 			break
 		}
@@ -285,7 +286,7 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 		return false
 	}
 
-	parts := splitOutsideParens(returnPart, ',')
+	parts := splitTopLevelComma(returnPart)
 	if len(parts) != 2 {
 		return false
 	}
@@ -366,7 +367,7 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	}
 
 	for _, item := range returnItems[1:] {
-		expr, _ := parseProjectionExprAlias(ctx, item.expr)
+		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		open := strings.IndexByte(u, '(')
 		close := strings.LastIndexByte(u, ')')
@@ -432,7 +433,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 		return false
 	}
 
-	items := splitOutsideParens(returnPart, ',')
+	items := splitTopLevelComma(returnPart)
 	if len(items) < 2 {
 		return false
 	}
@@ -496,7 +497,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 func functionCallParenAt(text string, open int) bool {
 	end := open
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	if start == end {
@@ -521,14 +522,14 @@ func extractNodeVariables(matchClause string) []string {
 			continue
 		}
 		if matchClause[i] == '{' {
-			if end := findMatchingDelimiter(matchClause, i, '{', '}'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(matchClause, i, '{', '}', cyphertext.OpeningDelimiter); end >= 0 {
 				i = end
 				continue
 			}
 		}
 		if dynamicLabelStartsAt(matchClause, i) {
 			// $(e): a dynamic label's expression, not a node.
-			if end := findMatchingDelimiter(matchClause, i+strings.IndexByte(matchClause[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(matchClause, i+strings.IndexByte(matchClause[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				i = end
 				continue
 			}
@@ -537,7 +538,7 @@ func extractNodeVariables(matchClause string) []string {
 			continue
 		}
 		j := i + 1
-		for j < len(matchClause) && isWhitespace(matchClause[j]) {
+		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
 		}
 		if _, _, subquery := subqueryExpressionKeywordAt(matchClause, j); subquery {
@@ -548,7 +549,7 @@ func extractNodeVariables(matchClause string) []string {
 			continue
 		}
 		if next < len(matchClause) {
-			for next < len(matchClause) && isWhitespace(matchClause[next]) {
+			for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
 				next++
 			}
 			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' && matchClause[next] != '$' {

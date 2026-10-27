@@ -46,9 +46,9 @@ func TestHTTPTransactionQuotas(t *testing.T) {
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
 				db := "quota_" + mode + "_" + tc.name
-				require.NoError(t, server.dbManager.CreateDatabase(db))
+				require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 				require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "editor", db, true, true))
-				require.NoError(t, server.dbManager.SetDatabaseLimits(db, &tc.limits))
+				require.NoError(t, server.dbManager.SetDatabaseLimits(t.Context(), db, &tc.limits))
 				endpoint := "/db/" + db + "/tx/commit"
 				if len(tc.setup) > 0 {
 					require.Empty(t, request(endpoint, tc.setup...).Errors)

@@ -14,41 +14,46 @@ func TestDatabaseManager_RejectsNamespacedInnerEngine(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := storage.NewNamespacedEngine(base, "nornic")
-	_, err := NewDatabaseManager(inner, DefaultConfig())
+	_, err := NewDatabaseManager(t.Context(), inner, DefaultConfig())
 	require.Error(t, err)
 }
 
-func TestDatabaseManager_DefaultDatabaseName_NeverSystem(t *testing.T) {
-	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = engine.Close() })
+func TestDatabaseManager_DefaultDatabaseName(t *testing.T) {
+	testCases := []struct {
+		name      string
+		defaultDB string
+		systemDB  string
+	}{
+		{
+			name:      "system collision",
+			defaultDB: "system",
+			systemDB:  "system",
+		},
+		{
+			name:      "empty defaults",
+			defaultDB: "",
+			systemDB:  "",
+		},
+	}
 
-	manager, err := NewDatabaseManager(engine, &Config{
-		DefaultDatabase: "system",
-		SystemDatabase:  "system",
-	})
-	require.NoError(t, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			t.Cleanup(func() { _ = engine.Close() })
 
-	// Regression: UI discovery must never advertise system as the default DB,
-	// otherwise browser queries like MATCH (n) will show system metadata nodes.
-	require.Equal(t, "nornic", manager.DefaultDatabaseName())
-	require.True(t, manager.Exists("system"))
-	require.True(t, manager.Exists("nornic"))
-}
+			manager, err := NewDatabaseManager(t.Context(), engine, &Config{
+				DefaultDatabase: tc.defaultDB,
+				SystemDatabase:  tc.systemDB,
+			})
+			require.NoError(t, err)
 
-func TestDatabaseManager_ConfigDefaults_AreApplied(t *testing.T) {
-	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	manager, err := NewDatabaseManager(engine, &Config{
-		// Intentionally empty to exercise defaults.
-		DefaultDatabase: "",
-		SystemDatabase:  "",
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, "nornic", manager.DefaultDatabaseName())
-	require.True(t, manager.Exists("system"))
-	require.True(t, manager.Exists("nornic"))
+			// Regression: UI discovery must never advertise system as the default DB,
+			// otherwise browser queries like MATCH (n) will show system metadata nodes.
+			require.Equal(t, "nornic", manager.DefaultDatabaseName())
+			require.True(t, manager.Exists("system"))
+			require.True(t, manager.Exists("nornic"))
+		})
+	}
 }
 
 func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing.T) {
@@ -75,7 +80,7 @@ func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing
 	})
 	require.NoError(t, err)
 
-	manager, err := NewDatabaseManager(engine, &Config{
+	manager, err := NewDatabaseManager(t.Context(), engine, &Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 	})

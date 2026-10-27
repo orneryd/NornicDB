@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
@@ -117,7 +118,9 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	}))
 	require.NoError(t, rawDB.Close())
 
-	migrated, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
+	plan, err := multidb.NewCatalogUpgradeV4("system", "")
+	require.NoError(t, err)
+	migrated, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = migrated.Close() })
 

@@ -480,7 +480,7 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 				return &cypher.ExecuteResult{}, nil
 			},
 		})
-		procedures := cypher.RegisteredProceduresForCalls(t.Context(), "CALL "+schemaName+"()")
+		procedures := cypher.RegisteredProceduresForCalls(t.Context(), "CALL "+schemaName+"()", cypher.RawSource)
 		require.Len(t, procedures, 1)
 		require.Equal(t, cypher.ProcedureModeSchema, procedures[0].Mode)
 	})

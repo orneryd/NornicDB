@@ -56,7 +56,7 @@ func TestPluginInvalidProcedureFailsWholeLoad(t *testing.T) {
 	t.Cleanup(cypher.ClearUserProcedures)
 	_, err := loadFunctionPlugin(invalidProcedureFixture{}, "fixture.so")
 	require.Error(t, err)
-	require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL invalid_proc_fixture.good()"))
+	require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL invalid_proc_fixture.good()", cypher.RawSource))
 }
 
 func TestPluginProcedureDeclarationChecks(t *testing.T) {
@@ -79,7 +79,7 @@ func TestPluginProcedureDeclarationChecks(t *testing.T) {
 			require.Error(t, registerProcedureWithCypher(proc))
 		}
 		require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
-		require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL atomic.good()"))
+		require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL atomic.good()", cypher.RawSource))
 
 	})
 	t.Run("invocation failures and cancellation", func(t *testing.T) {

@@ -66,7 +66,7 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = local.Close() })
 			follower := NewReplicatedEngine(local, &producerModeFollower{Replicator: leader, leader: leader}, time.Second)
-			manager, err := multidb.NewDatabaseManager(follower, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), follower, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = manager.Close() })
 			managed, err := manager.GetStorage("nornic")

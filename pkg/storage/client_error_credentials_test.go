@@ -29,7 +29,7 @@ func TestCredentialedRemoteHTTPClientErrorsAreRedacted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = engine.Close() })
 
-	_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil)
+	_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 	if err == nil {
 		t.Fatal("transport failure was not returned")
 	}
@@ -92,7 +92,7 @@ func TestCredentialedRemoteBoltClientErrorsAreRedacted(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _, err = engine.QueryCypher(ctx, "RETURN 1", nil)
+	_, _, err = engine.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead)
 	if err == nil {
 		t.Fatal("Bolt transport failure was not returned")
 	}

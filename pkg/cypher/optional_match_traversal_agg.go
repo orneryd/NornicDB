@@ -26,6 +26,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -66,7 +67,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		// aggregate. It is evaluated once per row by the same expression path.
 		folded := asciiUpper(c)
 		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+			i > 0 && (cyphertext.NamePartAt(expr, i-1) || expr[i-1] == '.') {
 			i++
 			continue
 		}
@@ -79,7 +80,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 				continue
 			}
 			j := i + len(fn.lower)
-			for j < len(expr) && isWhitespace(expr[j]) {
+			for j < len(expr) && cyphertext.IsWhitespaceAt(expr, j) {
 				j++
 			}
 			if j >= len(expr) || expr[j] != '(' {
@@ -145,14 +146,12 @@ func subqueryExpressionEnd(expr string, i int) int {
 	// A subquery's keyword is followed by '{': any other word ends here,
 	// before the keyword comparisons.
 	end := i
-	for end < len(expr) && isIdentByte(expr[end]) {
-		end++
-	}
+	end = cyphertext.NamePartEnd(expr, end)
 	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
 		return -1
 	}
 	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
-		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
+		if closing := cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter); closing > open {
 			return closing + 1
 		}
 	}

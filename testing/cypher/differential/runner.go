@@ -3,7 +3,6 @@ package differential
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 )
@@ -94,8 +93,6 @@ func (pair *Pair) executeCase(ctx context.Context, options Options, test SweepCa
 	return reference, actual
 }
 
-var callClause = regexp.MustCompile(`(?i)\bCALL\b`)
-
 // rerunOrder runs a statement again on NornicDB, up to options.OrderRetries
 // times, when its rows are Neo4j's in another order, it sorts on a key it
 // doesn't return, and it can't write. Rows that tie under such a key have no
@@ -103,8 +100,9 @@ var callClause = regexp.MustCompile(`(?i)\bCALL\b`)
 // in Neo4j's order shows the rows are the same. It returns the outcome to
 // report and whether it agrees with reference.
 func (pair *Pair) rerunOrder(ctx context.Context, options Options, query string, reference, actual Outcome) (Outcome, bool) {
+	facts := inspectClauseRoles(query)
 	if !OrderOnly(query, reference, actual) || returnShape(query, reference.Columns).sortKeys != nil ||
-		writeClause.MatchString(query) || callClause.MatchString(query) {
+		facts.writes || facts.calls {
 		return actual, false
 	}
 	for attempt := 0; attempt < options.OrderRetries; attempt++ {

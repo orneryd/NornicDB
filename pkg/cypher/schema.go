@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -1022,40 +1023,27 @@ func (e *StorageExecutor) parseCreateIndexLegacyDDL(cypher string) (parsedCreate
 	}, nil
 }
 
-func isVectorKeyBoundaryChar(b byte) bool {
-	if b >= 'a' && b <= 'z' {
-		return false
-	}
-	if b >= 'A' && b <= 'Z' {
-		return false
-	}
-	if b >= '0' && b <= '9' {
-		return false
-	}
-	return b != '_' && b != '.'
-}
-
 func extractVectorOptionValue(optionsClause, key string) (string, bool) {
 	if optionsClause == "" || key == "" {
 		return "", false
 	}
 	for index := 0; index < len(optionsClause); {
-		name, end, ok := scanIdentifierToken(optionsClause, index)
+		name, ok := cyphertext.ScanIdentifier(optionsClause, index)
 		if !ok && isCypherStringQuoteByte(optionsClause[index]) {
 			if quotedEnd, closed := scanCypherQuotedText(optionsClause, index, optionsClause[index]); closed {
-				name, ok = decodeCypherQuotedString(optionsClause[index:quotedEnd])
-				end = quotedEnd
+				name.Value, ok = cyphertext.DecodeString(optionsClause[index:quotedEnd], cyphertext.AcceptedSource)
+				name.End = quotedEnd
 			}
 		}
 		if !ok {
 			index++
 			continue
 		}
-		index = end
-		if !strings.EqualFold(name, key) {
+		index = name.End
+		if !strings.EqualFold(name.Value, key) {
 			continue
 		}
-		separator := queryGapEnd(optionsClause, end)
+		separator := queryGapEnd(optionsClause, name.End)
 		if separator >= len(optionsClause) || optionsClause[separator] != ':' {
 			continue
 		}
@@ -1064,7 +1052,7 @@ func extractVectorOptionValue(optionsClause, key string) (string, bool) {
 			return "", false
 		}
 		if finish, closed := scanCypherQuotedText(optionsClause, start, optionsClause[start]); closed {
-			if value, quoted := decodeCypherQuotedString(optionsClause[start:finish]); quoted {
+			if value, quoted := cyphertext.DecodeString(optionsClause[start:finish], cyphertext.AcceptedSource); quoted {
 				return strings.TrimSpace(value), true
 			}
 		}
@@ -1782,13 +1770,7 @@ func (e *StorageExecutor) parseCreateConstraintCardinalityDDL(cypher string) (pa
 			if spanOK {
 				raw := strings.TrimSpace(strings.TrimSpace(requireExpr)[end:])
 				if raw != "" {
-					digitsOnly := true
-					for _, r := range raw {
-						if r < '0' || r > '9' {
-							digitsOnly = false
-							break
-						}
-					}
+					digitsOnly := isAllDigits(raw)
 					if digitsOnly {
 						v, convErr := strconv.Atoi(raw)
 						if convErr != nil || v < 1 {
@@ -2352,7 +2334,7 @@ func parseDomainValueList(raw string) ([]interface{}, error) {
 		if token == "" {
 			continue
 		}
-		if value, quoted := decodeCypherQuotedString(token); quoted {
+		if value, quoted := cyphertext.DecodeString(token, cyphertext.AcceptedSource); quoted {
 			values = append(values, value)
 		} else if isCypherStringQuoteByte(token[0]) {
 			return nil, localizedError(localization.CypherSchemaUnterminatedString(token), nil)

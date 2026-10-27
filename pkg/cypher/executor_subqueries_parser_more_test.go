@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,8 +49,8 @@ func TestSubqueryParserHelpers_MoreBranches(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("a = ")
 	require.False(t, ok)
 
-	require.True(t, containsStandaloneIdentifier("x + y + z", "y"))
-	require.False(t, containsStandaloneIdentifier("node.y = 1", "y"))
-	require.False(t, containsStandaloneIdentifier("'y'", "y"))
-	require.False(t, containsStandaloneIdentifier("yy + 1", "y"))
+	require.True(t, cyphertext.FindIdentifier("x + y + z", "y", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("node.y = 1", "y", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("'y'", "y", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("yy + 1", "y", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 }

@@ -11,6 +11,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Node represents a graph node.
@@ -212,8 +214,7 @@ func Cypher(filePath string, config map[string]interface{}) (*ImportResult, erro
 //
 //	apoc.import.cypher.data('CREATE (n:Person {name: "Alice"})', {}) => import result
 func CypherData(cypherStr string, config map[string]interface{}) (*ImportResult, error) {
-	// Split by semicolon
-	statements := strings.Split(cypherStr, ";")
+	source := cyphertext.NormalizeSource(cypherStr)
 
 	result := &ImportResult{
 		Nodes:      0,
@@ -221,14 +222,10 @@ func CypherData(cypherStr string, config map[string]interface{}) (*ImportResult,
 		Errors:     []string{},
 	}
 
-	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-
-		// Simple parsing to count CREATE statements
-		if strings.HasPrefix(strings.ToUpper(stmt), "CREATE") {
+	for _, span := range source.StatementSpans() {
+		stmt := cypherStr[span.Start:span.End]
+		start, _ := cyphertext.GapEnd(stmt, 0)
+		if cyphertext.KeywordEnd(stmt, start, "CREATE", cyphertext.CypherWord) >= 0 {
 			result.Nodes++
 		}
 	}

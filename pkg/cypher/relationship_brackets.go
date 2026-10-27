@@ -1,5 +1,7 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/internal/cyphertext"
+
 // Relationship brackets in pattern text are found by one scanner for every
 // reader (CREATE / MERGE shape checks, relationship variable scoping, the MERGE
 // relationship parser and OPTIONAL MATCH endpoints). A '[' starts a
@@ -7,19 +9,17 @@ package cypher
 // property map (and so inside a subquery expression in a property value), a
 // list, a string literal or a backtick-quoted name does not.
 
-// nextRelationshipBracket returns the first relationship bracket of text at or
-// after from, as the index of its '[' and of the matching ']', or -1, -1 when
-// there is none (or it is not closed).
-func nextRelationshipBracket(text string, from int) (open, close int) {
-	if open, close = scanRelationshipBracket(text, from); close < 0 {
-		return -1, -1
-	}
-	return open, close
-}
+type relationshipBracketPolicy uint8
 
-// scanRelationshipBracket is nextRelationshipBracket that also reports a
-// relationship bracket that is not closed: its '[' and -1.
-func scanRelationshipBracket(text string, from int) (open, close int) {
+const (
+	requireClosedRelationship relationshipBracketPolicy = iota
+	reportUnclosedRelationship
+)
+
+// readRelationshipBracket owns both closed lookup and malformed-pattern
+// reporting. Validation retains the opening offset of an unclosed bracket;
+// execution readers receive no bracket until both delimiters are present.
+func readRelationshipBracket(text string, from int, policy relationshipBracketPolicy) (open, close int) {
 	for index := from; index < len(text); index++ {
 		switch c := text[index]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
@@ -29,18 +29,22 @@ func scanRelationshipBracket(text string, from int) (open, close int) {
 				index = end - 1
 			}
 		case '{':
-			if end := findMatchingDelimiter(text, index, '{', '}'); end > index {
+			if end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
 		case '[':
 			previous := index - 1
-			for previous >= 0 && isASCIISpace(text[previous]) {
+			for previous >= 0 && cyphertext.IsWhitespaceAt(text, previous) {
 				previous--
 			}
 			if previous < 0 || text[previous] != '-' {
 				continue
 			}
-			return index, findMatchingBracket(text, index)
+			close := findMatchingBracket(text, index)
+			if close < 0 && policy == requireClosedRelationship {
+				return -1, -1
+			}
+			return index, close
 		}
 	}
 	return -1, -1
@@ -60,7 +64,7 @@ func patternHasRelationship(pattern string) bool {
 				index = end - 1
 			}
 		case '{':
-			if end := findMatchingDelimiter(pattern, index, '{', '}'); end > index {
+			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
 		case '-':
@@ -74,10 +78,4 @@ func patternHasRelationship(pattern string) bool {
 		}
 	}
 	return false
-}
-
-// firstRelationshipBracket returns the first relationship bracket of text
-// (nextRelationshipBracket), or -1, -1.
-func firstRelationshipBracket(text string) (open, close int) {
-	return nextRelationshipBracket(text, 0)
 }

@@ -21,7 +21,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%s", kind, op), func(t *testing.T) {
 				engine, err := runtimeFixtureOwner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				manager, err := NewDatabaseManager(engine, nil)
+				manager, err := NewDatabaseManager(t.Context(), engine, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close() })
 				store, err := manager.GetStorage("nornic")

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"time"
 )
@@ -109,7 +110,7 @@ func (state *patternParse) parsePadded(item patternItem, pos int) (int, bool) {
 	if end > len(state.text) {
 		return pos, false
 	}
-	for pos < end && state.text[pos] == ' ' {
+	for pos < end && cyphertext.IsWhitespaceAt(state.text, pos) {
 		pos++
 	}
 	full := state.text

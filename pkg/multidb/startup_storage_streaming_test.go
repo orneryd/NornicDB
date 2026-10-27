@@ -244,7 +244,7 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	first, err := NewDatabaseManager(base, nil)
+	first, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	_, err = base.CreateNode(&storage.Node{
@@ -258,7 +258,7 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 	engine.Engine = engine.MemoryEngine
 	engine.StoredEntityReader = engine.MemoryEngine
 	engine.ScopedStoredEntityReader = engine.MemoryEngine
-	restarted, err := NewDatabaseManager(engine, nil)
+	restarted, err := NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	require.NotNil(t, restarted)
 	require.Zero(t, engine.nodeStreamCalls)
@@ -268,7 +268,7 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	_, err := NewDatabaseManager(base, nil)
+	_, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	_, err = base.CreateNode(&storage.Node{ID: "nornic:existing", Labels: []string{"Document"}})
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	engine.Engine = engine.MemoryEngine
 	engine.StoredEntityReader = engine.MemoryEngine
 	engine.ScopedStoredEntityReader = engine.MemoryEngine
-	restarted, err := NewDatabaseManager(engine, nil)
+	restarted, err := NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	engine.prefixes = nil // Ignore the narrowly scoped leaked-metadata cleanup.
 	database, err := restarted.GetDefaultStorage()

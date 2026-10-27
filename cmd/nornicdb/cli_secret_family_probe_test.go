@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"io"
 	"net"
 	"net/http"
@@ -318,7 +319,7 @@ func TestCLISecretFamilyOwners(t *testing.T) {
 	t.Run("remote-error", func(t *testing.T) {
 		executor := fabric.NewRemoteFragmentExecutor()
 		defer executor.Close()
-		_, err := executor.Execute(context.Background(), &fabric.LocationRemote{DBName: "remote", URI: "ftp://user:" + cliSecretProbeFlag + "@127.0.0.1", AuthMode: "user_password", User: "probe", Password: cliSecretProbeEnv}, "RETURN 1", nil, "")
+		_, err := executor.Execute(context.Background(), &fabric.LocationRemote{DBName: "remote", URI: "ftp://user:" + cliSecretProbeFlag + "@127.0.0.1", AuthMode: "user_password", User: "probe", Password: cliSecretProbeEnv}, "RETURN 1", nil, "", storage.RemoteAccessRead)
 		if err == nil {
 			t.Fatal("unsupported remote URI did not fail")
 		}

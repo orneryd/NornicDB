@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -9,7 +10,12 @@ import (
 
 // ResultColumns is the strict ordered-header view of the execution program.
 // Unknown facts are an error, never an empty successful header.
-func (e *StorageExecutor) ResultColumns(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool) ([]string, error) {
+func (e *StorageExecutor) ResultColumns(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, stage SourceStage) ([]string, error) {
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	query = source.Text
 	var columns []string
 	var failure error
 	program := e.statementProjectionProgram(ctx, query, incoming, cypher25, nil)
@@ -45,7 +51,7 @@ func (e *StorageExecutor) resultIncomingScope() resultmetadata.Scope {
 // unresolved or invalid facts and must never be treated as a successful header.
 // Execution and rewriting consumers use ResultColumns or StatementFacts.
 func (e *StorageExecutor) StatementColumns(query string) []string {
-	columns, err := e.StatementResultColumns(query)
+	columns, err := e.StatementResultColumns(query, RawSource)
 	if err != nil {
 		return nil
 	}
@@ -54,13 +60,18 @@ func (e *StorageExecutor) StatementColumns(query string) []string {
 
 // StatementResultColumns is the strict public header view with this executor's
 // incoming record scope. Rewriters and transaction adapters preserve its error.
-func (e *StorageExecutor) StatementResultColumns(query string) ([]string, error) {
-	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
+func (e *StorageExecutor) StatementResultColumns(query string, stage SourceStage) ([]string, error) {
+	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", stage)
 }
 
 // StatementResultColumnsContext is the public execution view, using the same
 // participant-signature resolver as Fabric planning before any effects.
-func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, query string) ([]string, error) {
+func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, query string, stage SourceStage) ([]string, error) {
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	query = source.Text
 	var columns []string
 	var failure error
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
@@ -138,7 +149,12 @@ func queryBodyProducesColumns(ctx context.Context, source string, body queryBody
 
 // ResultProjection is the execution descriptor from the owner program. It
 // never expands a compound wildcard from the statement's entry scope.
-func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
+func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, incoming []string, stage SourceStage) resultmetadata.Projection {
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return resultmetadata.Projection{}
+	}
+	query = source.Text
 	var projection resultmetadata.Projection
 	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
 		if len(statement.Branches) != 0 || len(statement.Clauses) == 0 {

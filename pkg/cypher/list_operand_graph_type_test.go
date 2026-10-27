@@ -63,6 +63,12 @@ func TestListOperandGraphVariableIsTypeError(t *testing.T) {
 }
 
 func TestGraphListOperandIgnoresUnrelatedDeclarations(t *testing.T) {
+	for _, header := range []string{"FOREACH (x IN n | SET x.ok = true)", "FOR x IN n RETURN x", "FOR /* header */ `x` IN n RETURN x"} {
+		require.NoError(t, graphListOperandTypeError(header, matchSemanticScope{"n": matchBindingNode}), header)
+	}
+	for _, statement := range []string{"FOREACH (x IN [1] | SET x.ok = 1 IN n)", "FOR x IN [1] RETURN 1 IN n", "RETURN 'FOR x' AS note, 1 IN n", "RETURN 1 /* FOREACH (x */ IN n"} {
+		require.ErrorContains(t, graphListOperandTypeError(statement, matchSemanticScope{"n": matchBindingNode}), "was Node", statement)
+	}
 	require.ErrorContains(t, graphListOperandTypeError("RETURN 1 IN n /* n IN [1] */ AS x", matchSemanticScope{"n": matchBindingNode}), "was Node")
 	require.ErrorContains(t, graphListOperandTypeError("RETURN 1 IN n AS x, 'n IN [1]' AS note", matchSemanticScope{"n": matchBindingNode}), "was Node")
 	require.ErrorContains(t, graphListOperandTypeError("RETURN 1 IN n AS x, [n IN [1] | n] AS y", matchSemanticScope{"n": matchBindingNode}), "was Node")

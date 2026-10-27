@@ -20,7 +20,8 @@ const (
 	storageVersionV1              = 1
 	storageVersionPropKeyDictV2   = 2
 	storageVersionEdgeAdjacencyV3 = 3
-	storageVersionCurrent         = storageVersionEdgeAdjacencyV3
+	storageVersionCatalogV4       = 4
+	storageVersionCurrent         = storageVersionCatalogV4
 )
 
 // Format-byte tokens for tokenized bodies. Both are reserved so they

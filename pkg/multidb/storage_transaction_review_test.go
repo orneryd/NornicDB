@@ -26,7 +26,7 @@ func TestTransactionQuotaListenerReentry(t *testing.T) {
 		t.Run(fmt.Sprintf("limited=%v", limited), func(t *testing.T) {
 			manager, db := setupTestManager(t)
 			if limited {
-				require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxNodes: 4, MaxBytes: 1 << 20}}))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 4, MaxBytes: 1 << 20}}))
 			}
 			engine, err := manager.GetStorage(db)
 			require.NoError(t, err)

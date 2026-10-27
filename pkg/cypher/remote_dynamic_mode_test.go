@@ -21,12 +21,12 @@ import (
 // wire boundary, including older/foreign peers that report no mode or counters.
 func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, [2]storage.Engine) {
 	t.Helper()
-	remote, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	remote, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
 	var stores [2]storage.Engine
 	for i, name := range []string{"remote_one", "remote_two"} {
-		require.NoError(t, remote.CreateDatabase(name))
+		require.NoError(t, remote.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 		stores[i], err = remote.GetStorage(name)
 		require.NoError(t, err)
 	}
@@ -153,10 +153,10 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 	configuration.RemoteEngineFactory = func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 		return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 	}
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), configuration)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), configuration)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateCompositeDatabase("remote_modes", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "remote_modes", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "remote_one", Type: "remote", AccessMode: "read_write", URI: endpoint.URL},
 		{Alias: "two", DatabaseName: "remote_two", Type: "remote", AccessMode: "read_write", URI: endpoint.URL},
 	}))

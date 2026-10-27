@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -84,7 +85,9 @@ func writeCompatStore(t *testing.T, dir string) {
 
 func requireCompatStoreServes(t *testing.T, dir string, wantIterations int32) {
 	t.Helper()
-	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+	plan, err := multidb.NewCatalogUpgradeV4("system", "")
+	require.NoError(t, err)
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: filepath.Join(dir, "graph"), AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
 	if badger != nil {
 		fixtureowner.Own(t, badger)
 	}

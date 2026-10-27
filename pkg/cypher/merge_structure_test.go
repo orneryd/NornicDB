@@ -81,7 +81,7 @@ func TestMergeStructureMatchesNeo4j(t *testing.T) {
 }
 
 func TestSplitMergeClauseActions(t *testing.T) {
-	parts := splitMergeClauseActions("(m:Q {s: 'ON MATCH SET'}) ON  CREATE   SET m.a = 1 ON MATCH SET m.b = 2, m.c = 3 ON CREATE SET m.d = 4")
+	parts := splitMergeClauseActions("(m:Q {s: 'ON MATCH SET'}) ON  CREATE   SET m.a = 1 ON MATCH SET m.b = 2, m.c = 3 ON CREATE SET m.d = 4", nil)
 	require.Equal(t, "(m:Q {s: 'ON MATCH SET'})", parts.pattern)
 	require.Equal(t, 2, parts.onCreate.len())
 	require.Equal(t, "m.d = 4", parts.onCreate.assignments(1))
@@ -89,9 +89,9 @@ func TestSplitMergeClauseActions(t *testing.T) {
 	require.Equal(t, "SET m.b = 2, m.c = 3", parts.onMatch.setText())
 	require.Equal(t, "", mergeActionClauses{}.setText())
 	require.Equal(t, []string{"m.b = 2", "m.c = 3"}, mergeActionAssignments(parts.onMatch))
-	require.Equal(t, mergeClauseActions{pattern: "(n)"}, splitMergeClauseActions(" (n) "))
+	require.Equal(t, mergeClauseActions{pattern: "(n)"}, splitMergeClauseActions(" (n) ", nil))
 	// More actions than the stack buffer holds.
-	many := splitMergeClauseActions("(n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9")
+	many := splitMergeClauseActions("(n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9", nil)
 	require.Equal(t, 9, many.onMatch.len())
 	require.Equal(t, "n.i = 9", many.onMatch.assignments(8))
 	require.Equal(t, "SET n.c = 3", many.onMatch.set(2))

@@ -22,25 +22,25 @@ func TestManagerRendersCatalogAndPluralForms(t *testing.T) {
 		language.EuropeanSpanish,
 	}, manager.SupportedTags())
 
-	english, tag, err := manager.Render(context.Background(), InvalidRequestBody())
+	english, tag, err := manager.Render(context.Background(), MessageRequest(InvalidRequestBody()))
 	require.NoError(t, err)
 	require.Equal(t, language.AmericanEnglish, tag)
 	require.Equal(t, "invalid request body", english)
 
 	spanishContext := WithPreferences(context.Background(), language.EuropeanSpanish)
-	spanish, tag, err := manager.Render(spanishContext, InvalidRequestBody())
+	spanish, tag, err := manager.Render(spanishContext, MessageRequest(InvalidRequestBody()))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "cuerpo de solicitud no válido", spanish)
-	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), language.MustParse("en-XA")), InvalidRequestBody())
+	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), language.MustParse("en-XA")), MessageRequest(InvalidRequestBody()))
 	require.NoError(t, err)
 	require.Equal(t, language.MustParse("en-XA"), tag)
 	require.Equal(t, "[!! invalid request body !!]", pseudo)
 
-	one, _, err := manager.Render(spanishContext, ItemsProcessed(1))
+	one, _, err := manager.Render(spanishContext, MessageRequest(ItemsProcessed(1)))
 	require.NoError(t, err)
 	require.Equal(t, "1 elemento procesado", one)
-	many, _, err := manager.Render(spanishContext, ItemsProcessed(3))
+	many, _, err := manager.Render(spanishContext, MessageRequest(ItemsProcessed(3)))
 	require.NoError(t, err)
 	require.Equal(t, "3 elementos procesados", many)
 }
@@ -53,7 +53,7 @@ func TestManagerPseudoLocaleOnlyWhenAskedFor(t *testing.T) {
 		manager, err := NewManager([]language.Tag{language.MustParse(preference)}, nil)
 		require.NoError(t, err)
 		require.Equal(t, language.AmericanEnglish, manager.DefaultTag(), preference)
-		text, tag, err := manager.Render(WithPreferences(context.Background(), language.MustParse(preference)), InvalidRequestBody())
+		text, tag, err := manager.Render(WithPreferences(context.Background(), language.MustParse(preference)), MessageRequest(InvalidRequestBody()))
 		require.NoError(t, err)
 		require.Equal(t, language.AmericanEnglish, tag, preference)
 		require.Equal(t, "invalid request body", text, preference)
@@ -73,12 +73,12 @@ func TestManagerContextOverrideAndFallback(t *testing.T) {
 	require.Equal(t, language.EuropeanSpanish, manager.DefaultTag())
 
 	englishContext := WithPreferences(context.Background(), language.AmericanEnglish)
-	text, tag, err := manager.Render(englishContext, InvalidRequestBody())
+	text, tag, err := manager.Render(englishContext, MessageRequest(InvalidRequestBody()))
 	require.NoError(t, err)
 	require.Equal(t, "invalid request body", text)
 	require.Equal(t, language.AmericanEnglish, tag)
 
-	text, tag, err = manager.Render(context.Background(), Message{ID: "missing.message"})
+	text, tag, err = manager.Render(context.Background(), MessageRequest(Message{ID: "missing.message"}))
 	require.Error(t, err)
 	require.Equal(t, "missing.message", text)
 	require.Equal(t, language.AmericanEnglish, tag)
@@ -104,11 +104,11 @@ func TestManagerWarnsOnceForMissingCatalogEntry(t *testing.T) {
 	spanishContext := WithPreferences(context.Background(), language.EuropeanSpanish)
 	message := Message{ID: "test.missing_message"}
 
-	text, tag, err := manager.Render(spanishContext, message)
+	text, tag, err := manager.Render(spanishContext, MessageRequest(message))
 	require.Error(t, err)
 	require.Equal(t, language.AmericanEnglish, tag)
 	require.Equal(t, "test.missing_message", text)
-	_, _, err = manager.Render(spanishContext, message)
+	_, _, err = manager.Render(spanishContext, MessageRequest(message))
 	require.Error(t, err)
 
 	require.Equal(t, uint64(2), manager.MissingCatalogEntryCount())

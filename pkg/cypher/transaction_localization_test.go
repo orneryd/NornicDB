@@ -31,7 +31,7 @@ func TestCypherTransactionsLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *te
 
 	t.Run("syntax validation", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		err := exec.validateSyntaxNornic("INVALID")
+		err := exec.validateSyntax(context.Background(), "INVALID", false, syntaxNativeCore)
 		requireCypherTransactionsLocalizedError(t, err, localization.MessageCypherTransactionsSyntaxStartInvalid, "syntax error: query must start with a valid clause (MATCH, CREATE, MERGE, DELETE, CALL, SHOW, EXPLAIN, PROFILE, ALTER, USE, BEGIN, COMMIT, ROLLBACK, etc.)")
 	})
 
@@ -135,13 +135,13 @@ func TestCypherTransactionsCatalogRendering(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherTransactionsInvalidScriptAction("ABORT")
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "acción de script de transacción no válida: ABORT", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! invalid transaction script action: ABORT !!]", pseudo)

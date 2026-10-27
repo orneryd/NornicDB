@@ -1,8 +1,12 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
+
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // validateKnownFunctions is the unknown-function check: every function a
@@ -14,7 +18,7 @@ import (
 // Neo4j.
 func validateKnownFunctions(expression string) error {
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
+		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
 		return nil
 	}
 	return forEachFunctionCall(expression, func(name, normalized string) error {
@@ -94,6 +98,12 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
+		if expression[index] >= 0x80 {
+			if width := queryWhitespaceAt(expression, index); width > 0 {
+				index += width
+				continue
+			}
+		}
 		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
@@ -102,31 +112,59 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			index = end
 			continue
 		}
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		if !isCypherBacktickByte(expression[index]) && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
-			index = skipCalledName(expression, next)
+		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
+			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
+			if err != nil {
+				// USE may also be an identifier in a fragment. Syntax validation
+				// owns invalid clauses; this scanner never guesses their extent.
+				index = name.End
+				continue
+			}
+			reference := syntax.Root()
+			// The grammar owns the selector's invocationName and full extent.
+			// Only its argument expressions contain scalar function calls.
+			arguments := reference.ChildRule(cypherantlr.CypherParserRULE_useGraphArguments).ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+			for i := 0; arguments.Valid() && i < arguments.ChildCount(); i++ {
+				argument := arguments.Child(i)
+				if argument.Rule() != cypherantlr.CypherParserRULE_expression {
+					continue
+				}
+				start, end := argument.Span()
+				if err := forEachFunctionInvocation(expression[index+start:index+end], func(name, normalized string, open int) error {
+					return visit(name, normalized, index+start+open)
+				}); err != nil {
+					return err
+				}
+			}
+			_, end := reference.Span()
+			index += end
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, next, true)
-		name += parts
+		if !isCypherBacktickByte(expression[index]) && strings.EqualFold(name.Value, "CALL") {
+			index = skipCalledName(expression, name.End)
+			continue
+		}
+		parts, cursor := dottedNameParts(expression, name.End, true)
+		name.Value += parts
 		cursor = queryGapEnd(expression, cursor)
 		if cursor >= len(expression) || expression[cursor] != '(' {
-			index = next
+			index = name.End
 			continue
 		}
 		index = cursor + 1
-		normalized := lowerASCII(normalizeProjectionColumnName(name))
+		normalized := lowerASCII(normalizeProjectionColumnName(name.Value))
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations.
 		if isNonFunctionSemanticKeyword(normalized) {
 			continue
 		}
-		if err := visit(name, normalized, cursor); err != nil {
+		if err := visit(name.Value, normalized, cursor); err != nil {
 			return err
 		}
 	}
@@ -142,16 +180,16 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// skipCalledName returns where the name after CALL or USE ends: a procedure
-// or graph name, dotted, which is not a function call. Anything else after
+// skipCalledName returns where the procedure name after CALL ends. A procedure
+// name, dotted, is not a function call. Anything else after
 // the keyword (a subquery, its imports) is scanned on.
 func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, skipSpaces(expression, start))
+	end, ok := cyphertext.ScanIdentifier(expression, skipSpaces(expression, start))
 	if !ok {
 		return start
 	}
-	_, end = dottedNameParts(expression, end, true)
-	return end
+	_, end.End = dottedNameParts(expression, end.End, true)
+	return end.End
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
@@ -161,7 +199,7 @@ func skipCalledName(expression string, start int) int {
 // the source slice; only names containing trivia or quotes are normalized.
 func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 	skip := func(index int) int {
-		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
+		if spaced && index < len(expression) && (cyphertext.IsWhitespaceAt(expression, index) || expression[index] == '/' || expression[index] >= 0x80) {
 			return queryGapEnd(expression, index)
 		}
 		return index
@@ -178,7 +216,7 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 			return expression[origin:end], end
 		}
 		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
+		part, ok := cyphertext.ScanIdentifier(expression, partStart)
 		if !ok {
 			if normalizing {
 				return normalized.String(), end
@@ -191,9 +229,9 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 		}
 		if normalizing {
 			normalized.WriteByte('.')
-			normalized.WriteString(part)
+			normalized.WriteString(part.Value)
 		}
-		end = partEnd
+		end = part.End
 	}
 }
 

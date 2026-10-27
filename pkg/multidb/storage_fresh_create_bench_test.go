@@ -53,7 +53,7 @@ func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 
 func benchmarkSizeTrackingEngine(b *testing.B) (*DatabaseManager, storage.Engine) {
 	b.Helper()
-	manager, err := NewDatabaseManager(runtimeFixtureOwner.Own(b, runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := NewDatabaseManager(b.Context(), runtimeFixtureOwner.Own(b, runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		b.Fatal(err)
 	}

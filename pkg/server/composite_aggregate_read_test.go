@@ -15,12 +15,12 @@ import (
 func TestCompositeAggregateReadsRequirePhysicalDatabaseAccess(t *testing.T) {
 	server, users := setupTestServer(t)
 	ctx := context.Background()
-	require.NoError(t, server.dbManager.CreateDatabase("aggregate_child"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "aggregate_child"}))
 	engine, err := server.dbManager.GetStorage("aggregate_child")
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&storage.Node{ID: "hidden-count", Labels: []string{"Private"}})
 	require.NoError(t, err)
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("aggregate_root", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "aggregate_root", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "aggregate_child", Type: "local", AccessMode: "read_write"},
 	}))
 	const role = "aggregate-reader"

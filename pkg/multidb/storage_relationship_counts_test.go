@@ -10,11 +10,11 @@ import (
 
 func TestSizeTrackingNamespaceRelationshipCounts(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	manager, err := NewDatabaseManager(base, nil)
+	manager, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	for _, namespace := range []string{"a", "b"} {
-		require.NoError(t, manager.CreateDatabase(namespace))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: namespace}))
 		view, err := manager.GetStorage(namespace)
 		require.NoError(t, err)
 		_, err = view.CreateNode(&storage.Node{ID: "start", Labels: []string{"Start"}})

@@ -13,7 +13,7 @@ func TestTransactionalBatchSizeDiagnostic(t *testing.T) {
 	manager, err := localization.NewManager(nil, nil)
 	require.NoError(t, err)
 	message := localization.CypherSubqueriesBatchSizeInvalid("1.5")
-	text, _, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), message)
+	text, _, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "CALL IN TRANSACTIONS requires a positive INTEGER batch size, got 1.5", text)
 	registered := false
@@ -40,7 +40,7 @@ func TestTransactionalBatchAdmissionDiagnostics(t *testing.T) {
 	} {
 		t.Run(sample.name, func(t *testing.T) {
 			for _, locale := range []language.Tag{language.AmericanEnglish, language.MustParse("es-ES"), language.MustParse("en-XA")} {
-				text, _, err := manager.Render(localization.WithPreferences(context.Background(), locale), sample.message)
+				text, _, err := manager.Render(localization.WithPreferences(context.Background(), locale), localization.MessageRequest(sample.message))
 				require.NoError(t, err)
 				require.NotEmpty(t, text)
 				require.NotContains(t, text, "{{")

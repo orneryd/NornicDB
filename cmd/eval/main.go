@@ -171,6 +171,9 @@ func (s *HTTPSearcher) Search(ctx context.Context, query string) (_ []string, er
 	defer func() {
 		err = observability.RedactClientError(err, s.url)
 	}()
+	if err := validateURL(s.url); err != nil {
+		return nil, err
+	}
 	if s.client == nil {
 		s.client = &http.Client{Timeout: 30 * time.Second}
 	}

@@ -203,7 +203,7 @@ func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 
 func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4j.DriverWithContext, func()) {
 	t.Helper()
-	manager, err := multidb.NewDatabaseManager(engine, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	if err != nil {
 		_ = engine.Close()
 		t.Fatalf("create conformance database manager: %v", err)

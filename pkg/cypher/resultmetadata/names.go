@@ -2,7 +2,10 @@
 // Unknown names have no payload; a known empty scope remains distinct.
 package resultmetadata
 
-import "context"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
 
 // Provider supplies previously established result columns without analysis.
 // Implementations must preserve unknown on a cache miss.
@@ -51,5 +54,5 @@ type Projection struct {
 // ProjectionProvider supplies the canonical single-clause projection reader.
 // This compiles projection syntax, never a statement scope or semantic walk.
 type ProjectionProvider interface {
-	ResultProjection(context.Context, string, []string) Projection
+	ResultProjection(context.Context, string, []string, cyphertext.SourceStage) Projection
 }

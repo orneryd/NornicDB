@@ -16,12 +16,17 @@ func TestUnknownDropFailsWithoutMutatingGraph(t *testing.T) {
 			_, err := exec.Execute(ctx, "CREATE (:Kept {id: 1})", nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, query, nil)
-			var semantic *SemanticError
-			require.ErrorAs(t, err, &semantic)
-			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", semantic.Code)
-			result, err := exec.Execute(ctx, "MATCH (n:Kept) RETURN count(n)", nil)
+			// Syntax admission can reject the unknown command before the DROP
+			// handler. Assert the public classification shared by both owners.
+			var classified interface{ BoltErrorCode() string }
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+			result, err := exec.Execute(ctx, "MATCH (n:Kept) RETURN n.id", nil)
 			require.NoError(t, err)
-			require.Equal(t, int64(1), result.Rows[0][0])
+			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+			result, err = exec.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 		})
 	}
 }

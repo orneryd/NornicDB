@@ -9,17 +9,19 @@ import (
 
 func TestExtractLabelsFromQuery_ColonScannerEdgeCases(t *testing.T) {
 	require.Empty(t, extractLabelsFromQuery("RETURN :"))
-	require.Empty(t, extractLabelsFromQuery("MATCH (n:person) RETURN n"))
+	// Lowercase labels are valid Cypher names and must retain their exact
+	// dependency identity under the shared identifier reader.
+	require.Equal(t, []string{"person"}, extractLabelsFromQuery("MATCH (n:person) RETURN n"))
 	require.Equal(t, []string{"TypeCast"}, extractLabelsFromQuery("MATCH (n::TypeCast) RETURN n"))
 	require.Equal(t, []string{"Person"}, extractLabelsFromQuery("MATCH (n:Person) RETURN n"))
 }
 
-func TestResolveContextPathRef_EmptyAndNoParams(t *testing.T) {
-	v, ok := resolveContextPathRef(context.Background(), "")
+func TestResolveRowPath_EmptyAndNoParams(t *testing.T) {
+	v, ok := resolveValueReference(context.Background(), "", rowPath)
 	require.False(t, ok)
 	require.Nil(t, v)
 
-	v, ok = resolveContextPathRef(context.Background(), "row.id")
+	v, ok = resolveValueReference(context.Background(), "row.id", rowPath)
 	require.False(t, ok)
 	require.Nil(t, v)
 }

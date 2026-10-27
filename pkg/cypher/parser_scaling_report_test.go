@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -130,7 +131,7 @@ func parserOp(parser, mode string) func(q string) error {
 				clear(c.shards[i].cache)
 				c.shards[i].mu.Unlock()
 			}
-			return e.validateSyntaxNornic(q)
+			return e.validateSyntax(context.Background(), q, false, syntaxNativeCore)
 		}
 	case "nornic/parse":
 		b := NewASTBuilder()

@@ -10,3 +10,6 @@
 - id: cypherantlr.validate_syntax_error
   description: Pseudo-localized ANTLR Validate syntax failure. Detail remains unchanged.
   other: "[!! syntax error: {{.Detail}} !!]"
+- id: cypherantlr.unexpected_input
+  description: Pseudo-localized ANTLR syntax location.
+  other: "[!! line {{.Line}}:{{.Column}} unexpected input !!]"

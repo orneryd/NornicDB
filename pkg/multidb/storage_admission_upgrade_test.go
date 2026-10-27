@@ -21,7 +21,7 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 			engine, err := manager.GetStorage(db)
 			require.NoError(t, err)
 			tracker := engine.(*sizeTrackingEngine)
-			require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxNodes: 10}}))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 10}}))
 			begin := func() *storage.BadgerTransaction {
 				tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
 				require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 			if !fits {
 				maxBytes = 1
 			}
-			require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxNodes: 10, MaxBytes: maxBytes}}))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 10, MaxBytes: maxBytes}}))
 			tracker.writeMu.Unlock()
 			locked = false
 			select {

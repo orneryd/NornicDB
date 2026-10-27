@@ -1,6 +1,8 @@
 package resolvers
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"reflect"
 	"sync/atomic"
@@ -16,7 +18,7 @@ import (
 func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	require.NoError(t, manager.CreateDatabase("revocation_named"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "revocation_named"}))
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)
 	subscriptions := resolver.Subscription()

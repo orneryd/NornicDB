@@ -19,11 +19,11 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
-			manager, err := multidb.NewDatabaseManager(base, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = manager.Close() })
-			require.NoError(t, manager.CreateDatabase("tenant"))
-			require.NoError(t, manager.CreateDatabase("peer"))
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}))
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
 			tenant, err := manager.GetStorage("tenant")
 			require.NoError(t, err)
 			peer, err := manager.GetStorage("peer")
@@ -45,7 +45,7 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 				return injected
 			})
 			if route == "managed-drop" {
-				err = manager.DropDatabase("tenant")
+				err = manager.DropDatabase(t.Context(), "tenant")
 			} else {
 				_, _, err = base.DeleteByPrefix("tenant:")
 			}
@@ -62,7 +62,7 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 			exists, err := storage.ReviewRawEntityExists(base, storage.StoredEntityNodeKind, "peer:keep")
 			require.NoError(t, err)
 			require.True(t, exists)
-			require.ErrorIs(t, manager.CreateDatabase("tenant"), multidb.ErrDatabaseExists, "failed DROP retains original catalog entry")
+			require.ErrorIs(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}), multidb.ErrDatabaseExists, "failed DROP retains original catalog entry")
 			_, err = peer.CreateNode(&storage.Node{ID: "after"})
 			require.NoError(t, err, "peer namespace must remain writable")
 			// These are NEW transactions after the failure, not stale open snapshots.

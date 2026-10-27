@@ -171,7 +171,7 @@ func TestPropertyMaterializationSharedReaders(t *testing.T) {
 		require.Error(t, getExpressionFailure(evalCtx), expr)
 	}
 	inner := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	e.SetDatabaseManager(optionsTestManager{&testDatabaseManagerAdapter{manager: manager}})
 	_, err = e.Execute(ctx, "CREATE DATABASE r4options OPTIONS {txLogEnrichment:'FULL'}", nil)

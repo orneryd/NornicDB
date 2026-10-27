@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -216,11 +217,11 @@ func containsStatementClockCall(expression string) bool {
 			continue
 		}
 		end := index
-		for end > 0 && isASCIISpace(expression[end-1]) {
+		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 			end--
 		}
 		start := end
-		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
+		for start > 0 && (cyphertext.NamePartAt(expression, start-1) || expression[start-1] == '.') {
 			start--
 		}
 		name := expression[start:end]
@@ -310,12 +311,17 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 			return
 		}
 		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil {
-			if function, argument, call := parseFunctionCallWS(expression); call && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" && len(e.splitFunctionArgs(argument)) == 1 {
+			var callFacts1 functionCallFacts
+			if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1); call && isTemporalConstructor(callFacts1.name) && strings.TrimSpace(callFacts1.inner) != "" && len(e.splitFunctionArgs(callFacts1.inner)) == 1 {
+				function := callFacts1.name
+
 				err = temporalConstructorError(function, lastArgument)
 			}
 		}
 	}()
-	name, argument, ok := parseFunctionCallWS(expression)
+	var callFacts2 functionCallFacts
+	ok := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts2)
+	name, argument := callFacts2.name, callFacts2.inner
 	if !ok {
 		return nil, false, nil
 	}

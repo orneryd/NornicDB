@@ -60,11 +60,11 @@ func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
 
 func TestPrivateReproBoltConstituentAccess(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("private_denied"))
-	require.NoError(t, manager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
