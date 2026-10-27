@@ -22,7 +22,7 @@ func TestSearchPageSizeExceededLocalization(t *testing.T) {
 	} {
 		t.Run(test.locale, func(t *testing.T) {
 			locale := language.MustParse(test.locale)
-			got, tag, err := manager.Render(WithPreferences(context.Background(), locale), message)
+			got, tag, err := manager.Render(WithPreferences(context.Background(), locale), MessageRequest(message))
 			require.NoError(t, err, "the message must render from the selected catalog")
 			require.Equal(t, locale, tag)
 			require.Equal(t, test.want, got)

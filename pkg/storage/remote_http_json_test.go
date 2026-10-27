@@ -99,7 +99,7 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 	ctx := context.Background()
 	run := fmt.Sprintf("remote-null-%d", time.Now().UnixNano())
 	defer func() {
-		_, _, _ = engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {run: $run}) DETACH DELETE n", map[string]interface{}{"run": run})
+		_, _, _ = engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {run: $run}) DETACH DELETE n", map[string]interface{}{"run": run}, RemoteAccessWrite)
 	}()
 	for _, value := range []struct {
 		name  string
@@ -110,7 +110,9 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 	} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicit=%v", value.name, explicit), func(t *testing.T) {
-				query := engine.QueryCypher
+				query := func(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+					return engine.QueryCypher(ctx, statement, params, RemoteAccessWrite)
+				}
 				if explicit {
 					tx, err := engine.BeginCypherTx(ctx)
 					require.NoError(t, err)
@@ -137,7 +139,7 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 		require.NoError(t, engine.UpdateNode(&Node{ID: id, Properties: map[string]interface{}{
 			"tags": []string(nil), "list": []interface{}(nil), "extra": map[string]string(nil),
 		}}))
-		_, rows, err := engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {id: $id}) RETURN n.tags IS NULL, n.list IS NULL, n.extra IS NULL, n.kept", map[string]interface{}{"id": string(id)})
+		_, rows, err := engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {id: $id}) RETURN n.tags IS NULL, n.list IS NULL, n.extra IS NULL, n.kept", map[string]interface{}{"id": string(id)}, RemoteAccessRead)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{true, true, true, int64(7)}}, rows)
 	})

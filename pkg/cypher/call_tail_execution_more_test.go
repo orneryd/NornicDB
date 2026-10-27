@@ -128,7 +128,7 @@ func TestSplitCallAndTail_AndExpectedReturnColumns(t *testing.T) {
 	cols := exec.StatementColumns("MATCH (n) WITH n RETURN n AS node, count(*) AS c ORDER BY c DESC SKIP 1 LIMIT 2")
 	require.Equal(t, []string{"node", "c"}, cols)
 
-	_, err := exec.StatementResultColumns("WITH n RETURN n AS node, count(*) AS c")
+	_, err := exec.StatementResultColumns("WITH n RETURN n AS node, count(*) AS c", RawSource)
 	require.ErrorContains(t, err, "Variable `n` not defined")
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 

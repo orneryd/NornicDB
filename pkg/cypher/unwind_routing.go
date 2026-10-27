@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"strings"
 
@@ -31,11 +32,11 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
 	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
 	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
+	for remainderStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, remainderStart) {
 		remainderStart++
 	}
 	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexAny(remainder, " \t\r\n")
+	spaceIdx := strings.IndexFunc(remainder, cyphertext.IsWhitespace)
 	plan := topLevelUnwindPlan{}
 	if spaceIdx > 0 {
 		plan.variable = strings.TrimSpace(remainder[:spaceIdx])

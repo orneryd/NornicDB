@@ -62,7 +62,7 @@ func TestRemoteTypedValues(t *testing.T) {
 		} {
 			t.Run(tt.name, func(t *testing.T) {
 				index := 0
-				value, err := decodeRemoteHTTPValue(json.RawMessage(tt.raw), tt.metadata, &index, tt.entities)
+				value, err := decodeRemoteHTTPValue(json.RawMessage(tt.raw), nil, tt.metadata, &index, tt.entities, remoteHTTPAuto)
 				require.NoError(t, err)
 				require.Equal(t, tt.want, value)
 				require.Equal(t, tt.consumed, index)

@@ -66,7 +66,7 @@ When you upgrade to NornicDB with multi-database support, **existing data is aut
 
 ### Migration Process
 
-The migration runs automatically in `NewDatabaseManager()`:
+The migration runs automatically in `NewDatabaseManager(ctx, inner, config)`:
 
 ```go
 1. Check if migration already completed (via metadata)

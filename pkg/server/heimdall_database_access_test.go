@@ -125,7 +125,7 @@ func TestHeimdallRouterRefusesCallWithoutPrincipal(t *testing.T) {
 func TestHeimdallRouterDeniesBeforeResolvingDatabase(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
-	require.NoError(t, server.dbManager.CreateDatabase("existing_secret"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "existing_secret"}))
 
 	principal := heimdallPrincipal([]string{"nornic"}, heimdallPermissions(map[auth.Permission]bool{"access": true, auth.PermRead: true, auth.PermWrite: true}))
 	sameRefusal := func(call func(database string) error) {
@@ -160,9 +160,9 @@ func TestHeimdallRouterRefusesCompositeSearchAndStats(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
 	for _, name := range []string{"open_part", "closed_part"} {
-		require.NoError(t, server.dbManager.CreateDatabase(name))
+		require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("portfolio", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "portfolio", []multidb.ConstituentRef{
 		{Alias: "open", DatabaseName: "open_part", Type: "local", AccessMode: "read_write"},
 		{Alias: "closed", DatabaseName: "closed_part", Type: "local", AccessMode: "read_write"},
 	}))
@@ -188,8 +188,8 @@ func TestHeimdallRouterRefusesCompositeSearchAndStats(t *testing.T) {
 func TestHeimdallRouterSharesExecutorOnlyAfterStatementAdmitted(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
-	require.NoError(t, server.dbManager.CreateDatabase("cold_db"))
-	require.NoError(t, server.dbManager.CreateDatabase("warm_db"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cold_db"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "warm_db"}))
 	principal := heimdallPrincipal([]string{"cold_db", "warm_db"}, func(database string, permission auth.Permission) bool {
 		return permission == "access" || database == "warm_db" && permission == auth.PermRead
 	})
@@ -214,7 +214,7 @@ func TestHeimdallRouterSharesExecutorOnlyAfterStatementAdmitted(t *testing.T) {
 func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
-	require.NoError(t, server.dbManager.CreateDatabase("async_named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "async_named"}))
 	named, err := server.dbManager.GetStorage("async_named")
 	require.NoError(t, err)
 	_, err = named.CreateNode(&storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})

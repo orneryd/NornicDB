@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"runtime"
 	"sort"
@@ -197,7 +198,7 @@ func cartesianAggregateProperty(expression string, patterns []struct {
 	}
 	property := expression[separator+1:]
 	for _, character := range property {
-		if !isIdentRune(character) {
+		if !cyphertext.NamePart(character) {
 			return 0, "", false
 		}
 	}

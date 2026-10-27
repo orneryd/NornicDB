@@ -10,7 +10,7 @@ import (
 
 // Standard Qdrant scroll and numeric-offset search do not allocate durable qids.
 func TestSearchStreamLifecycleQdrantStatelessPaging(t *testing.T) {
-	service, _, base := setupPointsService(t)
+	service, _, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	ctx := context.Background()
 	points := make([]*qpb.PointStruct, 3)

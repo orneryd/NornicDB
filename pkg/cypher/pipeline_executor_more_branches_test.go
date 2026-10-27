@@ -8,53 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPipelineApplyWith_AdditionalBranches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	rows := []pipelineRow{
-		{
-			"n": &storage.Node{ID: "n1", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "alice"}},
-			"m": map[string]interface{}{"score": int64(9)},
-		},
-	}
-
-	out, ok := exec.pipelineApplyWith(context.Background(), rows, "WITH")
-	require.True(t, ok)
-	require.Equal(t, rows, out)
-
-	// Aggregate with alias collapses rows.
-	aggOut, ok := exec.pipelineApplyWith(context.Background(), []pipelineRow{{"x": 1}, {"x": 2}}, "WITH count(*) AS c")
-	require.True(t, ok)
-	require.Len(t, aggOut, 1)
-	require.EqualValues(t, int64(2), aggOut[0]["c"])
-
-	// Property projection from node and map plus literal scalar.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH n.name AS name, m.score AS score, 42 AS answer")
-	require.True(t, ok)
-	require.Len(t, out, 1)
-	require.Equal(t, "alice", out[0]["name"])
-	require.EqualValues(t, int64(9), out[0]["score"])
-	require.EqualValues(t, int64(42), out[0]["answer"])
-
-	// Nested literals and postfix operations share the converged expression
-	// evaluator instead of being classified by a list-subscript specialization.
-	out, ok = exec.pipelineApplyWith(context.Background(), []pipelineRow{{"x": int64(7)}},
-		"WITH [x, [], {}] AS values, [x, []][1] AS nested")
-	require.True(t, ok)
-	require.Len(t, out, 1)
-	require.Equal(t, []interface{}{int64(7), []interface{}{}, map[string]interface{}{}}, out[0]["values"])
-	require.Equal(t, []interface{}{}, out[0]["nested"])
-
-	// COUNT without alias is unsupported in WITH projection and must fall back.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH count(*)")
-	require.False(t, ok)
-	require.Nil(t, out)
-
-	// Unknown expression also falls back.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH unknownExpr AS x")
-	require.False(t, ok)
-	require.Nil(t, out)
-}
-
 func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 

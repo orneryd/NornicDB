@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -53,11 +54,11 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
-			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '[':
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil, nil
 			}
@@ -147,7 +148,7 @@ func relationshipBracketAt(query string, start, i int) bool {
 // query[open]; IS followed by a space starts a type expression ([IS T]).
 func relationshipVariableAt(query string, open int) (string, int, bool) {
 	name, end, ok := scanSymbolicName(query, skipASCIISpaces(query, open+1, len(query)))
-	if ok && strings.EqualFold(name, "IS") && end < len(query) && isASCIISpace(query[end]) {
+	if ok && strings.EqualFold(name, "IS") && end < len(query) && cyphertext.IsWhitespaceAt(query, end) {
 		return "", end, false
 	}
 	return name, end, ok

@@ -34,7 +34,7 @@ func openTypedCountScope(t *testing.T, dir string, buffered bool) *typedCountSco
 	engine := storage.NewWALEngine(base, wal)
 	_, err = storage.RecoverBufferedCommits(base, wal)
 	require.NoError(t, err)
-	manager, err := multidb.NewDatabaseManager(engine, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	f := &typedCountScopeFixture{base: base, engine: engine, manager: manager}
 	f.admin = f.executor(t, manager.DefaultDatabaseName())
@@ -113,7 +113,7 @@ func TestTypedCountNamespaceLifecycle(t *testing.T) {
 			traced := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewTracedEngine(f.engine), "scope_a"))
 			typedCountShapes(t, traced, 1)
 
-			require.NoError(t, f.manager.CreateCompositeDatabase("scope_cmp", []multidb.ConstituentRef{
+			require.NoError(t, f.manager.CreateCompositeDatabase(t.Context(), "scope_cmp", []multidb.ConstituentRef{
 				{Alias: "a", DatabaseName: "scope_a", Type: "local", AccessMode: "read_write"},
 				{Alias: "b", DatabaseName: "scope_b", Type: "local", AccessMode: "read_write"},
 			}))

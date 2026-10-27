@@ -102,11 +102,11 @@ func TestStorageValidationCatalogsRenderNamedArguments(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.StorageTransactionCrossNamespace("tenant-a", "tenant-b")
 
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "la transacción abarca varios espacios de nombres: fijada en \"tenant-a\", se intentó \"tenant-b\"", spanish)
 
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), message)
+	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "[!! transaction spans multiple namespaces: pinned to \"tenant-a\", attempted \"tenant-b\" !!]", pseudo)
 }

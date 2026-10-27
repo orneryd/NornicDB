@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -42,7 +44,12 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
-func QueryPermissionRequirements(ctx context.Context, query string) PermissionRequirements {
+func QueryPermissionRequirements(ctx context.Context, query string, stage SourceStage) PermissionRequirements {
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return PermissionRequirements{Read: true, Write: true, Schema: true, Admin: true}
+	}
+	query = source.Text
 	query = classificationText(query)
 	requirements := PermissionRequirements{
 		Read:   true,
@@ -63,7 +70,7 @@ func QueryPermissionRequirements(ctx context.Context, query string) PermissionRe
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
-	for _, procedure := range RegisteredProceduresForCalls(ctx, query) {
+	for _, procedure := range RegisteredProceduresForCalls(ctx, query, AcceptedSource) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -89,51 +96,47 @@ func QueryPermissionRequirements(ctx context.Context, query string) PermissionRe
 // RegisteredProceduresForCalls returns the registered procedures named by every
 // grammar-owned CALL clause, including nested subqueries. Strings and comments
 // do not add calls; quoted name parts use the same registry identity as execution.
-// For example, RegisteredProceduresForCalls(ctx, "CALL db.labels()") resolves
+// For example, RegisteredProceduresForCalls(ctx, "CALL db.labels()", RawSource) resolves
 // the declaration listed by SHOW PROCEDURES without exposing its handler.
-func RegisteredProceduresForCalls(ctx context.Context, query string) []ProcedureSpec {
-	structure, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+func RegisteredProceduresForCalls(ctx context.Context, query string, stage SourceStage) []ProcedureSpec {
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return nil
+	}
+	query = source.Text
+	structure, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	}
 	var procedures []ProcedureSpec
-	visitStatementProcedureSyntax(structure, nil, func(procedure ProcedureSpec, _ string) bool {
+	visitStatementProcedureSyntax(structure, func(procedure ProcedureSpec, _ string) bool {
 		procedures = append(procedures, procedure)
 		return false
 	})
 	return procedures
 }
 
-// visitStatementProcedureSyntax is the single grammar walk for structural
-// statement admission and live registered-procedure resolution. inspect observes
-// every syntax node; visit observes resolved declarations and may stop the walk.
-func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, inspect func(cypherantlr.SyntaxNode), visit func(ProcedureSpec, string) bool) bool {
+// visitStatementProcedureSyntax resolves the cached structural call names through
+// the live registry on every request. No registry declarations enter syntax cache.
+func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, visit func(ProcedureSpec, string) bool) bool {
 	ensureBuiltInProceduresRegistered()
-	stopped := false
-	structure.Walk(func(node cypherantlr.SyntaxNode) func() {
-		if stopped {
-			return nil
-		}
-		if inspect != nil {
-			inspect(node)
-		}
-		if node.Rule() != cypherantlr.CypherParserRULE_queryCallSt && node.Rule() != cypherantlr.CypherParserRULE_standaloneCall {
-			return nil
-		}
-		name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
+	effects := structure.Effects()
+	for i := 0; i < effects.CallCount(); i++ {
+		call := effects.Call(i)
+		name := call.Name()
 		if procedure, found := globalProcedureRegistry.Get(name); found {
-			stopped = visit(procedure.Spec, node.Text())
-			return nil
+			if visit(procedure.Spec, call.Text()) {
+				return true
+			}
+			continue
 		}
 		for _, procedure := range globalProcedureRegistry.List() {
-			if strings.EqualFold(name, procedure.Name) && visit(procedure, node.Text()) {
-				stopped = true
-				break
+			if cyphertext.NameEqualFold(name, procedure.Name) && visit(procedure, call.Text()) {
+				return true
 			}
 		}
-		return nil
-	})
-	return stopped
+	}
+	return false
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword
@@ -142,7 +145,7 @@ func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, inspec
 func procedureNameAt(query string, offset int) (string, bool) {
 	i := offset
 	skipSpace := func() {
-		for i < len(query) && isASCIISpace(query[i]) {
+		for i < len(query) && cyphertext.IsWhitespaceAt(query, i) {
 			i++
 		}
 	}
@@ -158,7 +161,7 @@ func procedureNameAt(query string, offset int) (string, bool) {
 			break
 		}
 		partStart := i
-		part, next, ok := scanIdentifierToken(query, i)
+		part, ok := cyphertext.ScanIdentifier(query, i)
 		if !ok {
 			if expectComponent {
 				return "", false
@@ -167,7 +170,7 @@ func procedureNameAt(query string, offset int) (string, bool) {
 		}
 		expectComponent = false
 		quoted := isCypherBacktickByte(query[i])
-		i = next
+		i = part.End
 		if components == 0 {
 			startName = partStart
 		}
@@ -181,7 +184,7 @@ func procedureNameAt(query string, offset int) (string, bool) {
 			if components > 0 {
 				normalized.WriteByte('.')
 			}
-			normalized.WriteString(part)
+			normalized.WriteString(part.Value)
 		}
 		endName = i
 		components++
@@ -290,29 +293,8 @@ func firstExecutableCypherOffset(query string) int {
 	if strings.HasPrefix(query, "\xef\xbb\xbf") {
 		index = 3
 	}
-	for {
-		for index < len(query) && isASCIISpace(query[index]) {
-			index++
-		}
-		switch {
-		case index+1 < len(query) && query[index] == '/' && query[index+1] == '/':
-			index += 2
-			for index < len(query) && query[index] != '\n' {
-				index++
-			}
-		case index+1 < len(query) && query[index] == '/' && query[index+1] == '*':
-			index += 2
-			for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
-				index++
-			}
-			if index+1 >= len(query) {
-				return len(query)
-			}
-			index += 2
-		default:
-			return index
-		}
-	}
+	end, _ := cyphertext.GapEnd(query, index)
+	return end
 }
 
 func queryKeywords(query string) map[string]bool {
@@ -323,15 +305,13 @@ func queryKeywords(query string) map[string]bool {
 			continue
 		}
 
-		if !isIdentStartByte(query[index]) {
+		if !cyphertext.NameStartAt(query, index) {
 			index++
 			continue
 		}
 		start := index
 		index++
-		for index < len(query) && isIdentByte(query[index]) {
-			index++
-		}
+		index = cyphertext.NamePartEnd(query, index)
 		if isQualifiedOrMapKey(query, start, index) {
 			continue
 		}
@@ -342,14 +322,14 @@ func queryKeywords(query string) map[string]bool {
 
 func isQualifiedOrMapKey(query string, start, end int) bool {
 	left := start - 1
-	for left >= 0 && isASCIISpace(query[left]) {
+	for left >= 0 && cyphertext.IsWhitespaceAt(query, left) {
 		left--
 	}
 	if left >= 0 && (query[left] == '.' || query[left] == ':' || query[left] == '$') {
 		return true
 	}
 	right := end
-	for right < len(query) && isASCIISpace(query[right]) {
+	for right < len(query) && cyphertext.IsWhitespaceAt(query, right) {
 		right++
 	}
 	return right < len(query) && query[right] == ':'
@@ -426,35 +406,55 @@ type GraphDatabaseResolver interface {
 // composite's constituents can't be read, the list is the composite and the
 // error is returned with it.
 func AccessDatabases(manager GraphDatabaseResolver, database string) ([]string, error) {
-	selected, target, _, err := resolveGraphSelection(manager, database)
-	if err != nil {
-		return []string{selected}, err
+	return resolveGraphSelection(manager, database).databases(database)
+}
+
+func (selection graphSelection) databases(database string) ([]string, error) {
+	if selection.err != nil {
+		return []string{selection.selected}, selection.err
 	}
-	if selected != target || selected != database {
-		return []string{selected, target}, nil
+	if selection.selected != selection.target || selection.selected != database {
+		return []string{selection.selected, selection.target}, nil
 	}
-	return []string{target}, nil
+	return []string{selection.target}, nil
+}
+
+// graphSelection is the resolved identity of a selected graph: the selection
+// as named, the physical target it resolves to, whether that target is a
+// remote constituent, the constituent's configured AccessMode, and whether a
+// constituent reference matched at all. Mode and constituent are set only
+// when a reference matched; an unresolved name leaves them zero.
+type graphSelection struct {
+	selected    string
+	target      string
+	remote      bool
+	accessMode  string
+	constituent bool
+	err         error
 }
 
 // resolveGraphSelection owns selection/target resolution for both list consumers
 // and direct graph checks. Remote graph names never resolve locally.
-func resolveGraphSelection(manager GraphDatabaseResolver, database string) (selected, target string, remote bool, err error) {
+func resolveGraphSelection(manager GraphDatabaseResolver, database string) graphSelection {
 	if manager == nil {
-		return database, database, false, nil
+		return graphSelection{selected: database, target: database}
 	}
 	if dot := strings.IndexByte(database, '.'); dot > 0 && manager.IsCompositeDatabase(database[:dot]) {
 		composite := database[:dot]
+		// Manager snapshots contain canonical last winners. Match the catalog's
+		// lowercase keys, including Unicode distinctions that EqualFold collapses.
+		alias := cyphertext.NameLower(database[dot+1:])
 		// Native adapters can return typed snapshots without boxing each reference.
 		if typed, ok := manager.(interface {
 			GetCompositeConstituents(string) ([]multidb.ConstituentRef, error)
 		}); ok {
 			refs, err := typed.GetCompositeConstituents(composite)
 			if err != nil {
-				return composite, database, false, err
+				return graphSelection{selected: composite, target: database, err: err}
 			}
 			for _, ref := range refs {
-				if strings.EqualFold(ref.Alias, database[dot+1:]) {
-					return composite, ref.DatabaseName, ref.Type == "remote", nil
+				if cyphertext.NameLower(ref.Alias) == alias {
+					return constituentSelection(composite, ref)
 				}
 			}
 		} else if legacy, ok := manager.(interface {
@@ -462,42 +462,47 @@ func resolveGraphSelection(manager GraphDatabaseResolver, database string) (sele
 		}); ok {
 			refs, err := legacy.GetCompositeConstituents(composite)
 			if err != nil {
-				return composite, database, false, err
+				return graphSelection{selected: composite, target: database, err: err}
 			}
 			for _, item := range refs {
-				if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
-					return composite, ref.DatabaseName, ref.Type == "remote", nil
+				if ref, ok := catalogadapter.ConstituentRef(item, catalogadapter.StoredConstituentRecord); ok && cyphertext.NameLower(ref.Alias) == alias {
+					return constituentSelection(composite, ref)
 				}
 			}
 		} else {
-			return composite, database, false, errors.New("composite constituents unavailable")
+			return graphSelection{selected: composite, target: database, err: errors.New("composite constituents unavailable")}
 		}
-		return composite, database, false, nil
+		return graphSelection{selected: composite, target: database}
 	}
 	if resolved, err := manager.ResolveDatabase(database); err == nil {
-		return database, resolved, false, nil
+		return graphSelection{selected: database, target: resolved}
 	}
-	return database, database, false, nil
+	return graphSelection{selected: database, target: database}
 }
 
-// GraphAccess decides the selected and physical database using the same owner
-// as AccessDatabases, without allocating a list for a single graph decision.
-func GraphAccess(manager GraphDatabaseResolver, graph string, canAccess func(string) bool) (string, bool) {
-	database, _, allowed := GraphAccessTarget(manager, graph, canAccess)
-	return database, allowed
+// constituentSelection records a matched constituent reference: its target,
+// remoteness and the AccessMode configured for the alias.
+func constituentSelection(composite string, ref multidb.ConstituentRef) graphSelection {
+	return graphSelection{
+		selected:    composite,
+		target:      ref.DatabaseName,
+		remote:      ref.Type == "remote",
+		accessMode:  ref.AccessMode,
+		constituent: true,
+	}
 }
 
-// GraphAccessTarget also identifies remote constituents, so direct readers do
+// GraphAccessTarget resolves selection permissions and identifies remote constituents. Direct readers do
 // not copy parent metadata again or reinterpret foreign names as local aliases.
 func GraphAccessTarget(manager GraphDatabaseResolver, graph string, canAccess func(string) bool) (database string, remote, allowed bool) {
-	selected, target, remote, err := resolveGraphSelection(manager, graph)
-	if err != nil {
-		return graph, remote, false
+	selection := resolveGraphSelection(manager, graph)
+	if selection.err != nil {
+		return graph, selection.remote, false
 	}
-	if canAccess != nil && (!canAccess(selected) || selected != target && !canAccess(target)) {
-		return target, remote, false
+	if canAccess != nil && (!canAccess(selection.selected) || selection.selected != selection.target && !canAccess(selection.target)) {
+		return selection.target, selection.remote, false
 	}
-	return target, remote, true
+	return selection.target, selection.remote, true
 }
 
 // authorizeSelectedDatabase owns the selection and permission decision for a
@@ -505,21 +510,21 @@ func GraphAccessTarget(manager GraphDatabaseResolver, graph string, canAccess fu
 // the physical target needs the statement's data permissions. An empty name
 // selects the request's execution database from the context.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
-	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
-	if !ok {
-		return AuthorizeQuery(ctx, query)
-	}
+	authorization, hasAuthorization := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
 	selectionOnly := false
 	if database != "" {
 		_, body := parseExecutionMode(query)
 		body = body[firstExecutableCypherOffset(body):]
 		// A shell selection can precede another USE or a Fabric statement.
 		// Those statements decide data permissions on their own targets.
-		selectionOnly = startsWithKeywordFold(body, "USE") ||
-			e.dbManager != nil && e.dbManager.IsCompositeDatabase(database) && e.shouldUseFabricPlanner(body)
+		selectionOnly = startsWithUseClause(body) ||
+			e.dbManager != nil && e.dbManager.IsCompositeDatabase(database) && e.shouldUseFabricPlanner(ctx, body)
 	}
 	if database == "" {
-		database = authorization.database
+		database, _ = ctx.Value(ctxKeyUseDatabase).(string)
+		if database == "" {
+			database = authorization.database
+		}
 		if database == "" {
 			database = e.currentDatabaseName()
 		}
@@ -528,7 +533,16 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 	if e.dbManager != nil {
 		manager = e.dbManager
 	}
-	databases, listErr := AccessDatabases(manager, database)
+	selection := resolveGraphSelection(manager, database)
+	if !selectionOnly && selection.constituent && selection.accessMode != "write" && selection.accessMode != "read_write" {
+		if err := authorizeReadOnlyConstituent(ctx, query, selection.remote); err != nil {
+			return err
+		}
+	}
+	if !hasAuthorization {
+		return AuthorizeQuery(ctx, query)
+	}
+	databases, listErr := selection.databases(database)
 	for i, selected := range databases {
 		if selectionOnly || i < len(databases)-1 && listErr == nil {
 			if err := authorizeDatabase(ctx, selected, "access"); err != nil {
@@ -543,8 +557,37 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 	return listErr
 }
 
+const permissionReadOnlyConstituent = "read-only"
+
+// authorizeReadOnlyConstituent enforces configured access independently of the
+// caller's grants. Opaque remote procedures cannot inherit stored write authority:
+// their bodies execute remotely, outside local nested-statement admission.
+func authorizeReadOnlyConstituent(ctx context.Context, query string, remote bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	mode, _ := parseExecutionMode(query)
+	if mode == ModeExplain {
+		return nil
+	}
+	contract, err := readStatementExecutionContract(ctx, query)
+	if err != nil {
+		return err
+	}
+	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if contract.writes || requirements.Write || requirements.Schema || requirements.Admin || remote && (contract.unknownProcedure || contract.dynamic) {
+		return &PermissionDeniedError{Permission: permissionReadOnlyConstituent}
+	}
+	return nil
+}
+
 // PermissionDeniedError identifies the entitlement needed for a query.
 type PermissionDeniedError struct {
+	// Permission identifies the missing grant, or "read-only" when the
+	// selected constituent forbids mutation regardless of caller grants.
 	Permission string
 }
 
@@ -562,6 +605,8 @@ func (e *PermissionDeniedError) StatusMessage() string {
 
 func (e *PermissionDeniedError) Error() string {
 	switch e.Permission {
+	case permissionReadOnlyConstituent:
+		return "Selected constituent is read-only"
 	case "schema":
 		return "Schema operations require schema permission"
 	case "admin":
@@ -628,7 +673,7 @@ func AuthorizeQuery(ctx context.Context, query string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	requirements := QueryPermissionRequirements(ctx, query)
+	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	// An interrupted structural reader has no complete permission verdict.
 	// Never authorize its declined write classification as a read statement.
 	if err := ctx.Err(); err != nil {

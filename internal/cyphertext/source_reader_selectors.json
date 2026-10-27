@@ -1,0 +1,471 @@
+{
+  "owner": "#1667 internal/workcensus",
+  "status": "Round 3 B/C branch-reviewed supplement; shared-engine discovery is the later approved B0/#1667 step, not executed by this frozen client.",
+  "scope": {
+    "go": [
+      "internal",
+      "pkg",
+      "cmd"
+    ],
+    "language_peers": [
+      "ui/src/utils/cypherText.mjs",
+      "ui/src/utils/cypherStatements.ts",
+      "ui/src/store/appStore.ts"
+    ],
+    "include": [
+      "source functions",
+      "methods",
+      "closures",
+      "generic origins",
+      "cross-file package constants and globals",
+      "unreachable source readers for explicit legacy review"
+    ],
+    "exclude_with_disposition": [
+      "generated lexers/parsers: independent grammar oracle",
+      "tests: behavioral evidence, except explicit mutation overlays"
+    ]
+  },
+  "selectors": [
+    {
+      "kind": "source-index-walk",
+      "patterns": [
+        "for/range over string, []byte or []rune query source",
+        "index/slice reads while advancing or reversing a query-source cursor",
+        "source aliases, substrings, conversions and source-bearing fields",
+        "loop callbacks and function values reached from query-source owners"
+      ],
+      "independent_of": [
+        "variable spelling",
+        "compared punctuation or character literals",
+        "whether another branch calls a shared scanner"
+      ],
+      "product": "typed source identity, extent and containing source function"
+    },
+    {
+      "kind": "source-split",
+      "patterns": [
+        "strings/bytes Split*, Index*, LastIndex*, Fields*, Cut* over query source",
+        "aliases of split/index functions",
+        "splitting source substrings, converted source and returned source views"
+      ],
+      "independent_of": [
+        "literal separator",
+        "presence of a source loop",
+        "lexical function names"
+      ]
+    },
+    {
+      "kind": "source-regexp",
+      "patterns": [
+        "regexp Match*/Find*/Split/ReplaceAll* applied to query source",
+        "compiled regexp objects in locals, fields or package globals across files",
+        "constant identifiers, concatenated patterns and regexp constructors",
+        "function-value or method-value aliases and regexp-returning wrappers"
+      ],
+      "independent_of": [
+        "pattern character classes",
+        "pattern being one string literal",
+        "constructor and reader sharing a file"
+      ]
+    },
+    {
+      "kind": "language-peer-function",
+      "patterns": [
+        "enumerate maintained source-reading JavaScript/TypeScript functions and closures",
+        "named declarations, assigned arrow functions and object methods",
+        "index/range walks, split/index/field operations and regular expressions on query text"
+      ],
+      "coordinates": "UTF-16 source units; shared statement_spans.json fixtures observe agreement"
+    }
+  ],
+  "classes": {
+    "lexical-adapter": "Consumes shared SkipToken/ScanQuotedText/ScanStringToken, Identifier or Number products; this classification requires branch review, not mere call reachability.",
+    "contextual-grammar": "Owns statement/relationship/expression decisions while delegating quote/comment/name/number extents; it does not become a primitive lexer.",
+    "non-query-grammar": "Decoded value, Lucene, JSON, CSV, URL, storage key, output encoding or coordinate processing; explain the actual non-query input.",
+    "legacy-test-only": "No production callers; remove from production or explicitly pin unreachable status and retain only relevant compatibility tests.",
+    "owned by #1486 (relationship declaration owner)": "Relationship-type/framing provenance is owned by the upper #1486 lane. Recorded here for mechanism coverage, with no implementation change in credentials."
+  },
+  "reviewed_members": [
+    {
+      "path": "pkg/fabric/use_clause.go",
+      "function": "inputToken",
+      "class": "lexical-adapter",
+      "reason": "Identifier starts use ScanIdentifier; invalid digit/name runs use IsDigit and NamePartEnd; other starts are single runes. Dollar remains punctuation at the initial cursor."
+    },
+    {
+      "path": "pkg/cypher/traversal.go",
+      "function": "*StorageExecutor.isChainedPattern",
+      "class": "contextual-grammar",
+      "reason": "Counts framed relationship declarations through forEachRelationshipSource, excluding node properties and opaque tokens."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "forEachRelationshipSource",
+      "class": "contextual-grammar",
+      "reason": "Relationship direction/framing remains Cypher grammar; SkipToken, GapEnd and FindMatchingDelimiter own token extents."
+    },
+    {
+      "path": "pkg/cypher/match_rows.go",
+      "function": "splitOutsideParens",
+      "class": "lexical-adapter",
+      "reason": "Comma splitting consumes the existing structural splitter; other separators consume findTopLevelOperator."
+    },
+    {
+      "path": "pkg/cypher/match_rows.go",
+      "function": "*StorageExecutor.parseOrderBySpecsWithResolver",
+      "class": "contextual-grammar",
+      "reason": "Consumes parseOrderByClause and the existing postfix property-name owner; no independent Fields/Index/Split token extent remains."
+    },
+    {
+      "path": "pkg/cypher/match_with_rel.go",
+      "function": "*StorageExecutor.parseNodeOrderSpecs",
+      "class": "contextual-grammar",
+      "reason": "Consumes parseOrderByClause and the existing postfix property-name owner; no independent Fields/Index/Split token extent remains."
+    },
+    {
+      "path": "pkg/cypher/match_index_order_groups.go",
+      "function": "*StorageExecutor.parseIndexedNodeOrderSpecs",
+      "class": "contextual-grammar",
+      "reason": "Consumes parseOrderByClause and the existing postfix property-name owner; no independent Fields/Index/Split token extent remains."
+    },
+    {
+      "path": "pkg/cypher/query_patterns.go",
+      "function": "isReturnNameCountShape",
+      "class": "contextual-grammar",
+      "reason": "Projection shape consumes corrected structural comma splitting."
+    },
+    {
+      "path": "pkg/cypher/query_patterns.go",
+      "function": "isReturnEdgePropertyAggNameShape",
+      "class": "contextual-grammar",
+      "reason": "Edge projection shape consumes corrected structural comma splitting."
+    },
+    {
+      "path": "pkg/cypher/expression_validation.go",
+      "function": "staticListOperand",
+      "class": "lexical-adapter",
+      "reason": "String branch consumes ScanStringToken and closure; numeric branch consumes Number.TailEnd; parameter continuation retains NamePartEnd."
+    },
+    {
+      "path": "pkg/cypher/match_rows_legacy_test.go",
+      "function": "splitArithmeticExpression",
+      "class": "legacy-test-only",
+      "reason": "Moved out of production with its only caller evaluateSumArithmetic. Compatibility helper consumes shared opaque and numeric extents, including exponent signs."
+    },
+    {
+      "path": "pkg/cypher/match_rows_legacy_test.go",
+      "function": "*StorageExecutor.evaluateSumArithmetic",
+      "class": "legacy-test-only",
+      "reason": "Graph plus current rg found only test callers. Both functions now compile only for tests."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "*StorageExecutor.parseRelationshipHops",
+      "class": "contextual-grammar",
+      "reason": "Consumes framed declarations and the existing relationshipDeclarationOf name/type owner; no raw Index/Split quote extent remains."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "*StorageExecutor.extractRelTypesFromPattern",
+      "class": "contextual-grammar",
+      "reason": "Consumes the same framed declaration and relationshipDeclarationOf, preserving decoded quoted type names."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "*StorageExecutor.extractTargetVariable",
+      "class": "contextual-grammar",
+      "reason": "Uses framed relationship extents, shared balanced node extents and ScanIdentifier.Value for the target."
+    },
+    {
+      "path": "pkg/cypher/ast_builder.go",
+      "function": "*ASTBuilder.parseDelete",
+      "class": "contextual-grammar",
+      "reason": "DELETE variable list uses the existing structural comma splitter, retaining source spelling."
+    },
+    {
+      "path": "pkg/cypher/ast_builder.go",
+      "function": "*ASTBuilder.parseCall",
+      "class": "contextual-grammar",
+      "reason": "Skips opaque tokens before the invocation parenthesis, uses the shared matching delimiter and structural YIELD splitter."
+    },
+    {
+      "path": "pkg/cypher/call_fulltext.go",
+      "function": "isBackslashEscaped",
+      "class": "non-query-grammar",
+      "reason": "Moved from pattern_parser.go to its sole remaining production caller's file; it reads already decoded Lucene phrase text, whose quote rules are separate from Cypher source."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "skipCypherToken",
+      "class": "lexical-adapter",
+      "reason": "Maintained browser lexical peer; shared statement framing fixtures are its language contract."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingSource",
+      "class": "lexical-adapter",
+      "reason": "Maintained framing normalization and original-coordinate mapping peer; consumes skipCypherToken."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingSource.originalOffset",
+      "class": "non-query-grammar",
+      "reason": "Maps accepted UTF-16 offsets through recorded edits, without scanning query tokens."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingSource.span",
+      "class": "non-query-grammar",
+      "reason": "Maps a pair of source coordinates through originalOffset."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "cypherStatementSpans",
+      "class": "lexical-adapter",
+      "reason": "Maintained statement boundary peer; consumes framingSource and skipCypherToken."
+    },
+    {
+      "path": "ui/src/utils/cypherStatements.ts",
+      "function": "splitCypherStatements",
+      "class": "lexical-adapter",
+      "reason": "Slices original script by the browser peer's mapped statement spans."
+    },
+    {
+      "path": "ui/src/store/appStore.ts",
+      "function": "executeCypher",
+      "class": "contextual-grammar",
+      "reason": "UI execution consumes splitCypherStatements; it does not own quote/comment extents."
+    },
+    {
+      "path": "pkg/convert/json.go",
+      "function": "jsonNumbers",
+      "class": "non-query-grammar",
+      "reason": "Parent #1665 normalizes decoded json.Number values under an explicit numeric policy, not query-source tokenization."
+    },
+    {
+      "path": "pkg/convert/json_encode.go",
+      "function": "*jsonWriterState.value",
+      "class": "non-query-grammar",
+      "reason": "Parent #1665 emits JSON from reflected values and quoted struct fields; raw quote bytes are output framing, not source quotation."
+    },
+    {
+      "path": "pkg/convert/json_encode.go",
+      "function": "appendJSONString",
+      "class": "non-query-grammar",
+      "reason": "Parent #1665 emits escaped JSON string bytes from a decoded value; it does not scan Cypher."
+    },
+    {
+      "path": "pkg/convert/json_encode.go",
+      "function": "jsonEncodingStructPlan",
+      "class": "non-query-grammar",
+      "reason": "Parent #1665 reads Go reflection metadata and JSON tags into an encoder plan, not query text."
+    },
+    {
+      "path": "pkg/cypher/apoc_load_export.go",
+      "function": "*StorageExecutor.openAPOCJSONURL",
+      "class": "non-query-grammar",
+      "reason": "Parent #1665 factors the configured APOC HTTP request/error handoff; existing credential policy and endpoint sink manifest own its output."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "*StorageExecutor.checkChainedPattern",
+      "class": "contextual-grammar",
+      "reason": "Relationship existence grammar consumes migrated parseRelationshipHops, then traverses stored values; not a competing primitive scanner."
+    },
+    {
+      "path": "pkg/cypher/executor_mutations.go",
+      "function": "*StorageExecutor.relationshipExistencePatternDirections",
+      "class": "contextual-grammar",
+      "reason": "Existing relationship direction policy consumes migrated type extraction; this classification is contextual grammar, not proof that every source branch is a primitive adapter."
+    },
+    {
+      "path": "pkg/cypher/match.go",
+      "function": "*StorageExecutor.selectTopKNodesByOrder",
+      "class": "contextual-grammar",
+      "reason": "Node-order optimization consumes canonical parsed order specs; its remaining loops inspect node values, not lexical extents."
+    },
+    {
+      "path": "pkg/cypher/match_rows.go",
+      "function": "*StorageExecutor.orderResultRows",
+      "class": "contextual-grammar",
+      "reason": "Result sorting consumes canonical parsed order specs; row iteration is non-query data work."
+    },
+    {
+      "path": "pkg/cypher/match_rows.go",
+      "function": "*StorageExecutor.orderResultRowsForReturnItems",
+      "class": "contextual-grammar",
+      "reason": "Projection/result ordering consumes the canonical resolver; no independent quote/comment/name extent."
+    },
+    {
+      "path": "pkg/cypher/match_rows.go",
+      "function": "*StorageExecutor.parseOrderBySpecs",
+      "class": "contextual-grammar",
+      "reason": "Tuple adapter to the existing order resolver, which consumes parseOrderByClause and splitPostfixPropertyAccess."
+    },
+    {
+      "path": "pkg/cypher/match_with_rel.go",
+      "function": "*StorageExecutor.orderNodes",
+      "class": "contextual-grammar",
+      "reason": "Sorts node values using parseNodeOrderSpecs; contextual order policy, not a new token owner."
+    },
+    {
+      "path": "pkg/cypher/ast_builder.go",
+      "function": "*ASTBuilder.parseSetItems",
+      "class": "contextual-grammar",
+      "reason": "Advisory AST construction consumes structural assignment extents and the contextual SET target owner; shared reachability is not its branch proof.",
+      "branch_review": [
+        "Comma extent: splitSetAssignments delegates the existing structural splitter.",
+        "Assignment branch: findTopLevelOperator skips quotes/comments/nesting before choosing equals; the existing advisory plus-equals behavior is retained.",
+        "Target/property branch: parseSetAssignmentTarget delegates postfix boundary/decoded key to splitPostfixPropertyAccess; ScanIdentifier.Value supplies a complete variable identity.",
+        "Value branch: b.parseExpression retains AST responsibility and raw RHS text; unsupported non-assignment AST forms retain raw source rather than deriving new lexical facts.",
+        "The execution splitSetAssignment API also owns admission policy (including rejection of property +=); that policy is not substituted for the existing advisory AST model."
+      ]
+    },
+    {
+      "path": "pkg/cypher/ast_builder.go",
+      "function": "*ASTBuilder.parseRemove",
+      "class": "contextual-grammar",
+      "reason": "Advisory REMOVE uses structural list/colon boundaries and the existing label and SET/postfix/name products, on both of its modeled branches.",
+      "branch_review": [
+        "Comma and colon extents: splitTopLevelComma and findTopLevelOperator skip opaque tokens and nested structure.",
+        "Label branch: labelChainNames consumes the existing contextual label-chain owner, including quoted/dynamic names.",
+        "Property branch: parseSetAssignmentTarget consumes the postfix/name owner; ScanIdentifier.Value decodes the complete variable identity.",
+        "ASTRemoveItem represents static property/label facts; the execution parseRemoveItems product has additional dynamic-key and admission policy. This AST adapter reuses the matching constituent owners without copying that broader execution grammar."
+      ]
+    },
+    {
+      "path": "pkg/fabric/use_clause.go",
+      "function": "skipSpacesAndComments",
+      "class": "lexical-adapter",
+      "reason": "All trivia extents come from cyphertext.GapEnd, including CR/LF line endings and block-comment termination. Existing EOF/routing policy is retained.",
+      "branch_review": [
+        "Whitespace, line and block comment branches are all in GapEnd/CommentEndStatus; no private extent remains.",
+        "ReadUseClause and ParseUseClause retain graph-reference coordinates and the original following comment/RETURN text."
+      ]
+    },
+    {
+      "path": "pkg/cypher/authorization.go",
+      "function": "firstExecutableCypherOffset",
+      "class": "lexical-adapter",
+      "reason": "Retains the BOM prefix rule and consumes GapEnd for every following whitespace/line/block-comment extent.",
+      "branch_review": [
+        "BOM is source framing, not a competing comment lexer.",
+        "Every comment/trivia branch delegates GapEnd; unterminated comments retain the existing EOF result."
+      ]
+    },
+    {
+      "path": "pkg/cypher/validator_strictness.go",
+      "function": "previousSignificantWord",
+      "class": "lexical-adapter",
+      "reason": "The existing lastLiveByte owner scans opaque extents forward; the reverse word run only asks the shared NamePart continuation question.",
+      "branch_review": [
+        "lastLiveByte delegates CommentEnd and ScanQuotedText; no reverse search invents a block or line-comment opener.",
+        "The remaining reverse NamePartAt run is a name-continuation extent, not a token-start admission or comment extent."
+      ]
+    },
+    {
+      "path": "pkg/cypher/validator_strictness.go",
+      "function": "nextSignificantWords",
+      "class": "lexical-adapter",
+      "reason": "GapEnd/closure status owns all forward trivia; NamePartEnd preserves the existing exact-word candidate screen.",
+      "branch_review": [
+        "Each word begins after GapEnd; unfinished block comments return an empty word as before.",
+        "NamePartEnd is the shared candidate extent; TIME/ZONE contextual comparisons remain in the caller."
+      ]
+    },
+    {
+      "path": "pkg/adminimport/importer.go",
+      "function": "splitCypherStatements",
+      "class": "contextual-grammar",
+      "reason": "Import script wrapper delegates // extent to CommentEnd and all opaque/statement extents to SkipToken/StatementSpans.",
+      "branch_review": [
+        "Cypher full-line // comment: shared CommentEnd handles both CR and LF.",
+        "Hash-prefixed import-wrapper lines: separate non-Cypher line grammar uses CR/LF boundaries; it is not implemented as a Cypher comment owner.",
+        "Quoted values and inline opaque tokens: SkipToken preserves original text.",
+        "Statement extents: StatementSpans owns the accepted framing; wrapper filtering remains import context."
+      ]
+    },
+    {
+      "path": "pkg/cypher/subquery_value_expression.go",
+      "function": "boundDegreePattern",
+      "class": "owned by #1486 (relationship declaration owner)",
+      "reason": "Concatenated regexp global used by the bound-degree relationship-type shortcut; recording this mechanism does not correct quoted type splitting in this lane.",
+      "branch_review": [
+        "Global regexp definition, not a function; constructed by concatenated source patterns.",
+        "Required fix and consumer proof belong to #1486 relationship declaration/provenance ownership."
+      ]
+    },
+    {
+      "path": "pkg/cypher/subquery_value_expression.go",
+      "function": "parseBoundDegreeShapeText",
+      "class": "owned by #1486 (relationship declaration owner)",
+      "reason": "Contextual degree/EXISTS eligibility reads relationship type source through boundDegreePattern; its raw type splitting is delegated to #1486 for correction.",
+      "branch_review": [
+        "Relationship type source must retain decoded quoted delimiter-bearing identity under the relationship declaration owner.",
+        "No implementation change here; Case A is explicitly assigned to the upper #1486 lane."
+      ]
+    },
+    {
+      "path": "pkg/cypher/subquery_value_expression.go",
+      "function": "parseBoundDegreeShape",
+      "class": "owned by #1486 (relationship declaration owner)",
+      "reason": "Cached adapter to parseBoundDegreeShapeText; same relationship-type provenance ownership, recorded so caching does not hide the reader.",
+      "branch_review": [
+        "Cached adapter retains the same contextual shape; #1486 owns correction and COUNT/EXISTS behavioral evidence."
+      ]
+    },
+    {
+      "path": "pkg/cypher/call_imports.go",
+      "function": "callScopeClauseImportError",
+      "class": "contextual-grammar",
+      "reason": "#1679 CALL-scope diagnostic admission, including nested CALL and expression subqueries, consumes shared structural/trivia owners and the contextual import-list grammar.",
+      "branch_review": [
+        "containsFold is a presence screen; findAllTopLevelPipelineKeywordPositions owns live CALL positions outside opaque text.",
+        "queryGapEnd, findMatchingParen and cyphertext.FindMatchingDelimiter supply trivia and closed scope/body extents; a procedure or an unclosed body does not become an import clause.",
+        "Only a closed explicit CALL scope list reaches callScopeClauseVariables; recursive CALL bodies and findSubqueryExpressions products retain the same contextual check.",
+        "validateSyntaxANTLR and admitBoundStatement preserve cancellation and command/grammar precedence; TestMalformedCallScopeClauseDiagnosticOnBothParsers observes rejected scopes and the non-scope controls."
+      ]
+    }
+  ],
+  "mutation_controls": [
+    {
+      "kind": "source-index-walk",
+      "source": "func censusPunctuationProbe(q string) int { n:=0; for i:=0;i<len(q);i++ { if q[i]==':' { n++ } };return n }",
+      "baseline": "escaped frozen census on 56fbb4233",
+      "required_result": "same engine extracts planted unclassified member; manifest validation rejects that member"
+    },
+    {
+      "kind": "source-index-walk",
+      "source": "func censusByteWalkProbe(q []byte) int { n:=0; for _, b:=range q { if b==':' { n++ } };return n }",
+      "baseline": "escaped frozen census on 56fbb4233",
+      "required_result": "same engine extracts planted unclassified member; manifest validation rejects that member"
+    },
+    {
+      "kind": "source-split",
+      "source": "func censusSplitProbe(q string) []string { return strings.Split(q, \";\") }",
+      "baseline": "escaped frozen census on 56fbb4233",
+      "required_result": "same engine extracts planted unclassified member; manifest validation rejects that member"
+    },
+    {
+      "kind": "source-regexp",
+      "files": {
+        "reader.go": "func censusRegexProbe(q string) bool { return censusPattern.MatchString(q) }",
+        "pattern.go": "const head = `^:`; var censusPattern = regexp.MustCompile(head + `+$`)"
+      },
+      "baseline": "escaped frozen census on 56fbb4233",
+      "required_result": "resolve cross-file regexp and concatenated constants; reject planted unclassified reader"
+    },
+    {
+      "kind": "language-peer-function",
+      "source": "function censusPeerProbe(q) { for (let i=0;i<q.length;i++) if(q[i] === ':') return i; return -1; }",
+      "required_result": "enumerate and reject a new unclassified peer function"
+    }
+  ],
+  "limits": [
+    "The frozen scanner_population_test.go is still the current client; it does not execute these new selectors.",
+    "Do not claim a complete mechanism member count or successful future mutation gate until the approved shared engine consumes these data.",
+    "Static shared-call reachability does not prove every branch delegates lexical extent; retain consumer behavior tests and branch review.",
+    "Reflection, external plugins, dependency bodies and alternate build configurations require explicit disposition under the shared engine.",
+    "Round 3 finishes B/C and the ownership supplement only, per explicit orchestrator instruction. Engine-based discovery/classification/mutation rejection follows approved #1667 round 3 and its B0/API handoff."
+  ]
+}

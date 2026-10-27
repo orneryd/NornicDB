@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -45,7 +47,7 @@ func TestNeo4jExpressionBehaviours(t *testing.T) {
 		t.Run(tc.Source, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j_expression_behaviours"))
 			databases := newMockDatabaseManager(t)
-			require.NoError(t, databases.CreateDatabase("neo4j_expression_behaviours"))
+			require.NoError(t, databases.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "neo4j_expression_behaviours"}))
 			exec.SetDatabaseManager(databases)
 			params := make(map[string]interface{}, len(tc.Params))
 			for name, value := range tc.Params {

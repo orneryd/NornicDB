@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,7 +48,7 @@ func TestSharedDelimiterSectionsUseCypherQuoting(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, test.inside, inside)
 			require.Equal(t, "tail", rest)
-			require.Equal(t, len(test.inside)+1, findMatchingDelimiter(test.text, 0, test.open, test.close))
+			require.Equal(t, len(test.inside)+1, cyphertext.FindMatchingDelimiter(test.text, 0, test.open, test.close, cyphertext.OpeningDelimiter))
 			callInside, callRest, callOK := parseCallTailDelimited("  "+test.text, byte(test.open), byte(test.close))
 			require.True(t, callOK)
 			require.Equal(t, test.inside, callInside)
@@ -89,10 +90,10 @@ func TestSharedLexicalBoundaries(t *testing.T) {
 		require.Empty(t, rest)
 	}
 	for _, start := range []int{-1, 0, 2, 3} {
-		name, end, ok := scanIdentifierToken("1a", start)
+		name, ok := cyphertext.ScanIdentifier("1a", start)
 		require.False(t, ok)
-		require.Empty(t, name)
-		require.Equal(t, start, end)
+		require.Empty(t, name.Value)
+		require.Equal(t, start, name.End)
 		written, next, symbolic := scanSymbolicName("1a", start)
 		require.False(t, symbolic)
 		require.Empty(t, written)
@@ -109,7 +110,7 @@ func TestSharedLexicalBoundaries(t *testing.T) {
 	require.Empty(t, inside)
 	require.Equal(t, "tail", rest)
 	for _, start := range []int{-1, 1, 2} {
-		require.Equal(t, -1, findMatchingDelimiter("()", start, '(', ')'))
+		require.Equal(t, -1, cyphertext.FindMatchingDelimiter("()", start, '(', ')', cyphertext.OpeningDelimiter))
 	}
 	end, closed := scanCypherQuotedText("'x'", -1, '\'')
 	require.False(t, closed)

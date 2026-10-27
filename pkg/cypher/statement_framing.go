@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -33,7 +34,7 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
-			_, finishes := stripTrailingFinish(branch)
+			_, finishes := readTrailingFinish(branch, stripPermittedFinish)
 			if finishes {
 				hasFinish = true
 			} else if e.statementProducesColumns(ctx, branch) {
@@ -121,11 +122,8 @@ func validateCypherPreamble(query string) error {
 		if err := consumeGap(len("CYPHER")); err != nil {
 			return err
 		}
-		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-			end := 0
-			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
-				end++
-			}
+		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
+			end := token.TailEnd
 			version := rest[:end]
 			if version != "5" && version != "25" {
 				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5, 25", version))
@@ -146,9 +144,7 @@ func validateCypherPreamble(query string) error {
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			end := 0
-			for end < len(rest) && isIdentByte(rest[end]) {
-				end++
-			}
+			end = cyphertext.NamePartEnd(rest, end)
 			name := strings.ToLower(rest[:end])
 			if err := consumeGap(end); err != nil {
 				return err
@@ -160,9 +156,7 @@ func validateCypherPreamble(query string) error {
 				return err
 			}
 			end = 0
-			for end < len(rest) && isIdentByte(rest[end]) {
-				end++
-			}
+			end = cyphertext.NamePartEnd(rest, end)
 			if end == 0 {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
 			}
@@ -190,53 +184,67 @@ func validateCypherPreamble(query string) error {
 }
 
 func stripCypherPreamble(query string) (string, bool) {
+	text, changed, _ := readCypherPreamble(query)
+	return text, changed
+}
+
+func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 	rest := query
+	offset := 0
 	changed := false
 	var modes []string
+	trim := func() {
+		left := strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
+		offset += len(rest) - len(left)
+		rest = strings.TrimRightFunc(left, cyphertext.IsWhitespace)
+	}
+	consume := func(count int) { offset += count; rest = rest[count:]; trim() }
 	for {
-		trimmed := strings.TrimSpace(rest)
-		if mode, inner := executionModePrefix(trimmed); mode != ModeNormal {
+		trim()
+		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
 			modes = append(modes, string(mode))
+			offset += len(rest) - len(inner)
 			rest = inner
 			continue
 		}
-		if !matchKeywordAt(trimmed, 0, "CYPHER") {
+		if !matchKeywordAt(rest, 0, "CYPHER") {
 			break
 		}
 		changed = true
-		rest = strings.TrimSpace(trimmed[queryGapEnd(trimmed, len("CYPHER")):])
-		// Optional version number (e.g. CYPHER 5, CYPHER 25).
-		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-			i := 0
-			for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-				i++
-			}
-			rest = strings.TrimSpace(rest[queryGapEnd(rest, i):])
+		consume(queryGapEnd(rest, len("CYPHER")))
+		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
+			consume(queryGapEnd(rest, token.TailEnd))
 		}
-		// Option tokens until the next clause keyword starts the statement.
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			if isCypherStringQuoteByte(rest[0]) {
 				end := skipCypherQuotedText(rest, 0, rest[0])
-				rest = strings.TrimSpace(rest[queryGapEnd(rest, end):])
+				consume(queryGapEnd(rest, end))
 				continue
 			}
-			i := 0
-			for i < len(rest) && !isASCIISpace(rest[i]) && queryCommentEnd(rest, i) < 0 {
-				i++
+			end := 0
+			for end < len(rest) && !cyphertext.IsWhitespaceAt(rest, end) && queryCommentEnd(rest, end) < 0 {
+				end++
 			}
-			rest = strings.TrimSpace(rest[queryGapEnd(rest, i):])
+			consume(queryGapEnd(rest, end))
 		}
 		if rest == "" {
 			break
 		}
 	}
-	if changed {
-		if len(modes) > 0 {
-			return strings.Join(modes, " ") + " " + strings.TrimSpace(rest), true
-		}
-		return strings.TrimSpace(rest), true
+	if !changed {
+		return query, false, nil
 	}
-	return query, false
+	prefix := ""
+	if len(modes) > 0 {
+		prefix = strings.Join(modes, " ") + " "
+	}
+	canonical := prefix + rest
+	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query, Text: canonical}}
+	rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: 0, End: offset}, Accepted: cyphertext.Span{Start: 0, End: len(prefix)}})
+	if end := offset + len(rest); end < len(query) {
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: end, End: len(query)}, Accepted: cyphertext.Span{Start: len(canonical), End: len(canonical)}})
+	}
+	return canonical, true, rewrite
 }
 
 // finishProhibitedClauses are the clause keywords a statement may not end
@@ -248,45 +256,35 @@ var finishProhibitedClauses = map[string]bool{
 	"RETURN": true,
 }
 
-// trailingBareFinish reports whether the statement ends with a standalone
-// FINISH keyword outside quotes and comments. A trailing `finish` where a
-// name or an expression is read (RETURN finish, x AS finish, DELETE finish,
-// m.finish) is a variable, not the clause: FINISH is not a reserved word in
-// Neo4j (#958).
-func trailingBareFinish(cypher string) (string, bool) {
+type finishSuffixPolicy uint8
+
+const (
+	detectFinishSuffix finishSuffixPolicy = iota
+	stripPermittedFinish
+)
+
+// readTrailingFinish recognizes one name-aware FINISH suffix. Validation can
+// detect every suffix; execution strips only those allowed after the preceding
+// top-level clause, leaving prohibited RETURN/FINISH forms for validation.
+func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool) {
 	last := lastLiveByte(cypher, len(cypher))
-	if last < 0 || !isIdentByte(cypher[last]) {
-		return "", false
+	if last < 0 || !cyphertext.NamePartAt(cypher, last) {
+		return cypher, false
 	}
 	end := last + 1
 	start := end
-	for start > 0 && isIdentByte(cypher[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(cypher, start-1) {
 		start--
 	}
 	if !strings.EqualFold(cypher[start:end], "FINISH") {
-		return "", false
+		return cypher, false
 	}
 	remainder := strings.TrimSpace(cypher[:start])
 	// A FINISH with nothing before it is the whole statement, the clause.
 	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
-		return "", false
-	}
-	return remainder, true
-}
-
-// stripTrailingFinish removes a trailing FINISH clause terminator (Neo4j 5.19+:
-// FINISH ends a query without returning rows). FINISH counts unless the
-// preceding top-level clause is RETURN (finishProhibitedClauses); a trailing
-// FINISH after RETURN stays in the text so validation rejects it. The
-// preceding clause comes from the shared name-aware scanner
-// lastTopLevelClauseWord (validator_strictness.go): one clause scanner for
-// both the FINISH position and the dangling-UNWIND rule.
-func stripTrailingFinish(cypher string) (string, bool) {
-	remainder, ok := trailingBareFinish(cypher)
-	if !ok {
 		return cypher, false
 	}
-	if finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
+	if policy == stripPermittedFinish && finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
 		return cypher, false
 	}
 	return remainder, true
@@ -347,13 +345,13 @@ func topLevelUnionCut(s string) int {
 func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool) {
 	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
-		return stripTrailingFinish(cypher)
+		return readTrailingFinish(cypher, stripPermittedFinish)
 	}
 	before := strings.TrimSpace(cypher[:cut])
 	after := strings.TrimSpace(cypher[cut:])
 	// Consume UNION and an optional ALL.
 	wordEnd := 0
-	for wordEnd < len(after) && !isASCIISpace(after[wordEnd]) {
+	for wordEnd < len(after) && !cyphertext.IsWhitespaceAt(after, wordEnd) {
 		wordEnd++
 	}
 	unionWord := after[:wordEnd]
@@ -363,7 +361,7 @@ func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool)
 		tail = strings.TrimSpace(tail[len("ALL"):])
 	}
 	right, rightStripped := stripUnionBranchFinishes(ctx, tail)
-	left, leftStripped := stripTrailingFinish(before)
+	left, leftStripped := readTrailingFinish(before, stripPermittedFinish)
 	if !leftStripped && !rightStripped {
 		return cypher, false
 	}
@@ -378,7 +376,7 @@ func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool)
 
 func firstWordUpper(s string) (string, bool) {
 	i := 0
-	for i < len(s) && !isASCIISpace(s[i]) {
+	for i < len(s) && !cyphertext.IsWhitespaceAt(s, i) {
 		i++
 	}
 	if i == 0 {

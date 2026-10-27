@@ -81,7 +81,7 @@ func TestBoltLogEventsRenderDeterministicallyAcrossLocales(t *testing.T) {
 				{language.EuropeanSpanish, test.spanish},
 				{language.MustParse("en-XA"), "[!! " + test.english + " !!]"},
 			} {
-				got, _, renderErr := manager.Render(localization.WithPreferences(context.Background(), locale.tag), test.event.Message)
+				got, _, renderErr := manager.Render(localization.WithPreferences(context.Background(), locale.tag), localization.MessageRequest(test.event.Message))
 				require.NoError(t, renderErr)
 				require.Equal(t, locale.want, got)
 			}

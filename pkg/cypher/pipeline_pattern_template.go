@@ -123,9 +123,9 @@ func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMerge
 	template := &pipelineMergeTemplate{}
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "MERGE") {
-		parts := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):]))
+		parts := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):]), nil)
 		pattern := parts.pattern
-		if open, _ := firstRelationshipBracket(pattern); open >= 0 && parts.onCreate.len() == 0 && parts.onMatch.len() == 0 {
+		if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0 && parts.onCreate.len() == 0 && parts.onMatch.len() == 0 {
 			if shape, err := e.parseMergeRelationshipShape(pattern); err == nil &&
 				isSimpleIdentifier(strings.TrimSpace(shape.startContent)) && isSimpleIdentifier(strings.TrimSpace(shape.endContent)) &&
 				shape.relType != "" {

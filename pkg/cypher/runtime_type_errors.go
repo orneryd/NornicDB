@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"sort"
@@ -295,19 +296,29 @@ func subscriptReceiverError(base, index interface{}) error {
 	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
 }
 
-// isOperatorExpressionText reports whether text can be an expression whose
-// operators recordRowOperatorFailure may report: not a relationship pattern
-// ((a)-[:R]->(b)) or a map projection (n {.*, …}), whose - and * aren't
-// arithmetic.
-func isOperatorExpressionText(text string) bool {
+// expressionTextPolicy separates operator-bearing syntax from whole operands.
+// Lists/maps are operands but do not themselves expose arithmetic operators.
+type expressionTextPolicy uint8
+
+const (
+	expressionTextOperator expressionTextPolicy = iota
+	expressionTextOperand
+)
+
+// expressionTextAccepted owns shared pattern/map-projection exclusion and the
+// whole-operand grammar required by subscript and static operand validation.
+func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 	text = strings.TrimSpace(text)
+	if text == "" && policy == expressionTextOperand {
+		return false
+	}
 	// A list or map literal is a value, not an operator expression, even
 	// when its elements are.
 	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
-		return false
+		return policy == expressionTextOperand
 	}
-	if strings.HasPrefix(text, "{") && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
-		return false
+	if strings.HasPrefix(text, "{") && cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter) == len(text)-1 {
+		return policy == expressionTextOperand
 	}
 	// -[1] is a unary minus of a list, not a relationship.
 	if strings.HasPrefix(text, "-") {
@@ -327,7 +338,7 @@ func isOperatorExpressionText(text string) bool {
 	for brace := strings.IndexByte(text, '{'); brace > 0; {
 		before := strings.TrimSpace(text[:brace])
 		word := len(before)
-		for word > 0 && isIdentByte(before[word-1]) {
+		for word > 0 && cyphertext.NamePartAt(before, word-1) {
 			word--
 		}
 		if word < len(before) && !isCypherKeyword(before[word:]) {
@@ -339,32 +350,14 @@ func isOperatorExpressionText(text string) bool {
 		}
 		brace += next + 1
 	}
-	return true
-}
-
-// isOperandExpressionText reports whether text is a whole operand: a literal,
-// a parameter, a variable or property chain, a function call, a
-// parenthesised expression, a list or map literal, a unary minus of one of
-// those, or arithmetic over them.
-func isOperandExpressionText(text string) bool {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return false
-	}
-	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
+	if policy == expressionTextOperator {
 		return true
-	}
-	if text[0] == '{' && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
-		return true
-	}
-	if !isOperatorExpressionText(text) {
-		return false
 	}
 	if _, literal := parseLiteralValueFromComputedRow(text); literal {
 		return true
 	}
 	if text[0] == '-' || text[0] == '+' {
-		return isOperandExpressionText(text[1:])
+		return expressionTextAccepted(text[1:], expressionTextOperand)
 	}
 	if text[0] == '$' {
 		return simpleSemanticIdentifier(text[1:]) != ""
@@ -375,12 +368,12 @@ func isOperandExpressionText(text string) bool {
 	if _, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
 		return true
 	}
-	if _, _, call := parseFunctionCallWS(text); call {
+	if call := inspectFunctionCall(text, qualifiedFunctionCall, "", nil); call {
 		return true
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
 		if left, right, _, arithmetic := splitRowArithmeticTier(text, tier); arithmetic {
-			return isOperandExpressionText(left) && isOperandExpressionText(right)
+			return expressionTextAccepted(left, expressionTextOperand) && expressionTextAccepted(right, expressionTextOperand)
 		}
 	}
 	return false

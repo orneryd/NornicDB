@@ -1,6 +1,8 @@
 package differential
 
 import (
+	"context"
+
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
@@ -29,7 +31,9 @@ var (
 // columns by position; a RETURN * or an item count that isn't the column
 // count gives an empty shape.
 func returnShape(query string, columns []string) shape {
-	query, masked := maskNested(query)
+	facts := inspectClauseRoles(query)
+	query, masked := maskQuery(query, maskNestedSyntax)
+	masked = facts.roleMask(masked, true)
 	returns := returnKeyword.FindAllStringIndex(masked, -1)
 	if len(returns) == 0 {
 		return shape{}
@@ -106,11 +110,23 @@ func splitTopLevel(text, masked string) []part {
 	return parts
 }
 
-// maskNested returns query with its // comments blanked out (clean), and clean
-// with every byte inside a quoted string, a quoted name or brackets replaced
-// by '_' (masked), so a keyword or comma left in masked is one of the
-// statement's own. Both are as long as query.
-func maskNested(query string) (clean, masked string) {
+type queryMaskPolicy uint8
+
+const (
+	maskOpaqueSyntax queryMaskPolicy = iota
+	maskNestedSyntax
+)
+
+// maskQuery owns the oracle's lexical views. It shares Unicode/quote/comment
+// primitives, not the executor or its syntax-confusable normalization. Opaque
+// tokens never contribute query effects; the shape view also hides nested text.
+// Offsets refer to the once-projected clean text returned alongside the mask.
+func maskQuery(raw string, policy queryMaskPolicy) (clean, masked string) {
+	source := cyphertext.ProjectUnicode(context.Background(), raw)
+	if source.Err != nil {
+		return "", ""
+	}
+	query := source.Text
 	blanked := []byte(query)
 	hidden := []byte(query)
 	depth := 0
@@ -130,15 +146,24 @@ func maskNested(query string) (clean, masked string) {
 			index--
 			continue
 		}
+		if width := cyphertext.WhitespaceAt(query, index); width > 0 {
+			for end := index + width; index < end; index++ {
+				hidden[index] = ' '
+			}
+			index--
+			continue
+		}
 		switch query[index] {
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
 			depth--
-			hidden[index] = '_'
+			if policy == maskNestedSyntax {
+				hidden[index] = '_'
+			}
 			continue
 		}
-		if depth > 0 {
+		if depth > 0 && policy == maskNestedSyntax {
 			hidden[index] = '_'
 		}
 	}

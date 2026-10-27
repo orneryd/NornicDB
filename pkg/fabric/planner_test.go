@@ -1,7 +1,9 @@
 package fabric
 
 import (
+	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +14,7 @@ func TestPlan_SimpleQueryNoUse(t *testing.T) {
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
 	p := NewFabricPlanner(catalog)
 
-	frag, err := p.Plan("MATCH (n) RETURN n", "nornic")
+	frag, err := p.Plan(t.Context(), "MATCH (n) RETURN n", "nornic", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +49,7 @@ CALL {
 }
 RETURN seedId, translated`
 
-	frag, err := p.Plan(query, "nornic")
+	frag, err := p.Plan(t.Context(), query, "nornic", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -99,7 +101,7 @@ func TestPlan_UnionPartUse(t *testing.T) {
 	catalog.Register("g2", &LocationLocal{DBName: "g2"})
 	p := NewFabricPlanner(catalog)
 
-	frag, err := p.Plan("USE g1 RETURN 1 AS x UNION ALL USE g2 RETURN 2 AS x", "nornic")
+	frag, err := p.Plan(t.Context(), "USE g1 RETURN 1 AS x UNION ALL USE g2 RETURN 2 AS x", "nornic", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,96 +127,6 @@ func TestPlan_UnionPartUse(t *testing.T) {
 	}
 }
 
-func TestPlan_LeadingUseClause(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
-	p := NewFabricPlanner(catalog)
-
-	frag, err := p.Plan("USE nornic MATCH (n) RETURN n", "nornic")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	exec, ok := frag.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec, got %T", frag)
-	}
-	if exec.GraphName != "nornic" {
-		t.Errorf("expected nornic, got %s", exec.GraphName)
-	}
-	if exec.Query != "MATCH (n) RETURN n" {
-		t.Errorf("expected remaining query, got %s", exec.Query)
-	}
-}
-
-func TestPlan_LeadingUseDotted(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic.tr", &LocationRemote{DBName: "nornic_tr", URI: "bolt://a:7687"})
-	p := NewFabricPlanner(catalog)
-
-	frag, err := p.Plan("USE nornic.tr MATCH (n) RETURN n", "nornic")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	exec, ok := frag.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec, got %T", frag)
-	}
-	if exec.GraphName != "nornic.tr" {
-		t.Errorf("expected nornic.tr, got %s", exec.GraphName)
-	}
-}
-
-func TestPlan_CallUseSubquery(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
-	catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
-	p := NewFabricPlanner(catalog)
-
-	query := `USE nornic
-CALL {
-  USE nornic.tr
-  MATCH (t:Translation)
-  RETURN t.id AS translationId
-}
-RETURN translationId`
-
-	frag, err := p.Plan(query, "nornic")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should be an Apply chain: Apply(input=Apply(input=Init, inner=Exec(nornic.tr)), inner=Exec(trailing RETURN))
-	apply, ok := frag.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected FragmentApply at root, got %T", frag)
-	}
-
-	// The trailing RETURN should be in the outer apply.
-	innerExec, ok := apply.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec for trailing RETURN, got %T", apply.Inner)
-	}
-	if innerExec.GraphName != "nornic" {
-		t.Errorf("expected trailing fragment on nornic, got %s", innerExec.GraphName)
-	}
-
-	// The inner apply contains the CALL { USE nornic.tr ... } block.
-	innerApply, ok := apply.Input.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected FragmentApply for CALL block, got %T", apply.Input)
-	}
-
-	callExec, ok := innerApply.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec for CALL body, got %T", innerApply.Inner)
-	}
-	if callExec.GraphName != "nornic.tr" {
-		t.Errorf("expected nornic.tr, got %s", callExec.GraphName)
-	}
-}
-
 func TestPlan_MultipleCallUseSubqueries(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
@@ -237,7 +149,7 @@ CALL {
 }
 RETURN translationId, textKey, texts`
 
-	frag, err := p.Plan(query, "nornic")
+	frag, err := p.Plan(t.Context(), query, "nornic", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,7 +207,7 @@ CALL {
 }
 RETURN textKey, textKey128, texts`
 
-	frag, err := p.Plan(query, "translations")
+	frag, err := p.Plan(t.Context(), query, "translations", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,42 +263,6 @@ RETURN textKey, textKey128, texts`
 	}
 }
 
-func TestCallBlockContainsFabricUse_WithThenUse(t *testing.T) {
-	body := `
-WITH textKey128
-USE translations.txr
-MATCH (tt)
-WHERE tt.textKey128 = textKey128
-RETURN collect(tt) AS texts
-`
-	ok, err := callBlockContainsFabricUse(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected WITH ... USE ... block to be detected as fabric block")
-	}
-}
-
-func TestCallBlockContainsFabricUse_WithPipelineThenUse(t *testing.T) {
-	body := `
-WITH rows
-UNWIND rows AS r
-WITH collect(DISTINCT r.textKey128) AS keys
-USE translations.txr
-MATCH (tt)
-WHERE tt.textKey128 IN keys
-RETURN collect(tt) AS texts
-`
-	ok, err := callBlockContainsFabricUse(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected WITH/UNWIND/.../USE block to be detected as fabric block")
-	}
-}
-
 func TestPlan_MidQueryUseAfterPipeline(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("translations", &LocationLocal{DBName: "translations"})
@@ -401,7 +277,7 @@ MATCH (tt:MongoDocument)
 WHERE tt.textKey128 IN keys
 RETURN tt.textKey128 AS k, collect(tt) AS texts`
 
-	frag, err := p.Plan(query, "translations")
+	frag, err := p.Plan(t.Context(), query, "translations", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -461,7 +337,7 @@ CALL {
 }
 RETURN n`
 
-	frag, err := p.Plan(query, "nornic")
+	frag, err := p.Plan(t.Context(), query, "nornic", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -494,7 +370,7 @@ func TestPlan_ScopedCallImportsLiveThroughBody(t *testing.T) {
 	read, asked := recordedCallImports("x")
 	p.SetCallImportReader(read)
 
-	frag, err := p.Plan("USE db UNWIND [1] AS x CALL (x /* c */) { USE db.shard WITH 10 AS y CALL { USE db.other RETURN 1 AS z } RETURN x + y + z AS v } RETURN v", "db")
+	frag, err := p.Plan(t.Context(), "USE db UNWIND [1] AS x CALL (x /* c */) { USE db.shard WITH 10 AS y CALL { USE db.other RETURN 1 AS z } RETURN x + y + z AS v } RETURN v", "db", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -557,7 +433,7 @@ func TestPlan_WriteDetection(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		frag, err := p.Plan(tt.query, "db")
+		frag, err := p.Plan(t.Context(), tt.query, "db", cyphertext.RawSource)
 		if err != nil {
 			t.Fatalf("unexpected error for %q: %v", tt.query, err)
 		}
@@ -570,7 +446,7 @@ func TestPlan_WriteDetection(t *testing.T) {
 
 func TestPlan_EmptyQuery(t *testing.T) {
 	p := NewFabricPlanner(NewCatalog())
-	_, err := p.Plan("", "db")
+	_, err := p.Plan(t.Context(), "", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for empty query")
 	}
@@ -578,7 +454,7 @@ func TestPlan_EmptyQuery(t *testing.T) {
 
 func TestPlan_UseWithoutDbName(t *testing.T) {
 	p := NewFabricPlanner(NewCatalog())
-	_, err := p.Plan("USE ", "db")
+	_, err := p.Plan(t.Context(), "USE ", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for USE without database name")
 	}
@@ -595,7 +471,7 @@ func TestPlan_CallWithoutUse_NotFabric(t *testing.T) {
 }
 RETURN n`
 
-	frag, err := p.Plan(query, "db")
+	frag, err := p.Plan(t.Context(), query, "db", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -604,86 +480,6 @@ RETURN n`
 	_, ok := frag.(*FragmentExec)
 	if !ok {
 		t.Fatalf("expected FragmentExec for non-fabric CALL, got %T", frag)
-	}
-}
-
-func TestPlan_NestedCallUseSubquery(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
-	catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
-	p := NewFabricPlanner(catalog)
-	read, _ := recordedCallImports("outerId")
-	p.SetCallImportReader(read)
-
-	query := `USE nornic
-WITH "t-1" AS outerId
-CALL {
-  WITH outerId
-  CALL {
-    USE nornic.tr
-    WITH outerId
-    MATCH (t:Translation {id: outerId})
-    RETURN t.id AS translationId
-  }
-  RETURN translationId
-}
-RETURN translationId`
-
-	frag, err := p.Plan(query, "nornic")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	nestedExec := findExecByGraphName(frag, "nornic.tr")
-	if nestedExec == nil {
-		t.Fatalf("expected nested nornic.tr fragment in plan tree")
-	}
-
-	init, ok := nestedExec.Input.(*FragmentInit)
-	if !ok {
-		t.Fatalf("expected nested exec input to be FragmentInit, got %T", nestedExec.Input)
-	}
-	if len(init.ImportColumns) != 1 || init.ImportColumns[0] != "outerId" {
-		t.Fatalf("expected nested import columns [outerId], got %v", init.ImportColumns)
-	}
-}
-
-func TestPlan_SubqueryUseTargetOutOfScope(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("comp1", &LocationLocal{DBName: "comp1"})
-	catalog.Register("comp1.a", &LocationLocal{DBName: "comp1_a"})
-	catalog.Register("comp2", &LocationLocal{DBName: "comp2"})
-	catalog.Register("comp2.b", &LocationLocal{DBName: "comp2_b"})
-	p := NewFabricPlanner(catalog)
-
-	query := `USE comp1
-CALL {
-  USE comp2.b
-  RETURN 1 AS x
-}
-RETURN x`
-
-	_, err := p.Plan(query, "comp1")
-	if err == nil {
-		t.Fatal("expected out-of-scope USE error")
-	}
-}
-
-func TestPlan_SubqueryUseTargetNotFound(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
-	p := NewFabricPlanner(catalog)
-
-	query := `USE nornic
-CALL {
-  USE nornic.missing
-  RETURN 1 AS x
-}
-RETURN x`
-
-	_, err := p.Plan(query, "nornic")
-	if err == nil {
-		t.Fatal("expected missing USE target error")
 	}
 }
 
@@ -736,7 +532,7 @@ func TestParseLeadingUse_DottedName(t *testing.T) {
 }
 
 func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
-	use, remaining, hasUse, err := parseLeadingUse("USE graph.byName('tenant_a') MATCH (n) RETURN n", false)
+	use, remaining, hasUse, err := parseLeadingUse(t.Context(), "USE graph.byName('tenant_a') MATCH (n) RETURN n", false)
 	if err != nil || !hasUse {
 		t.Fatalf("unexpected result: hasUse=%v err=%v", hasUse, err)
 	}
@@ -747,7 +543,7 @@ func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
 		t.Fatalf("unexpected remaining query: %q", remaining)
 	}
 
-	use, _, hasUse, err = parseLeadingUse("USE graph.byElementId($id) RETURN 1", false)
+	use, _, hasUse, err = parseLeadingUse(t.Context(), "USE graph.byElementId($id) RETURN 1", false)
 	if err != nil || !hasUse || use.Text() != "graph.byElementId($id)" {
 		t.Fatalf("unexpected byElementId result: %+v hasUse=%v err=%v", use, hasUse, err)
 	}
@@ -766,7 +562,7 @@ func TestPlannerHelpers_SplitAtTopLevelUse(t *testing.T) {
 // parseLeadingUseName is parseLeadingUse for a top-level query, returning
 // the static graph name.
 func parseLeadingUseName(query string) (string, string, bool, error) {
-	use, remaining, hasUse, err := parseLeadingUse(query, false)
+	use, remaining, hasUse, err := parseLeadingUse(context.Background(), query, false)
 	return use.Name, remaining, hasUse, err
 }
 
@@ -1059,7 +855,7 @@ func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 	got = trailingWithAliases("MATCH (n) WITH `weird name` AS x")
 	// `weird name` is not a valid identifier, so AS alias "x" should be found.
 	// But the item with backtick goes through lastAsIndexFold which finds AS.
-	// alias = "x", isValidIdentifier("x") = true.
+	// alias = "x", cyphertext.IsIdentifier("x") = true.
 	if len(got) != 1 || got[0] != "x" {
 		t.Fatalf("expected [x] with backtick alias, got %v", got)
 	}
@@ -1085,27 +881,26 @@ func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestIsValidIdentifier(t *testing.T) {
-	if isValidIdentifier("") {
-		t.Fatal("empty should not be valid")
-	}
-	if isValidIdentifier("1abc") {
-		t.Fatal("starting with digit should not be valid")
-	}
-	if !isValidIdentifier("abc") {
-		t.Fatal("abc should be valid")
-	}
-	if !isValidIdentifier("_abc") {
-		t.Fatal("_abc should be valid")
-	}
-	if isValidIdentifier("a.b") {
-		t.Fatal("dotted should not be valid")
-	}
-	if isValidIdentifier("a-b") {
-		t.Fatal("hyphenated should not be valid")
-	}
-	if !isValidIdentifier("abc123_DEF") {
-		t.Fatal("mixed alphanum with underscore should be valid")
+func TestIdentifierValidation(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		valid bool
+	}{
+		{input: ""},
+		{input: "1abc"},
+		{input: "abc", valid: true},
+		{input: "_abc", valid: true},
+		{input: "a.b"},
+		{input: "a-b"},
+		{input: "abc123_DEF", valid: true},
+		{input: "abc.def"},
+		{input: "abc123", valid: true},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := cyphertext.IsIdentifier(tc.input); got != tc.valid {
+				t.Errorf("validation of %q = %v, want %v", tc.input, got, tc.valid)
+			}
+		})
 	}
 }
 
@@ -1245,8 +1040,8 @@ func TestCompositeScopeRoot(t *testing.T) {
 	if compositeScopeRoot("") != "" {
 		t.Fatal("expected empty for empty")
 	}
-	if compositeScopeRoot("  ") != "" {
-		t.Fatal("expected empty for whitespace")
+	if compositeScopeRoot("  ") != "  " {
+		t.Fatal("decoded graph identity must retain whitespace")
 	}
 	if compositeScopeRoot("comp.shard") != "comp" {
 		t.Fatal("expected comp")
@@ -1314,21 +1109,21 @@ func TestBindLeadingImportColumns_AllBranches(t *testing.T) {
 }
 
 func TestParseLeadingWithUse_NoWith(t *testing.T) {
-	_, _, ok, err := parseLeadingWithUse("MATCH (n) RETURN n")
+	_, _, ok, err := parseLeadingWithUse(t.Context(), "MATCH (n) RETURN n")
 	if err != nil || ok {
 		t.Fatalf("expected no match for non-WITH, got ok=%v err=%v", ok, err)
 	}
 }
 
 func TestParseLeadingWithUse_WithButNoUse(t *testing.T) {
-	_, _, ok, err := parseLeadingWithUse("WITH a MATCH (n) RETURN n")
+	_, _, ok, err := parseLeadingWithUse(t.Context(), "WITH a MATCH (n) RETURN n")
 	if err != nil || ok {
 		t.Fatalf("expected no match for WITH without USE, got ok=%v err=%v", ok, err)
 	}
 }
 
 func TestParseLeadingWithUse_EmptyRemainder(t *testing.T) {
-	_, _, _, err := parseLeadingWithUse("WITH a USE db")
+	_, _, _, err := parseLeadingWithUse(t.Context(), "WITH a USE db")
 	if err == nil {
 		t.Fatal("expected error for USE with no following query")
 	}
@@ -1349,7 +1144,7 @@ func TestParseLeadingUse_InvalidGraphRef(t *testing.T) {
 }
 
 func TestCallBlockContainsFabricUse_NoUse(t *testing.T) {
-	ok, err := callBlockContainsFabricUse("MATCH (n) RETURN n")
+	ok, err := callBlockContainsFabricUse(t.Context(), "MATCH (n) RETURN n")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1360,7 +1155,7 @@ func TestCallBlockContainsFabricUse_NoUse(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_NestedCall(t *testing.T) {
 	body := "CALL { USE db RETURN 1 } RETURN x"
-	ok, err := callBlockContainsFabricUse(body)
+	ok, err := callBlockContainsFabricUse(t.Context(), body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1386,7 +1181,7 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	catalog.Register("g1", &LocationLocal{DBName: "g1"})
 	p := NewFabricPlanner(catalog)
 
-	frag, err := p.Plan("RETURN 1 AS x UNION ALL RETURN 2 AS x UNION ALL RETURN 3 AS x", "g1")
+	frag, err := p.Plan(t.Context(), "RETURN 1 AS x UNION ALL RETURN 2 AS x UNION ALL RETURN 3 AS x", "g1", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1407,7 +1202,7 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	}
 
 	// UNION and UNION ALL at one level are rejected before a branch is planned.
-	if _, err := p.Plan("RETURN 1 AS x UNION ALL RETURN 2 AS x UNION RETURN 3 AS x", "g1"); !errors.Is(err, ErrMixedUnion) {
+	if _, err := p.Plan(t.Context(), "RETURN 1 AS x UNION ALL RETURN 2 AS x UNION RETURN 3 AS x", "g1", cyphertext.RawSource); !errors.Is(err, ErrMixedUnion) {
 		t.Fatalf("expected ErrMixedUnion, got %v", err)
 	}
 }
@@ -1449,36 +1244,13 @@ func TestSplitTopLevelUnion_EscapedQuotes(t *testing.T) {
 	}
 }
 
-func TestPlan_PlanErrorInUnionBranch(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("g1", &LocationLocal{DBName: "g1"})
-	p := NewFabricPlanner(catalog)
-
-	// First branch is valid, second has empty USE → error.
-	_, err := p.Plan("USE g1 RETURN 1 AS x UNION ALL USE ", "g1")
-	if err == nil {
-		t.Fatal("expected error for invalid USE in union branch")
-	}
-}
-
-func TestPlan_PlanErrorInFirstUnionBranch(t *testing.T) {
-	catalog := NewCatalog()
-	p := NewFabricPlanner(catalog)
-
-	// First branch has empty USE → error.
-	_, err := p.Plan("USE UNION RETURN 1 AS x", "db")
-	if err == nil {
-		t.Fatal("expected error for invalid first union branch")
-	}
-}
-
 func TestPlanSingleQuery_InvalidMidQueryUse(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	p := NewFabricPlanner(catalog)
 
 	// Mid-query USE followed by invalid USE clause.
-	_, err := p.Plan("WITH a USE ", "db")
+	_, err := p.Plan(t.Context(), "WITH a USE ", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for invalid mid-query USE")
 	}
@@ -1490,7 +1262,7 @@ func TestPlanSingleQuery_MidQueryUseTargetError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// Mid-query USE to nonexistent target.
-	_, err := p.Plan("WITH a USE nonexistent.db MATCH (n) RETURN n", "db")
+	_, err := p.Plan(t.Context(), "WITH a USE nonexistent.db MATCH (n) RETURN n", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for nonexistent mid-query USE target")
 	}
@@ -1503,7 +1275,7 @@ func TestPlanSingleQuery_MidQueryUseEmptyPrefix(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// Mid-query USE where prefix is empty after trim → returns inner directly.
-	frag, err := p.Plan("USE db.shard RETURN 1 AS x", "db")
+	frag, err := p.Plan(t.Context(), "USE db.shard RETURN 1 AS x", "db", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1529,14 +1301,14 @@ CALL {
   RETURN 1 AS x
 }
 RETURN x`
-	_, err := p.Plan(query, "db")
+	_, err := p.Plan(t.Context(), query, "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for invalid USE target in CALL block")
 	}
 }
 
 func TestParseLeadingWithUse_InvalidUseInWith(t *testing.T) {
-	_, _, _, err := parseLeadingWithUse("WITH a USE ")
+	_, _, _, err := parseLeadingWithUse(t.Context(), "WITH a USE ")
 	if err == nil {
 		t.Fatal("expected error for USE with no target in WITH...USE")
 	}
@@ -1544,7 +1316,7 @@ func TestParseLeadingWithUse_InvalidUseInWith(t *testing.T) {
 
 func TestParseLeadingWithUse_WithEndAtStart(t *testing.T) {
 	// WITH clause that immediately ends (withEnd == 0 or withEnd <= 0).
-	_, _, ok, _ := parseLeadingWithUse("WITH")
+	_, _, ok, _ := parseLeadingWithUse(t.Context(), "WITH")
 	if ok {
 		t.Fatal("expected false for bare WITH")
 	}
@@ -1589,14 +1361,14 @@ func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_ParseError(t *testing.T) {
 	// Invalid USE should propagate error.
-	_, err := callBlockContainsFabricUse("USE ")
+	_, err := callBlockContainsFabricUse(t.Context(), "USE ")
 	if err == nil {
 		t.Fatal("expected error for invalid USE in call block")
 	}
 }
 
 func TestCallBlockContainsFabricUse_ParseLeadingWithUseError(t *testing.T) {
-	_, err := callBlockContainsFabricUse("WITH a USE ")
+	_, err := callBlockContainsFabricUse(t.Context(), "WITH a USE ")
 	if err == nil {
 		t.Fatal("expected error for invalid WITH...USE in call block")
 	}
@@ -1604,7 +1376,7 @@ func TestCallBlockContainsFabricUse_ParseLeadingWithUseError(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_NestedCallError(t *testing.T) {
 	// Nested CALL with unmatched brace.
-	_, err := callBlockContainsFabricUse("CALL { USE db")
+	_, err := callBlockContainsFabricUse(t.Context(), "CALL { USE db")
 	if err == nil {
 		t.Fatal("expected error for unmatched brace in nested CALL")
 	}
@@ -1684,23 +1456,6 @@ func TestFindMatchingBrace_EscapedQuotes(t *testing.T) {
 	}
 }
 
-func TestPlanMultiGraph_WithUseAndSubPlanError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	// CALL block body that has USE to nonexistent db.
-	query := `CALL {
-  USE nonexistent
-  RETURN 1 AS x
-}
-RETURN x`
-	_, err := p.Plan(query, "db")
-	if err == nil {
-		t.Fatal("expected error for invalid USE target in CALL block")
-	}
-}
-
 func TestPlanSingleQuery_TopUseValidationError(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("comp1", &LocationLocal{DBName: "comp1"})
@@ -1709,7 +1464,7 @@ func TestPlanSingleQuery_TopUseValidationError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// USE target out of scope.
-	_, err := p.Plan("USE comp2.b RETURN 1", "comp1")
+	_, err := p.Plan(t.Context(), "USE comp2.b RETURN 1", "comp1", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected validation error for out-of-scope USE target")
 	}
@@ -1721,7 +1476,7 @@ func TestPlanSingleQuery_ExtractCallBlocksError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// Unmatched brace in CALL subquery.
-	_, err := p.Plan("CALL { RETURN 1", "db")
+	_, err := p.Plan(t.Context(), "CALL { RETURN 1", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for unmatched brace in CALL")
 	}
@@ -1733,7 +1488,7 @@ func TestPlanSingleQuery_CallBlockContainsFabricUseError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// CALL block with invalid USE.
-	_, err := p.Plan("CALL { USE } RETURN 1", "db")
+	_, err := p.Plan(t.Context(), "CALL { USE } RETURN 1", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for invalid USE in CALL block")
 	}
@@ -1747,7 +1502,7 @@ func TestPlanSingleQuery_MidQueryUseInvalidUSE(t *testing.T) {
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	p := NewFabricPlanner(catalog)
 
-	_, err := p.Plan("WITH a USE", "db")
+	_, err := p.Plan(t.Context(), "WITH a USE", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for bare USE")
 	}
@@ -1761,7 +1516,7 @@ func TestPlanSingleQuery_MidQueryUseValidateError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// Mid-query USE to out-of-scope target.
-	_, err := p.Plan("WITH x USE comp2.b RETURN x", "comp1")
+	_, err := p.Plan(t.Context(), "WITH x USE comp2.b RETURN x", "comp1", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected validation error for out-of-scope mid-query USE")
 	}
@@ -1774,7 +1529,7 @@ func TestPlanSingleQuery_MidQueryUseInnerError(t *testing.T) {
 	p := NewFabricPlanner(catalog)
 
 	// Mid-query USE where inner query has another invalid USE.
-	_, err := p.Plan("WITH x USE db.shard USE ", "db")
+	_, err := p.Plan(t.Context(), "WITH x USE db.shard USE ", "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for invalid inner USE")
 	}
@@ -1797,25 +1552,6 @@ func TestTrailingWithAliases_BracketsAndBraces(t *testing.T) {
 	}
 }
 
-func TestPlanMultiGraph_PrefixError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
-
-	// CALL block where USE target doesn't exist.
-	query := `MATCH (n) RETURN n.id AS id
-CALL {
-  USE db.nonexistent
-  RETURN 1 AS x
-}
-RETURN x`
-	_, err := p.Plan(query, "db")
-	if err == nil {
-		t.Fatal("expected error for nonexistent USE target in CALL")
-	}
-}
-
 func TestPlanMultiGraph_NonFabricCallThenFabricCall(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
@@ -1832,7 +1568,7 @@ CALL {
   RETURN 1 AS x
 }
 RETURN x`
-	frag, err := p.Plan(query, "db")
+	frag, err := p.Plan(t.Context(), query, "db", cyphertext.RawSource)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1851,7 +1587,7 @@ func TestParseLeadingUse_InvalidIdentifier(t *testing.T) {
 func TestParseLeadingWithUse_WithFindEndFail(t *testing.T) {
 	// WITH followed by a clause keyword immediately — withEnd would be at position
 	// right after WITH keyword.
-	_, _, ok, _ := parseLeadingWithUse("WITH MATCH (n)")
+	_, _, ok, _ := parseLeadingWithUse(t.Context(), "WITH MATCH (n)")
 	// findLeadingWithClauseEnd("WITH MATCH (n)") finds MATCH as clause start → withEnd=5.
 	// withClause = "WITH " (trimmed → "WITH"), rest = "MATCH (n)".
 	// rest doesn't start with USE → returns false.
@@ -1868,36 +1604,12 @@ func TestExtractGraphReference_OpenParenPresent(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_NestedCallWithoutUse(t *testing.T) {
 	body := "CALL { MATCH (n) RETURN n } RETURN x"
-	ok, err := callBlockContainsFabricUse(body)
+	ok, err := callBlockContainsFabricUse(t.Context(), body)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
 		t.Fatal("expected false for nested CALL without USE")
-	}
-}
-
-func TestPlanMultiGraph_WithUseNoUseBody(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
-
-	// CALL block without USE inside (non-fabric).
-	query := `CALL {
-  MATCH (n) RETURN n
-}
-CALL {
-  USE db.shard
-  RETURN 1 AS x
-}
-RETURN x`
-	frag, err := p.Plan(query, "db")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if frag == nil {
-		t.Fatal("expected non-nil fragment")
 	}
 }
 
@@ -1920,5 +1632,221 @@ func findExecByGraphName(fragment Fragment, graphName string) *FragmentExec {
 		return findExecByGraphName(f.RHS, graphName)
 	default:
 		return nil
+	}
+}
+
+type plannerGraphPopulation struct {
+	name     string
+	location Location
+}
+
+func TestPlan_LeadingUsePopulations(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		location                Location
+		query, graph, remaining string
+		checkRemaining          bool
+	}{
+		{"local", &LocationLocal{DBName: "nornic"}, "USE nornic MATCH (n) RETURN n", "nornic", "MATCH (n) RETURN n", true},
+		{"dotted remote", &LocationRemote{DBName: "nornic_tr", URI: "bolt://a:7687"}, "USE nornic.tr MATCH (n) RETURN n", "nornic.tr", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			catalog.Register(tc.graph, tc.location)
+			p := NewFabricPlanner(catalog)
+			frag, err := p.Plan(t.Context(), tc.query, "nornic", cyphertext.RawSource)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			exec, ok := frag.(*FragmentExec)
+			if !ok {
+				t.Fatalf("expected FragmentExec, got %T", frag)
+			}
+			if exec.GraphName != tc.graph {
+				t.Errorf("expected %s, got %s", tc.graph, exec.GraphName)
+			}
+			if tc.checkRemaining && exec.Query != tc.remaining {
+				t.Errorf("expected remaining query, got %s", exec.Query)
+			}
+		})
+	}
+}
+
+type plannerCallScope uint8
+
+const (
+	plannerCallDirect plannerCallScope = iota
+	plannerCallNestedImports
+)
+
+func TestPlan_CallUseScopes(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope plannerCallScope
+		query string
+	}{
+		{"direct", plannerCallDirect, `USE nornic
+CALL {
+  USE nornic.tr
+  MATCH (t:Translation)
+  RETURN t.id AS translationId
+}
+RETURN translationId`},
+		{"nested imports", plannerCallNestedImports, `USE nornic
+WITH "t-1" AS outerId
+CALL {
+  WITH outerId
+  CALL {
+    USE nornic.tr
+    WITH outerId
+    MATCH (t:Translation {id: outerId})
+    RETURN t.id AS translationId
+  }
+  RETURN translationId
+}
+RETURN translationId`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
+			catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
+			p := NewFabricPlanner(catalog)
+			if tc.scope == plannerCallNestedImports {
+				read, _ := recordedCallImports("outerId")
+				p.SetCallImportReader(read)
+			}
+			frag, err := p.Plan(t.Context(), tc.query, "nornic", cyphertext.RawSource)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch tc.scope {
+			case plannerCallDirect:
+				apply, ok := frag.(*FragmentApply)
+				if !ok {
+					t.Fatalf("expected FragmentApply at root, got %T", frag)
+				}
+				innerExec, ok := apply.Inner.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected FragmentExec for trailing RETURN, got %T", apply.Inner)
+				}
+				if innerExec.GraphName != "nornic" {
+					t.Errorf("expected trailing fragment on nornic, got %s", innerExec.GraphName)
+				}
+				innerApply, ok := apply.Input.(*FragmentApply)
+				if !ok {
+					t.Fatalf("expected FragmentApply for CALL block, got %T", apply.Input)
+				}
+				callExec, ok := innerApply.Inner.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected FragmentExec for CALL body, got %T", innerApply.Inner)
+				}
+				if callExec.GraphName != "nornic.tr" {
+					t.Errorf("expected nornic.tr, got %s", callExec.GraphName)
+				}
+			case plannerCallNestedImports:
+				nestedExec := findExecByGraphName(frag, "nornic.tr")
+				if nestedExec == nil {
+					t.Fatalf("expected nested nornic.tr fragment in plan tree")
+				}
+				init, ok := nestedExec.Input.(*FragmentInit)
+				if !ok {
+					t.Fatalf("expected nested exec input to be FragmentInit, got %T", nestedExec.Input)
+				}
+				if len(init.ImportColumns) != 1 || init.ImportColumns[0] != "outerId" {
+					t.Fatalf("expected nested import columns [outerId], got %v", init.ImportColumns)
+				}
+			}
+		})
+	}
+}
+
+func TestCallBlockContainsFabricUse_ImportPipelines(t *testing.T) {
+	for _, tc := range []struct{ name, body, message string }{
+		{"WITH", `
+WITH textKey128
+USE translations.txr
+MATCH (tt)
+WHERE tt.textKey128 = textKey128
+RETURN collect(tt) AS texts
+`, "expected WITH ... USE ... block to be detected as fabric block"},
+		{"pipeline", `
+WITH rows
+UNWIND rows AS r
+WITH collect(DISTINCT r.textKey128) AS keys
+USE translations.txr
+MATCH (tt)
+WHERE tt.textKey128 IN keys
+RETURN collect(tt) AS texts
+`, "expected WITH/UNWIND/.../USE block to be detected as fabric block"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, err := callBlockContainsFabricUse(t.Context(), tc.body)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !ok {
+				t.Fatal(tc.message)
+			}
+		})
+	}
+}
+
+type plannerFailureSite uint8
+
+const (
+	plannerFailureSubqueryScope plannerFailureSite = iota
+	plannerFailureMissingTarget
+	plannerFailureUnionLater
+	plannerFailureUnionFirst
+	plannerFailurePrefixedCall
+	plannerFailureInnerCall
+)
+
+func TestPlan_InvalidUsePopulations(t *testing.T) {
+	cases := []struct {
+		name                    string
+		site                    plannerFailureSite
+		graphs                  []plannerGraphPopulation
+		query, session, message string
+	}{
+		{"subquery outside scope", plannerFailureSubqueryScope, []plannerGraphPopulation{{"comp1", &LocationLocal{DBName: "comp1"}}, {"comp1.a", &LocationLocal{DBName: "comp1_a"}}, {"comp2", &LocationLocal{DBName: "comp2"}}, {"comp2.b", &LocationLocal{DBName: "comp2_b"}}}, `USE comp1
+CALL {
+  USE comp2.b
+  RETURN 1 AS x
+}
+RETURN x`, "comp1", "expected out-of-scope USE error"},
+		{"subquery missing target", plannerFailureMissingTarget, []plannerGraphPopulation{{"nornic", &LocationLocal{DBName: "nornic"}}}, `USE nornic
+CALL {
+  USE nornic.missing
+  RETURN 1 AS x
+}
+RETURN x`, "nornic", "expected missing USE target error"},
+		{"later UNION branch", plannerFailureUnionLater, []plannerGraphPopulation{{"g1", &LocationLocal{DBName: "g1"}}}, "USE g1 RETURN 1 AS x UNION ALL USE ", "g1", "expected error for invalid USE in union branch"},
+		{"first UNION branch", plannerFailureUnionFirst, nil, "USE UNION RETURN 1 AS x", "db", "expected error for invalid first union branch"},
+		{"prefixed CALL", plannerFailurePrefixedCall, []plannerGraphPopulation{{"db", &LocationLocal{DBName: "db"}}, {"db.shard", &LocationLocal{DBName: "shard"}}}, `MATCH (n) RETURN n.id AS id
+CALL {
+  USE db.nonexistent
+  RETURN 1 AS x
+}
+RETURN x`, "db", "expected error for nonexistent USE target in CALL"},
+		{"inner CALL", plannerFailureInnerCall, []plannerGraphPopulation{{"db", &LocationLocal{DBName: "db"}}}, `CALL {
+  USE nonexistent
+  RETURN 1 AS x
+}
+RETURN x`, "db", "expected error for invalid USE target in CALL block"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			for _, graph := range tc.graphs {
+				catalog.Register(graph.name, graph.location)
+			}
+			p := NewFabricPlanner(catalog)
+			_, err := p.Plan(t.Context(), tc.query, tc.session, cyphertext.RawSource)
+			if err == nil {
+				t.Fatalf("%s (site=%d)", tc.message, tc.site)
+			}
+		})
 	}
 }

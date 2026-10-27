@@ -31,7 +31,8 @@ func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineCl
 		projection, _ := projectionSemanticBodyAndTail(clause.text, keyword)
 		projection, _ = cutDistinct(strings.TrimSpace(projection))
 		for _, raw := range splitTopLevelComma(projection) {
-			expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+			itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+			expression, alias := itemSource.expression, itemSource.alias
 			if err := check(expression, alias); err != nil {
 				return err
 			}

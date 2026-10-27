@@ -3,32 +3,11 @@ package storage_test
 import (
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func bootstrapParseDDLAndApply(t *testing.T, sm *storage.SchemaManager, stmt string) {
-	t.Helper()
-	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(stmt)
-	require.NoError(t, err, "parse error for: %s", stmt)
-	require.True(t, ok, "not recognized as DDL: %s", stmt)
-
-	switch c := cmd.(type) {
-	case *cypher.CreateDecayProfileBundleCmd:
-		require.NoError(t, sm.CreateDecayProfileBundle(c.Bundle))
-	case *cypher.CreateDecayProfileBindingCmd:
-		require.NoError(t, sm.CreateDecayProfileBinding(c.Binding))
-	case *cypher.CreatePromotionProfileCmd:
-		require.NoError(t, sm.CreatePromotionProfile(c.Profile))
-	case *cypher.CreatePromotionPolicyCmd:
-		require.NoError(t, sm.CreatePromotionPolicy(c.Policy))
-	default:
-		t.Fatalf("unexpected DDL command type: %T", cmd)
-	}
-}
 
 func allBootstrapDDL() []string {
 	return []string{
@@ -201,10 +180,21 @@ APPLY {
 	}
 }
 
+// newBootstrapSchema returns a fresh schema manager populated with the full
+// bootstrap DDL via the canonical parseDDLAndApply helper.
+func newBootstrapSchema(t *testing.T) *storage.SchemaManager {
+	t.Helper()
+	sm := storage.NewSchemaManager()
+	for _, stmt := range allBootstrapDDL() {
+		parseDDLAndApply(t, sm, stmt)
+	}
+	return sm
+}
+
 func TestBootstrap_AllDDLParses(t *testing.T) {
 	sm := storage.NewSchemaManager()
 	for i, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
+		parseDDLAndApply(t, sm, stmt)
 		if t.Failed() {
 			t.Fatalf("failed at DDL statement %d", i)
 		}
@@ -212,10 +202,7 @@ func TestBootstrap_AllDDLParses(t *testing.T) {
 }
 
 func TestBootstrap_Counts(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
+	sm := newBootstrapSchema(t)
 
 	bundles, bindings := sm.ShowDecayProfiles()
 	assert.Len(t, bundles, 5, "expected 5 decay profile bundles")
@@ -228,305 +215,194 @@ func TestBootstrap_Counts(t *testing.T) {
 	assert.Len(t, promoPolicies, 3, "expected 3 promotion policies")
 }
 
-func TestBootstrap_KnowledgeFactBundle(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
+func TestBootstrap_DecayProfileBundles(t *testing.T) {
+	sm := newBootstrapSchema(t)
 
-	bundles, _ := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBundle
-	for i := range bundles {
-		if bundles[i].Name == "knowledge_fact_retention" {
-			b = &bundles[i]
-			break
-		}
+	tests := []struct {
+		name  string
+		check func(t *testing.T, b *knowledgepolicy.DecayProfileBundle)
+	}{
+		{
+			name: "knowledge_fact_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBundle) {
+				assert.False(t, b.DecayEnabled)
+				assert.Equal(t, 0.0, b.VisibilityThreshold)
+				assert.Equal(t, knowledgepolicy.DecayFunctionNone, b.Function)
+				assert.Equal(t, knowledgepolicy.ScoreFromCreated, b.ScoreFrom)
+			},
+		},
+		{
+			name: "memory_episode_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBundle) {
+				assert.Equal(t, int64(604800), b.HalfLifeSeconds)
+				assert.Equal(t, knowledgepolicy.DecayFunctionExponential, b.Function)
+				assert.Equal(t, 0.10, b.VisibilityThreshold)
+				assert.Equal(t, knowledgepolicy.ScoreFromVersion, b.ScoreFrom)
+				assert.True(t, b.Enabled)
+			},
+		},
+		{
+			name: "session_summary",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBundle) {
+				assert.Equal(t, int64(1209600), b.HalfLifeSeconds)
+				assert.Equal(t, 0.10, b.ScoreFloor)
+			},
+		},
+		{
+			name: "wisdom_directive_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBundle) {
+				assert.False(t, b.DecayEnabled)
+				assert.Equal(t, knowledgepolicy.DecayFunctionNone, b.Function)
+			},
+		},
+		{
+			name: "evidence_decay",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBundle) {
+				assert.Equal(t, int64(2592000), b.HalfLifeSeconds)
+				assert.Equal(t, knowledgepolicy.ScoreFromCreated, b.ScoreFrom)
+			},
+		},
 	}
-	require.NotNil(t, b)
-	assert.False(t, b.DecayEnabled)
-	assert.Equal(t, 0.0, b.VisibilityThreshold)
-	assert.Equal(t, knowledgepolicy.DecayFunctionNone, b.Function)
-	assert.Equal(t, knowledgepolicy.ScoreFromCreated, b.ScoreFrom)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bundles, _ := sm.ShowDecayProfiles()
+			var b *knowledgepolicy.DecayProfileBundle
+			for i := range bundles {
+				if bundles[i].Name == tt.name {
+					b = &bundles[i]
+					break
+				}
+			}
+			require.NotNil(t, b)
+			tt.check(t, b)
+		})
+	}
 }
 
-func TestBootstrap_MemoryEpisodeBundle(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
+func TestBootstrap_DecayProfileBindings(t *testing.T) {
+	sm := newBootstrapSchema(t)
+
+	tests := []struct {
+		name  string
+		check func(t *testing.T, b *knowledgepolicy.DecayProfileBinding)
+	}{
+		{
+			name: "memory_episode_retention_binding",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.Equal(t, []string{"MemoryEpisode"}, b.TargetLabels)
+				assert.False(t, b.IsEdge)
+				assert.Equal(t, "memory_episode_retention", b.ProfileRef)
+				require.NotNil(t, b.VisibilityThreshold)
+				assert.Equal(t, 0.10, *b.VisibilityThreshold)
+				assert.False(t, b.NoDecay)
+
+				require.Len(t, b.PropertyRules, 9)
+
+				noDecayProps := []string{"tenantId", "agentId", "sessionId", "system_created_at",
+					"system_expired_at", "valid_from", "valid_to"}
+				for i, name := range noDecayProps {
+					assert.Equal(t, name, b.PropertyRules[i].PropertyPath)
+					assert.True(t, b.PropertyRules[i].NoDecay, "%s should be NoDecay", name)
+				}
+
+				// summary: merged DECAY HALF LIFE + DECAY FLOOR
+				assert.Equal(t, "summary", b.PropertyRules[7].PropertyPath)
+				assert.Equal(t, int64(1209600), b.PropertyRules[7].HalfLifeSeconds)
+				assert.Equal(t, 0.10, b.PropertyRules[7].ScoreFloor)
+				assert.False(t, b.PropertyRules[7].NoDecay)
+
+				// ephemeralContext: 1-day half-life
+				assert.Equal(t, "ephemeralContext", b.PropertyRules[8].PropertyPath)
+				assert.Equal(t, int64(86400), b.PropertyRules[8].HalfLifeSeconds)
+				assert.False(t, b.PropertyRules[8].NoDecay)
+			},
+		},
+		{
+			name: "knowledge_fact_retention_binding",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.Equal(t, []string{"KnowledgeFact"}, b.TargetLabels)
+				assert.Equal(t, "knowledge_fact_retention", b.ProfileRef)
+				assert.Len(t, b.PropertyRules, 0, "no-decay node should not have redundant property rules")
+			},
+		},
+		{
+			name: "wisdom_directive_retention_binding",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.Equal(t, []string{"WisdomDirective"}, b.TargetLabels)
+				assert.Equal(t, "wisdom_directive_retention", b.ProfileRef)
+				assert.Len(t, b.PropertyRules, 0, "no-decay node should not have redundant property rules")
+			},
+		},
+		{
+			name: "evidence_edge_retention_binding",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.True(t, b.IsEdge)
+				assert.Equal(t, "EVIDENCES", b.TargetEdgeType)
+				assert.Equal(t, "evidence_decay", b.ProfileRef)
+				assert.False(t, b.NoDecay)
+				require.NotNil(t, b.VisibilityThreshold)
+				assert.Equal(t, 0.10, *b.VisibilityThreshold)
+
+				require.Len(t, b.PropertyRules, 1)
+				assert.Equal(t, "sourceId", b.PropertyRules[0].PropertyPath)
+				assert.True(t, b.PropertyRules[0].NoDecay)
+			},
+		},
+		{
+			name: "supersession_edge_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.True(t, b.IsEdge)
+				assert.Equal(t, "SUPERSEDES", b.TargetEdgeType)
+				assert.True(t, b.NoDecay)
+				assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
+			},
+		},
+		{
+			name: "consolidation_edge_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.True(t, b.IsEdge)
+				assert.Equal(t, "CONSOLIDATES_TO", b.TargetEdgeType)
+				assert.True(t, b.NoDecay)
+				assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
+			},
+		},
+		{
+			name: "revision_edge_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.True(t, b.IsEdge)
+				assert.Equal(t, "REVISES", b.TargetEdgeType)
+				assert.True(t, b.NoDecay)
+				assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
+			},
+		},
+		{
+			name: "derivation_edge_retention",
+			check: func(t *testing.T, b *knowledgepolicy.DecayProfileBinding) {
+				assert.True(t, b.IsEdge)
+				assert.Equal(t, "DERIVED_FROM", b.TargetEdgeType)
+				assert.True(t, b.NoDecay)
+				assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
+			},
+		},
 	}
-
-	bundles, _ := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBundle
-	for i := range bundles {
-		if bundles[i].Name == "memory_episode_retention" {
-			b = &bundles[i]
-			break
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, bindings := sm.ShowDecayProfiles()
+			var b *knowledgepolicy.DecayProfileBinding
+			for i := range bindings {
+				if bindings[i].Name == tt.name {
+					b = &bindings[i]
+					break
+				}
+			}
+			require.NotNil(t, b)
+			tt.check(t, b)
+		})
 	}
-	require.NotNil(t, b)
-	assert.Equal(t, int64(604800), b.HalfLifeSeconds)
-	assert.Equal(t, knowledgepolicy.DecayFunctionExponential, b.Function)
-	assert.Equal(t, 0.10, b.VisibilityThreshold)
-	assert.Equal(t, knowledgepolicy.ScoreFromVersion, b.ScoreFrom)
-	assert.True(t, b.Enabled)
-}
-
-func TestBootstrap_SessionSummaryBundle(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	bundles, _ := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBundle
-	for i := range bundles {
-		if bundles[i].Name == "session_summary" {
-			b = &bundles[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.Equal(t, int64(1209600), b.HalfLifeSeconds)
-	assert.Equal(t, 0.10, b.ScoreFloor)
-}
-
-func TestBootstrap_WisdomBundle(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	bundles, _ := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBundle
-	for i := range bundles {
-		if bundles[i].Name == "wisdom_directive_retention" {
-			b = &bundles[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.False(t, b.DecayEnabled)
-	assert.Equal(t, knowledgepolicy.DecayFunctionNone, b.Function)
-}
-
-func TestBootstrap_EvidenceDecayBundle(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	bundles, _ := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBundle
-	for i := range bundles {
-		if bundles[i].Name == "evidence_decay" {
-			b = &bundles[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.Equal(t, int64(2592000), b.HalfLifeSeconds)
-	assert.Equal(t, knowledgepolicy.ScoreFromCreated, b.ScoreFrom)
-}
-
-func TestBootstrap_MemoryEpisodeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "memory_episode_retention_binding" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.Equal(t, []string{"MemoryEpisode"}, b.TargetLabels)
-	assert.False(t, b.IsEdge)
-	assert.Equal(t, "memory_episode_retention", b.ProfileRef)
-	require.NotNil(t, b.VisibilityThreshold)
-	assert.Equal(t, 0.10, *b.VisibilityThreshold)
-	assert.False(t, b.NoDecay)
-
-	require.Len(t, b.PropertyRules, 9)
-
-	noDecayProps := []string{"tenantId", "agentId", "sessionId", "system_created_at",
-		"system_expired_at", "valid_from", "valid_to"}
-	for i, name := range noDecayProps {
-		assert.Equal(t, name, b.PropertyRules[i].PropertyPath)
-		assert.True(t, b.PropertyRules[i].NoDecay, "%s should be NoDecay", name)
-	}
-
-	// summary: merged DECAY HALF LIFE + DECAY FLOOR
-	assert.Equal(t, "summary", b.PropertyRules[7].PropertyPath)
-	assert.Equal(t, int64(1209600), b.PropertyRules[7].HalfLifeSeconds)
-	assert.Equal(t, 0.10, b.PropertyRules[7].ScoreFloor)
-	assert.False(t, b.PropertyRules[7].NoDecay)
-
-	// ephemeralContext: 1-day half-life
-	assert.Equal(t, "ephemeralContext", b.PropertyRules[8].PropertyPath)
-	assert.Equal(t, int64(86400), b.PropertyRules[8].HalfLifeSeconds)
-	assert.False(t, b.PropertyRules[8].NoDecay)
-}
-
-func TestBootstrap_KnowledgeFactBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "knowledge_fact_retention_binding" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.Equal(t, []string{"KnowledgeFact"}, b.TargetLabels)
-	assert.Equal(t, "knowledge_fact_retention", b.ProfileRef)
-	assert.Len(t, b.PropertyRules, 0, "no-decay node should not have redundant property rules")
-}
-
-func TestBootstrap_WisdomDirectiveBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "wisdom_directive_retention_binding" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.Equal(t, []string{"WisdomDirective"}, b.TargetLabels)
-	assert.Equal(t, "wisdom_directive_retention", b.ProfileRef)
-	assert.Len(t, b.PropertyRules, 0, "no-decay node should not have redundant property rules")
-}
-
-func TestBootstrap_EvidenceEdgeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "evidence_edge_retention_binding" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.True(t, b.IsEdge)
-	assert.Equal(t, "EVIDENCES", b.TargetEdgeType)
-	assert.Equal(t, "evidence_decay", b.ProfileRef)
-	assert.False(t, b.NoDecay)
-	require.NotNil(t, b.VisibilityThreshold)
-	assert.Equal(t, 0.10, *b.VisibilityThreshold)
-
-	require.Len(t, b.PropertyRules, 1)
-	assert.Equal(t, "sourceId", b.PropertyRules[0].PropertyPath)
-	assert.True(t, b.PropertyRules[0].NoDecay)
-}
-
-func TestBootstrap_SupersessionEdgeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "supersession_edge_retention" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.True(t, b.IsEdge)
-	assert.Equal(t, "SUPERSEDES", b.TargetEdgeType)
-	assert.True(t, b.NoDecay)
-	assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
-}
-
-func TestBootstrap_ConsolidationEdgeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "consolidation_edge_retention" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.True(t, b.IsEdge)
-	assert.Equal(t, "CONSOLIDATES_TO", b.TargetEdgeType)
-	assert.True(t, b.NoDecay)
-	assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
-}
-
-func TestBootstrap_RevisionEdgeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "revision_edge_retention" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.True(t, b.IsEdge)
-	assert.Equal(t, "REVISES", b.TargetEdgeType)
-	assert.True(t, b.NoDecay)
-	assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
-}
-
-func TestBootstrap_DerivationEdgeBinding(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	_, bindings := sm.ShowDecayProfiles()
-	var b *knowledgepolicy.DecayProfileBinding
-	for i := range bindings {
-		if bindings[i].Name == "derivation_edge_retention" {
-			b = &bindings[i]
-			break
-		}
-	}
-	require.NotNil(t, b)
-	assert.True(t, b.IsEdge)
-	assert.Equal(t, "DERIVED_FROM", b.TargetEdgeType)
-	assert.True(t, b.NoDecay)
-	assert.Len(t, b.PropertyRules, 0, "no-decay edge should not have redundant property rules")
 }
 
 func TestBootstrap_PromotionProfiles(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
+	sm := newBootstrapSchema(t)
 
 	profiles := sm.ShowPromotionProfiles()
 	pMap := make(map[string]*knowledgepolicy.PromotionProfileDef)
@@ -565,124 +441,109 @@ func TestBootstrap_PromotionProfiles(t *testing.T) {
 	assert.Equal(t, 0.0, re.ScoreFloor)
 }
 
-func TestBootstrap_MemoryConsolidationPolicy(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
+func TestBootstrap_PromotionPolicies(t *testing.T) {
+	sm := newBootstrapSchema(t)
+
+	tests := []struct {
+		name  string
+		check func(t *testing.T, pol *knowledgepolicy.PromotionPolicyDef)
+	}{
+		{
+			name: "memory_episode_consolidation",
+			check: func(t *testing.T, pol *knowledgepolicy.PromotionPolicyDef) {
+				assert.Equal(t, []string{"MemoryEpisode"}, pol.TargetLabels)
+				assert.True(t, pol.Enabled)
+
+				require.NotNil(t, pol.OnAccess)
+				require.Len(t, pol.OnAccess.Mutations, 5)
+
+				assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "accessCount")
+				assert.Nil(t, pol.OnAccess.Mutations[0].Kalman)
+
+				assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastAccessedAt")
+				assert.Nil(t, pol.OnAccess.Mutations[1].Kalman)
+
+				assert.Contains(t, pol.OnAccess.Mutations[2].Expression, "accessIntervals")
+				assert.Nil(t, pol.OnAccess.Mutations[2].Kalman)
+
+				require.NotNil(t, pol.OnAccess.Mutations[3].Kalman)
+				assert.Equal(t, knowledgepolicy.KalmanModeAuto, pol.OnAccess.Mutations[3].Kalman.Mode)
+				assert.Contains(t, pol.OnAccess.Mutations[3].Expression, "crossSessionAccessRate")
+
+				assert.Contains(t, pol.OnAccess.Mutations[4].Expression, "$_session")
+				assert.Nil(t, pol.OnAccess.Mutations[4].Kalman)
+
+				require.Len(t, pol.WhenClauses, 2)
+				assert.Equal(t, "n.accessCount >= 3", pol.WhenClauses[0].Predicate)
+				assert.Equal(t, "memory_reinforced", pol.WhenClauses[0].ProfileRef)
+
+				assert.Contains(t, pol.WhenClauses[1].Predicate, "n.accessCount >= 5")
+				assert.Contains(t, pol.WhenClauses[1].Predicate, "n.sourceAgreement >= 0.80")
+				assert.Equal(t, "consolidation_candidate", pol.WhenClauses[1].ProfileRef)
+			},
+		},
+		{
+			name: "wisdom_directive_stability",
+			check: func(t *testing.T, pol *knowledgepolicy.PromotionPolicyDef) {
+				assert.Equal(t, []string{"WisdomDirective"}, pol.TargetLabels)
+				assert.True(t, pol.Enabled)
+
+				require.NotNil(t, pol.OnAccess)
+				require.Len(t, pol.OnAccess.Mutations, 2)
+
+				assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "evaluationCount")
+				assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastEvaluatedAt")
+
+				require.Len(t, pol.WhenClauses, 3)
+				assert.Equal(t, "n.evidenceCount < 3", pol.WhenClauses[0].Predicate)
+				assert.Equal(t, "wisdom_provisional", pol.WhenClauses[0].ProfileRef)
+
+				assert.Contains(t, pol.WhenClauses[1].Predicate, "n.evidenceCount >= 3")
+				assert.Contains(t, pol.WhenClauses[1].Predicate, "n.contradictionRate < 0.20")
+				assert.Equal(t, "wisdom_established", pol.WhenClauses[1].ProfileRef)
+
+				assert.Contains(t, pol.WhenClauses[2].Predicate, "n.evidenceCount >= 10")
+				assert.Contains(t, pol.WhenClauses[2].Predicate, "n.contradictionRate < 0.05")
+				assert.Contains(t, pol.WhenClauses[2].Predicate, "n.crossSessionSupport >= 3")
+				assert.Equal(t, "wisdom_canonical", pol.WhenClauses[2].ProfileRef)
+			},
+		},
+		{
+			name: "evidence_traversal_tiering",
+			check: func(t *testing.T, pol *knowledgepolicy.PromotionPolicyDef) {
+				assert.True(t, pol.IsEdge)
+				assert.Equal(t, "EVIDENCES", pol.TargetEdgeType)
+				assert.True(t, pol.Enabled)
+
+				require.NotNil(t, pol.OnAccess)
+				require.Len(t, pol.OnAccess.Mutations, 2)
+				assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "traversalCount")
+				assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastTraversedAt")
+
+				require.Len(t, pol.WhenClauses, 1)
+				assert.Equal(t, "r.traversalCount >= 5", pol.WhenClauses[0].Predicate)
+				assert.Equal(t, "reinforced_evidence", pol.WhenClauses[0].ProfileRef)
+			},
+		},
 	}
-
-	policies := sm.ShowPromotionPolicies()
-	var pol *knowledgepolicy.PromotionPolicyDef
-	for i := range policies {
-		if policies[i].Name == "memory_episode_consolidation" {
-			pol = &policies[i]
-			break
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policies := sm.ShowPromotionPolicies()
+			var pol *knowledgepolicy.PromotionPolicyDef
+			for i := range policies {
+				if policies[i].Name == tt.name {
+					pol = &policies[i]
+					break
+				}
+			}
+			require.NotNil(t, pol)
+			tt.check(t, pol)
+		})
 	}
-	require.NotNil(t, pol)
-	assert.Equal(t, []string{"MemoryEpisode"}, pol.TargetLabels)
-	assert.True(t, pol.Enabled)
-
-	require.NotNil(t, pol.OnAccess)
-	require.Len(t, pol.OnAccess.Mutations, 5)
-
-	assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "accessCount")
-	assert.Nil(t, pol.OnAccess.Mutations[0].Kalman)
-
-	assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastAccessedAt")
-	assert.Nil(t, pol.OnAccess.Mutations[1].Kalman)
-
-	assert.Contains(t, pol.OnAccess.Mutations[2].Expression, "accessIntervals")
-	assert.Nil(t, pol.OnAccess.Mutations[2].Kalman)
-
-	require.NotNil(t, pol.OnAccess.Mutations[3].Kalman)
-	assert.Equal(t, knowledgepolicy.KalmanModeAuto, pol.OnAccess.Mutations[3].Kalman.Mode)
-	assert.Contains(t, pol.OnAccess.Mutations[3].Expression, "crossSessionAccessRate")
-
-	assert.Contains(t, pol.OnAccess.Mutations[4].Expression, "$_session")
-	assert.Nil(t, pol.OnAccess.Mutations[4].Kalman)
-
-	require.Len(t, pol.WhenClauses, 2)
-	assert.Equal(t, "n.accessCount >= 3", pol.WhenClauses[0].Predicate)
-	assert.Equal(t, "memory_reinforced", pol.WhenClauses[0].ProfileRef)
-
-	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.accessCount >= 5")
-	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.sourceAgreement >= 0.80")
-	assert.Equal(t, "consolidation_candidate", pol.WhenClauses[1].ProfileRef)
-}
-
-func TestBootstrap_WisdomStabilityPolicy(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	policies := sm.ShowPromotionPolicies()
-	var pol *knowledgepolicy.PromotionPolicyDef
-	for i := range policies {
-		if policies[i].Name == "wisdom_directive_stability" {
-			pol = &policies[i]
-			break
-		}
-	}
-	require.NotNil(t, pol)
-	assert.Equal(t, []string{"WisdomDirective"}, pol.TargetLabels)
-	assert.True(t, pol.Enabled)
-
-	require.NotNil(t, pol.OnAccess)
-	require.Len(t, pol.OnAccess.Mutations, 2)
-
-	assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "evaluationCount")
-	assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastEvaluatedAt")
-
-	require.Len(t, pol.WhenClauses, 3)
-	assert.Equal(t, "n.evidenceCount < 3", pol.WhenClauses[0].Predicate)
-	assert.Equal(t, "wisdom_provisional", pol.WhenClauses[0].ProfileRef)
-
-	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.evidenceCount >= 3")
-	assert.Contains(t, pol.WhenClauses[1].Predicate, "n.contradictionRate < 0.20")
-	assert.Equal(t, "wisdom_established", pol.WhenClauses[1].ProfileRef)
-
-	assert.Contains(t, pol.WhenClauses[2].Predicate, "n.evidenceCount >= 10")
-	assert.Contains(t, pol.WhenClauses[2].Predicate, "n.contradictionRate < 0.05")
-	assert.Contains(t, pol.WhenClauses[2].Predicate, "n.crossSessionSupport >= 3")
-	assert.Equal(t, "wisdom_canonical", pol.WhenClauses[2].ProfileRef)
-}
-
-func TestBootstrap_EvidenceTraversalPolicy(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
-
-	policies := sm.ShowPromotionPolicies()
-	var pol *knowledgepolicy.PromotionPolicyDef
-	for i := range policies {
-		if policies[i].Name == "evidence_traversal_tiering" {
-			pol = &policies[i]
-			break
-		}
-	}
-	require.NotNil(t, pol)
-	assert.True(t, pol.IsEdge)
-	assert.Equal(t, "EVIDENCES", pol.TargetEdgeType)
-	assert.True(t, pol.Enabled)
-
-	require.NotNil(t, pol.OnAccess)
-	require.Len(t, pol.OnAccess.Mutations, 2)
-	assert.Contains(t, pol.OnAccess.Mutations[0].Expression, "traversalCount")
-	assert.Contains(t, pol.OnAccess.Mutations[1].Expression, "lastTraversedAt")
-
-	require.Len(t, pol.WhenClauses, 1)
-	assert.Equal(t, "r.traversalCount >= 5", pol.WhenClauses[0].Predicate)
-	assert.Equal(t, "reinforced_evidence", pol.WhenClauses[0].ProfileRef)
 }
 
 func TestBootstrap_PersistenceRoundTrip(t *testing.T) {
-	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		bootstrapParseDDLAndApply(t, sm, stmt)
-	}
+	sm := newBootstrapSchema(t)
 
 	def := sm.ExportDefinition()
 	require.NotNil(t, def)

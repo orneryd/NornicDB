@@ -91,18 +91,18 @@ func TestReview1477R2PublicAliasConstituentRecreation(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	manager := server.GetDatabaseManager()
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
-	if err := manager.CreateDatabase("review_local"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "review_local"}); err != nil {
 		t.Fatal(err)
 	}
 	local := multidb.ConstituentRef{Alias: "leaf", DatabaseName: "review_local", Type: "local", AccessMode: "read_write"}
-	if err := manager.CreateCompositeDatabase("review_comp", []multidb.ConstituentRef{
+	if err := manager.CreateCompositeDatabase(t.Context(), "review_comp", []multidb.ConstituentRef{
 		local,
 		{Alias: "remote", DatabaseName: "remote_db", Type: "remote", AccessMode: "read", URI: "http://remote.example"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
-		if err := manager.CreateAlias("review_alias", "review_local"); err != nil {
+		if err := manager.CreateAlias(t.Context(), "review_alias", "review_local"); err != nil {
 			t.Fatal(err)
 		}
 		for _, path := range []string{"review_local", "review_comp"} {
@@ -128,21 +128,21 @@ func TestReview1477R2PublicAliasConstituentRecreation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.DropAlias("review_alias"); err != nil {
+		if err := manager.DropAlias(t.Context(), "review_alias"); err != nil {
 			t.Fatal(err)
 		}
 		if aliasOwner.Disposed() {
 			t.Fatal("alias removal retired canonical owner")
 		}
 		review1477AssertNoPublicVerdict(t, aliasOwner, "MATCH (n:PublicRecreationReview) RETURN count(n) AS c")
-		if err := manager.RemoveConstituent("review_comp", "leaf"); err != nil {
+		if err := manager.RemoveConstituent(t.Context(), "review_comp", "leaf"); err != nil {
 			t.Fatal(err)
 		}
 		if compOwner.Disposed() {
 			t.Fatal("constituent removal retired composite owner")
 		}
 		review1477AssertNoPublicVerdict(t, compOwner, "MATCH (n:PublicRecreationReview) RETURN count(n) AS c")
-		if err := manager.AddConstituent("review_comp", local); err != nil {
+		if err := manager.AddConstituent(t.Context(), "review_comp", local); err != nil {
 			t.Fatal(err)
 		}
 	}

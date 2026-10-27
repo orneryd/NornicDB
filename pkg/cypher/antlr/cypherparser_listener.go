@@ -436,6 +436,21 @@ type CypherParserListener interface {
 	// EnterProcedurePrivilegePattern is called when entering the procedurePrivilegePattern production.
 	EnterProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
 
+	// EnterCredentialValue is called when entering the credentialValue production.
+	EnterCredentialValue(c *CredentialValueContext)
+
+	// EnterCredentialURL is called when entering the credentialURL production.
+	EnterCredentialURL(c *CredentialURLContext)
+
+	// EnterUseGraphArguments is called when entering the useGraphArguments production.
+	EnterUseGraphArguments(c *UseGraphArgumentsContext)
+
+	// EnterUseGraphPrefix is called when entering the useGraphPrefix production.
+	EnterUseGraphPrefix(c *UseGraphPrefixContext)
+
+	// EnterUseReferencePrefix is called when entering the useReferencePrefix production.
+	EnterUseReferencePrefix(c *UseReferencePrefixContext)
+
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
@@ -864,4 +879,19 @@ type CypherParserListener interface {
 
 	// ExitProcedurePrivilegePattern is called when exiting the procedurePrivilegePattern production.
 	ExitProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
+
+	// ExitCredentialValue is called when exiting the credentialValue production.
+	ExitCredentialValue(c *CredentialValueContext)
+
+	// ExitCredentialURL is called when exiting the credentialURL production.
+	ExitCredentialURL(c *CredentialURLContext)
+
+	// ExitUseGraphArguments is called when exiting the useGraphArguments production.
+	ExitUseGraphArguments(c *UseGraphArgumentsContext)
+
+	// ExitUseGraphPrefix is called when exiting the useGraphPrefix production.
+	ExitUseGraphPrefix(c *UseGraphPrefixContext)
+
+	// ExitUseReferencePrefix is called when exiting the useReferencePrefix production.
+	ExitUseReferencePrefix(c *UseReferencePrefixContext)
 }

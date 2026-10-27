@@ -28,6 +28,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 )
@@ -331,8 +332,8 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 
 	// Split into clauses on MATCH/CREATE boundaries. We use the existing
 	// position-finder so word boundaries are respected.
-	matchPositions := findAllKeywordPositions(restQuery, "MATCH")
-	createPositions := findAllKeywordPositions(restQuery, "CREATE")
+	matchPositions := findAllTopLevelPipelineKeywordPositions(restQuery, "MATCH")
+	createPositions := findAllTopLevelPipelineKeywordPositions(restQuery, "CREATE")
 
 	type boundary struct {
 		pos  int
@@ -541,13 +542,11 @@ func referencesUnwindBinding(expr, unwindVar string) bool {
 		return true
 	}
 	for i := 0; i < len(expr); {
-		ch := expr[i]
-		if isIdentStartByte(ch) {
+
+		if cyphertext.NameStartAt(expr, i) {
 			start := i
 			i++
-			for i < len(expr) && isIdentByte(expr[i]) {
-				i++
-			}
+			i = cyphertext.NamePartEnd(expr, i)
 			if expr[start:i] == unwindVar {
 				return true
 			}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -84,100 +85,54 @@ func printParserReportComparison(title, mode string, nornicResults, antlrResults
 	fmt.Printf("PARSER_REPORT_SUMMARY mode=%s parser=ANTLR total_ns=%d success=%d total_cases=%d\n\n", mode, totalANTLR.Nanoseconds(), successANTLR, len(antlrResults))
 }
 
-// TestParserValidationBenchmarkReport prints a machine-readable validation-only parser report.
-// Run explicitly with: NORNIC_RUN_PARSER_REPORTS=1 go test -run TestParserValidationBenchmarkReport ./pkg/cypher -count=1 -v
-func TestParserValidationBenchmarkReport(t *testing.T) {
+// TestParserBenchmarkReports prints machine-readable validation and full parse
+// reports. Run one mode with NORNIC_RUN_PARSER_REPORTS=1 go test
+// -run 'TestParserBenchmarkReports/validate' ./pkg/cypher -count=1 -v.
+func TestParserBenchmarkReports(t *testing.T) {
 	if os.Getenv("NORNIC_RUN_PARSER_REPORTS") == "" {
 		t.Skip("benchmark-style parser report; set NORNIC_RUN_PARSER_REPORTS=1 to run")
 	}
-
-	const samplesPerQuery = 5
 	exec := &StorageExecutor{}
-	nornicResults := make([]parserBenchmarkResult, 0, len(testQueries))
-	antlrResults := make([]parserBenchmarkResult, 0, len(testQueries))
-	var totalNornic, totalANTLR time.Duration
-	var successNornic, successANTLR int
-
-	for _, tc := range testQueries {
-		nornicTime, nornicErr := measureMedianParserDuration(samplesPerQuery, func() error {
-			return exec.validateSyntaxNornic(tc.query)
-		})
-		nornicStatus := "ok"
-		if nornicErr != nil {
-			nornicStatus = "failed: " + nornicErr.Error()
-		} else {
-			totalNornic += nornicTime
-			successNornic++
-		}
-		nornicResults = append(nornicResults, parserBenchmarkResult{name: tc.name, time: nornicTime, status: nornicStatus})
-
-		antlrTime, antlrErr := measureMedianParserDuration(samplesPerQuery, func() error {
-			return antlrparser.Validate(tc.query)
-		})
-		antlrStatus := "ok"
-		if antlrErr != nil {
-			antlrStatus = "failed: " + antlrErr.Error()
-		} else {
-			totalANTLR += antlrTime
-			successANTLR++
-		}
-		antlrResults = append(antlrResults, parserBenchmarkResult{name: tc.name, time: antlrTime, status: antlrStatus})
-	}
-
-	printParserReportComparison("CYPHER VALIDATION BENCHMARK REPORT", "validate", nornicResults, antlrResults, totalNornic, totalANTLR, successNornic, successANTLR)
-
-	if successNornic == 0 || successANTLR == 0 {
-		t.Fatalf("expected both parsers to validate at least one query (nornic=%d antlr=%d)", successNornic, successANTLR)
-	}
-}
-
-// TestParserParseBenchmarkReport prints a machine-readable full parse report.
-// The Nornic side uses ASTBuilder.Build(), which is the structured AST-building
-// path, rather than the older skeletal Parser.Parse() surface.
-// Run explicitly with: NORNIC_RUN_PARSER_REPORTS=1 go test -run TestParserParseBenchmarkReport ./pkg/cypher -count=1 -v
-func TestParserParseBenchmarkReport(t *testing.T) {
-	if os.Getenv("NORNIC_RUN_PARSER_REPORTS") == "" {
-		t.Skip("benchmark-style parser report; set NORNIC_RUN_PARSER_REPORTS=1 to run")
-	}
-
-	const samplesPerQuery = 5
 	astBuilder := NewASTBuilder()
-	nornicResults := make([]parserBenchmarkResult, 0, len(testQueries))
-	antlrResults := make([]parserBenchmarkResult, 0, len(testQueries))
-	var totalNornic, totalANTLR time.Duration
-	var successNornic, successANTLR int
-
-	for _, tc := range testQueries {
-		nornicTime, nornicErr := measureMedianParserDuration(samplesPerQuery, func() error {
-			_, err := astBuilder.Build(tc.query)
-			return err
+	for _, mode := range []struct {
+		name, title, action string
+		parsers             [2]func(string) error
+	}{
+		{"validate", "CYPHER VALIDATION BENCHMARK REPORT", "validate", [2]func(string) error{
+			func(query string) error {
+				return exec.validateSyntax(context.Background(), query, false, syntaxNativeCore)
+			},
+			antlrparser.Validate,
+		}},
+		{"parse", "CYPHER PARSE BENCHMARK REPORT", "parse", [2]func(string) error{
+			func(query string) error { _, err := astBuilder.Build(query); return err },
+			func(query string) error { _, err := antlrparser.Parse(query); return err },
+		}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			var results [2][]parserBenchmarkResult
+			var totals [2]time.Duration
+			var successes [2]int
+			for index := range results {
+				results[index] = make([]parserBenchmarkResult, 0, len(testQueries))
+			}
+			for _, tc := range testQueries {
+				for index, parse := range mode.parsers {
+					duration, err := measureMedianParserDuration(5, func() error { return parse(tc.query) })
+					status := "ok"
+					if err != nil {
+						status = "failed: " + err.Error()
+					} else {
+						totals[index] += duration
+						successes[index]++
+					}
+					results[index] = append(results[index], parserBenchmarkResult{name: tc.name, time: duration, status: status})
+				}
+			}
+			printParserReportComparison(mode.title, mode.name, results[0], results[1], totals[0], totals[1], successes[0], successes[1])
+			if successes[0] == 0 || successes[1] == 0 {
+				t.Fatalf("expected both parsers to %s at least one query (nornic=%d antlr=%d)", mode.action, successes[0], successes[1])
+			}
 		})
-		nornicStatus := "ok"
-		if nornicErr != nil {
-			nornicStatus = "failed: " + nornicErr.Error()
-		} else {
-			totalNornic += nornicTime
-			successNornic++
-		}
-		nornicResults = append(nornicResults, parserBenchmarkResult{name: tc.name, time: nornicTime, status: nornicStatus})
-
-		antlrTime, antlrErr := measureMedianParserDuration(samplesPerQuery, func() error {
-			_, err := antlrparser.Parse(tc.query)
-			return err
-		})
-		antlrStatus := "ok"
-		if antlrErr != nil {
-			antlrStatus = "failed: " + antlrErr.Error()
-		} else {
-			totalANTLR += antlrTime
-			successANTLR++
-		}
-		antlrResults = append(antlrResults, parserBenchmarkResult{name: tc.name, time: antlrTime, status: antlrStatus})
-	}
-
-	printParserReportComparison("CYPHER PARSE BENCHMARK REPORT", "parse", nornicResults, antlrResults, totalNornic, totalANTLR, successNornic, successANTLR)
-
-	if successNornic == 0 || successANTLR == 0 {
-		t.Fatalf("expected both parsers to parse at least one query (nornic=%d antlr=%d)", successNornic, successANTLR)
 	}
 }

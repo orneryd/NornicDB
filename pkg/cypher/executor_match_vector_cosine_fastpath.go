@@ -3,6 +3,7 @@ package cypher
 import (
 	"container/heap"
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strconv"
@@ -985,13 +986,13 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 		}
 		start := offset + idx
 		end := start + len(varName)
-		if (start > 0 && isIdentByte(expr[start-1])) || (end < len(expr) && isIdentByte(expr[end])) {
+		if (start > 0 && cyphertext.NamePartAt(expr, start-1)) || (end < len(expr) && cyphertext.NamePartAt(expr, end)) {
 			offset = end
 			continue
 		}
 
 		j := end
-		for j < len(expr) && (expr[j] == ' ' || expr[j] == '\t' || expr[j] == '\n' || expr[j] == '\r') {
+		for j < len(expr) && (cyphertext.IsWhitespaceAt(expr, j)) {
 			j++
 		}
 		if j >= len(expr) || expr[j] != '.' {
@@ -999,31 +1000,29 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 			continue
 		}
 		j++
-		for j < len(expr) && (expr[j] == ' ' || expr[j] == '\t' || expr[j] == '\n' || expr[j] == '\r') {
+		for j < len(expr) && (cyphertext.IsWhitespaceAt(expr, j)) {
 			j++
 		}
 		if j >= len(expr) {
 			return false
 		}
 		if isCypherBacktickByte(expr[j]) {
-			prop, end, ok := scanIdentifierToken(expr, j)
-			if !ok || end <= j {
+			prop, ok := cyphertext.ScanIdentifier(expr, j)
+			if !ok || prop.End <= j {
 				return false
 			}
-			if prop == "" {
+			if prop.Value == "" {
 				return false
 			}
-			props[prop] = struct{}{}
-			offset = end
+			props[prop.Value] = struct{}{}
+			offset = prop.End
 			continue
 		}
-		if !isIdentByte(expr[j]) {
+		if !cyphertext.NamePartAt(expr, j) {
 			return false
 		}
 		k := j + 1
-		for k < len(expr) && isIdentByte(expr[k]) {
-			k++
-		}
+		k = cyphertext.NamePartEnd(expr, k)
 		props[expr[j:k]] = struct{}{}
 		offset = k
 	}

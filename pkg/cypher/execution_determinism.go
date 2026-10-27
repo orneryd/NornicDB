@@ -80,7 +80,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
-	requirements := QueryPermissionRequirements(ctx, text)
+	requirements := QueryPermissionRequirements(ctx, text, AcceptedSource)
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
@@ -141,7 +141,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 			continue
 		}
 		var arguments []string
-		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 		if err != nil {
 			return policy
 		}

@@ -127,8 +127,7 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 	lastLogin := time.Unix(300, 0)
 	lockedUntil := time.Unix(400, 0)
 
-	a := &Authenticator{}
-	user, err := a.userFromNode(&storage.Node{
+	user := mapUserRecord(loadUserRecord, nil, &storage.Node{
 		ID:        storage.NodeID("user:alice"),
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
@@ -146,8 +145,8 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 			"disabled":      true,
 			"metadata":      `{"team":"graph"}`,
 		},
-	})
-	assert.NoError(t, err)
+	}).User
+	assert.NotNil(t, user)
 	assert.Equal(t, "user-1", user.ID)
 	assert.Equal(t, "alice", user.Username)
 	assert.Equal(t, "alice@example.com", user.Email)
@@ -161,7 +160,7 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 	assert.True(t, user.Disabled)
 	assert.Equal(t, map[string]string{"team": "graph"}, user.Metadata)
 
-	fallbackUser, err := a.userFromNode(&storage.Node{
+	fallbackUser := mapUserRecord(loadUserRecord, nil, &storage.Node{
 		ID:        storage.NodeID("user:bob"),
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
@@ -170,8 +169,8 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 			"roles":    `not-json`,
 			"metadata": `not-json`,
 		},
-	})
-	assert.NoError(t, err)
+	}).User
+	assert.NotNil(t, fallbackUser)
 	assert.Equal(t, createdAt, fallbackUser.CreatedAt)
 	assert.Equal(t, updatedAt, fallbackUser.UpdatedAt)
 	assert.Empty(t, fallbackUser.Roles)

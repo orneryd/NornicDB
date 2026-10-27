@@ -81,7 +81,7 @@ func endpointFunctionCalls(fn *ast.FuncDecl, name string) bool {
 
 func safeEndpointCall(name string) bool {
 	switch name {
-	case "RedactURL", "RedactText", "RedactError", "RedactClientError", "DisplayValue", "DisplayArgs", "DisplayFlagDefault", "redactOwnedCredentials", "redactAdminCommandError", "RemoteUserForDisplay":
+	case "RedactURL", "RedactText", "RedactError", "RedactErrorDetails", "RedactClientError", "DisplayValue", "DisplayArgs", "DisplayFlagDefault", "redactOwnedCredentials", "redactAdminCommandError", "redactAdminCommandErrorSource", "RemoteUserForDisplay":
 		return true
 	}
 	return false
@@ -319,8 +319,20 @@ func TestCredentialURLSinkStructure(t *testing.T) {
 			// Public Execute and transparent routed execution share this owner.
 			// It must bind the original statement before any normalization or
 			// routing can reject it; a same-function dummy call is insufficient.
-			if deferStmt, ok := fn.decl.Body.List[0].(*ast.DeferStmt); ok && endpointCallName(deferStmt.Call) == "redactAdminCommandError" {
-				add(deferStmt)
+			if deferStmt, ok := fn.decl.Body.List[0].(*ast.DeferStmt); ok {
+				call := deferStmt.Call
+				if endpointCallName(call) == "redactAdminCommandError" {
+					add(deferStmt)
+				}
+				// The inline form captures the original source by value while reading
+				// the final statement credential set after the consuming DDL reader.
+				if inline, ok := call.Fun.(*ast.FuncLit); ok && len(call.Args) == 1 && sourceText(call.Args[0]) == "cypher" && len(inline.Body.List) == 1 && len(inline.Type.Params.List) == 1 && len(inline.Type.Params.List[0].Names) == 1 {
+					if expression, ok := inline.Body.List[0].(*ast.ExprStmt); ok {
+						if project, ok := expression.X.(*ast.CallExpr); ok && endpointCallName(project) == "redactAdminCommandError" && len(project.Args) >= 2 && sourceText(project.Args[0]) == inline.Type.Params.List[0].Names[0].Name && sourceText(project.Args[1]) == "&retErr" {
+							add(deferStmt)
+						}
+					}
+				}
 			}
 		}
 		configProjection := (fn.path == "pkg/config/display_errors.go" && fn.decl.Name.Name == "configDisplayError") ||

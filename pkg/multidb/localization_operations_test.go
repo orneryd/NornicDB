@@ -25,7 +25,7 @@ func requireMultidbOperationLocalizedError(t *testing.T, err error, messageID lo
 func TestMultidbCompositeAndManagerErrorsHaveTypedIdentity(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 
-	err := manager.CreateCompositeDatabase("composite", []ConstituentRef{{
+	err := manager.CreateCompositeDatabase(t.Context(), "composite", []ConstituentRef{{
 		Alias:        "missing",
 		DatabaseName: "missing",
 		Type:         "local",
@@ -35,11 +35,11 @@ func TestMultidbCompositeAndManagerErrorsHaveTypedIdentity(t *testing.T) {
 	require.ErrorIs(t, err, ErrDatabaseNotFound)
 	require.Equal(t, "missing", localizedErr.Message.Data["Database"])
 
-	err = manager.DropCompositeDatabase(dbName)
+	err = manager.DropCompositeDatabase(t.Context(), dbName)
 	localizedErr = requireMultidbOperationLocalizedError(t, err, "multidb.composite.database_not_composite", "database 'testdb' is not a composite database")
 	require.Equal(t, dbName, localizedErr.Message.Data["Database"])
 
-	err = manager.SetDatabaseStatus(dbName, "paused")
+	err = manager.SetDatabaseStatus(t.Context(), dbName, "paused")
 	localizedErr = requireMultidbOperationLocalizedError(t, err, "multidb.manager.invalid_status", "invalid status: paused (must be 'online' or 'offline')")
 	require.Equal(t, "paused", localizedErr.Message.Data["Status"])
 

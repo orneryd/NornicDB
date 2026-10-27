@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -9,11 +10,14 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // =============================================================================
@@ -303,12 +307,20 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			serveRequestTimeout(next, w, r, searchTimeout, "request timeout: search busy")
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
+			// Keep the execution deadline and retention wrapper, while binding
+			// participant completion to server lifetime and admitting terminal
+			// commits through the transaction phase owner.
+			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
+			if s.requestsCtx != nil {
+				ctx = fabric.WithTransactionLifetime(ctx, s.requestsCtx)
+			}
+			defer cancel()
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				s.activeTxReqs.Add(1)
 				defer s.activeTxReqs.Add(-1)
 				next.ServeHTTP(w, r)
 			})
-			serveRequestTimeout(txWrapped, w, r, txTimeout, "request timeout: transaction busy")
+			s.serveTransactionRequest(txWrapped, w, r.WithContext(ctx))
 			return
 		default:
 			next.ServeHTTP(w, r)
@@ -321,6 +333,121 @@ func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Reque
 	// wins before the worker is scheduled. The worker releases on return/panic.
 	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
 	http.TimeoutHandler(next, timeout, message).ServeHTTP(w, r)
+}
+
+// serveTransactionRequest returns the timeout response while an unadmitted
+// transaction handler remains retained. After COMMIT admission, it waits for
+// the storage outcome instead of replacing that result with a timeout.
+func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	response := &transactionResponseWriter{header: make(http.Header)}
+	done := make(chan struct{})
+	panicCh := make(chan any, 1)
+	go func() {
+		defer close(done)
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				panicCh <- recovered
+			}
+		}()
+		next.ServeHTTP(response, r)
+	}()
+
+	writeResponse := func() {
+		select {
+		case recovered := <-panicCh:
+			panic(recovered)
+		default:
+		}
+		response.writeTo(w)
+	}
+	select {
+	case recovered := <-panicCh:
+		panic(recovered)
+	case <-done:
+		if r.Context().Err() == context.DeadlineExceeded && !txphase.CommitAdmitted(r.Context()) {
+			response.markTimedOut()
+			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+			return
+		}
+		writeResponse()
+	case <-r.Context().Done():
+		if txphase.CommitAdmitted(r.Context()) {
+			select {
+			case recovered := <-panicCh:
+				panic(recovered)
+			case <-done:
+				writeResponse()
+			}
+			return
+		}
+		response.markTimedOut()
+		if r.Context().Err() == context.DeadlineExceeded {
+			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
+		}
+	}
+}
+
+type transactionResponseWriter struct {
+	mu        sync.Mutex
+	header    http.Header
+	body      bytes.Buffer
+	status    int
+	timedOut  bool
+	wroteBody bool
+}
+
+func (w *transactionResponseWriter) Header() http.Header { return w.header }
+
+func (w *transactionResponseWriter) WriteHeader(status int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.timedOut && w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *transactionResponseWriter) Write(body []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.timedOut {
+		return 0, http.ErrHandlerTimeout
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if len(body) > 0 && !w.wroteBody {
+		if w.header.Get("Content-Type") == "" {
+			w.header.Set("Content-Type", http.DetectContentType(body))
+		}
+		w.wroteBody = true
+	}
+	return w.body.Write(body)
+}
+
+func (w *transactionResponseWriter) markTimedOut() {
+	w.mu.Lock()
+	w.timedOut = true
+	w.mu.Unlock()
+}
+
+func (w *transactionResponseWriter) writeTo(dst http.ResponseWriter) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for key, values := range w.header {
+		dst.Header().Del(key)
+		for _, value := range values {
+			dst.Header().Add(key, value)
+		}
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	dst.WriteHeader(status)
+	if w.body.Len() > 0 {
+		_, _ = dst.Write(w.body.Bytes())
+	}
 }
 
 func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {

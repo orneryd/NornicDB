@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -117,4 +118,33 @@ func TestDesugarStandaloneOrderClausesAllocatesNothingWithoutEdits(t *testing.T)
 		}
 	})
 	require.Zero(t, allocations)
+}
+
+// A USE clause's graph reference is a name even when it is spelled like a
+// standalone clause keyword (USE GRAPH limit CALL { … }); the USE grammar
+// owns where the reference ends, in a statement and in a subquery.
+func TestDesugarStandaloneOrderClausesKeepsUseGraphNames(t *testing.T) {
+	for _, word := range []string{"limit", "LIMIT", "Skip", "offset", "order"} {
+		for _, reference := range []string{word, "GRAPH " + word, word + ".one", word + " /* c */ . one", "GRAPH " + word + " ." + word} {
+			for _, query := range []string{
+				"USE " + reference + " CALL { USE " + word + ".one MATCH (n:P) RETURN n.db AS k } RETURN k",
+				"USE " + reference + " MATCH (n) RETURN n  ",
+				"CALL { USE " + reference + " MATCH (n:P) RETURN n.db AS k } RETURN k",
+			} {
+				got, rewrite := desugarStandaloneOrderClauses(query)
+				require.Equal(t, query, got, query)
+				require.Nil(t, rewrite, query)
+				// The grammar span ends at the graph reference; the scanner
+				// consumes following whitespace on its next iteration.
+				start := strings.Index(query, "USE ")
+				end := start + len("USE "+reference)
+				gotEnd := useClauseReferenceEnd(query, start, strings.HasPrefix(query, "CALL"))
+				require.Equal(t, end, gotEnd, query)
+				require.Equal(t, "USE "+reference, query[start:gotEnd], query)
+			}
+		}
+	}
+	// A standalone clause after the USE clause is still rewritten.
+	got, _ := desugarStandaloneOrderClauses("USE GRAPH limit MATCH (n) LIMIT 1 RETURN n")
+	require.Equal(t, "USE GRAPH limit MATCH (n) WITH * LIMIT 1 RETURN n", got)
 }

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -86,7 +88,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	observability.NewStorageMetrics(registry, false, metricsReadStorageProbe{badger})
 	server.SetObsRegistry(registry)
-	require.NoError(t, server.dbManager.CreateDatabase("rule73_named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "rule73_named"}))
 	for database, id := range map[string]string{"nornic": "default-secret", "rule73_named": "named-secret"} {
 		engine, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
@@ -262,7 +264,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 	server, users := setupTestServer(t)
 	ctx := context.Background()
-	require.NoError(t, server.dbManager.CreateDatabase("rule73_named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "rule73_named"}))
 
 	type profile struct {
 		name, token string

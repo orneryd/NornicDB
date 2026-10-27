@@ -11,6 +11,7 @@ import (
 // neither admission nor resolved execution may consume them.
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
+	unknownProcedure                    bool
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
@@ -28,22 +29,23 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		writes := startsWithKeywordFold(body, "CREATE")
 		return statementExecutionContract{writes: writes, transaction: writes}, nil
 	}
-	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return statementExecutionContract{}, err
 	}
 	if err != nil {
-		return statementExecutionContract{}, syntaxAdmissionError(body, err)
+		return statementExecutionContract{}, syntaxAdmissionError(ctx, body, AcceptedSource, err)
 	}
-	contract := statementExecutionContract{}
-	visitStatementProcedureSyntax(structure, func(node cypherantlr.SyntaxNode) {
-		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_updatingStatement:
-			contract.writes, contract.transaction = true, true
-		case cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall:
-			contract.calls = true
+	ensureBuiltInProceduresRegistered()
+	effects := structure.Effects()
+	contract := statementExecutionContract{writes: effects.Writes(), transaction: effects.Writes(), calls: effects.CallCount() > 0}
+	for i := 0; i < effects.CallCount(); i++ {
+		if _, known := globalProcedureRegistry.Get(effects.Call(i).Name()); !known {
+			contract.unknownProcedure = true
 		}
-	}, func(spec ProcedureSpec, _ string) bool {
+	}
+	visitStatementProcedureSyntax(structure, func(spec ProcedureSpec, _ string) bool {
 		// SCHEMA procedures keep their existing schema-transaction owner;
 		// this contract admits registered data WRITE procedures.
 		fixedWrite := spec.Mode == ProcedureModeWrite

@@ -98,7 +98,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				t.Cleanup(func() { _ = leaderAdapter.Close(); _ = followerAdapter.Close() })
 				fanout := &hiddenNoOpFanout{targets: []*replication.StorageAdapter{leaderAdapter, followerAdapter}}
 				replicated := replication.NewReplicatedEngine(bases[0], fanout, time.Second)
-				manager, err := multidb.NewDatabaseManager(replicated, nil)
+				manager, err := multidb.NewDatabaseManager(t.Context(), replicated, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close() })
 				managed, err := manager.GetStorage("nornic")

@@ -139,10 +139,10 @@ func TestParseCreateLookupIndexRejects(t *testing.T) {
 // doesn't plan, and parts it hands back to the row evaluator.
 func TestRowPredicatePlanEdges(t *testing.T) {
 	for _, text := range []string{"", "[1, 2]", "$1x", "1 + 2"} {
-		_, ok := parseRowOperand(text)
+		_, ok := parseRowOperand(text, rowOperandSimple)
 		require.False(t, ok, text)
 	}
-	operand, ok := parseRowOperand("n.a")
+	operand, ok := parseRowOperand("n.a", rowOperandSimple)
 	require.True(t, ok)
 	_, bound := operand.resolve(map[string]interface{}{})
 	require.False(t, bound)

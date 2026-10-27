@@ -311,7 +311,7 @@ Registry.collections["bench_col"] = meta
 ```
 CreateCollection("bench_col")
     ↓
-DatabaseManager.CreateDatabase("bench_col")
+DatabaseManager.CreateDatabase(ctx, DatabaseCreateRequest{Name: "bench_col"})
     ↓
 Database created with namespace "bench_col"
     ↓

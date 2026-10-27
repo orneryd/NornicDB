@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -70,7 +71,7 @@ func parseCurlySection(s string) (inside string, rest string, ok bool) {
 	if s == "" || s[0] != '{' {
 		return "", s, false
 	}
-	closing := findMatchingDelimiter(s, 0, '{', '}')
+	closing := cyphertext.FindMatchingDelimiter(s, 0, '{', '}', cyphertext.OpeningDelimiter)
 	if closing < 0 {
 		return "", s, false
 	}

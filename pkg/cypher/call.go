@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"runtime"
 	"sort"
@@ -184,7 +185,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		if projected, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
 			return projected, err
 		}
-		columns, err := e.ResultColumns(ctx, tail, resultmetadata.KnownScope(seed.Columns), cypherVersionFromContext(ctx) == "25")
+		columns, err := e.ResultColumns(ctx, tail, resultmetadata.KnownScope(seed.Columns), cypherVersionFromContext(ctx) == "25", AcceptedSource)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +278,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
+	projected, ok := e.pipelineApplyWith(ctx, rows, prefix, nil, false)
 	if !ok {
 		return nil, false, nil
 	}
@@ -600,7 +601,7 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
 	} else {
 		var ok bool
-		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause)
+		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause, nil, false)
 		if !ok {
 			return nil, false
 		}
@@ -696,7 +697,7 @@ func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternP
 	if !ok {
 		return parts, false
 	}
-	rest = strings.TrimLeftFunc(rest, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+	rest = strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
 	if !strings.HasPrefix(rest, "-") {
 		return parts, false
 	}
@@ -815,7 +816,7 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 	}
 	key = strings.TrimSpace(inside[:colonIdx])
 	expr = strings.TrimSpace(inside[colonIdx+1:])
-	if !isValidIdentifier(key) || expr == "" {
+	if !cyphertext.IsIdentifier(key) || expr == "" {
 		return "", "", "", false
 	}
 	return key, expr, rest, true
@@ -982,7 +983,7 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		}
 	}
 	for _, item := range withItems {
-		if !isValidIdentifier(item.expr) || item.alias != item.expr {
+		if !cyphertext.IsIdentifier(item.expr) || item.alias != item.expr {
 			plan.passThroughWith = false
 		}
 	}
@@ -1063,7 +1064,7 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 
 func callTailHasRelationshipTypeConstraint(tail string) bool {
 	for from := 0; from < len(tail); {
-		open, close := nextRelationshipBracket(tail, from)
+		open, close := readRelationshipBracket(tail, from, requireClosedRelationship)
 		if open < 0 {
 			return false
 		}
@@ -1107,7 +1108,7 @@ func splitPathAssignment(patternPart string) (string, string, bool) {
 }
 
 // isIdentifierReferenced compares identifier tokens with a binding's decoded
-// name. scanIdentifierToken owns identifier decoding, including doubled
+// name. cyphertext.ScanIdentifier owns identifier decoding, including doubled
 // backticks; matching raw query bytes loses those imported bindings.
 // This is a conservative name check, not a scope or variable-role analysis.
 func isIdentifierReferenced(query, identifier string) bool {
@@ -1123,15 +1124,15 @@ func isIdentifierReferenced(query, identifier string) bool {
 			index = end
 			continue
 		}
-		name, end, ok := scanIdentifierToken(query, index)
-		if !ok || (!isCypherBacktickByte(query[index]) && index > 0 && isIdentByte(query[index-1])) {
+		name, ok := cyphertext.ScanIdentifier(query, index)
+		if !ok || (!isCypherBacktickByte(query[index]) && index > 0 && cyphertext.NamePartAt(query, index-1)) {
 			index++
 			continue
 		}
-		if name == identifier {
+		if name.Value == identifier {
 			return true
 		}
-		index = end
+		index = name.End
 	}
 	return false
 }
@@ -1203,7 +1204,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		if yield.limit != "" {
 			with.WriteString(" LIMIT " + yield.limit)
 		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
+		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String(), nil, false)
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -37,34 +38,34 @@ func TestLowCoverageHelpers_SmallFunctions(t *testing.T) {
 	require.Error(t, err)
 
 	// executor_use
-	db, rem, hasUse, err := parseLeadingUseClause("USE mydb MATCH (n) RETURN n")
+	db, rem, hasUse, err := parseLeadingUseClause(t.Context(), "USE mydb MATCH (n) RETURN n", cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "mydb", db)
 	require.Equal(t, "MATCH (n) RETURN n", rem)
 
-	db, rem, hasUse, err = parseLeadingUseClause("USE `db``name` RETURN 1")
+	db, rem, hasUse, err = parseLeadingUseClause(t.Context(), "USE `db``name` RETURN 1", cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "db`name", db)
 	require.Equal(t, "RETURN 1", rem)
 
-	_, _, hasUse, err = parseLeadingUseClause("MATCH (n) RETURN n")
+	_, _, hasUse, err = parseLeadingUseClause(t.Context(), "MATCH (n) RETURN n", cyphertext.RawSource)
 	require.NoError(t, err)
 	require.False(t, hasUse)
 
-	_, _, hasUse, err = parseLeadingUseClause("USE")
+	_, _, hasUse, err = parseLeadingUseClause(t.Context(), "USE", cyphertext.RawSource)
 	require.Error(t, err)
 	require.True(t, hasUse)
 
 	// A dynamic reference has no static name; it resolves when it runs.
-	db, rem, hasUse, err = parseLeadingUseClause("USE graph.byName('dbx') RETURN 1")
+	db, rem, hasUse, err = parseLeadingUseClause(t.Context(), "USE graph.byName('dbx') RETURN 1", cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "", db)
 	require.Equal(t, "RETURN 1", rem)
 
-	_, _, hasUse, err = parseLeadingUseClause("USE `broken RETURN 1")
+	_, _, hasUse, err = parseLeadingUseClause(t.Context(), "USE `broken RETURN 1", cyphertext.RawSource)
 	require.Error(t, err)
 	require.True(t, hasUse)
 

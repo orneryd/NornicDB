@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"strings"
 	"testing"
 
@@ -225,7 +226,7 @@ func TestRemoteFragmentExecutorExecuteRowsErrorPath(t *testing.T) {
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
 
-	_, _, err := remote.ExecuteRows(context.Background(), &LocationRemote{DBName: "db", URI: "ftp://example.invalid"}, "RETURN 1", nil, "")
+	_, _, err := remote.ExecuteRows(context.Background(), &LocationRemote{DBName: "db", URI: "ftp://example.invalid"}, "RETURN 1", nil, "", storage.RemoteAccessRead)
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "failed to connect to remote") || strings.Contains(err.Error(), "unsupported"), err.Error())
 }
@@ -270,11 +271,14 @@ func TestFabricParserHelperExtraBranches(t *testing.T) {
 	require.Equal(t, -1, indexTopLevelKeyword("RETURN `MATCH` AS word", "MATCH"))
 	require.GreaterOrEqual(t, indexTopLevelKeyword("WITH x MATCH (n) RETURN n", "MATCH"), 0)
 
-	items, ok := parseSimpleBatchedLookupReturnItems("n.name AS name, n.age AS age", "n")
+	items, ok := readPropertyReturnItems("n.name AS name, n.age AS age", "n")
 	require.True(t, ok)
 	require.Equal(t, []string{"name", "age"}, aliasesFromReturnItems(items))
-	require.False(t, func() bool { _, ok := parseSimpleBatchedLookupReturnItems("m.name AS name", "n"); return ok }())
-	require.False(t, func() bool { _, ok := parseSimpleBatchedLookupReturnItems("n.name AS bad-alias", "n"); return ok }())
+	require.False(t, func() bool { _, ok := readPropertyReturnItems("m.name AS name", "n"); return ok }())
+	require.False(t, func() bool {
+		_, ok := readPropertyReturnItems("n.name AS bad-alias", "n")
+		return ok
+	}())
 
 	collectExpr, alias, ok := parseSimpleCollectReturnItem("collect(n) AS nodes")
 	require.True(t, ok)
@@ -283,7 +287,7 @@ func TestFabricParserHelperExtraBranches(t *testing.T) {
 	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("count(n) AS c"); return ok }())
 	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("collect() AS empty"); return ok }())
 
-	countItems, ok := parseSimpleBatchedCountReturnItems("count(*) AS total")
+	countItems, ok := readCountReturnItems("count(*) AS total")
 	require.True(t, ok)
 	require.Equal(t, []string{"total"}, aliasesFromCountReturnItems(countItems))
 	require.Equal(t, []interface{}{int64(0), int64(0)}, zeroCountValues(2))

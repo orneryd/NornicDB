@@ -1,14 +1,45 @@
 package antlr
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
+
+func TestParseEntrypointNestedDiagnosticsUseBoundaryLocale(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	for _, query := range []string{"MATCH (", "RETURN 1 'private-diagnostic-literal' @"} {
+		_, parseErr := Parse(query)
+		for _, err := range []error{parseErr, Validate(query), ValidateContext(context.Background(), query, cyphertext.RawSource)} {
+			var typed *localization.LocalizedError
+			require.ErrorAs(t, err, &typed)
+			for locale, prefix := range map[string]string{"en-US": "syntax error: line ", "es-ES": "error de sintaxis: línea ", "en-XA": "[!! syntax error: [!! line "} {
+				ctx := localization.WithPreferences(context.Background(), language.MustParse(locale))
+				text, _, renderErr := manager.Render(ctx, localization.ErrorRequest(typed))
+				require.NoError(t, renderErr)
+				require.True(t, strings.HasPrefix(text, prefix), "%s: %s", locale, text)
+				if locale == "es-ES" {
+					require.Contains(t, text, "entrada inesperada")
+					require.NotContains(t, text, "unexpected input")
+				}
+				require.NotContains(t, text, "private-diagnostic-literal")
+			}
+			// Reusing pooled validators must not overwrite a returned diagnostic.
+			before := fmt.Sprint(typed.Message.Data)
+			require.Error(t, Validate("RETURN ("))
+			require.Equal(t, before, fmt.Sprint(typed.Message.Data))
+		}
+	}
+}
 
 func requireANTLRLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
 	t.Helper()
@@ -35,7 +66,7 @@ func TestParseEntrypointErrorsHaveLocalizedIdentity(t *testing.T) {
 		require.NotNil(t, result)
 		require.NotEmpty(t, result.Errors)
 		localizedErr := requireANTLRLocalizedError(t, err, localization.MessageCypherANTLRParseSyntaxError, "syntax error: "+result.Errors[0])
-		require.Equal(t, result.Errors[0], localizedErr.Message.Data["Detail"])
+		require.Equal(t, result.Errors[0], fmt.Sprint(localizedErr.Message.Data["Detail"]))
 	})
 
 	t.Run("Validate empty query", func(t *testing.T) {
@@ -46,8 +77,7 @@ func TestParseEntrypointErrorsHaveLocalizedIdentity(t *testing.T) {
 	t.Run("Validate syntax error", func(t *testing.T) {
 		err := Validate("MATCH (")
 		localizedErr := requireANTLRLocalizedError(t, err, localization.MessageCypherANTLRValidateSyntaxError, err.Error())
-		detail, ok := localizedErr.Message.Data["Detail"].(string)
-		require.True(t, ok)
+		detail := fmt.Sprint(localizedErr.Message.Data["Detail"])
 		require.Equal(t, "syntax error: "+detail, err.Error())
 	})
 }
@@ -57,18 +87,18 @@ func TestParseEntrypointCatalogRendering(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherANTLRParseSyntaxError("line 1:7 unexpected token")
 
-	english, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), message)
+	english, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.AmericanEnglish, tag)
 	require.Equal(t, "syntax error: line 1:7 unexpected token", english)
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "error de sintaxis: line 1:7 unexpected token", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! syntax error: line 1:7 unexpected token !!]", pseudo)

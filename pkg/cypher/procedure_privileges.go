@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -146,9 +147,9 @@ func unquoteProcedureGlob(written string) string {
 	var name strings.Builder
 	for i := 0; i < len(written); {
 		if isCypherBacktickByte(written[i]) {
-			if value, end, ok := scanIdentifierToken(written, i); ok {
-				name.WriteString(value)
-				i = end
+			if value, ok := cyphertext.ScanIdentifier(written, i); ok {
+				name.WriteString(value.Value)
+				i = value.End
 				continue
 			}
 		}

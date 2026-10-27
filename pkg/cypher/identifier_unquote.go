@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -11,11 +12,11 @@ import (
 // the name as written (quotes included; normalizeProjectionColumnName removes
 // them), the offset after it, and whether a name starts there.
 func scanSymbolicName(s string, start int) (string, int, bool) {
-	_, end, ok := scanIdentifierToken(s, start)
+	end, ok := cyphertext.ScanIdentifier(s, start)
 	if !ok {
-		return "", end, false
+		return "", end.End, false
 	}
-	return s[start:end], end, true
+	return s[start:end.End], end.End, true
 }
 
 // isPatternVariableName reports whether name is exactly one symbolic name,
@@ -33,20 +34,18 @@ func isPatternVariableName(name string) bool {
 //
 // We accept this form and normalize it to the raw name ("bench_col").
 //
-// This helper intentionally does not attempt to fully implement Cypher's escaping rules
-// for arbitrary identifiers. NornicDB database names should remain simple and are
-// validated elsewhere.
+// The canonical identifier scanner owns quoted closure and doubled-backtick
+// decoding. Database-name admission remains with each command consumer.
 func unquoteBacktickIdentifier(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if len(s) < 2 || !isCypherBacktickByte(s[0]) || !isCypherBacktickByte(s[len(s)-1]) {
 		return s, nil
 	}
-	written, end, ok := scanSymbolicName(s, 0)
-	inner := symbolicNameValue(written)
-	if !ok || end != len(s) || strings.Contains(inner, "`") {
+	name, ok := cyphertext.ScanIdentifier(s, 0)
+	if !ok || !name.Quoted || name.End != len(s) {
 		// Internal parser detail: every caller wraps this cause in an admin or
 		// composite localized error before returning it from query execution.
-		return "", fmt.Errorf("invalid identifier %q: nested backticks are not supported", raw)
+		return "", fmt.Errorf("invalid quoted identifier %q", raw)
 	}
-	return inner, nil
+	return name.Value, nil
 }

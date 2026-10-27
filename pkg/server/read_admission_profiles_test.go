@@ -15,13 +15,13 @@ import (
 func TestReadAdmissionRemoteCompositeProfiles(t *testing.T) {
 	s, users := setupTestServer(t)
 	ctx := context.Background()
-	require.NoError(t, s.dbManager.CreateDatabase("read_local"))
-	require.NoError(t, s.dbManager.CreateDatabase("remote_shadow"))
-	require.NoError(t, s.dbManager.CreateAlias("read_remote", "remote_shadow"))
-	require.NoError(t, s.dbManager.CreateCompositeDatabase("read_remote_only", []multidb.ConstituentRef{
+	require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "read_local"}))
+	require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "remote_shadow"}))
+	require.NoError(t, s.dbManager.CreateAlias(t.Context(), "read_remote", "remote_shadow"))
+	require.NoError(t, s.dbManager.CreateCompositeDatabase(t.Context(), "read_remote_only", []multidb.ConstituentRef{
 		{Alias: "remote", DatabaseName: "read_remote", Type: "remote", AccessMode: "read", URI: "http://127.0.0.1:1"},
 	}))
-	require.NoError(t, s.dbManager.CreateCompositeDatabase("read_mixed", []multidb.ConstituentRef{
+	require.NoError(t, s.dbManager.CreateCompositeDatabase(t.Context(), "read_mixed", []multidb.ConstituentRef{
 		{Alias: "local", DatabaseName: "read_local", Type: "local", AccessMode: "read"},
 		{Alias: "remote", DatabaseName: "read_remote", Type: "remote", AccessMode: "read", URI: "http://127.0.0.1:1"},
 	}))

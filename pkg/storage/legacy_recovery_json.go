@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"strconv"
 	"strings"
@@ -13,9 +14,9 @@ import (
 // An integer lexeme uses int64 (or uint64 for larger positive values); fractional/exponent
 // lexemes remain floating point. New typed recovery records retain exact types.
 func decodeLegacyRecoveryJSON(reader io.Reader, target any) error {
-	decoder := json.NewDecoder(reader)
-	decoder.UseNumber()
-	if err := decoder.Decode(target); err != nil {
+	decoder := jsontext.NewDecoder(reader)
+	var raw jsontext.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
 	var trailing any
@@ -23,6 +24,9 @@ func decodeLegacyRecoveryJSON(reader io.Reader, target any) error {
 		if err == nil {
 			return fmt.Errorf("unexpected extra legacy recovery JSON value")
 		}
+		return err
+	}
+	if err := decodeLegacyRecoveryRecord(raw, target); err != nil {
 		return err
 	}
 	var firstErr error

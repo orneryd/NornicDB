@@ -3,8 +3,8 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // WAL entry payload codec. The outer record framing (magic/version/length/
@@ -52,7 +52,7 @@ func decodeWALEntry(payload []byte, version uint8) (WALEntry, error) {
 	}
 	if version < walFormatVersionV3 {
 		var e WALEntry
-		if err := json.Unmarshal(payload, &e); err != nil {
+		if err := jsontext.Unmarshal(payload, &e); err != nil {
 			return WALEntry{}, err
 		}
 		return e, nil
@@ -72,7 +72,7 @@ func decodeWALEntry(payload []byte, version uint8) (WALEntry, error) {
 	}
 
 	var e WALEntry
-	if err := json.Unmarshal(payload[4:dataOff], &e); err != nil {
+	if err := jsontext.Unmarshal(payload[4:dataOff], &e); err != nil {
 		return WALEntry{}, err
 	}
 	e.Data = payload[dataOff+4:]

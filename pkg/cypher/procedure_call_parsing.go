@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -37,7 +38,7 @@ func extractCallArguments(cypher string) ([]interface{}, error) {
 }
 
 func findMatchingCallParen(s string, open int) int {
-	return findMatchingDelimiter(s, open, '(', ')')
+	return cyphertext.FindMatchingDelimiter(s, open, '(', ')', cyphertext.OpeningDelimiter)
 }
 
 func parseProcedureArgLiteral(s string) (interface{}, error) {

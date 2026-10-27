@@ -45,7 +45,7 @@ func TestHTTPDatabaseLimitStatus(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	limits := multidb.DefaultLimits()
 	limits.Query.MaxQueryTime = 100 * time.Millisecond
-	require.NoError(t, server.dbManager.SetDatabaseLimits("nornic", limits))
+	require.NoError(t, server.dbManager.SetDatabaseLimits(t.Context(), "nornic", limits))
 	host := httptest.NewServer(server.buildRouter())
 	defer host.Close()
 	payload, err := json.Marshal(TransactionRequest{Statements: []StatementRequest{{Statement: "UNWIND range(1, 100000000) AS x WITH x WHERE x < 0 RETURN count(x) AS c"}}})

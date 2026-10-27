@@ -162,7 +162,7 @@ func TestAPOCNativeRemoteTransportPaths(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded_fixture", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded_fixture", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	path := rows[0][5].(storage.RemotePathValue)
 	e := nativeAPOCFixture(t)

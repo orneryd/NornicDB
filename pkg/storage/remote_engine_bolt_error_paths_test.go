@@ -29,7 +29,7 @@ func TestBoltTransport_ErrorPathsWithoutServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	_, _, err := bt.query(ctx, "MATCH (n) RETURN n", nil)
+	_, _, err := bt.query(ctx, "MATCH (n) RETURN n", nil, RemoteAccessRead)
 	require.Error(t, err)
 
 	err = bt.queryBatch(ctx, []remoteStatement{{Statement: "CREATE (n:Tmp)", Parameters: nil}})

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -40,14 +41,14 @@ func splitNormalizationPredicate(expr string) (operand string, negated bool, for
 // word.
 func lastPredicateWord(text string) (rest, word string) {
 	end := len(text)
-	if end == 0 || !isASCIISpace(text[end-1]) {
+	if end == 0 || !cyphertext.IsWhitespaceAt(text, end-1) {
 		return text, ""
 	}
-	for end > 0 && isASCIISpace(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	return text[:start], text[start:end]

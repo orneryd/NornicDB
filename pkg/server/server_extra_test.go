@@ -16,10 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
@@ -910,7 +912,7 @@ func TestHandleSearchAdditionalErrorCoverage(t *testing.T) {
 	})
 
 	t.Run("returns service unavailable while database search is not ready", func(t *testing.T) {
-		requireErr := server.dbManager.CreateDatabase("colddb")
+		requireErr := server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "colddb"})
 		if requireErr != nil {
 			t.Fatalf("CreateDatabase failed: %v", requireErr)
 		}
@@ -1202,7 +1204,7 @@ func TestDBLifecycleHandlers(t *testing.T) {
 	rec = makeRequest(t, server, "POST", "/admin/databases/nornic/mvcc/status", nil, "Bearer "+token)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("lifecycle_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "lifecycle_cmp", []multidb.ConstituentRef{
 		{Alias: "n", DatabaseName: server.dbManager.DefaultDatabaseName(), Type: "local", AccessMode: "read_write"},
 	}))
 	rec = makeRequest(t, server, "GET", "/admin/databases/lifecycle_cmp/mvcc", nil, "Bearer "+token)
@@ -1660,25 +1662,25 @@ func TestRecoveryMiddlewareRecoversPanic(t *testing.T) {
 
 func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	server, _ := setupTestServer(t)
-	adapter := &databaseManagerAdapter{manager: server.dbManager, db: server.db, server: server}
+	adapter := &databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: server.dbManager}, db: server.db, server: server}
 
 	// Alias/lifecycle adapter methods.
-	err := adapter.CreateDatabase("db_adapter_a")
+	err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "db_adapter_a"})
 	assert.NoError(t, err)
-	err = adapter.CreateAlias("alias_a", "db_adapter_a")
+	err = adapter.CreateAlias(t.Context(), "alias_a", "db_adapter_a")
 	assert.NoError(t, err)
 	aliases := adapter.ListAliases("db_adapter_a")
 	assert.NotNil(t, aliases)
 	resolved, err := adapter.ResolveDatabase("alias_a")
 	assert.NoError(t, err)
 	assert.Equal(t, "db_adapter_a", resolved)
-	err = adapter.DropAlias("alias_a")
+	err = adapter.DropAlias(t.Context(), "alias_a")
 	assert.NoError(t, err)
 
 	// Limits adapter methods.
-	err = adapter.SetDatabaseLimits("db_adapter_a", "bad-type")
+	err = adapter.SetDatabaseLimits(t.Context(), "db_adapter_a", "bad-type")
 	assert.Error(t, err)
-	err = adapter.SetDatabaseLimits("db_adapter_a", &multidb.Limits{})
+	err = adapter.SetDatabaseLimits(t.Context(), "db_adapter_a", &multidb.Limits{})
 	assert.NoError(t, err)
 	_, err = adapter.GetDatabaseLimits("db_adapter_a")
 	assert.NoError(t, err)
@@ -1695,12 +1697,12 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 			"auth_mode":     "oidc_forwarding",
 		},
 	}
-	err = adapter.CreateCompositeDatabase("cmp_adapter", constituents)
+	err = adapter.CreateCompositeDatabase(t.Context(), "cmp_adapter", constituents)
 	assert.NoError(t, err)
 	assert.True(t, adapter.IsCompositeDatabase("cmp_adapter"))
-	err = adapter.CreateDatabase("db_adapter_b")
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "db_adapter_b"})
 	assert.NoError(t, err)
-	err = adapter.AddConstituent("cmp_adapter", map[string]interface{}{
+	err = adapter.AddConstituent(t.Context(), "cmp_adapter", map[string]interface{}{
 		"alias":         "extra",
 		"database_name": "db_adapter_b",
 		"type":          "remote",
@@ -1722,19 +1724,63 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.Equal(t, "oidc_forwarding", first.AuthMode)
 	second, ok := constituentList[1].(multidb.ConstituentRef)
 	require.True(t, ok)
-	assert.Equal(t, "https://remote-2.example/nornic-db", second.URI)
-	assert.Equal(t, "spn-prod-b", second.SecretRef)
-	assert.Equal(t, "user_password", second.AuthMode)
-	assert.Equal(t, "svc-user", second.User)
-	err = adapter.RemoveConstituent("cmp_adapter", "extra")
+	require.NotEmpty(t, second.ConnectionV1)
+	require.Empty(t, second.URI)
+	require.Empty(t, second.AuthMode)
+	require.Empty(t, second.User)
+	require.Empty(t, second.Password)
+	secondView, err := server.dbManager.RemoteConstituentForDisplay(second)
+	require.NoError(t, err)
+	assert.Equal(t, "https://remote-2.example/nornic-db", secondView.URI)
+	assert.Equal(t, "spn-prod-b", secondView.SecretRef)
+	assert.Equal(t, "user_password", secondView.AuthMode)
+	assert.Equal(t, "svc-user", secondView.User)
+	system, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	catalogNode, err := system.GetNode("databases:metadata")
+	require.NoError(t, err)
+	require.Contains(t, catalogNode.Properties["data"], second.ConnectionV1)
+	require.NotContains(t, catalogNode.Properties["data"], "svc-pass")
+	require.NotContains(t, catalogNode.Properties["data"], "svc-user")
+	// Exercise this actual adapter's manager through the real HTTP transport.
+	var wireCalls atomic.Int64
+	var wrongAuthentication atomic.Bool
+	wire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wireCalls.Add(1)
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "svc-user" || password != "svc-pass" || r.URL.Path != "/db/db_adapter_b/tx/commit" {
+			wrongAuthentication.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"columns":["marker"],"data":[{"row":["adapter-wire-control"],"meta":[null]}]}],"errors":[]}`)
+	}))
+	defer wire.Close()
+	require.NoError(t, adapter.AddConstituent(t.Context(), "cmp_adapter", map[string]interface{}{"alias": "wire", "database_name": "db_adapter_b", "type": "remote", "access_mode": "read", "uri": wire.URL, "auth_mode": "user_password", "user": "svc-user", "password": "svc-pass"}))
+	remote, err := server.dbManager.GetStorageWithAuth("cmp_adapter.wire", "Bearer adapter-wire-token")
+	require.NoError(t, err)
+	// RemoteEngine.Close releases its completed transport, rather than making
+	// later engine calls return the native ErrStorageClosed sentinel.
+	remote = runtimeFixtureOwner.Own(t, remote)
+	query, ok := remote.(interface {
+		QueryCypher(context.Context, string, map[string]interface{}, storage.RemoteAccessMode) ([]string, [][]interface{}, error)
+	})
+	require.True(t, ok)
+	columns, rows, err := query.QueryCypher(t.Context(), "RETURN 'adapter-wire-control' AS marker", nil, storage.RemoteAccessRead)
+	require.NoError(t, err)
+	require.Equal(t, []string{"marker"}, columns)
+	require.Equal(t, [][]interface{}{{"adapter-wire-control"}}, rows)
+	require.Equal(t, int64(1), wireCalls.Load())
+	require.False(t, wrongAuthentication.Load())
+	require.NoError(t, remote.Close())
+	err = adapter.RemoveConstituent(t.Context(), "cmp_adapter", "extra")
 	assert.NoError(t, err)
-	err = adapter.AddConstituent("cmp_adapter", 123)
+	err = adapter.AddConstituent(t.Context(), "cmp_adapter", 123)
 	assert.Error(t, err)
-	err = adapter.DropCompositeDatabase("cmp_adapter")
+	err = adapter.DropCompositeDatabase(t.Context(), "cmp_adapter")
 	assert.NoError(t, err)
-	err = adapter.DropDatabase("db_adapter_b")
+	err = adapter.DropDatabase(t.Context(), "db_adapter_b")
 	assert.NoError(t, err)
-	err = adapter.DropDatabase("db_adapter_a")
+	err = adapter.DropDatabase(t.Context(), "db_adapter_a")
 	assert.NoError(t, err)
 
 	// Ensure CreatedAt adapter method is exercised.
@@ -2176,12 +2222,12 @@ func TestGPUHandlersNoManagerBranches(t *testing.T) {
 	// Enable/disable/test with no manager.
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/enable", nil)
 	rec = httptest.NewRecorder()
-	server.handleGPUEnable(rec, req)
+	server.handleGPUControl(rec, req, gpuControlEnable)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/disable", nil)
 	rec = httptest.NewRecorder()
-	server.handleGPUDisable(rec, req)
+	server.handleGPUControl(rec, req, gpuControlDisable)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader(`{"node_id":"n1","mode":"cpu"}`))
@@ -2703,12 +2749,12 @@ func TestGPUHandlersInvalidManagerTypeBranches(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/gpu/enable", nil)
 	rec := httptest.NewRecorder()
-	server.handleGPUEnable(rec, req)
+	server.handleGPUControl(rec, req, gpuControlEnable)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/disable", nil)
 	rec = httptest.NewRecorder()
-	server.handleGPUDisable(rec, req)
+	server.handleGPUControl(rec, req, gpuControlDisable)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/admin/gpu/test", strings.NewReader(`{"node_id":"n1","mode":"cpu"}`))

@@ -126,9 +126,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"strings"
 	"sync"
 	"time"
@@ -694,11 +694,7 @@ func (a *Authenticator) loadUsers() error {
 		}
 
 		// Deserialize user from node properties
-		user, err := a.userFromNode(n)
-		if err != nil {
-			// Log but continue - don't fail on corrupt user data
-			return nil
-		}
+		user := mapUserRecord(loadUserRecord, nil, n).User
 		loadedUsers = append(loadedUsers, user)
 		return nil
 	})
@@ -727,7 +723,7 @@ func (a *Authenticator) saveUser(user *User) error {
 }
 
 func (a *Authenticator) saveUserInTransaction(user *User) error {
-	node := a.userToNode(user)
+	node := mapUserRecord(storeUserRecord, user, nil).Node
 
 	// Check if node exists
 	nodeID := storage.NodeID("user:" + user.Username)
@@ -754,108 +750,6 @@ func (a *Authenticator) deleteUserNode(username string) error {
 	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
 		return view.DeleteNode(nodeID)
 	})
-}
-
-// userToNode converts a User to a storage.Node for persistence.
-func (a *Authenticator) userToNode(user *User) *storage.Node {
-	// Serialize roles
-	rolesJSON, _ := json.Marshal(user.Roles)
-
-	// Serialize metadata
-	metadataJSON, _ := json.Marshal(user.Metadata)
-
-	properties := map[string]any{
-		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"password_hash": user.PasswordHash,
-		"roles":         string(rolesJSON),
-		"created_at":    user.CreatedAt.Unix(),
-		"updated_at":    user.UpdatedAt.Unix(),
-		"last_login":    int64(0),
-		"failed_logins": user.FailedLogins,
-		"locked_until":  int64(0),
-		"disabled":      user.Disabled,
-		"metadata":      string(metadataJSON),
-	}
-
-	// Set timestamps
-	if !user.LastLogin.IsZero() {
-		properties["last_login"] = user.LastLogin.Unix()
-	}
-	if !user.LockedUntil.IsZero() {
-		properties["locked_until"] = user.LockedUntil.Unix()
-	}
-
-	return &storage.Node{
-		ID:         storage.NodeID("user:" + user.Username),
-		Labels:     []string{"_User", "_System"},
-		Properties: properties,
-		CreatedAt:  user.CreatedAt,
-		UpdatedAt:  user.UpdatedAt,
-	}
-}
-
-// userFromNode converts a storage.Node to a User.
-func (a *Authenticator) userFromNode(n *storage.Node) (*User, error) {
-	user := &User{
-		Metadata: make(map[string]string),
-	}
-
-	// Extract basic properties
-	if id, ok := n.Properties["id"].(string); ok {
-		user.ID = id
-	}
-	if username, ok := n.Properties["username"].(string); ok {
-		user.Username = username
-	}
-	if email, ok := n.Properties["email"].(string); ok {
-		user.Email = email
-	}
-	if passwordHash, ok := n.Properties["password_hash"].(string); ok {
-		user.PasswordHash = passwordHash
-	}
-
-	// Extract roles
-	if rolesJSON, ok := n.Properties["roles"].(string); ok {
-		var roles []Role
-		if err := json.Unmarshal([]byte(rolesJSON), &roles); err == nil {
-			user.Roles = roles
-		}
-	}
-
-	// Extract timestamps
-	if createdAt, ok := n.Properties["created_at"].(int64); ok {
-		user.CreatedAt = time.Unix(createdAt, 0)
-	} else {
-		user.CreatedAt = n.CreatedAt
-	}
-	if updatedAt, ok := n.Properties["updated_at"].(int64); ok {
-		user.UpdatedAt = time.Unix(updatedAt, 0)
-	} else {
-		user.UpdatedAt = n.UpdatedAt
-	}
-	if lastLogin, ok := n.Properties["last_login"].(int64); ok && lastLogin > 0 {
-		user.LastLogin = time.Unix(lastLogin, 0)
-	}
-	if lockedUntil, ok := n.Properties["locked_until"].(int64); ok && lockedUntil > 0 {
-		user.LockedUntil = time.Unix(lockedUntil, 0)
-	}
-
-	// Extract other fields
-	if failedLogins, ok := n.Properties["failed_logins"].(int64); ok {
-		user.FailedLogins = int(failedLogins)
-	}
-	if disabled, ok := n.Properties["disabled"].(bool); ok {
-		user.Disabled = disabled
-	}
-
-	// Extract metadata
-	if metadataJSON, ok := n.Properties["metadata"].(string); ok {
-		json.Unmarshal([]byte(metadataJSON), &user.Metadata)
-	}
-
-	return user, nil
 }
 
 // CreateUser creates a new user account with the given credentials and roles.
@@ -1113,7 +1007,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 	a.saveUser(user) // Ignore error - don't fail authentication on storage issues
 
 	// Generate JWT token
-	token, err := a.generateJWT(user)
+	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate token: %w", err)
 	}
@@ -1666,10 +1560,6 @@ func AuthenticationDisabled(a *Authenticator) bool {
 //   - Store the secret securely (e.g., HashiCorp Vault, K8s Secrets)
 //   - Rotate secrets periodically by generating new tokens
 func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, error) {
-	if len(a.config.JWTSecret) == 0 {
-		return "", ErrMissingSecret
-	}
-
 	// Create a virtual user for the cluster node
 	user := &User{
 		ID:       clusterSubjectPrefix + nodeID,
@@ -1677,8 +1567,11 @@ func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, 
 		Roles:    []Role{role},
 	}
 
-	token, err := a.generateJWT(user)
+	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
 	if err != nil {
+		if err == ErrMissingSecret {
+			return "", err
+		}
 		return "", fmt.Errorf("failed to generate cluster token: %w", err)
 	}
 
@@ -1707,43 +1600,11 @@ func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, 
 //	// Generate a token that expires in 7 days
 //	token, _ := auth.GenerateClusterTokenWithExpiry("node-2", auth.RoleAdmin, 7*24*time.Hour)
 func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role, expiry time.Duration) (string, error) {
-	if len(a.config.JWTSecret) == 0 {
-		return "", ErrMissingSecret
+	user := &User{ID: clusterSubjectPrefix + nodeID, Username: nodeID, Roles: []Role{role}}
+	token, err := a.issueUserJWT(user, expiry)
+	if err != nil {
+		return "", err
 	}
-
-	now := time.Now().Unix()
-
-	claims := JWTClaims{
-		Sub:      clusterSubjectPrefix + nodeID,
-		Username: nodeID,
-		Roles:    []string{string(role)},
-		Iat:      now,
-	}
-
-	// Set expiration if provided
-	if expiry > 0 {
-		claims.Exp = now + int64(expiry.Seconds())
-	}
-
-	// Build JWT manually (header.payload.signature)
-	header := map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	}
-
-	headerJSON, _ := json.Marshal(header)
-	claimsJSON, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	// Sign with HMAC-SHA256
-	message := headerB64 + "." + claimsB64
-	mac := hmac.New(sha256.New, a.config.JWTSecret)
-	mac.Write([]byte(message))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	token := message + "." + signature
 
 	a.logAudit(AuditEvent{
 		Timestamp: time.Now(),
@@ -1768,50 +1629,10 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 //
 // Returns the raw JWT token string.
 func (a *Authenticator) GenerateAPIToken(user *User, subject string, expiry time.Duration) (string, error) {
-	if len(a.config.JWTSecret) == 0 {
-		return "", ErrMissingSecret
+	token, err := a.issueUserJWT(user, expiry)
+	if err != nil {
+		return "", err
 	}
-
-	now := time.Now().Unix()
-
-	// Convert roles to strings
-	roles := make([]string, len(user.Roles))
-	for i, r := range user.Roles {
-		roles[i] = string(r)
-	}
-
-	claims := JWTClaims{
-		Sub:      user.ID,
-		Email:    user.Email,
-		Username: user.Username,
-		Roles:    roles,
-		Iat:      now,
-	}
-
-	// Set expiration if provided
-	if expiry > 0 {
-		claims.Exp = now + int64(expiry.Seconds())
-	}
-
-	// Build JWT manually (header.payload.signature)
-	header := map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	}
-
-	headerJSON, _ := json.Marshal(header)
-	claimsJSON, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
-
-	// Sign with HMAC-SHA256
-	message := headerB64 + "." + claimsB64
-	mac := hmac.New(sha256.New, a.config.JWTSecret)
-	mac.Write([]byte(message))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	token := message + "." + signature
 
 	a.logAudit(AuditEvent{
 		Timestamp: time.Now(),
@@ -1827,9 +1648,9 @@ func (a *Authenticator) GenerateAPIToken(user *User, subject string, expiry time
 
 // JWT Generation and Validation
 
-// generateJWT creates a JWT token for the user.
+// issueUserJWT owns the shared user claim projection and HS256 signing product.
 // Uses HS256 algorithm.
-func (a *Authenticator) generateJWT(user *User) (string, error) {
+func (a *Authenticator) issueUserJWT(user *User, expiry time.Duration) (string, error) {
 	if len(a.config.JWTSecret) == 0 {
 		return "", ErrMissingSecret
 	}
@@ -1851,8 +1672,8 @@ func (a *Authenticator) generateJWT(user *User) (string, error) {
 	}
 
 	// Only set expiration if configured (0 = never expire)
-	if a.config.TokenExpiry > 0 {
-		claims.Exp = now + int64(a.config.TokenExpiry.Seconds())
+	if expiry > 0 {
+		claims.Exp = now + int64(expiry.Seconds())
 	}
 
 	// Build JWT manually (header.payload.signature)
@@ -1861,8 +1682,8 @@ func (a *Authenticator) generateJWT(user *User) (string, error) {
 		"typ": "JWT",
 	}
 
-	headerJSON, _ := json.Marshal(header)
-	claimsJSON, _ := json.Marshal(claims)
+	headerJSON, _ := jsontext.Marshal(header)
+	claimsJSON, _ := jsontext.Marshal(claims)
 
 	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
@@ -1905,7 +1726,7 @@ func (a *Authenticator) verifyJWT(token string) (*JWTClaims, error) {
 	}
 
 	var claims JWTClaims
-	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
+	if err := jsontext.Unmarshal(claimsJSON, &claims); err != nil {
 		return nil, ErrInvalidToken
 	}
 

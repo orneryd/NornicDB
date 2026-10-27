@@ -146,17 +146,17 @@ func TestCypherCommandRoutingUseGraphMessagesRender(t *testing.T) {
 			require.Equal(t, testCase.data, testCase.message.Data, id)
 		}
 
-		english, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), testCase.message)
+		english, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), MessageRequest(testCase.message))
 		require.NoError(t, err, id)
 		require.Equal(t, language.AmericanEnglish, tag, id)
 		require.Equal(t, testCase.english, english, id)
 
-		spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), testCase.message)
+		spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), MessageRequest(testCase.message))
 		require.NoError(t, err, id)
 		require.Equal(t, language.EuropeanSpanish, tag, id)
 		require.Equal(t, testCase.spanish, spanish, id)
 
-		pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), testCase.message)
+		pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), MessageRequest(testCase.message))
 		require.NoError(t, err, id)
 		require.Equal(t, pseudoTag, tag, id)
 		require.Equal(t, "[!! "+testCase.english+" !!]", pseudo, id)

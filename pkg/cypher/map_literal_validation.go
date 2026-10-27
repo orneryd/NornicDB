@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // validateStaticMapKeys rejects malformed symbolic map keys before either
 // parser frontend or executor can normalize them. Braces without a top-level
@@ -41,7 +44,7 @@ func validateStaticMapKeys(query string) error {
 		if subqueryExpressionAfterLiveByte(query, index, previous) {
 			// Validate in the nearest statement scope: an outer RETURN must
 			// not turn a nested MATCH property map into a map projection.
-			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
+			if close := cyphertext.FindMatchingDelimiter(query, index, '{', '}', cyphertext.OpeningDelimiter); close >= 0 {
 				if err := validateStaticMapKeys(query[index+1 : close]); err != nil {
 					return err
 				}
@@ -55,7 +58,7 @@ func validateStaticMapKeys(query string) error {
 		if quantifiedGroupQuantifierAt(query, index) {
 			continue
 		}
-		close := findMatchingDelimiter(query, index, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(query, index, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			continue
 		}
@@ -149,17 +152,17 @@ func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 			return false
 		}
 		index--
-		for index >= 0 && isCypherWhitespace(query[index]) {
+		for index >= 0 && cyphertext.IsWhitespaceAt(query, index) {
 			index--
 		}
 		wordEnd := index + 1
-		for index >= 0 && isIdentByte(query[index]) {
+		for index >= 0 && cyphertext.NamePartAt(query, index) {
 			index--
 		}
 		return strings.EqualFold(query[index+1:wordEnd], "CALL")
 	}
 	end := index + 1
-	for index >= 0 && isIdentByte(query[index]) {
+	for index >= 0 && cyphertext.NamePartAt(query, index) {
 		index--
 	}
 	start := index + 1
@@ -176,7 +179,7 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 		return false
 	}
 	precedingToken := start - 1
-	for precedingToken >= 0 && isCypherWhitespace(query[precedingToken]) {
+	for precedingToken >= 0 && cyphertext.IsWhitespaceAt(query, precedingToken) {
 		precedingToken--
 	}
 	if precedingToken >= 0 {
@@ -203,7 +206,7 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	index := braceIndex + 1
 	for index < len(query) {
-		if isCypherWhitespace(query[index]) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			index++
 			continue
 		}
@@ -222,9 +225,7 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 		return true
 	}
 	start := index
-	for index < len(query) && isIdentByte(query[index]) {
-		index++
-	}
+	index = cyphertext.NamePartEnd(query, index)
 	if index == start {
 		return false
 	}
@@ -242,10 +243,6 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	default:
 		return false
 	}
-}
-
-func isCypherWhitespace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // inProjectionClause reports whether position lies in a RETURN, WITH, UNWIND
@@ -278,7 +275,7 @@ func undefinedStandaloneMapValue(expression string) string {
 			continue
 		}
 		value := strings.TrimSpace(part[separator+1:])
-		if isValidIdentifier(value) && !strings.EqualFold(value, "null") &&
+		if cyphertext.IsIdentifier(value) && !strings.EqualFold(value, "null") &&
 			!strings.EqualFold(value, "true") && !strings.EqualFold(value, "false") {
 			return value
 		}

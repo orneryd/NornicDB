@@ -1,6 +1,9 @@
 package fabric
 
 import (
+	"context"
+	"errors"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -51,21 +54,13 @@ func useSyntaxError(message localization.Message) error {
 	return &UseSyntaxError{Message: message}
 }
 
-// useClauseFollowers are the words Neo4j's grammar accepts after the graph
-// reference of a top-level USE clause, in the order of Neo4j's SyntaxError
-// "expected …" list (Neo4j 5.26). START / STOP DATABASE and ENABLE SERVER
-// are listed by their first word.
-var useClauseFollowers = [...]string{"FOREACH", "ALTER", "ORDER", "CALL", "CREATE", "LOAD", "START", "STOP",
-	"DEALLOCATE", "DELETE", "DENY", "DETACH", "DROP", "DRYRUN", "FINISH", "GRANT", "INSERT", "LIMIT", "MATCH",
-	"MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REALLOCATE", "REMOVE", "RENAME", "RETURN", "REVOKE", "ENABLE",
-	"SET", "SHOW", "SKIP", "TERMINATE", "UNION", "UNWIND", "USE", "WITH"}
-
-// subqueryUseClauseFollowers are the words Neo4j's grammar accepts after
-// the graph reference of a USE clause that starts a subquery (CALL { USE …
-// }): the query clauses, no administration commands.
-var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE", "LOAD", "DELETE", "DETACH",
-	"FINISH", "INSERT", "LIMIT", "MATCH", "MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REMOVE", "RETURN", "SET",
-	"SKIP", "UNION", "UNWIND", "USE", "WITH"}
+// UseClauseReference retains source coordinates separately from a routed
+// graph's semantic identity, which remains valid after fragment rewriting.
+// End is a byte offset in the supplied query at the selected source stage.
+type UseClauseReference struct {
+	UseClause
+	End int
+}
 
 // ParseUseClause reads a leading USE clause as Neo4j 5.26's grammar does
 // (#738). It is the one USE parser: the Cypher executor, the Fabric planner
@@ -87,27 +82,51 @@ var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE
 // Errors are *UseSyntaxError with Neo4j's message. The syntax is checked
 // before any graph is looked up, so a bad statement is a SyntaxError even
 // when the graph doesn't exist.
-func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining string, hasUse bool, err error) {
-	trimmed := strings.TrimSpace(query)
-	if !startsWithWordFold(trimmed, "USE") {
-		return UseClause{}, query, false, nil
+func ParseUseClause(ctx context.Context, query string, inSubquery bool, stage SourceStage) (UseClause, string, bool, error) {
+	reference, remaining, hasUse, err := ReadUseClause(ctx, query, inSubquery, stage)
+	return reference.UseClause, remaining, hasUse, err
+}
+
+// ReadUseClause consumes the shared grammar product and applies routing policy.
+// RawSource preserves original Args, End and remaining source while names are
+// decoded. AcceptedSource retains compiler spellings without another projection.
+// The original context governs admission and grammar work, including no-USE input.
+func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage SourceStage) (clause UseClauseReference, remaining string, hasUse bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return UseClauseReference{}, "", false, err
 	}
-	start := skipSpacesAndComments(trimmed, len("USE"))
-	if word, next, ok := scanWord(trimmed, start); ok && strings.EqualFold(word, "GRAPH") {
-		// GRAPH is the keyword when a name follows it that is not a clause
-		// keyword; otherwise it is the graph's name.
-		after := skipSpacesAndComments(trimmed, next)
-		if after < len(trimmed) && (cyphertext.IsBacktick(trimmed[after]) || isNameStart(trimmed[after])) {
-			if follow, _, ok := scanWord(trimmed, after); !ok || !isUseClauseFollower(follow, inSubquery) {
-				start = after
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return UseClauseReference{}, "", false, source.Err
+	}
+	leading := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
+	trailing := max(leading, len(strings.TrimRightFunc(source.Text, cyphertext.IsWhitespace)))
+	view := source.Window(leading, trailing)
+	trimmed := view.Text
+	if !startsWithWordFold(trimmed, "USE") {
+		return UseClauseReference{}, query, false, nil
+	}
+	reference, readErr := cypherantlr.ReadUseReference(ctx, view)
+	if readErr != nil {
+		if ctx.Err() != nil {
+			return UseClauseReference{}, "", true, ctx.Err()
+		}
+		var position *cypherantlr.UseReferenceError
+		if errors.As(readErr, &position) {
+			input := inputToken(trimmed, position.Offset)
+			switch {
+			case position.Function:
+				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphFunctionArgument(input))
+			case position.NamePart:
+				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphNamePart(input))
+			default:
+				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(input))
 			}
 		}
+		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(trimmed, skipSpacesAndComments(trimmed, len("USE")))))
 	}
-
-	clause, end, err := scanGraphReference(trimmed, start)
-	if err != nil {
-		return UseClause{}, "", true, err
-	}
+	clause = UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args}, End: reference.End}
+	end := reference.AcceptedEnd
 
 	next := skipSpacesAndComments(trimmed, end)
 	if next < len(trimmed) && trimmed[next] == ';' {
@@ -116,72 +135,33 @@ func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining 
 		// statement is Neo4j's "Expected exactly one statement per query
 		// but got: <n>".
 		if more := statementsAfter(trimmed[next:]); more > 0 {
-			return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingMultipleStatements(1 + more))
+			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingMultipleStatements(1 + more))
 		}
 		next = len(trimmed)
 	}
 	if next >= len(trimmed) {
 		if inSubquery {
-			return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseSubqueryMustConclude())
+			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseSubqueryMustConclude())
 		}
-		return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseQueryCannotConclude())
+		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseQueryCannotConclude())
 	}
 	word, _, ok := scanWord(trimmed, next)
-	if !ok || !isUseClauseFollower(word, inSubquery) {
+	if !ok || !cypherantlr.IsUseClauseFollower(word, inSubquery) {
 		if inSubquery {
-			return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidSubqueryClauseAfterGraph(inputToken(trimmed, next)))
+			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidSubqueryClauseAfterGraph(inputToken(trimmed, next)))
 		}
-		return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidClauseAfterGraph(inputToken(trimmed, next)))
+		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidClauseAfterGraph(inputToken(trimmed, next)))
 	}
 	if strings.EqualFold(word, "USE") {
-		return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseNotFirstClause())
+		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseNotFirstClause())
 	}
 	if !inSubquery && IsAdministrationCommand(trimmed[next:]) {
-		return UseClause{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseAdministrationCommand())
+		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseAdministrationCommand())
 	}
-	return clause, strings.TrimSpace(trimmed[end:]), true, nil
-}
-
-// scanGraphReference reads the graph reference at start: a name, or a
-// function call (a dynamic reference). It returns the clause and where the
-// reference ends.
-func scanGraphReference(s string, start int) (UseClause, int, error) {
-	var parts []string
-	i := start
-	quoted := false
-	for {
-		if i < len(s) && cyphertext.IsBacktick(s[i]) {
-			part, next, ok := scanBacktickName(s, i)
-			if !ok {
-				return UseClause{}, start, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference("`"))
-			}
-			parts = append(parts, part)
-			quoted = true
-			i = next
-		} else if i < len(s) && isNameStart(s[i]) {
-			word, next, _ := scanWord(s, i)
-			parts = append(parts, word)
-			i = next
-		} else if len(parts) == 0 {
-			return UseClause{}, start, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(s, i)))
-		} else {
-			return UseClause{}, start, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphNamePart(inputToken(s, i)))
-		}
-		next := skipSpacesAndComments(s, i)
-		if next < len(s) && s[next] == '(' && !quoted {
-			// A function call: a dynamic graph reference.
-			closeIdx, ok := matchingParen(s, next)
-			if !ok {
-				return UseClause{}, start, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphFunctionArgument(inputToken(s, len(s))))
-			}
-			args := splitArguments(s[next+1 : closeIdx])
-			return UseClause{Function: strings.Join(parts, "."), Args: args}, closeIdx + 1, nil
-		}
-		if next >= len(s) || s[next] != '.' {
-			return UseClause{Name: strings.Join(parts, ".")}, i, nil
-		}
-		i = skipSpacesAndComments(s, next+1)
-	}
+	restStart := end + len(trimmed[end:]) - len(strings.TrimLeftFunc(trimmed[end:], cyphertext.IsWhitespace))
+	restEnd := max(restStart, len(strings.TrimRightFunc(trimmed, cyphertext.IsWhitespace)))
+	restSpan, _ := view.OriginalSpan(cyphertext.Span{Start: restStart, End: restEnd}, cyphertext.SourceExtent)
+	return clause, source.Original[restSpan.Start:restSpan.End], true, nil
 }
 
 // IsAdministrationCommand reports whether the statement is one of Neo4j's
@@ -235,36 +215,23 @@ func IsAdministrationCommand(statement string) bool {
 	return false
 }
 
-// isUseClauseFollower reports whether word may follow a USE clause's graph
-// reference (useClauseFollowers, subqueryUseClauseFollowers).
-func isUseClauseFollower(word string, inSubquery bool) bool {
-	followers := useClauseFollowers[:]
-	if inSubquery {
-		followers = subqueryUseClauseFollowers[:]
-	}
-	for _, follower := range followers {
-		if strings.EqualFold(word, follower) {
-			return true
-		}
-	}
-	return false
-}
-
 // inputToken is the token Neo4j names in "Invalid input '…'" at i: the run
-// of identifier bytes (digits included: '1abc'), else the one byte, else ”
+// of an identifier, an invalid digit/name run ('1abc'), or one rune, else ”
 // at the end of the text.
 func inputToken(s string, i int) string {
 	if i >= len(s) {
 		return ""
 	}
-	j := i
-	for j < len(s) && isNameByte(s[j]) {
-		j++
+	if s[i] == '$' {
+		return s[i : i+1]
 	}
-	if j > i {
-		return s[i:j]
+	if name, ok := cyphertext.ScanIdentifier(s, i); ok {
+		return s[i:name.End]
 	}
-	return s[i : i+1]
+	if cyphertext.IsDigit(s[i]) {
+		return s[i:cyphertext.NamePartEnd(s, i)]
+	}
+	return string(cyphertext.RuneAt(s, i))
 }
 
 // leadingWords returns up to n leading words of statement, upper-cased,
@@ -278,6 +245,13 @@ func leadingWords(statement string, n int) []string {
 		if !ok {
 			break
 		}
+		// These products classify reserved grammar words, not identifiers.
+		// Unicode case folding must not turn a name into a reserved token.
+		for j := 0; j < len(word); j++ {
+			if word[j] >= 0x80 {
+				return words
+			}
+		}
 		words = append(words, strings.ToUpper(word))
 		i = skipSpacesAndComments(statement, next)
 	}
@@ -288,40 +262,17 @@ func leadingWords(statement string, n int) []string {
 // followed by a byte that can't continue a name.
 func startsWithWordFold(s, word string) bool {
 	return len(s) >= len(word) && strings.EqualFold(s[:len(word)], word) &&
-		(len(s) == len(word) || !isNameByte(s[len(word)]))
+		(len(s) == len(word) || !cyphertext.NamePartAt(s, len(word)))
 }
 
 // scanWord reads the unquoted name at i: a letter, '_' or non-ASCII byte,
 // then name bytes.
 func scanWord(s string, i int) (string, int, bool) {
-	if i >= len(s) || !isNameStart(s[i]) {
+	name, ok := cyphertext.ScanIdentifier(s, i)
+	if !ok || name.Quoted {
 		return "", i, false
 	}
-	j := i + 1
-	for j < len(s) && isNameByte(s[j]) {
-		j++
-	}
-	return s[i:j], j, true
-}
-
-// scanBacktickName reads the backtick-quoted name at start (“ escapes a
-// backtick) and returns it without the quotes and where it ends.
-func scanBacktickName(s string, start int) (string, int, bool) {
-	end, closed := cyphertext.ScanQuotedText(s, start)
-	if !closed || !cyphertext.IsBacktick(s[start]) {
-		return "", start, false
-	}
-	return strings.ReplaceAll(s[start+1:end-1], "``", "`"), end, true
-}
-
-// isNameStart reports whether b starts an unquoted name: a letter, '_' or a
-// non-ASCII byte (a digit does not: USE 1abc is a SyntaxError).
-func isNameStart(b byte) bool {
-	return b >= 0x80 || b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
-}
-
-func isNameByte(b byte) bool {
-	return isNameStart(b) || (b >= '0' && b <= '9')
+	return name.Value, name.End, true
 }
 
 // statementsAfter counts the statements in rest, text that starts at a
@@ -362,27 +313,8 @@ func statementsAfter(rest string) int {
 // skipSpacesAndComments returns the index of the first byte at or after i
 // that is not whitespace or part of a // or /* */ comment.
 func skipSpacesAndComments(s string, i int) int {
-	for i < len(s) {
-		switch {
-		case isWhitespace(s[i]):
-			i++
-		case s[i] == '/' && i+1 < len(s) && s[i+1] == '/':
-			end := strings.IndexByte(s[i:], '\n')
-			if end < 0 {
-				return len(s)
-			}
-			i += end + 1
-		case s[i] == '/' && i+1 < len(s) && s[i+1] == '*':
-			end := strings.Index(s[i+2:], "*/")
-			if end < 0 {
-				return len(s)
-			}
-			i += 2 + end + 2
-		default:
-			return i
-		}
-	}
-	return i
+	end, _ := cyphertext.GapEnd(s, i)
+	return end
 }
 
 // matchingParen returns the index of the ')' closing the '(' at open,
@@ -405,34 +337,6 @@ func matchingParen(s string, open int) (int, bool) {
 		}
 	}
 	return -1, false
-}
-
-// splitArguments splits a function call's argument text at top-level
-// commas and trims each argument.
-func splitArguments(text string) []string {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	var args []string
-	depth, start := 0, 0
-	for i := 0; i < len(text); i++ {
-		if end, quoted := cyphertext.SkipToken(text, i); quoted {
-			i = end - 1
-			continue
-		}
-		switch text[i] {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case ',':
-			if depth == 0 {
-				args = append(args, strings.TrimSpace(text[start:i]))
-				start = i + 1
-			}
-		}
-	}
-	return append(args, strings.TrimSpace(text[start:]))
 }
 
 // doubleQuoteStringLiterals writes an expression's single-quoted string
@@ -465,3 +369,5 @@ func doubleQuoteStringLiterals(expression string) string {
 	}
 	return b.String()
 }
+
+func useKeywordAt(query string, at int) bool { return keywordAt(query, at, "USE") }

@@ -9,7 +9,7 @@ import (
 )
 
 func TestRule73CachedHeimdallViewsDropCycles64(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,13 +17,13 @@ func TestRule73CachedHeimdallViewsDropCycles64(t *testing.T) {
 	router := newHeimdallDBRouter(nil, manager, nil)
 	for i := range 64 {
 		name := fmt.Sprintf("gate_cached_%d", i)
-		if err := manager.CreateDatabase(name); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, _, err := router.executorForDatabase(name); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.DropDatabase(name); err != nil {
+		if err := manager.DropDatabase(t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 	}

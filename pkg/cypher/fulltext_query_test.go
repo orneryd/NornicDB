@@ -697,7 +697,9 @@ func TestDecodeCypherStringLiteral(t *testing.T) {
 	}{
 		{`'foo'`, "foo"},
 		{`"foo"`, "foo"},
-		{`'it\\'s'`, `it\'s`}, // \\ -> \, then \' -> unknown, preserved as \'
+		{`'it\\'s'`, `'it\\'s'`}, // not one string token; preserve the invalid source
+		{`'it\'s'`, "it's"},      // a valid escaped quote decodes
+		{`'it''s'`, `'it''s'`},   // adjacent literals are not a single token
 		{`'has \\backslash'`, `has \backslash`},
 		{`'has \n newline'`, "has \n newline"},
 		{`'has \t tab'`, "has \t tab"},

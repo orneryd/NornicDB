@@ -9,6 +9,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -39,7 +40,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 				continue
 			}
 			openParen := idx + len(upperFunc)
-			for openParen < len(cypher) && (cypher[openParen] == ' ' || cypher[openParen] == '\t' || cypher[openParen] == '\n' || cypher[openParen] == '\r') {
+			for openParen < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, openParen)) {
 				openParen++
 			}
 			if openParen >= len(cypher) || cypher[openParen] != '(' {
@@ -78,7 +79,7 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	if err := shortestPathPatternError(funcName, pattern, match); err != nil {
 		return nil, true, err
 	}
-	rowCtx, prepared, err := e.preparePatternRow(ctx, pattern, entityRow(ctx, nodes, nil))
+	rowCtx, prepared, err := e.bindPatternProperties(ctx, pattern, entityRow(ctx, nodes, nil))
 	if err != nil {
 		return nil, true, err
 	}

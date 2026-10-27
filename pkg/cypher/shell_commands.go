@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -105,12 +106,12 @@ func consumeShellMapCommand(input string) (string, int, bool) {
 	if start == -1 {
 		return "", 0, false
 	}
-	close := findMatchingDelimiter(input, start, '{', '}')
+	close := cyphertext.FindMatchingDelimiter(input, start, '{', '}', cyphertext.OpeningDelimiter)
 	if close < 0 {
 		return "", 0, false
 	}
 	end := close + 1
-	for end < len(input) && (input[end] == ';' || input[end] == ' ' || input[end] == '\t' || input[end] == '\r') {
+	for end < len(input) && (input[end] == ';' || cyphertext.IsWhitespaceAt(input, end)) {
 		end++
 	}
 	if end < len(input) && input[end] == '\n' {
@@ -320,7 +321,7 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 
 		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
 		if err != nil {
-			if isValidIdentifier(valueExpr) {
+			if cyphertext.IsIdentifier(valueExpr) {
 				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)
 			}
 			cause := fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)

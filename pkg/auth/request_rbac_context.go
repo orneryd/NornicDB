@@ -7,6 +7,8 @@ package auth
 import (
 	"context"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 type requestRBACKey uint8
@@ -103,7 +105,7 @@ func (s *RequestDatabaseScope) resolve(selection string) (string, bool) {
 }
 
 func normalizeDatabaseSelection(selection string) string {
-	return strings.ToLower(strings.TrimSpace(selection))
+	return cyphertext.NameLower(strings.TrimSpace(selection))
 }
 
 // WithRequestPrincipalRoles attaches the principal's role names to the context.

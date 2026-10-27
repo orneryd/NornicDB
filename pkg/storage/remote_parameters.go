@@ -3,13 +3,13 @@ package storage
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"math"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -191,7 +191,7 @@ func (s remoteStatement) MarshalJSON() ([]byte, error) {
 				w.buf = append(w.buf, ',')
 			}
 			first = false
-			w.buf = appendRemoteJSONString(w.buf, key)
+			w.buf = jsontext.AppendString(w.buf, key)
 			w.buf = append(w.buf, ':')
 			shape, _, err := w.value(value)
 			if err != nil {
@@ -207,7 +207,7 @@ func (s remoteStatement) MarshalJSON() ([]byte, error) {
 		w.buf = append(w.buf, "},"...)
 	}
 	w.buf = append(w.buf, `"statement":`...)
-	w.buf = appendRemoteJSONString(w.buf, remoteHTTPRewrite(s.Statement, shapes))
+	w.buf = jsontext.AppendString(w.buf, remoteHTTPRewrite(s.Statement, shapes))
 	if s.IncludeStats {
 		w.buf = append(w.buf, `,"includeStats":true`...)
 	}
@@ -217,7 +217,7 @@ func (s remoteStatement) MarshalJSON() ([]byte, error) {
 			if i > 0 {
 				w.buf = append(w.buf, ',')
 			}
-			w.buf = appendRemoteJSONString(w.buf, content)
+			w.buf = jsontext.AppendString(w.buf, content)
 		}
 		w.buf = append(w.buf, ']')
 	}
@@ -281,7 +281,7 @@ func (s *remoteHTTPShape) write(b *strings.Builder, reference, variable string, 
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			quoted := remoteQuotedName(key)
+			quoted := cyphertext.PrintIdentifier(key, nil, cyphertext.RawSource)
 			b.WriteString(quoted)
 			b.WriteString(": ")
 			field := reference + "." + quoted
@@ -326,11 +326,6 @@ func (s *remoteHTTPShape) write(b *strings.Builder, reference, variable string, 
 	}
 }
 
-// remoteQuotedName is name as a backtick-quoted Cypher name.
-func remoteQuotedName(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
-
 // remoteHTTPKind is what remoteHTTPWriter.value wrote, for a list's shape.
 type remoteHTTPKind uint8
 
@@ -356,7 +351,7 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 		w.buf = append(w.buf, "null"...)
 		return nil, remoteHTTPNull, nil
 	case string:
-		w.buf = appendRemoteJSONString(w.buf, v)
+		w.buf = jsontext.AppendString(w.buf, v)
 		return nil, remoteHTTPOther, nil
 	case bool:
 		w.buf = strconv.AppendBool(w.buf, v)
@@ -433,7 +428,7 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 	case reflect.Float32, reflect.Float64:
 		return w.float(rv.Float(), rv.Type().Bits())
 	case reflect.String:
-		w.buf = appendRemoteJSONString(w.buf, rv.String())
+		w.buf = jsontext.AppendString(w.buf, rv.String())
 		return nil, remoteHTTPOther, nil
 	case reflect.Slice, reflect.Array:
 		if rv.Type().Elem().Kind() == reflect.Uint8 && rv.Kind() == reflect.Slice {
@@ -459,7 +454,7 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 			return shape, remoteHTTPOther, err
 		}
 	}
-	raw, err := json.Marshal(value)
+	raw, err := jsontext.Marshal(value)
 	if err != nil {
 		return nil, remoteHTTPOther, err
 	}
@@ -496,7 +491,7 @@ func (w *remoteHTTPWriter) object(fields map[string]interface{}) (*remoteHTTPSha
 			w.buf = append(w.buf, ',')
 		}
 		first = false
-		w.buf = appendRemoteJSONString(w.buf, key)
+		w.buf = jsontext.AppendString(w.buf, key)
 		w.buf = append(w.buf, ':')
 		shape, _, err := w.value(item)
 		if err != nil {
@@ -631,7 +626,7 @@ func (w *remoteHTTPWriter) conforming(value interface{}, shape *remoteHTTPShape)
 		if i > 0 {
 			w.buf = append(w.buf, ',')
 		}
-		w.buf = appendRemoteJSONString(w.buf, key)
+		w.buf = jsontext.AppendString(w.buf, key)
 		w.buf = append(w.buf, ':')
 		if shape.fields[i] == nil {
 			own, _, err := w.value(item)
@@ -689,7 +684,7 @@ func (w *remoteHTTPWriter) dateTime(t time.Time) {
 		w.buf = append(w.buf, `,"nanosecond":`...)
 		w.buf = strconv.AppendInt(w.buf, int64(t.Nanosecond()), 10)
 		w.buf = append(w.buf, `,"timezone":`...)
-		w.buf = appendRemoteJSONString(w.buf, zone)
+		w.buf = jsontext.AppendString(w.buf, zone)
 		w.buf = append(w.buf, '}')
 		return
 	}
@@ -715,7 +710,7 @@ func (w *remoteHTTPWriter) timeOfDay(t time.Time) {
 		w.buf = append(w.buf, `,"nanosecond":`...)
 		w.buf = strconv.AppendInt(w.buf, int64(t.Nanosecond()), 10)
 		w.buf = append(w.buf, `,"timezone":`...)
-		w.buf = appendRemoteJSONString(w.buf, remoteOffsetText(offset))
+		w.buf = jsontext.AppendString(w.buf, remoteOffsetText(offset))
 		w.buf = append(w.buf, '}')
 		return
 	}
@@ -798,53 +793,6 @@ func appendRemoteJSONFloat(buf []byte, value float64, bitSize int) []byte {
 
 // appendRemoteJSONString appends s as a JSON string. Invalid UTF-8 is
 // written as U+FFFD, as encoding/json writes it.
-func appendRemoteJSONString(buf []byte, s string) []byte {
-	const hex = "0123456789abcdef"
-	buf = append(buf, '"')
-	start := 0
-	for i := 0; i < len(s); {
-		if c := s[i]; c < utf8.RuneSelf {
-			if c >= 0x20 && c != '"' && c != '\\' {
-				i++
-				continue
-			}
-			buf = append(buf, s[start:i]...)
-			switch c {
-			case '"', '\\':
-				buf = append(buf, '\\', c)
-			case '\n':
-				buf = append(buf, '\\', 'n')
-			case '\r':
-				buf = append(buf, '\\', 'r')
-			case '\t':
-				buf = append(buf, '\\', 't')
-			default:
-				buf = append(buf, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xF])
-			}
-			i++
-			start = i
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && size == 1 {
-			buf = append(buf, s[start:i]...)
-			buf = append(buf, `�`...)
-			i += size
-			start = i
-			continue
-		}
-		if r == ' ' || r == ' ' {
-			buf = append(buf, s[start:i]...)
-			buf = append(buf, '\\', 'u', '2', '0', '2', hex[r&0xF])
-			i += size
-			start = i
-			continue
-		}
-		i += size
-	}
-	buf = append(buf, s[start:]...)
-	return append(buf, '"')
-}
 
 // remoteOffsetText is a UTC offset as Neo4j writes a timezone: +00:00 for
 // zero, with seconds when it has them.

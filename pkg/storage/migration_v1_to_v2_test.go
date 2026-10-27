@@ -459,7 +459,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	require.Equal(t, storageVersionCurrent, upgradeErr.Current)
 
 	// Reopen WITH the upgrade flag — must succeed and finish at V2.
-	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
@@ -499,6 +499,7 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
+		CatalogUpgradeV4:    graphOnlyCatalogUpgradeV4(),
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })

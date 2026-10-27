@@ -53,18 +53,28 @@ type boundClause struct {
 	projectionSyntax    []cypherantlr.SyntaxNode
 	body                *boundBody
 	expressionDepth     int
+	transparent         bool // an unbound WITH EMBEDDING candidate
 }
 
 func (compiler *projectionCompilation) compileBound(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25)
+	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, compiler.source); supported {
+		if err != nil {
+			return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
+		}
+		names := resultmetadata.Known(command.columns())
+		scope := projectionScope(names)
+		statement := resultmetadata.Statement{Start: 0, End: len(compiler.source), Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(command.columns()), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: 0, End: len(compiler.source), Before: projectionScope(incoming), After: scope}}}
+		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
+	}
+	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25, cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
 	}
 	if err != nil {
-		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(compiler.source, err))
+		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(ctx, compiler.source, AcceptedSource, err))
 	}
 	compiler.syntax = syntax
 	query := statementSyntaxQuery(syntax)
@@ -211,7 +221,8 @@ func (compilation *boundCompilation) prepareUse(ctx context.Context, branch *bou
 	compilation.event(node).enter = append(compilation.event(node).enter, func() {
 		prior = compilation.clause
 		start, end := node.Span()
-		if !node.ChildRule(cypherantlr.CypherParserRULE_functionInvocation).Valid() && strings.EqualFold(node.QualifiedName(), "system") {
+		reference := node.UseReference(nil)
+		if reference.Function == "" && strings.EqualFold(reference.Name, "system") {
 			if err := systemDatabaseStatementError(ctx, strings.TrimSpace(compilation.owner.source[end:branch.shape.end])); err != nil {
 				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
 				return
@@ -332,6 +343,16 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 	clause.step = resultmetadata.Clause{Start: source.start, End: source.end, Before: projectionScope(projectedMapNames(clause.before))}
 	switch source.kind {
 	case pipelineClauseWith, pipelineClauseReturn:
+		if name := branchEmbeddingCandidate(branch.shape.clauses, source); name != "" {
+			if _, bound := clause.before[name]; !bound {
+				// The same decision as semantic validation and the pipeline
+				// frame: an unbound candidate is the execution option, and
+				// the scope passes through unchanged.
+				clause.transparent = true
+				clause.step.Kind = resultmetadata.ClauseWrite
+				return
+			}
+		}
 		clause.step.Kind = resultmetadata.ClauseReturn
 		if source.kind == pipelineClauseWith {
 			clause.step.Kind = resultmetadata.ClauseWith
@@ -405,6 +426,16 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 	default:
 		compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, nil)
 	}
+}
+
+// branchEmbeddingCandidate locates source among its branch's clauses.
+func branchEmbeddingCandidate(clauses []queryBodyClause, source queryBodyClause) string {
+	for index := range clauses {
+		if clauses[index].syntax.ID() == source.syntax.ID() {
+			return embeddingCandidate(clauses, index)
+		}
+	}
+	return ""
 }
 
 func (compilation *boundCompilation) leaveClause(clause *boundClause) {

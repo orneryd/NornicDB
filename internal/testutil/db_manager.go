@@ -14,7 +14,7 @@ import (
 // database workers before the manager closes that shared storage.
 func DatabaseManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
 	t.Helper()
-	manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
+	manager, err := multidb.NewDatabaseManager(db.LifetimeContext(), db.GetBaseStorageForManager(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		assert.NoError(t, db.Close())

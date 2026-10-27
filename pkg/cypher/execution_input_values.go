@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -61,13 +62,13 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 		return executionInputValue{bound: true, path: path}, known && len(path) > 0
 	}
 	if isWholeCypherQuotedString(text) {
-		value, known := decodeCypherQuotedString(text)
+		value, known := cyphertext.DecodeString(text, cyphertext.AcceptedSource)
 		return executionInputValue{literal: value}, known
 	}
 	if value, literal := parseLiteralValueFromComputedRow(text); literal {
 		return executionInputValue{literal: value}, true
 	}
-	if strings.HasPrefix(text, "{") && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
+	if strings.HasPrefix(text, "{") && cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter) == len(text)-1 {
 		result := executionInputValue{entries: []executionInputEntry{}}
 		if strings.TrimSpace(text[1:len(text)-1]) != "" {
 			for _, entry := range splitTopLevelComma(text[1 : len(text)-1]) {
@@ -77,7 +78,7 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 				}
 				key := strings.TrimSpace(entry[:colon])
 				if isWholeCypherQuotedString(key) {
-					key, _ = decodeCypherQuotedString(key)
+					key, _ = cyphertext.DecodeString(key, cyphertext.AcceptedSource)
 				} else {
 					key = symbolicNameValue(key)
 				}
@@ -91,7 +92,7 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 		}
 		return foldExecutionInput(result), true
 	}
-	if strings.HasPrefix(text, "[") && findMatchingDelimiter(text, 0, '[', ']') == len(text)-1 {
+	if strings.HasPrefix(text, "[") && cyphertext.FindMatchingDelimiter(text, 0, '[', ']', cyphertext.OpeningDelimiter) == len(text)-1 {
 		result := executionInputValue{items: []executionInputValue{}}
 		if strings.TrimSpace(text[1:len(text)-1]) != "" {
 			for _, item := range splitTopLevelComma(text[1 : len(text)-1]) {

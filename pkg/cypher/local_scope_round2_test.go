@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -232,7 +233,7 @@ func TestLocalOccurrencesWalkOnce(t *testing.T) {
 	} {
 		var occurrences []int
 		for at := 0; at < len(text); at++ {
-			if text[at] == 'x' && (at == 0 || !isIdentByte(text[at-1])) && (at+1 == len(text) || !isIdentByte(text[at+1])) {
+			if text[at] == 'x' && (at == 0 || !cyphertext.NamePartAt(text, at-1)) && (at+1 == len(text) || !cyphertext.NamePartAt(text, at+1)) {
 				occurrences = append(occurrences, at)
 			}
 		}

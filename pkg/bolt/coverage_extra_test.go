@@ -965,9 +965,13 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 
 		db, ok = databaseFromMetadata(map[string]any{"db": "  graph  "})
 		assert.True(t, ok)
-		assert.Equal(t, "graph", db)
+		assert.Equal(t, "  graph  ", db, "metadata contains a decoded identity, not raw Cypher whitespace")
 
 		db, ok = databaseFromMetadata(map[string]any{"db": " ", "database": "fallback"})
+		assert.True(t, ok)
+		assert.Equal(t, " ", db, "an explicit selection must not silently switch to another database")
+
+		db, ok = databaseFromMetadata(map[string]any{"db": "", "database": "fallback"})
 		assert.True(t, ok)
 		assert.Equal(t, "fallback", db)
 

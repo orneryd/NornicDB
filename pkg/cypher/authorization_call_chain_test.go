@@ -30,9 +30,9 @@ func TestQueryPermissionRequirementsClassifiesEveryCall(t *testing.T) {
 		"in a comment":                   {query: "// CALL db.cdc.query()\nRETURN 1", admin: false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, testCase.admin, QueryPermissionRequirements(t.Context(), testCase.query).Admin)
+			require.Equal(t, testCase.admin, QueryPermissionRequirements(t.Context(), testCase.query, RawSource).Admin)
 			var names []string
-			for _, procedure := range RegisteredProceduresForCalls(t.Context(), testCase.query) {
+			for _, procedure := range RegisteredProceduresForCalls(t.Context(), testCase.query, RawSource) {
 				names = append(names, procedure.Name)
 			}
 			require.Equal(t, testCase.procedures, names)
@@ -76,9 +76,9 @@ func TestProcedureCaseAuthorizationPreservesExactContracts(t *testing.T) {
 			delete(globalProcedureRegistry.user, name)
 		}
 	})
-	require.False(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.Read()").Admin)
-	require.True(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.read()").Admin)
-	unknownCase := QueryPermissionRequirements(t.Context(), "CALL CASEAUTHORIZATION.READ()")
+	require.False(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.Read()", RawSource).Admin)
+	require.True(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.read()", RawSource).Admin)
+	unknownCase := QueryPermissionRequirements(t.Context(), "CALL CASEAUTHORIZATION.READ()", RawSource)
 	require.True(t, unknownCase.Admin)
 	require.Equal(t, []string{"caseAuthorization.read"}, unknownCase.BoostedProcedures)
 	_, found := globalProcedureRegistry.Get("CASEAUTHORIZATION.READ")

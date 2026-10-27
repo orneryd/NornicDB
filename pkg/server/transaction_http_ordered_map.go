@@ -2,7 +2,7 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 )
@@ -49,11 +49,11 @@ func (value transactionHTTPOrderedMap) MarshalJSON() ([]byte, error) {
 		if index > 0 {
 			encoded.WriteByte(',')
 		}
-		name, err := json.Marshal(key)
+		name, err := jsontext.Marshal(key)
 		if err != nil {
 			return nil, err
 		}
-		item, err := json.Marshal(value.values[key])
+		item, err := jsontext.Marshal(value.values[key])
 		if err != nil {
 			return nil, err
 		}

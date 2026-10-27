@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -97,8 +98,8 @@ func (b *BoltBackend) dropSchemaObjects(ctx context.Context, showQuery, nameColu
 		if !ok || strings.TrimSpace(name) == "" {
 			return fmt.Errorf("%s returned invalid schema object name %v", showQuery, row[nameIndex])
 		}
-		escapedName := strings.ReplaceAll(name, "`", "``")
-		if _, err := b.executeAutocommit(ctx, dropPrefix+" `"+escapedName+"` IF EXISTS", nil); err != nil {
+		escapedName := cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
+		if _, err := b.executeAutocommit(ctx, dropPrefix+" "+escapedName+" IF EXISTS", nil); err != nil {
 			return fmt.Errorf("drop schema object %q: %w", name, err)
 		}
 	}

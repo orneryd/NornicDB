@@ -88,7 +88,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						if quota == "bytes" {
 							limits = &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: beforeTotal}}
 						}
-						require.NoError(t, h.server.dbManager.SetDatabaseLimits("nornic", limits))
+						require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", limits))
 
 						noOp := run(identical)
 						require.Zero(t, noOp.relationshipsCreated)

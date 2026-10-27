@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"log/slog"
 	"net/http"
@@ -26,7 +27,7 @@ func (s *Server) handleDbConfigKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keys := dbconfig.AllowedKeys()
-	s.writeJSON(w, http.StatusOK, keys)
+	httpresponse.WriteJSON(w, http.StatusOK, keys)
 }
 
 // handleDbConfigPrefix handles GET/PUT /admin/databases/{dbName}/config.
@@ -92,7 +93,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
 		return
 	}
 	switch suffix {
@@ -103,7 +104,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		s.writeJSON(w, http.StatusOK, status)
+		httpresponse.WriteJSON(w, http.StatusOK, status)
 	case "mvcc/prune":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -113,21 +114,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCPruneTriggered()), "database": dbName})
 	case "mvcc/pause":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.PauseLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecyclePaused()), "database": dbName})
 	case "mvcc/resume":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
 		lce.ResumeLifecycle()
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.MVCCLifecycleResumed()), "database": dbName})
 	case "mvcc/schedule":
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -156,7 +157,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		}
 		status := lce.LifecycleStatus()
 		status["database"] = dbName
-		s.writeJSON(w, http.StatusOK, status)
+		httpresponse.WriteJSON(w, http.StatusOK, status)
 	case "mvcc/debt":
 		if r.Method != http.MethodGet {
 			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
@@ -184,7 +185,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		if keys == nil {
 			keys = []storage.MVCCLifecycleDebtKey{}
 		}
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"database": dbName,
 			"limit":    limit,
 			"keys":     keys,
@@ -201,7 +202,7 @@ func (s *Server) handleGetDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	}
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"overrides":      redactDatabaseSettings(overrides),
 		"configured":     redactDatabaseSettings(overrides),
 		"effective":      redactDatabaseSettings(effective),
@@ -293,7 +294,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		overrides = make(map[string]string)
 	}
 	effective, pendingRestart := s.updateDatabaseConfigRuntimeState(dbName, previousResolved, nextResolved, changedDefinitions)
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"overrides":        redactDatabaseSettings(overrides),
 		"configured":       redactDatabaseSettings(overrides),
 		"effective":        redactDatabaseSettings(effective),

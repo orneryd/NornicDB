@@ -16,7 +16,7 @@ import (
 // point: the search-service path returns only the owning point.
 func TestPointsService_SearchServiceReturnsOwningPointForAnyVectorName(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	var shared *search.Service
 	service.searchProvider = func(_ string, st storage.Engine) (*search.Service, error) {
 		if shared == nil {

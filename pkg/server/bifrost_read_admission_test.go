@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"bufio"
 	"context"
 	"net/http"
@@ -16,7 +18,7 @@ import (
 
 func TestBifrostGlobalFeedRequiresAllDatabaseReads(t *testing.T) {
 	server, users := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("feed_named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "feed_named"}))
 	ctx := context.Background()
 	for _, spec := range []struct {
 		name      string

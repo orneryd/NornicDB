@@ -60,11 +60,11 @@ func TestStorageLoaderCatalogsRenderNamedArguments(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.StorageLoaderCreatingFile("/tmp/export.json", errors.New("permission denied"))
 
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "al crear el archivo: permission denied", spanish)
 
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), message)
+	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "[!! creating file: permission denied !!]", pseudo)
 }

@@ -24,10 +24,10 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				wal, err := storage.NewWAL(dir, nil)
 				require.NoError(t, err)
 				logged := storage.NewWALEngine(base, wal)
-				manager, err := multidb.NewDatabaseManager(logged, nil)
+				manager, err := multidb.NewDatabaseManager(t.Context(), logged, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close(); _ = logged.Close() })
-				require.NoError(t, manager.CreateDatabase("quota"))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 				limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
 				query := "UNWIND [1,2] AS id CREATE (:Quota {id:id,content:'rejectedtoken'})"
 				switch kind {
@@ -60,7 +60,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				require.NoError(t, err)
 				require.NotEmpty(t, positive.Results)
 				published.Store(0)
-				require.NoError(t, manager.SetDatabaseLimits("quota", limits))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 				exec := NewStorageExecutor(engine)
 				if explicit {
 					_, err = exec.Execute(ctx, "BEGIN", nil)

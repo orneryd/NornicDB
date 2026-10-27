@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -63,93 +63,6 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 	return nil
 }
 
-// evaluateSumArithmetic handles expressions like SUM(n.a) + SUM(n.b)
-func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.Node, variable string) float64 {
-	// Split by + and - operators (respecting parentheses)
-	parts := splitArithmeticExpression(expr)
-	result := float64(0)
-	currentOp := "+"
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "+" {
-			currentOp = "+"
-			continue
-		}
-		if part == "-" {
-			currentOp = "-"
-			continue
-		}
-
-		// Evaluate this part
-		var value float64
-		upperPart := upperASCII(part)
-
-		if strings.HasPrefix(upperPart, "SUM(") {
-			if agg := ParseAggregation(part); agg != nil && agg.Function == "SUM" && agg.Property != "" {
-				for _, node := range nodes {
-					if val, exists := node.Properties[agg.Property]; exists {
-						if num, ok := toFloat64(val); ok {
-							value += num
-						}
-					}
-				}
-			}
-		} else if num, err := strconv.ParseFloat(part, 64); err == nil {
-			value = num
-		}
-
-		// Apply operator
-		if currentOp == "+" {
-			result += value
-		} else {
-			result -= value
-		}
-	}
-
-	return result
-}
-
-// splitArithmeticExpression splits an arithmetic expression by + and - operators
-// while respecting parentheses
-func splitArithmeticExpression(expr string) []string {
-	var parts []string
-	var current strings.Builder
-	depth := 0
-
-	for i, ch := range expr {
-		if ch == '(' {
-			depth++
-			current.WriteRune(ch)
-		} else if ch == ')' {
-			depth--
-			current.WriteRune(ch)
-		} else if depth == 0 && (ch == '+' || ch == '-') {
-			// Check if this is a unary minus (at start or after operator)
-			isUnary := i == 0 || (i > 0 && (expr[i-1] == '+' || expr[i-1] == '-' || expr[i-1] == '('))
-			if !isUnary {
-				if current.Len() > 0 {
-					parts = append(parts, current.String())
-					current.Reset()
-				}
-				parts = append(parts, string(ch))
-			} else {
-				current.WriteRune(ch)
-			}
-		} else {
-			current.WriteRune(ch)
-		}
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
-}
-
-// evaluateWithWhereCondition evaluates a WHERE condition against computed WITH values.
-// This is for filtering after WITH aggregation (like SQL HAVING).
 func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
@@ -257,7 +170,7 @@ func isWithWhereIdentifier(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+		if !cyphertext.NamePart(r) {
 			return false
 		}
 	}
@@ -282,15 +195,13 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 			continue
 		}
 		c := whereClause[i]
-		if !isIdentStartByte(c) || (i > 0 && isIdentByte(whereClause[i-1])) {
+		if !cyphertext.NameStartAt(whereClause, i) || (i > 0 && cyphertext.NamePartAt(whereClause, i-1)) {
 			out.WriteByte(c)
 			i++
 			continue
 		}
 		j := i
-		for j < len(whereClause) && isIdentByte(whereClause[j]) {
-			j++
-		}
+		j = cyphertext.NamePartEnd(whereClause, j)
 		if j >= len(whereClause) || whereClause[j] != ':' {
 			out.WriteString(whereClause[i:j])
 			i = j
@@ -302,7 +213,7 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 		// label test (a map entry such as {name: x}).
 		var parts []*labelExpression
 		k := j
-		for k+1 < len(whereClause) && whereClause[k] == ':' && !isASCIISpace(whereClause[k+1]) {
+		for k+1 < len(whereClause) && whereClause[k] == ':' && !cyphertext.IsWhitespaceAt(whereClause, k+1) {
 			expr, end, ok := parseLabelExpressionPrefix(whereClause[k+1:])
 			if !ok {
 				break
@@ -427,21 +338,8 @@ func (e *StorageExecutor) parseOrderBySpecs(orderExpr string, columns []string) 
 func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, columns []string, resolveExpression func(colName string) int) []orderSpec {
 	var specs []orderSpec
 
-	parts := splitOutsideParens(orderExpr, ',')
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		tokens := strings.Fields(part)
-		if len(tokens) == 0 {
-			continue
-		}
-
-		colName := tokens[0]
-		descending := len(tokens) > 1 && upperASCII(tokens[1]) == "DESC"
+	for _, term := range parseOrderByClause(orderExpr) {
+		colName, descending := term.column, term.descending
 
 		colIdx := findOrderByColumnIndex(columns, colName)
 
@@ -451,14 +349,17 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 
 		propPath := make([]string, 0)
 		if colIdx == -1 {
-			dot := strings.Index(colName, ".")
-			if dot <= 0 || dot >= len(colName)-1 {
-				continue
+			varName := colName
+			for {
+				base, property, ok := splitPostfixPropertyAccess(varName)
+				if !ok {
+					break
+				}
+				propPath = append(propPath, property)
+				varName = base
 			}
-			varName := strings.TrimSpace(colName[:dot])
-			propExpr := strings.TrimSpace(colName[dot+1:])
-			if varName == "" || propExpr == "" {
-				continue
+			for left, right := 0, len(propPath)-1; left < right; left, right = left+1, right-1 {
+				propPath[left], propPath[right] = propPath[right], propPath[left]
 			}
 			for i, col := range columns {
 				if strings.EqualFold(col, varName) {
@@ -468,14 +369,6 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 			}
 			if colIdx == -1 {
 				continue
-			}
-			for _, segment := range strings.Split(propExpr, ".") {
-				segment = strings.TrimSpace(segment)
-				if segment == "" {
-					propPath = nil
-					break
-				}
-				propPath = append(propPath, segment)
 			}
 			if len(propPath) == 0 {
 				continue
@@ -595,34 +488,6 @@ func mapLookupCaseInsensitive(m map[string]interface{}, key string) (interface{}
 // Returns -1 if a < b, 0 if a == b, 1 if a > b
 func (e *StorageExecutor) compareOrderValues(a, b interface{}) int {
 	return compareValuesForSort(a, b)
-}
-
-// splitOutsideParens splits a string by delimiter, respecting parentheses
-func splitOutsideParens(s string, delim rune) []string {
-	var parts []string
-	var current strings.Builder
-	depth := 0
-
-	for _, ch := range s {
-		if ch == '(' {
-			depth++
-		} else if ch == ')' {
-			depth--
-		}
-
-		if ch == delim && depth == 0 {
-			parts = append(parts, current.String())
-			current.Reset()
-		} else {
-			current.WriteRune(ch)
-		}
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
 }
 
 // filterNodesByProperties filters nodes to only include those matching ALL specified properties.

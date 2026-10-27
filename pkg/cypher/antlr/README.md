@@ -227,8 +227,8 @@ go test -v -run TestParserComparison ./pkg/cypher/
 go test -bench=BenchmarkParserComparison ./pkg/cypher/
 
 # Run parser-only validation report
-NORNIC_RUN_PARSER_REPORTS=1 go test -v -run TestParserValidationBenchmarkReport ./pkg/cypher/ -count=1
+NORNIC_RUN_PARSER_REPORTS=1 go test -v -run 'TestParserBenchmarkReports/validate' ./pkg/cypher/ -count=1
 
 # Run parser-only full parse report
-NORNIC_RUN_PARSER_REPORTS=1 go test -v -run TestParserParseBenchmarkReport ./pkg/cypher/ -count=1
+NORNIC_RUN_PARSER_REPORTS=1 go test -v -run 'TestParserBenchmarkReports/parse' ./pkg/cypher/ -count=1
 ```

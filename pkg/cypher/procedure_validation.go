@@ -276,7 +276,8 @@ func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clau
 		projected[name] = struct{}{}
 	}
 	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name := range unwound {
 				keep(name)

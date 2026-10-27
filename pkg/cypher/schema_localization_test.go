@@ -31,13 +31,13 @@ func TestCypherSchemaCatalogRendering(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherSchemaRangeIndexSinglePropertyRequired(2)
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "RANGE INDEX solo admite una propiedad; se obtuvieron 2", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! RANGE INDEX only supports single property, got 2 !!]", pseudo)

@@ -18,7 +18,7 @@ func BenchmarkTransactionRequestDecode(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				var req TransactionRequest
-				if err := decodeTransactionRequest(bytes.NewReader(body), &req); err != nil {
+				if err := decodeTransactionRequest(bytes.NewReader(body), &req, transactionRequestLimit{}); err != nil {
 					b.Fatal(err)
 				}
 			}

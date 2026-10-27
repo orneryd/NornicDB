@@ -15,10 +15,10 @@ import (
 // engine, the namespace is "" and the label is counted.
 func TestSizeTrackingEnginePassesLabelCounterAndNamespace(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
-	require.NoError(t, mgr.CreateDatabase("tracked"))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tracked"}))
 	store, err := mgr.GetStorage("tracked")
 	require.NoError(t, err)
 	tracker, ok := store.(*sizeTrackingEngine)

@@ -38,7 +38,7 @@ func TestIntegration_CreateTranslatesTo_FromRealData(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	mgr, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), multidb.DefaultConfig())
+	mgr, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), multidb.DefaultConfig())
 	require.NoError(t, err)
 
 	const dbName = "caremark_translation"

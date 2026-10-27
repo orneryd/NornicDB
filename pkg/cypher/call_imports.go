@@ -32,7 +32,7 @@ func callSubqueryImportedVariables(ctx context.Context, scope string, scoped boo
 // variable is defined.
 func callScopeClauseVariables(ctx context.Context, list string) ([]string, error) {
 	const prefix = "CALL ("
-	syntax, err := cypherantlr.ParseSyntax(ctx, prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

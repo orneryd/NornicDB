@@ -109,7 +109,8 @@ func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeSc
 	input.complete = false
 	projected := make(typeScope)
 	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name, operand := range types {
 				projected[name] = operand

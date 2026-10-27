@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // ArgumentTypeError reports a function argument of a type the function does
@@ -54,7 +56,7 @@ func Register(name string, fn Func) {
 	if fn == nil {
 		panic("fn.Register: nil function")
 	}
-	key := strings.ToLower(strings.TrimSpace(name))
+	key := cyphertext.NameLower(strings.TrimSpace(name))
 	mu.Lock()
 	defer mu.Unlock()
 	registry[key] = fn
@@ -67,7 +69,7 @@ func Register(name string, fn Func) {
 //   - found: whether the function name is registered
 //   - err: evaluation error (only meaningful if found is true)
 func EvaluateFunction(name string, args []string, ctx Context) (value interface{}, found bool, err error) {
-	key := strings.ToLower(strings.TrimSpace(name))
+	key := cyphertext.NameLower(strings.TrimSpace(name))
 	mu.RLock()
 	fn, ok := registry[key]
 	mu.RUnlock()

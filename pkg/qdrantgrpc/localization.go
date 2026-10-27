@@ -22,7 +22,7 @@ func localizedStatus(ctx context.Context, manager *localization.Manager, code co
 			ctx = localization.WithPreferences(ctx, match.Tag)
 		}
 	}
-	text, _, err := manager.Render(ctx, message)
+	text, _, err := manager.Render(ctx, localization.MessageRequest(message))
 	if err != nil {
 		text = manager.MustRenderEnglish(message)
 	}

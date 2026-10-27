@@ -12,7 +12,7 @@ import (
 // localization is unavailable. It is safe to use during command construction.
 func Render(manager *localization.Manager, message localization.Message) string {
 	if manager != nil {
-		if rendered, _, err := manager.Render(context.Background(), message); err == nil {
+		if rendered, _, err := manager.Render(context.Background(), localization.MessageRequest(message)); err == nil {
 			return rendered
 		}
 	}

@@ -407,7 +407,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
 	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
-		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
+		var callFacts1 functionCallFacts
+		if isCall := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); isCall && isReduceFormFunction(callFacts1.name) {
+			function, inner := callFacts1.name, callFacts1.inner
+
 			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // PluginType identifies the kind of plugin.
@@ -82,6 +83,10 @@ var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem 
 // Callers treat the returned error as a warning; returning nil after a failed
 // file made a plugin that didn't load look like an empty directory (#867).
 func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) error {
+	diagnosticCredentials := observability.ClientCredentials(dir)
+	if heimdallCtx != nil {
+		diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(heimdallCtx.Config.APIURL, heimdallCtx.Config.APIKey)...)
+	}
 	if dir == "" {
 		fmt.Printf("   [Plugin Debug] LoadPluginsFromDir called with empty directory\n")
 		return nil
@@ -90,28 +95,36 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	// Resolve relative paths to absolute
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		fmt.Printf("   [Plugin Debug] Failed to resolve path %s: %v\n", dir, err)
-		return fmt.Errorf("resolving plugins directory: %w", err)
+		safeDir := observability.RedactText(dir, diagnosticCredentials...)
+		safeErr := observability.RedactError(err, diagnosticCredentials...)
+		fmt.Printf("   [Plugin Debug] Failed to resolve path %s: %v\n", safeDir, safeErr)
+		return observability.RedactError(fmt.Errorf("resolving plugins directory: %w", err), diagnosticCredentials...)
 	}
-	fmt.Printf("   [Plugin Debug] Loading plugins from: %s (resolved from %s)\n", absDir, dir)
+	safeAbsDir := observability.RedactText(absDir, diagnosticCredentials...)
+	safeDir := observability.RedactText(dir, diagnosticCredentials...)
+	fmt.Printf("   [Plugin Debug] Loading plugins from: %s (resolved from %s)\n", safeAbsDir, safeDir)
 
 	info, err := os.Stat(absDir)
 	if os.IsNotExist(err) {
-		fmt.Printf("   [Plugin Debug] Directory does not exist: %s\n", absDir)
+		fmt.Printf("   [Plugin Debug] Directory does not exist: %s\n", safeAbsDir)
 		return nil // No plugins directory
 	}
 	if err != nil {
-		return fmt.Errorf("checking plugins directory: %w", err)
+		return observability.RedactError(fmt.Errorf("checking plugins directory '%s': %w", safeAbsDir, err), diagnosticCredentials...)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("not a directory: %s", absDir)
+		return fmt.Errorf("not a directory: %s", safeAbsDir)
 	}
 
 	matches, err := filepath.Glob(filepath.Join(absDir, "*.so"))
 	if err != nil {
-		return fmt.Errorf("scanning directory: %w", err)
+		return observability.RedactError(fmt.Errorf("scanning directory '%s': %w", safeAbsDir, err), diagnosticCredentials...)
 	}
-	fmt.Printf("   [Plugin Debug] Found %d .so files: %v\n", len(matches), matches)
+	safeMatches := make([]string, len(matches))
+	for i, match := range matches {
+		safeMatches[i] = observability.RedactText(match, diagnosticCredentials...)
+	}
+	fmt.Printf("   [Plugin Debug] Found %d .so files: %v\n", len(matches), safeMatches)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -143,16 +156,18 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 				stats.skipped++
 				if loaded != nil && loaded.Name != "" {
 					fmt.Printf("║ - [HEIM] %-15s v%-8s deferred (no host context)      ║\n",
-						loaded.Name, loaded.Version)
+						observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...))
 				} else {
-					fmt.Printf("║ - [HEIM] %-47s deferred (no host context) ║\n", filepath.Base(path))
+					fmt.Printf("║ - [HEIM] %-47s deferred (no host context) ║\n", observability.RedactText(filepath.Base(path), diagnosticCredentials...))
 				}
 				continue
 			}
 
-			fmt.Printf("║ ⚠️  %-56s ║\n", filepath.Base(path)+": "+err.Error())
+			safePath := observability.RedactText(filepath.Base(path), diagnosticCredentials...)
+			safeErr := observability.RedactError(err, diagnosticCredentials...)
+			fmt.Printf("║ ⚠️  %-56s ║\n", safePath+": "+safeErr.Error())
 			stats.failed++
-			failures = append(failures, localizedError(localization.NornicDBCorePluginLoadFailed(filepath.Base(path), err), err))
+			failures = append(failures, localizedError(localization.NornicDBCorePluginLoadFailed(safePath, safeErr), safeErr))
 			continue
 		}
 
@@ -170,7 +185,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 				pluginProcedures[proc.Name] = proc
 			}
 			fmt.Printf("║ ✓ [FUNC] %-15s v%-8s %3d functions %12s ║\n",
-				loaded.Name, loaded.Version, len(loaded.Functions), "")
+				observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...), len(loaded.Functions), "")
 
 		case PluginTypeHeimdall:
 			stats.heimdall++
@@ -181,7 +196,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 					actionCount := len(p.Actions())
 					stats.actions += actionCount
 					fmt.Printf("║ ✓ [HEIM] %-15s v%-8s %3d actions  %12s ║\n",
-						loaded.Name, loaded.Version, actionCount, "")
+						observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...), actionCount, "")
 				}
 			}
 		}

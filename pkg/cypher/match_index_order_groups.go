@@ -9,22 +9,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) parseIndexedNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
-	parts := splitOutsideParens(orderExpr, ',')
-	if len(parts) == 0 || variable == "" {
-		return nil, false
-	}
-	prefix := variable + "."
-	for _, part := range parts {
-		fields := strings.Fields(strings.TrimSpace(part))
-		if len(fields) == 0 || !strings.HasPrefix(fields[0], prefix) {
-			return nil, false
-		}
-	}
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
-	return specs, len(specs) == len(parts)
-}
-
 func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property, where string) bool {
 	for _, term := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(where))) {
 		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterParens(strings.TrimSpace(term)))

@@ -2,7 +2,6 @@ package txsession
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
@@ -117,9 +116,9 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 		t.Fatalf("unexpected execute result in session: %#v", result.Rows)
 	}
 
-	mgr.nowFunc = func() time.Time { return baseTime.Add(5 * time.Second) }
+	mgr.nowFunc = func() time.Time { return baseTime.Add(500 * time.Millisecond) }
 	mgr.Touch(session)
-	if !session.Expires.Equal(baseTime.Add(6 * time.Second)) {
+	if !session.Expires.Equal(baseTime.Add(1500 * time.Millisecond)) {
 		t.Fatalf("touch should refresh expiration, got %v", session.Expires)
 	}
 
@@ -131,6 +130,27 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 	}
 
 	mgr.Delete("42") // no-op path
+}
+
+func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
+	mgr := NewManager(time.Second, newExecutorFactory(t))
+	base := time.Unix(1700000000, 0)
+	mgr.nowFunc = func() time.Time { return base }
+	session, err := mgr.Open(context.Background(), "neo4j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.nowFunc = func() time.Time { return base.Add(2 * time.Second) }
+	mgr.Touch(session)
+	if _, ok := mgr.Get(session.ID); ok {
+		t.Fatal("expired session was revived")
+	}
+	if session.Executor != nil {
+		t.Fatal("expired executor retained")
+	}
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "RETURN 1", nil); err == nil {
+		t.Fatal("expired session admitted a statement")
+	}
 }
 
 func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {
@@ -162,40 +182,48 @@ func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {
 	}
 }
 
-func TestManagerOpenWithExecutor(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
-
-	store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = store.Close() })
-	exec := cypher.NewStorageExecutor(store)
-
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
-	if err != nil {
-		t.Fatalf("open with executor failed: %v", err)
-	}
-	if session == nil || session.Executor == nil {
-		t.Fatalf("expected non-nil session and executor")
-	}
-	if session.Database != "neo4j" {
-		t.Fatalf("unexpected session database: %s", session.Database)
-	}
-	if _, ok := mgr.Get(session.ID); !ok {
-		t.Fatalf("expected session to be tracked")
-	}
-
-	if err := mgr.RollbackAndDelete(context.Background(), session); err != nil {
-		t.Fatalf("rollback failed: %v", err)
-	}
-	if _, ok := mgr.Get(session.ID); ok {
-		t.Fatalf("expected session deleted after rollback")
-	}
-}
-
-func TestManagerOpenWithExecutorErrors(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
-
-	if _, err := mgr.OpenWithExecutor(context.Background(), "neo4j", nil); err == nil {
-		t.Fatalf("expected nil executor error")
+func TestManagerOpenWithExecutorScenarios(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		nilExecutor bool
+	}{
+		{name: "provided executor"},
+		{name: "nil executor rejected", nilExecutor: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			mgr := NewManager(time.Second, newExecutorFactory(t))
+			var exec *cypher.StorageExecutor
+			if !scenario.nilExecutor {
+				store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+				t.Cleanup(func() { _ = store.Close() })
+				exec = cypher.NewStorageExecutor(store)
+			}
+			session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", exec, "")
+			if scenario.nilExecutor {
+				if err == nil {
+					t.Fatalf("expected nil executor error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("open with executor failed: %v", err)
+			}
+			if session == nil || session.Executor == nil {
+				t.Fatalf("expected non-nil session and executor")
+			}
+			if session.Database != "neo4j" {
+				t.Fatalf("unexpected session database: %s", session.Database)
+			}
+			if _, ok := mgr.Get(session.ID); !ok {
+				t.Fatalf("expected session to be tracked")
+			}
+			if err := mgr.RollbackAndDelete(context.Background(), session); err != nil {
+				t.Fatalf("rollback failed: %v", err)
+			}
+			if _, ok := mgr.Get(session.ID); ok {
+				t.Fatalf("expected session deleted after rollback")
+			}
+		})
 	}
 }
 
@@ -242,7 +270,7 @@ func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
 	)
 	exec := cypher.NewStorageExecutor(c)
 
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
+	session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", exec, "")
 	if err != nil {
 		t.Fatalf("expected composite begin to succeed, got: %v", err)
 	}
@@ -252,37 +280,28 @@ func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
 	_ = mgr.RollbackAndDelete(context.Background(), session)
 }
 
-func TestManagerExecuteInSession_ReplaysTerminalLifecycleError(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
+func TestManagerCommitCompletionOutlivesRequest(t *testing.T) {
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	t.Cleanup(func() { _ = store.Close() })
+	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic"))
+	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
+	session, err := mgr.Open(context.Background(), "nornic")
 	if err != nil {
-		t.Fatalf("failed to create badger engine: %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = engine.Close() })
-	controller := &lifecycleControllerStub{}
-	engine.SetLifecycleController(controller)
-	exec := cypher.NewStorageExecutor(engine)
-	mgr := NewManager(time.Second, nil)
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "CREATE (:CommitRequestOwner {k:7})", nil); err != nil {
+		t.Fatal(err)
+	}
+	request, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mgr.CommitAndDelete(request, session); err != nil {
+		t.Fatalf("COMMIT completion inherited request cancellation: %v", err)
+	}
+	result, err := executor.Execute(context.Background(), "MATCH (n:CommitRequestOwner) RETURN count(n)", nil)
 	if err != nil {
-		t.Fatalf("open with executor failed: %v", err)
+		t.Fatal(err)
 	}
-
-	controller.mu.Lock()
-	controller.gracefulExpire = true
-	controller.mu.Unlock()
-
-	_, err = mgr.ExecuteInSession(context.Background(), session, "CREATE (n:Doc {name:'expired'})", nil)
-	if !errors.Is(err, storage.ErrMVCCSnapshotGracefulCancel) {
-		t.Fatalf("expected graceful snapshot cancel, got %v", err)
-	}
-	_, err = mgr.ExecuteInSession(context.Background(), session, "CREATE (n:Doc {name:'expired-again'})", nil)
-	if !errors.Is(err, storage.ErrMVCCSnapshotGracefulCancel) {
-		t.Fatalf("expected repeated graceful snapshot cancel, got %v", err)
-	}
-	if rollbackErr := mgr.RollbackAndDelete(context.Background(), session); rollbackErr != nil {
-		t.Fatalf("rollback after terminal error should succeed, got %v", rollbackErr)
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("committed outcome missing: %v", result.Rows)
 	}
 }

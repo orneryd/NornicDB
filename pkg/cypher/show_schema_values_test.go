@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"fmt"
 	"testing"
@@ -183,7 +185,7 @@ func (m *identityDatabaseManager) SystemDatabaseName() string {
 
 func TestShowDatabasePersistentIdentity(t *testing.T) {
 	manager := &identityDatabaseManager{mockDatabaseManager: newMockDatabaseManager(t)}
-	require.NoError(t, manager.CreateDatabase("identity_db"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "identity_db"}))
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "identity_db"))
 	executor.SetDatabaseManager(manager)
 	ctx := context.Background()

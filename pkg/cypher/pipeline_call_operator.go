@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
@@ -60,7 +61,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 	}
 	targetExec := e
-	if use, remaining, hasUse, err := parseUseClause(body, true); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(ctx, body, true, cyphertext.AcceptedSource); hasUse || err != nil {
 		if err != nil {
 			return nil, nil, true, err
 		}
@@ -78,7 +79,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 
 	if len(rows) == 0 {
 		if metadata != nil {
-			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25")
+			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25", AcceptedSource)
 			if err != nil {
 				return nil, nil, true, err
 			}

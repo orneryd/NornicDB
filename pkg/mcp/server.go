@@ -58,6 +58,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -582,7 +583,7 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request) {
 		"clientInfo":      req.ClientInfo,
 	})
 
-	s.writeJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 
 // handleListTools returns the list of available tools.
@@ -594,7 +595,7 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	result := s.doListTools(ctx)
-	s.writeJSON(w, http.StatusOK, result)
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -623,7 +624,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, CallToolResponse{
+		httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 			Content: []Content{{Type: "text", Text: s.renderError(r.Context(), err)}},
 			IsError: true,
 		})
@@ -632,14 +633,14 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 
 	// Convert result to JSON string
 	resultJSON, _ := json.Marshal(result)
-	s.writeJSON(w, http.StatusOK, CallToolResponse{
+	httpresponse.WriteJSON(w, http.StatusOK, CallToolResponse{
 		Content: []Content{{Type: "text", Text: string(resultJSON)}},
 	})
 }
 
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "healthy",
 		"uptime":  time.Since(s.started).String(),
 		"version": "1.0.0",
@@ -1974,14 +1975,8 @@ func (s *Server) validateAndConvertEmbedding(input interface{}) ([]float32, erro
 // Response Helpers
 // =============================================================================
 
-func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
-	s.writeJSON(w, status, map[string]string{"error": message})
+	httpresponse.WriteJSON(w, status, map[string]string{"error": message})
 }
 
 func (s *Server) localizedHandler(next http.HandlerFunc) http.HandlerFunc {
@@ -2006,7 +2001,7 @@ func (s *Server) renderMessage(ctx context.Context, message localization.Message
 	if s.localizer == nil {
 		return message.Fallback, language.AmericanEnglish
 	}
-	text, tag, err := s.localizer.Render(ctx, message)
+	text, tag, err := s.localizer.Render(ctx, localization.MessageRequest(message))
 	if err != nil {
 		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
 	}
@@ -2018,7 +2013,7 @@ func (s *Server) renderError(ctx context.Context, err error) string {
 	if !errors.As(err, &localized) {
 		return err.Error()
 	}
-	text, _, renderErr := localized.Render(ctx, s.localizer)
+	text, _, renderErr := s.localizer.Render(ctx, localization.ErrorRequest(localized))
 	if renderErr != nil {
 		return localized.Error()
 	}
@@ -2044,7 +2039,7 @@ func (s *Server) writeLocalizedJSONRPCError(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
@@ -2052,7 +2047,7 @@ func (s *Server) writeJSONRPCResult(w http.ResponseWriter, id interface{}, resul
 }
 
 func (s *Server) writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message, data string) {
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"error": map[string]interface{}{

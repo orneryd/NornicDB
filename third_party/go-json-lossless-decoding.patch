@@ -1,0 +1,1795 @@
+diff --git a/NORNICDB-MAINTENANCE.md b/NORNICDB-MAINTENANCE.md
+new file mode 100644
+index 0000000..23efab2
+--- /dev/null
++++ b/NORNICDB-MAINTENANCE.md
+@@ -0,0 +1,22 @@
++# Maintained go-json decoder option
++
++Based on upstream goccy/go-json v0.11.2. Upstream license, source and test
++populations are retained. Module/import paths use github.com/orneryd/go-json so
++embedding applications consume the pinned dependency without local replace
++rules. The encoder includes a cold-path map cycle-identity correction: newly allocated interface slots must retain the identity of their underlying map.
++
++The decoder delta is DecodePreserveInvalidUTF8, off by default. The flag
++belongs to each decode request or stream; cached decoders carry no mutable mode.
++It preserves raw string bytes after normal JSON grammar and escape handling.
++Lone escaped surrogates retain upstream behavior; NornicDB validates original
++JSON and projects those lexemes before opting in through internal/jsontext.
++
++Review every string normalization path on upgrade. Keep this option's map-key,
++typed-field, long-string, streaming/path, concurrent isolation and malformed
++input tests, plus the complete unchanged upstream suite. Path.Unmarshal passes
++its decode options to the selected-value binder. No storage format, reflection
++binder or alternate lexical implementation is added.
++
++First-party regression evidence belongs to NornicDB PR1515. Performance
++qualification remains deferred; no benchmark improvement is claimed. Prefer
++retiring this maintenance delta when upstream supports the same explicit mode.
+diff --git a/benchmarks/bench_test.go b/benchmarks/bench_test.go
+index 8a704cf..e562866 100644
+--- a/benchmarks/bench_test.go
++++ b/benchmarks/bench_test.go
+@@ -24 +24 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/benchmarks/decode_github_test.go b/benchmarks/decode_github_test.go
+index 60de61e..b644891 100644
+--- a/benchmarks/decode_github_test.go
++++ b/benchmarks/decode_github_test.go
+@@ -10 +10 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/decode_interface_test.go b/benchmarks/decode_interface_test.go
+index c7a9f2b..d8ec33c 100644
+--- a/benchmarks/decode_interface_test.go
++++ b/benchmarks/decode_interface_test.go
+@@ -6 +6 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/decode_key_length_test.go b/benchmarks/decode_key_length_test.go
+index c1def21..a26deae 100644
+--- a/benchmarks/decode_key_length_test.go
++++ b/benchmarks/decode_key_length_test.go
+@@ -11 +11 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+@@ -83 +83 @@ func keyLengthFixture(typ reflect.Type) []byte {
+-		`"https://github.com/goccy/go-json"`, `2048`, `"Fast JSON encoder/decoder compatible with encoding/json"`,
++		`"https://github.com/orneryd/go-json"`, `2048`, `"Fast JSON encoder/decoder compatible with encoding/json"`,
+diff --git a/benchmarks/decode_test.go b/benchmarks/decode_test.go
+index 7e6a028..2747ec9 100644
+--- a/benchmarks/decode_test.go
++++ b/benchmarks/decode_test.go
+@@ -9 +9 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/encode_test.go b/benchmarks/encode_test.go
+index 35ecfd3..01eeac1 100644
+--- a/benchmarks/encode_test.go
++++ b/benchmarks/encode_test.go
+@@ -10 +10 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/llm_api_test.go b/benchmarks/llm_api_test.go
+index 693cf12..6d82d1e 100644
+--- a/benchmarks/llm_api_test.go
++++ b/benchmarks/llm_api_test.go
+@@ -10 +10 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/path_test.go b/benchmarks/path_test.go
+index 3224b65..ff7a00d 100644
+--- a/benchmarks/path_test.go
++++ b/benchmarks/path_test.go
+@@ -6 +6 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/report/render_test.go b/benchmarks/report/render_test.go
+index 711bf1a..b0b8c04 100644
+--- a/benchmarks/report/render_test.go
++++ b/benchmarks/report/render_test.go
+@@ -14 +14 @@ func testRun(arch string) *Run {
+-		Libraries:  []Library{{Name: "encoding/json", Module: "std", Version: "go1.27.1"}, {Name: "goccy/go-json", Module: "github.com/goccy/go-json", Version: "0123456789abcdef"}},
++		Libraries:  []Library{{Name: "encoding/json", Module: "std", Version: "go1.27.1"}, {Name: "goccy/go-json", Module: "github.com/orneryd/go-json", Version: "0123456789abcdef"}},
+diff --git a/benchmarks/report_test.go b/benchmarks/report_test.go
+index 6fdcc26..7684f36 100644
+--- a/benchmarks/report_test.go
++++ b/benchmarks/report_test.go
+@@ -22 +22 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+@@ -146 +146 @@ const (
+-	goJSONModule    = "github.com/goccy/go-json"
++	goJSONModule    = "github.com/orneryd/go-json"
+@@ -765 +765 @@ func reportLibraries() []report.Library {
+-		versions["github.com/goccy/go-json"] = sha
++		versions["github.com/orneryd/go-json"] = sha
+diff --git a/benchmarks/report_v2_test.go b/benchmarks/report_v2_test.go
+index c48b29d..4e073cb 100644
+--- a/benchmarks/report_v2_test.go
++++ b/benchmarks/report_v2_test.go
+@@ -13 +13 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/slow_reader_test.go b/benchmarks/slow_reader_test.go
+index bd9623c..1921db8 100644
+--- a/benchmarks/slow_reader_test.go
++++ b/benchmarks/slow_reader_test.go
+@@ -10 +10 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/sonic_bench_test.go b/benchmarks/sonic_bench_test.go
+index da8d5b4..b08e3e9 100644
+--- a/benchmarks/sonic_bench_test.go
++++ b/benchmarks/sonic_bench_test.go
+@@ -43 +43 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/sonic_decode_test.go b/benchmarks/sonic_decode_test.go
+index 64d9658..aa37b3e 100644
+--- a/benchmarks/sonic_decode_test.go
++++ b/benchmarks/sonic_decode_test.go
+@@ -8 +8 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/benchmarks/sonic_test.go b/benchmarks/sonic_test.go
+index 8ba30ff..8599d87 100644
+--- a/benchmarks/sonic_test.go
++++ b/benchmarks/sonic_test.go
+@@ -14 +14 @@ import (
+-	gojson "github.com/goccy/go-json"
++	gojson "github.com/orneryd/go-json"
+diff --git a/color.go b/color.go
+index e80b22b..184fe90 100644
+--- a/color.go
++++ b/color.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/color_test.go b/color_test.go
+index 3888e9d..76b3829 100644
+--- a/color_test.go
++++ b/color_test.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/dead_code_test.go b/dead_code_test.go
+index 5db5573..1a1e74b 100644
+--- a/dead_code_test.go
++++ b/dead_code_test.go
+@@ -21 +21 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+@@ -63 +63 @@ func TestNoReflectMethodLookupByVariableName(t *testing.T) {
+-	goMod := "module deadcode\n\ngo 1.21\n\nrequire github.com/goccy/go-json v0.0.0\n\nreplace github.com/goccy/go-json => " +
++	goMod := "module deadcode\n\ngo 1.21\n\nrequire github.com/orneryd/go-json v0.0.0\n\nreplace github.com/orneryd/go-json => " +
+@@ -86 +86 @@ func TestNoReflectMethodLookupByVariableName(t *testing.T) {
+-			if name, ok := strings.CutSuffix(strings.TrimSpace(fn), " <ReflectMethod>"); ok && strings.HasPrefix(name, "github.com/goccy/go-json") {
++			if name, ok := strings.CutSuffix(strings.TrimSpace(fn), " <ReflectMethod>"); ok && strings.HasPrefix(name, "github.com/orneryd/go-json") {
+diff --git a/decode.go b/decode.go
+index c455b79..a2fb265 100644
+--- a/decode.go
++++ b/decode.go
+@@ -8,3 +8,3 @@ import (
+-	"github.com/goccy/go-json/internal/decoder"
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/decoder"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/decode_any_map_test.go b/decode_any_map_test.go
+index 3eb8225..388c322 100644
+--- a/decode_any_map_test.go
++++ b/decode_any_map_test.go
+@@ -11 +11 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_container_test.go b/decode_container_test.go
+index 282cf13..cc00cdd 100644
+--- a/decode_container_test.go
++++ b/decode_container_test.go
+@@ -8 +8 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_first_win_test.go b/decode_first_win_test.go
+index ef075d4..ee8a9d9 100644
+--- a/decode_first_win_test.go
++++ b/decode_first_win_test.go
+@@ -12 +12 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_number_test.go b/decode_number_test.go
+index 0f687f7..1b188e9 100644
+--- a/decode_number_test.go
++++ b/decode_number_test.go
+@@ -12 +12 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_of.go b/decode_of.go
+index 438c305..d79777c 100644
+--- a/decode_of.go
++++ b/decode_of.go
+@@ -7,2 +7,2 @@ import (
+-	"github.com/goccy/go-json/internal/decoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/decoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/decode_of_test.go b/decode_of_test.go
+index 54af20f..6627142 100644
+--- a/decode_of_test.go
++++ b/decode_of_test.go
+@@ -12 +12 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_pointer_test.go b/decode_pointer_test.go
+index be316f8..580c98e 100644
+--- a/decode_pointer_test.go
++++ b/decode_pointer_test.go
+@@ -12 +12 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_preserve_utf8_test.go b/decode_preserve_utf8_test.go
+new file mode 100644
+index 0000000..7d78ccd
+--- /dev/null
++++ b/decode_preserve_utf8_test.go
+@@ -0,0 +1,175 @@
++package json_test
++
++import (
++	"encoding/json"
++	"fmt"
++	fork "github.com/orneryd/go-json"
++	"io"
++	"reflect"
++	"strings"
++	"sync"
++	"testing"
++)
++
++func TestDecodePreserveInvalidUTF8(t *testing.T) {
++	high, low := "\xed\xa0\x80", "\xed\xb0\x80"
++	for _, raw := range []string{high, low, "\xff", "ordinary", "日本", high + `\n` + low, `\ud800`, `\ud83d\ude00`} {
++		input := []byte(`"` + raw + `"`)
++		var normal string
++		if err := json.Unmarshal(input, &normal); err != nil {
++			t.Fatal(err)
++		}
++		for _, preserve := range []bool{false, true, false} {
++			var opts []fork.DecodeOptionFunc
++			want := normal
++			if preserve {
++				opts = append(opts, fork.DecodePreserveInvalidUTF8())
++				if strings.ContainsAny(raw, "\xed\xff") {
++					want = strings.ReplaceAll(raw, `\n`, "\n")
++				}
++			}
++			var got string
++			if err := fork.UnmarshalWithOption(input, &got, opts...); err != nil {
++				t.Fatal(err)
++			}
++			if got != want {
++				t.Fatalf("preserve=%v input=%q got=%q want=%q", preserve, raw, got, want)
++			}
++		}
++	}
++	input := []byte(`{"` + high + `":"` + low + `","` + low + `":"` + high + `"}`)
++	var got map[string]string
++	if err := fork.UnmarshalWithOption(input, &got, fork.DecodePreserveInvalidUTF8()); err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(got, map[string]string{high: low, low: high}) {
++		t.Fatalf("map identity: %#v", got)
++	}
++	var normal map[string]string
++	if err := json.Unmarshal(input, &normal); err != nil {
++		t.Fatal(err)
++	}
++	if err := fork.Unmarshal(input, &got); err != nil {
++		t.Fatal(err)
++	}
++	// Both decoders preserve pre-existing entries; compare newly decoded maps.
++	var actual map[string]string
++	if err := fork.Unmarshal(input, &actual); err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(actual, normal) {
++		t.Fatalf("default changed: %#v want %#v", actual, normal)
++	}
++	for _, bad := range []string{`"unterminated`, "\"line\nnext\"", `"\q"`} {
++		var value string
++		if fork.UnmarshalWithOption([]byte(bad), &value, fork.DecodePreserveInvalidUTF8()) == nil {
++			t.Fatalf("accepted malformed input %q", bad)
++		}
++	}
++}
++
++func TestDecodePreserveInvalidUTF8LongStreamAndPath(t *testing.T) {
++	high, low := "\xed\xa0\x80", "\xed\xb0\x80"
++	for _, size := range []int{0, 511, 513, 65535, 65537} {
++		t.Run(fmt.Sprint(size), func(t *testing.T) {
++			pad := strings.Repeat("x", size)
++			input := []byte(`"` + pad + high + `\n` + low + `"`)
++			want := pad + high + "\n" + low
++			var value string
++			if err := fork.UnmarshalWithOption(input, &value, fork.DecodePreserveInvalidUTF8()); err != nil {
++				t.Fatal(err)
++			}
++			if value != want {
++				t.Fatal("long scalar changed")
++			}
++			var field struct {
++				Name string `json:"name"`
++			}
++			if err := fork.UnmarshalWithOption([]byte(`{"name":`+string(input)+`}`), &field, fork.DecodePreserveInvalidUTF8()); err != nil {
++				t.Fatal(err)
++			}
++			if field.Name != want {
++				t.Fatal("long field changed")
++			}
++			decoder := fork.NewDecoder(&losslessByteReader{input})
++			if err := decoder.DecodeWithOption(&value, fork.DecodePreserveInvalidUTF8()); err != nil {
++				t.Fatal(err)
++			}
++			if value != want {
++				t.Fatal("stream changed")
++			}
++			if err := decoder.Decode(&value); err != io.EOF {
++				t.Fatalf("stream end: %v", err)
++			}
++		})
++	}
++	path, err := fork.CreatePath("$.name")
++	if err != nil {
++		t.Fatal(err)
++	}
++	var selected string
++	if err := path.Unmarshal([]byte(`{"name":"`+high+`"}`), &selected, fork.DecodePreserveInvalidUTF8()); err != nil {
++		t.Fatal(err)
++	}
++	if selected != high {
++		t.Fatalf("path lost bytes: %q", selected)
++	}
++	decoder := fork.NewDecoder(strings.NewReader(`null ["` + high + `","` + low + `"]`))
++	var header any
++	if err := decoder.DecodeWithOption(&header, fork.DecodePreserveInvalidUTF8()); err != nil {
++		t.Fatal(err)
++	}
++	for _, want := range []any{json.Delim('['), high, low, json.Delim(']')} {
++		got, err := decoder.Token()
++		if err != nil || got != want {
++			t.Fatalf("token %#v/%v want %#v", got, err, want)
++		}
++	}
++}
++
++type losslessByteReader struct{ raw []byte }
++
++func (r *losslessByteReader) Read(out []byte) (int, error) {
++	if len(r.raw) == 0 {
++		return 0, io.EOF
++	}
++	if len(out) == 0 {
++		return 0, nil
++	}
++	out[0] = r.raw[0]
++	r.raw = r.raw[1:]
++	return 1, nil
++}
++
++func TestDecodePreserveInvalidUTF8ConcurrentIsolation(t *testing.T) {
++	input := []byte(`"` + "\xed\xa0\x80" + `"`)
++	var normal string
++	if err := json.Unmarshal(input, &normal); err != nil {
++		t.Fatal(err)
++	}
++	var wg sync.WaitGroup
++	for n := 0; n < 12; n++ {
++		wg.Add(1)
++		go func(n int) {
++			defer wg.Done()
++			for j := 0; j < 64; j++ {
++				var got string
++				var opts []fork.DecodeOptionFunc
++				want := normal
++				if (n+j)%2 == 0 {
++					opts = append(opts, fork.DecodePreserveInvalidUTF8())
++					want = "\xed\xa0\x80"
++				}
++				if err := fork.UnmarshalWithOption(input, &got, opts...); err != nil {
++					t.Error(err)
++					return
++				}
++				if got != want {
++					t.Errorf("option leaked: got=%q want=%q", got, want)
++					return
++				}
++			}
++		}(n)
++	}
++	wg.Wait()
++}
+diff --git a/decode_reported_issues_test.go b/decode_reported_issues_test.go
+index dcd8e78..ce95e26 100644
+--- a/decode_reported_issues_test.go
++++ b/decode_reported_issues_test.go
+@@ -13 +13 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_retention_test.go b/decode_retention_test.go
+index 457aa8d..eae13da 100644
+--- a/decode_retention_test.go
++++ b/decode_retention_test.go
+@@ -11 +11 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_skip_grammar_test.go b/decode_skip_grammar_test.go
+index 111d30a..a4ad946 100644
+--- a/decode_skip_grammar_test.go
++++ b/decode_skip_grammar_test.go
+@@ -13 +13 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_slice_in_place_test.go b/decode_slice_in_place_test.go
+index ca3d809..813f654 100644
+--- a/decode_slice_in_place_test.go
++++ b/decode_slice_in_place_test.go
+@@ -10 +10 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_std_unmarshaler_test.go b/decode_std_unmarshaler_test.go
+index 2c199d3..5d5d554 100644
+--- a/decode_std_unmarshaler_test.go
++++ b/decode_std_unmarshaler_test.go
+@@ -16 +16 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/decode_stream_test.go b/decode_stream_test.go
+index f8d5f10..18f3309 100644
+--- a/decode_stream_test.go
++++ b/decode_stream_test.go
+@@ -11 +11 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_string_escape_test.go b/decode_string_escape_test.go
+index c9c3466..d8736a9 100644
+--- a/decode_string_escape_test.go
++++ b/decode_string_escape_test.go
+@@ -11 +11 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_struct_key_test.go b/decode_struct_key_test.go
+index 9900496..1217fe2 100644
+--- a/decode_struct_key_test.go
++++ b/decode_struct_key_test.go
+@@ -10 +10 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/decode_test.go b/decode_test.go
+index 536fabe..c7f9277 100644
+--- a/decode_test.go
++++ b/decode_test.go
+@@ -22 +22 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+@@ -127 +127 @@ func Test_Decoder(t *testing.T) {
+-			// https://github.com/goccy/go-json/issues/8
++			// https://github.com/orneryd/go-json/issues/8
+diff --git a/decode_type_error_test.go b/decode_type_error_test.go
+index f01784a..eee18f4 100644
+--- a/decode_type_error_test.go
++++ b/decode_type_error_test.go
+@@ -11 +11 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/encode.go b/encode.go
+index 65eedba..4e8dbd1 100644
+--- a/encode.go
++++ b/encode.go
+@@ -10,5 +10,5 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/encoder/vm"
+-	"github.com/goccy/go-json/internal/encoder/vm_color"
+-	"github.com/goccy/go-json/internal/encoder/vm_color_indent"
+-	"github.com/goccy/go-json/internal/encoder/vm_indent"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder/vm"
++	"github.com/orneryd/go-json/internal/encoder/vm_color"
++	"github.com/orneryd/go-json/internal/encoder/vm_color_indent"
++	"github.com/orneryd/go-json/internal/encoder/vm_indent"
+diff --git a/encode_cycle_detection_test.go b/encode_cycle_detection_test.go
+index f63f7ab..9fe1c05 100644
+--- a/encode_cycle_detection_test.go
++++ b/encode_cycle_detection_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_direct_marshaler_test.go b/encode_direct_marshaler_test.go
+index d109847..d709cc7 100644
+--- a/encode_direct_marshaler_test.go
++++ b/encode_direct_marshaler_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_embedded_omitempty_test.go b/encode_embedded_omitempty_test.go
+index 0770f38..19fb0a2 100644
+--- a/encode_embedded_omitempty_test.go
++++ b/encode_embedded_omitempty_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_embedded_struct_test.go b/encode_embedded_struct_test.go
+index 85db685..94e558d 100644
+--- a/encode_embedded_struct_test.go
++++ b/encode_embedded_struct_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_field_run_test.go b/encode_field_run_test.go
+index 8d42403..4fc8f88 100644
+--- a/encode_field_run_test.go
++++ b/encode_field_run_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_long_key_test.go b/encode_long_key_test.go
+index cb5440c..db574af 100644
+--- a/encode_long_key_test.go
++++ b/encode_long_key_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_map_cycle_test.go b/encode_map_cycle_test.go
+new file mode 100644
+index 0000000..b84f26e
+--- /dev/null
++++ b/encode_map_cycle_test.go
+@@ -0,0 +1,41 @@
++package json_test
++
++import (
++	"bytes"
++	std "encoding/json"
++	"errors"
++	json "github.com/orneryd/go-json"
++	"testing"
++)
++
++func TestEncodeMapCycleIdentity(t *testing.T) {
++	direct := map[string]any{}
++	direct["self"] = direct
++	left, right := map[string]any{}, map[string]any{}
++	left["next"] = right
++	right["next"] = left
++	mixed := map[string]any{}
++	mixed["items"] = []any{mixed}
++	for _, options := range [][]json.EncodeOptionFunc{nil, {json.DisableNormalizeUTF8()}, {json.DisableHTMLEscape()}, {json.UnorderedMap()}} {
++		for _, cycle := range []any{direct, left, mixed} {
++			_, err := json.MarshalWithOption(cycle, options...)
++			var unsupported *json.UnsupportedValueError
++			if !errors.As(err, &unsupported) {
++				t.Fatalf("cycle error: %T %v", err, err)
++			}
++		}
++	}
++	shared := map[string]any{"name": "shared"}
++	value := nestedInterfaceValue(1100, []any{shared, shared})
++	expected, err := std.Marshal(value)
++	if err != nil {
++		t.Fatal(err)
++	}
++	got, err := json.Marshal(value)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !bytes.Equal(expected, got) {
++		t.Fatal("shared acyclic map changed")
++	}
++}
+diff --git a/encode_map_interface_key_test.go b/encode_map_interface_key_test.go
+index 4cf0cca..1436ffb 100644
+--- a/encode_map_interface_key_test.go
++++ b/encode_map_interface_key_test.go
+@@ -14 +14 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/encode_map_key_test.go b/encode_map_key_test.go
+index 62565cf..6e9f835 100644
+--- a/encode_map_key_test.go
++++ b/encode_map_key_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_map_layout_test.go b/encode_map_layout_test.go
+index 7ae0ff5..0e63b39 100644
+--- a/encode_map_layout_test.go
++++ b/encode_map_layout_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_marshaler_call_test.go b/encode_marshaler_call_test.go
+index a8397da..0f60fe1 100644
+--- a/encode_marshaler_call_test.go
++++ b/encode_marshaler_call_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_nested_frames_test.go b/encode_nested_frames_test.go
+index 11a6bde..6927cba 100644
+--- a/encode_nested_frames_test.go
++++ b/encode_nested_frames_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_nil_text_marshaler_test.go b/encode_nil_text_marshaler_test.go
+index ac8b62a..2e013bb 100644
+--- a/encode_nil_text_marshaler_test.go
++++ b/encode_nil_text_marshaler_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_of.go b/encode_of.go
+index 995e508..f67023f 100644
+--- a/encode_of.go
++++ b/encode_of.go
+@@ -6,2 +6,2 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/encode_of_test.go b/encode_of_test.go
+index 8de6c51..daeeb04 100644
+--- a/encode_of_test.go
++++ b/encode_of_test.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_omit_zero_test.go b/encode_omit_zero_test.go
+index 6849381..4bcbb11 100644
+--- a/encode_omit_zero_test.go
++++ b/encode_omit_zero_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_omitempty_marshaler_test.go b/encode_omitempty_marshaler_test.go
+index 31847c4..893bf67 100644
+--- a/encode_omitempty_marshaler_test.go
++++ b/encode_omitempty_marshaler_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_optimize_field_order_test.go b/encode_optimize_field_order_test.go
+index 30fefcb..f8075d0 100644
+--- a/encode_optimize_field_order_test.go
++++ b/encode_optimize_field_order_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_pointer_shaped_test.go b/encode_pointer_shaped_test.go
+index c3e9946..fa97ab5 100644
+--- a/encode_pointer_shaped_test.go
++++ b/encode_pointer_shaped_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_recursive_test.go b/encode_recursive_test.go
+index dfaa607..dfa9bb2 100644
+--- a/encode_recursive_test.go
++++ b/encode_recursive_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_reported_issues_test.go b/encode_reported_issues_test.go
+index 707d448..37eca7b 100644
+--- a/encode_reported_issues_test.go
++++ b/encode_reported_issues_test.go
+@@ -15 +15 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_shared_struct_test.go b/encode_shared_struct_test.go
+index 45433fd..7e4043d 100644
+--- a/encode_shared_struct_test.go
++++ b/encode_shared_struct_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_sorted_map_test.go b/encode_sorted_map_test.go
+index 1e1a9c9..15d37f0 100644
+--- a/encode_sorted_map_test.go
++++ b/encode_sorted_map_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_stack_copy_test.go b/encode_stack_copy_test.go
+index a5034a4..b144110 100644
+--- a/encode_stack_copy_test.go
++++ b/encode_stack_copy_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_std_marshaler_test.go b/encode_std_marshaler_test.go
+index a2871eb..544febf 100644
+--- a/encode_std_marshaler_test.go
++++ b/encode_std_marshaler_test.go
+@@ -15 +15 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_string_escape_test.go b/encode_string_escape_test.go
+index 996ad7b..22ac814 100644
+--- a/encode_string_escape_test.go
++++ b/encode_string_escape_test.go
+@@ -10 +10 @@ import (
+-	json "github.com/goccy/go-json"
++	json "github.com/orneryd/go-json"
+diff --git a/encode_tail_recursion_test.go b/encode_tail_recursion_test.go
+index abe5d3e..593e548 100644
+--- a/encode_tail_recursion_test.go
++++ b/encode_tail_recursion_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_test.go b/encode_test.go
+index a41bc73..18ef60c 100644
+--- a/encode_test.go
++++ b/encode_test.go
+@@ -21 +21 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_unordered_map_test.go b/encode_unordered_map_test.go
+index 8cf550a..eb3c46d 100644
+--- a/encode_unordered_map_test.go
++++ b/encode_unordered_map_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/encode_value_lifetime_test.go b/encode_value_lifetime_test.go
+index 3d01a97..5aaa4bd 100644
+--- a/encode_value_lifetime_test.go
++++ b/encode_value_lifetime_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/error.go b/error.go
+index 5b2dcee..d8d255e 100644
+--- a/error.go
++++ b/error.go
+@@ -4 +4 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/export_test.go b/export_test.go
+index 526f9b2..c5fc999 100644
+--- a/export_test.go
++++ b/export_test.go
+@@ -4 +4 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/go.mod b/go.mod
+index adc1ce3..e493aaf 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1 +1 @@
+-module github.com/goccy/go-json
++module github.com/orneryd/go-json
+diff --git a/internal/decoder/array.go b/internal/decoder/array.go
+index 76a3073..a89d8ea 100644
+--- a/internal/decoder/array.go
++++ b/internal/decoder/array.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/bool.go b/internal/decoder/bool.go
+index 08f6cf3..43fa44d 100644
+--- a/internal/decoder/bool.go
++++ b/internal/decoder/bool.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/bytes.go b/internal/decoder/bytes.go
+index 5fff2b3..0aa1e46 100644
+--- a/internal/decoder/bytes.go
++++ b/internal/decoder/bytes.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+@@ -91 +91 @@ func (d *bytesDecoder) decodeBinary(ctx *RuntimeContext, cursor, depth int64, p
+-	return d.stringDecoder.decodeByte(buf, cursor)
++	return d.stringDecoder.decodeByte(buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+diff --git a/internal/decoder/compile.go b/internal/decoder/compile.go
+index 5f32c33..a3f8582 100644
+--- a/internal/decoder/compile.go
++++ b/internal/decoder/compile.go
+@@ -10,2 +10,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/compile_race_test.go b/internal/decoder/compile_race_test.go
+index 0e9aa47..f6ca29c 100644
+--- a/internal/decoder/compile_race_test.go
++++ b/internal/decoder/compile_race_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/context.go b/internal/decoder/context.go
+index 7c0dfa8..a27dc61 100644
+--- a/internal/decoder/context.go
++++ b/internal/decoder/context.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/float.go b/internal/decoder/float.go
+index aebde0d..d910bed 100644
+--- a/internal/decoder/float.go
++++ b/internal/decoder/float.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/int.go b/internal/decoder/int.go
+index caba2f9..be71e52 100644
+--- a/internal/decoder/int.go
++++ b/internal/decoder/int.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/interface.go b/internal/decoder/interface.go
+index 679e0cc..5306693 100644
+--- a/internal/decoder/interface.go
++++ b/internal/decoder/interface.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/invalid.go b/internal/decoder/invalid.go
+index 4fdc4fb..cab086f 100644
+--- a/internal/decoder/invalid.go
++++ b/internal/decoder/invalid.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/map.go b/internal/decoder/map.go
+index 0a04659..1bc20ef 100644
+--- a/internal/decoder/map.go
++++ b/internal/decoder/map.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+@@ -276 +276 @@ func (d *mapDecoder) DecodePath(ctx *RuntimeContext, cursor, depth int64) ([][]b
+-		key, keyCursor, err := keyDecoder.decodeByte(buf, cursor)
++		key, keyCursor, err := keyDecoder.decodeByte(buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+diff --git a/internal/decoder/number.go b/internal/decoder/number.go
+index d15b3eb..fff93f7 100644
+--- a/internal/decoder/number.go
++++ b/internal/decoder/number.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+@@ -42 +42 @@ func (d *numberDecoder) Decode(ctx *RuntimeContext, cursor, depth int64, p unsaf
+-	bytes, c, err := d.decodeByte(buf, cursor)
++	bytes, c, err := d.decodeByte(buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+@@ -97 +97 @@ func (d *numberDecoder) DecodePath(ctx *RuntimeContext, cursor, depth int64) ([]
+-	bytes, c, err := d.decodeByte(ctx.Buf, cursor)
++	bytes, c, err := d.decodeByte(ctx.Buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+@@ -107 +107 @@ func (d *numberDecoder) DecodePath(ctx *RuntimeContext, cursor, depth int64) ([]
+-func (d *numberDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, error) {
++func (d *numberDecoder) decodeByte(buf []byte, cursor int64, preserve bool) ([]byte, int64, error) {
+@@ -128 +128 @@ func (d *numberDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, err
+-			return d.stringDecoder.decodeByte(buf, cursor)
++			return d.stringDecoder.decodeByte(buf, cursor, preserve)
+diff --git a/internal/decoder/number_parse.go b/internal/decoder/number_parse.go
+index 0921e1d..f9617cb 100644
+--- a/internal/decoder/number_parse.go
++++ b/internal/decoder/number_parse.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/option.go b/internal/decoder/option.go
+index 9ac6cd6..d5c7d45 100644
+--- a/internal/decoder/option.go
++++ b/internal/decoder/option.go
+@@ -16,0 +17,4 @@ const (
++	// PreserveInvalidUTF8Option keeps the invalid UTF-8 of a decoded string as it is in the input, instead of
++	// replacing it with utf8.RuneError as encoding/json does ( see decodeLiteral ). The escapes are decoded, and a
++	// lone escaped surrogate is still written as utf8.RuneError: only the bytes of the input are kept.
++	PreserveInvalidUTF8Option
+diff --git a/internal/decoder/path.go b/internal/decoder/path.go
+index 35f85f6..1a1b715 100644
+--- a/internal/decoder/path.go
++++ b/internal/decoder/path.go
+@@ -8,2 +8,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/recent_decoder_test.go b/internal/decoder/recent_decoder_test.go
+index 26eba56..2f412c7 100644
+--- a/internal/decoder/recent_decoder_test.go
++++ b/internal/decoder/recent_decoder_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/reflect.go b/internal/decoder/reflect.go
+index 9ea78d1..1b4d43f 100644
+--- a/internal/decoder/reflect.go
++++ b/internal/decoder/reflect.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/scan.go b/internal/decoder/scan.go
+index 23cfd40..7275f9d 100644
+--- a/internal/decoder/scan.go
++++ b/internal/decoder/scan.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/scan_amd64.go b/internal/decoder/scan_amd64.go
+index ba07577..589a206 100644
+--- a/internal/decoder/scan_amd64.go
++++ b/internal/decoder/scan_amd64.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/slice.go b/internal/decoder/slice.go
+index ff7a386..164dec9 100644
+--- a/internal/decoder/slice.go
++++ b/internal/decoder/slice.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/stream.go b/internal/decoder/stream.go
+index 97b5a98..55aa89f 100644
+--- a/internal/decoder/stream.go
++++ b/internal/decoder/stream.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+@@ -570 +570 @@ func (s *Stream) tokenString() (any, error) {
+-	literal, _, err := tokenStringDecoder.decodeByte(s.buf[:end+1], s.cursor)
++	literal, _, err := tokenStringDecoder.decodeByte(s.buf[:end+1], s.cursor, preserveInvalidUTF8(s.Option.Flags))
+diff --git a/internal/decoder/stream_token_legacy.go b/internal/decoder/stream_token_legacy.go
+index c4998d0..f565896 100644
+--- a/internal/decoder/stream_token_legacy.go
++++ b/internal/decoder/stream_token_legacy.go
+@@ -10,2 +10,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/stream_token_v2.go b/internal/decoder/stream_token_v2.go
+index c8a9291..0053d1c 100644
+--- a/internal/decoder/stream_token_v2.go
++++ b/internal/decoder/stream_token_v2.go
+@@ -13 +13 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/string.go b/internal/decoder/string.go
+index dc3d277..16af962 100644
+--- a/internal/decoder/string.go
++++ b/internal/decoder/string.go
+@@ -13 +13 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+@@ -64 +64 @@ func (d *stringDecoder) DecodePath(ctx *RuntimeContext, cursor, depth int64) ([]
+-	bytes, c, err := d.decodeByte(ctx.Buf, cursor)
++	bytes, c, err := d.decodeByte(ctx.Buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+@@ -111,0 +112,8 @@ type stringInfo struct {
++// preserveInvalidUTF8 reports whether the invalid UTF-8 of a decoded string is kept as it is in the input, which
++// PreserveInvalidUTF8Option asks for, instead of being replaced by utf8.RuneError ( see decodeLiteral ). The flags
++// are passed to the normalizers from the option of the RuntimeContext of the call: nothing of the decoding is kept
++// by them, so that a decoder shared by the calls of the types, or by the goroutines, keeps no option.
++func preserveInvalidUTF8(flags OptionFlags) bool {
++	return flags&PreserveInvalidUTF8Option != 0
++}
++
+@@ -113,2 +121,2 @@ type stringInfo struct {
+-// the string has an escape or invalid UTF-8 ( see decodeLiteral ).
+-func (d *stringDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, error) {
++// the string has an escape or invalid UTF-8 ( see decodeLiteral ), which are kept as they are if preserve is set.
++func (d *stringDecoder) decodeByte(buf []byte, cursor int64, preserve bool) ([]byte, int64, error) {
+@@ -122 +130 @@ func (d *stringDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, err
+-	return decodeLiteral(literal, info), next, nil
++	return decodeLiteral(literal, info, preserve), next, nil
+@@ -128 +136 @@ func (d *stringDecoder) decodeByte(buf []byte, cursor int64) ([]byte, int64, err
+-func (ctx *RuntimeContext) unescapeLong(literal []byte, info stringInfo) string {
++func (ctx *RuntimeContext) unescapeLong(literal []byte, info stringInfo, preserve bool) string {
+@@ -130 +138 @@ func (ctx *RuntimeContext) unescapeLong(literal []byte, info stringInfo) string
+-		decoded := decodeLiteral(literal, info)
++		decoded := decodeLiteral(literal, info, preserve)
+@@ -138 +146 @@ func (ctx *RuntimeContext) unescapeLong(literal []byte, info stringInfo) string
+-	if info.nonASCII && !utf8.Valid(decoded) {
++	if info.nonASCII && !preserve && !utf8.Valid(decoded) {
+@@ -146,2 +154,3 @@ func (ctx *RuntimeContext) unescapeLong(literal []byte, info stringInfo) string
+-// ( see Stream.decodeError ).
+-func decodeLiteral(literal []byte, info stringInfo) []byte {
++// ( see Stream.decodeError ). The invalid UTF-8 is replaced unless preserve is set, which keeps it as it is: the
++// escapes are decoded the same way then, and a lone escaped surrogate is written as utf8.RuneError in either case.
++func decodeLiteral(literal []byte, info stringInfo, preserve bool) []byte {
+@@ -152 +161 @@ func decodeLiteral(literal []byte, info stringInfo) []byte {
+-	if info.nonASCII && !utf8.Valid(literal) {
++	if info.nonASCII && !preserve && !utf8.Valid(literal) {
+@@ -159,2 +168,5 @@ func decodeLiteral(literal []byte, info stringInfo) []byte {
+-// UTF-8 replaced ( see decodeLiteral ).
+-func validLiteral(literal []byte) []byte {
++// UTF-8 replaced, or kept as it is if preserve is set ( see decodeLiteral ).
++func validLiteral(literal []byte, preserve bool) []byte {
++	if preserve {
++		return literal
++	}
+@@ -170,0 +183 @@ func (d *stringDecoder) decodeStringValue(ctx *RuntimeContext, cursor int64) (st
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -186 +199 @@ func (d *stringDecoder) decodeStringValue(ctx *RuntimeContext, cursor int64) (st
+-		if info.nonASCII && !utf8.Valid(decoded) {
++		if info.nonASCII && !preserve && !utf8.Valid(decoded) {
+@@ -193 +206 @@ func (d *stringDecoder) decodeStringValue(ctx *RuntimeContext, cursor int64) (st
+-		return ctx.unescapeLong(literal, info), next, true, nil
++		return ctx.unescapeLong(literal, info, preserve), next, true, nil
+@@ -196 +209 @@ func (d *stringDecoder) decodeStringValue(ctx *RuntimeContext, cursor int64) (st
+-		literal = validLiteral(literal)
++		literal = validLiteral(literal, preserve)
+@@ -209,0 +223 @@ func (d *stringDecoder) decodeStringField(ctx *RuntimeContext, start int64) (str
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -242 +256 @@ func (d *stringDecoder) decodeStringField(ctx *RuntimeContext, start int64) (str
+-					literal = validLiteral(literal)
++					literal = validLiteral(literal, preserve)
+@@ -251 +265 @@ func (d *stringDecoder) decodeStringField(ctx *RuntimeContext, start int64) (str
+-				if nonASCII && !utf8.Valid(decoded) {
++				if nonASCII && !preserve && !utf8.Valid(decoded) {
+@@ -257 +271 @@ func (d *stringDecoder) decodeStringField(ctx *RuntimeContext, start int64) (str
+-			return ctx.unescapeLong(literal, stringInfo{firstEscape: int(firstEscape), nonASCII: nonASCII}), next, true, nil
++			return ctx.unescapeLong(literal, stringInfo{firstEscape: int(firstEscape), nonASCII: nonASCII}, preserve), next, true, nil
+@@ -332,0 +347 @@ func (d *stringDecoder) decodeString(ctx *RuntimeContext, cursor int64) (string,
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -345 +360 @@ func (d *stringDecoder) decodeString(ctx *RuntimeContext, cursor int64) (string,
+-		if info.nonASCII && !utf8.Valid(decoded) {
++		if info.nonASCII && !preserve && !utf8.Valid(decoded) {
+@@ -352 +367 @@ func (d *stringDecoder) decodeString(ctx *RuntimeContext, cursor int64) (string,
+-		return ctx.unescapeLong(literal, info), next, true, nil
++		return ctx.unescapeLong(literal, info, preserve), next, true, nil
+@@ -355 +370 @@ func (d *stringDecoder) decodeString(ctx *RuntimeContext, cursor int64) (string,
+-		literal = validLiteral(literal)
++		literal = validLiteral(literal, preserve)
+diff --git a/internal/decoder/string_scan_amd64.go b/internal/decoder/string_scan_amd64.go
+index ec5246e..e809fbb 100644
+--- a/internal/decoder/string_scan_amd64.go
++++ b/internal/decoder/string_scan_amd64.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/string_scan_amd64_test.go b/internal/decoder/string_scan_amd64_test.go
+index 85ac1b7..df86c15 100644
+--- a/internal/decoder/string_scan_amd64_test.go
++++ b/internal/decoder/string_scan_amd64_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/string_unescape.go b/internal/decoder/string_unescape.go
+index 04f9a2c..948e8c1 100644
+--- a/internal/decoder/string_unescape.go
++++ b/internal/decoder/string_unescape.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+@@ -17,0 +18 @@ func (d *stringDecoder) decodeStringRest(ctx *RuntimeContext, literal []byte, cu
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -53 +54 @@ func (d *stringDecoder) decodeStringRest(ctx *RuntimeContext, literal []byte, cu
+-				literal = validLiteral(literal)
++				literal = validLiteral(literal, preserve)
+@@ -74,0 +76 @@ func (d *stringDecoder) unescapeRest(ctx *RuntimeContext, literal []byte, cursor
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -144 +146 @@ func (d *stringDecoder) unescapeRest(ctx *RuntimeContext, literal []byte, cursor
+-					literal = validLiteral(literal)
++					literal = validLiteral(literal, preserve)
+@@ -152 +154 @@ func (d *stringDecoder) unescapeRest(ctx *RuntimeContext, literal []byte, cursor
+-			if high&msb != 0 && !utf8.Valid(out) {
++			if high&msb != 0 && !preserve && !utf8.Valid(out) {
+diff --git a/internal/decoder/struct.go b/internal/decoder/struct.go
+index 04c1640..0a18af1 100644
+--- a/internal/decoder/struct.go
++++ b/internal/decoder/struct.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+@@ -95,0 +96 @@ func (d *structDecoder) Decode(ctx *RuntimeContext, cursor, depth int64, p unsaf
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -97 +98 @@ func (d *structDecoder) Decode(ctx *RuntimeContext, cursor, depth int64, p unsaf
+-		field, c, err := d.decodeKey(buf, cursor, disallowUnknownFields)
++		field, c, err := d.decodeKey(buf, cursor, disallowUnknownFields, preserve)
+@@ -162,0 +164 @@ func (d *structDecoder) decodeObjectFirstWin(ctx *RuntimeContext, cursor, depth
++	preserve := preserveInvalidUTF8(ctx.Option.Flags)
+@@ -164 +166 @@ func (d *structDecoder) decodeObjectFirstWin(ctx *RuntimeContext, cursor, depth
+-		field, c, err := d.decodeKey(buf, cursor, disallowUnknownFields)
++		field, c, err := d.decodeKey(buf, cursor, disallowUnknownFields, preserve)
+@@ -271,2 +273,2 @@ func (d *structDecoder) DecodePath(ctx *RuntimeContext, cursor, depth int64) ([]
+-// of the loop too.
+-func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownFields bool) (*structFieldSet, int64, error) {
++// of the loop too. preserve is whether the invalid UTF-8 of the key which the error reports is kept.
++func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownFields bool, preserve bool) (*structFieldSet, int64, error) {
+@@ -292 +294 @@ func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownField
+-				return d.decodeKeyNotASCII(buf, cursor, disallowUnknownFields)
++				return d.decodeKeyNotASCII(buf, cursor, disallowUnknownFields, preserve)
+@@ -316 +318 @@ func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownField
+-				return d.decodeKeyByScan(buf, cursor, disallowUnknownFields)
++				return d.decodeKeyByScan(buf, cursor, disallowUnknownFields, preserve)
+@@ -322 +324 @@ func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownField
+-			return d.decodeKeyNotASCII(buf, cursor, disallowUnknownFields)
++			return d.decodeKeyNotASCII(buf, cursor, disallowUnknownFields, preserve)
+@@ -344 +346 @@ func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownField
+-	return d.decodeKeyByScan(buf, cursor, disallowUnknownFields)
++	return d.decodeKeyByScan(buf, cursor, disallowUnknownFields, preserve)
+@@ -352 +354 @@ func (d *structDecoder) decodeKey(buf []byte, cursor int64, disallowUnknownField
+-func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnknownFields bool) (*structFieldSet, int64, error) {
++func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnknownFields bool, preserve bool) (*structFieldSet, int64, error) {
+@@ -357 +359 @@ func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnkn
+-			return d.decodeKeyByScan(buf, cursor, disallowUnknownFields)
++			return d.decodeKeyByScan(buf, cursor, disallowUnknownFields, preserve)
+@@ -366 +368 @@ func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnkn
+-		return d.decodeKeyByScan(buf, cursor, disallowUnknownFields)
++		return d.decodeKeyByScan(buf, cursor, disallowUnknownFields, preserve)
+@@ -395 +397 @@ func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnkn
+-			field, key = keys.lookup(key, stringInfo{firstEscape: -1, nonASCII: true})
++			field, key = keys.lookup(key, stringInfo{firstEscape: -1, nonASCII: true}, preserve)
+@@ -397 +399 @@ func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnkn
+-			key = decodeLiteral(key, stringInfo{firstEscape: -1, nonASCII: true})
++			key = decodeLiteral(key, stringInfo{firstEscape: -1, nonASCII: true}, preserve)
+@@ -407 +409 @@ func (d *structDecoder) decodeKeyNotASCII(buf []byte, cursor int64, disallowUnkn
+-func (d *structDecoder) decodeKeyByScan(buf []byte, cursor int64, disallowUnknownFields bool) (*structFieldSet, int64, error) {
++func (d *structDecoder) decodeKeyByScan(buf []byte, cursor int64, disallowUnknownFields bool, preserve bool) (*structFieldSet, int64, error) {
+@@ -415 +417 @@ func (d *structDecoder) decodeKeyByScan(buf []byte, cursor int64, disallowUnknow
+-	field, key := d.keys.lookup(rawKey, info)
++	field, key := d.keys.lookup(rawKey, info, preserve)
+diff --git a/internal/decoder/struct_keys.go b/internal/decoder/struct_keys.go
+index 012dac8..15de80c 100644
+--- a/internal/decoder/struct_keys.go
++++ b/internal/decoder/struct_keys.go
+@@ -417 +417,3 @@ func equalFoldedASCII(key, folded []byte) bool {
+-func (k *structKeys) lookup(key []byte, info stringInfo) (*structFieldSet, []byte) {
++// preserve is whether the invalid UTF-8 of the decoded key is kept as the input has it ( see decodeLiteral ):
++// the lookup itself goes by the runes the key folds to, which is the same for the bytes of the input either way.
++func (k *structKeys) lookup(key []byte, info stringInfo, preserve bool) (*structFieldSet, []byte) {
+@@ -425 +427 @@ func (k *structKeys) lookup(key []byte, info stringInfo) (*structFieldSet, []byt
+-	key = decodeLiteral(key, info)
++	key = decodeLiteral(key, info, preserve)
+diff --git a/internal/decoder/struct_keys_test.go b/internal/decoder/struct_keys_test.go
+index 37d4169..43066cc 100644
+--- a/internal/decoder/struct_keys_test.go
++++ b/internal/decoder/struct_keys_test.go
+@@ -86 +86 @@ func TestStructKeysShortWithNul(t *testing.T) {
+-		field, _, err := d.decodeKey(buf, 0, false)
++		field, _, err := d.decodeKey(buf, 0, false, false)
+diff --git a/internal/decoder/syntax_error.go b/internal/decoder/syntax_error.go
+index 40cd048..329565e 100644
+--- a/internal/decoder/syntax_error.go
++++ b/internal/decoder/syntax_error.go
+@@ -4 +4 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/syntax_error_legacy.go b/internal/decoder/syntax_error_legacy.go
+index 042b5ab..e46398b 100644
+--- a/internal/decoder/syntax_error_legacy.go
++++ b/internal/decoder/syntax_error_legacy.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/syntax_error_v2.go b/internal/decoder/syntax_error_v2.go
+index 4f65a16..50a680c 100644
+--- a/internal/decoder/syntax_error_v2.go
++++ b/internal/decoder/syntax_error_v2.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/type_error.go b/internal/decoder/type_error.go
+index ed8dd8f..50dfd79 100644
+--- a/internal/decoder/type_error.go
++++ b/internal/decoder/type_error.go
+@@ -175 +175,2 @@ func (ctx *RuntimeContext) TypeError(dec Decoder, typ reflect.Type, base, offset
+-	e := newTypeError(p, typeErrorPath(dec, ctx.Buf, base, p), typ)
++	// the input names of the type error are decoded as the option of the call decodes the keys
++	e := newTypeError(p, typeErrorPath(dec, ctx.Buf, base, p, preserveInvalidUTF8(ctx.Option.Flags)), typ)
+@@ -202,2 +203,3 @@ type typeErrorStep struct {
+-// decoders of the values it goes through.
+-func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError) []typeErrorStep {
++// decoders of the values it goes through. preserve is whether the invalid UTF-8 of an input name is kept as the
++// input has it ( see decodeLiteral ).
++func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError, preserve bool) []typeErrorStep {
+@@ -221 +223 @@ func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError) [
+-			step, child, next, ok := d.typeErrorChild(buf, cursor, p)
++			step, child, next, ok := d.typeErrorChild(buf, cursor, p, preserve)
+@@ -251 +253 @@ func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError) [
+-				if key, next, ok = typeErrorEntry(buf, cursor, p); ok {
++				if key, next, ok = typeErrorEntry(buf, cursor, p, preserve); ok {
+@@ -265 +267 @@ func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError) [
+-			key, next, ok := typeErrorEntry(buf, cursor, p)
++			key, next, ok := typeErrorEntry(buf, cursor, p, preserve)
+@@ -283 +285 @@ func typeErrorPath(dec Decoder, buf []byte, cursor int64, p *pendingTypeError) [
+-func (d *structDecoder) typeErrorChild(buf []byte, cursor int64, p *pendingTypeError) (typeErrorStep, Decoder, int64, bool) {
++func (d *structDecoder) typeErrorChild(buf []byte, cursor int64, p *pendingTypeError, preserve bool) (typeErrorStep, Decoder, int64, bool) {
+@@ -297 +299 @@ func (d *structDecoder) typeErrorChild(buf []byte, cursor int64, p *pendingTypeE
+-		field, _ := d.keys.lookup(key, info)
++		field, _ := d.keys.lookup(key, info, preserve)
+@@ -312 +314 @@ func (d *structDecoder) typeErrorChild(buf []byte, cursor int64, p *pendingTypeE
+-				structName: d.typeName, name: field.key, inputName: string(decodeLiteral(key, info)), isField: true,
++				structName: d.typeName, name: field.key, inputName: string(decodeLiteral(key, info, preserve)), isField: true,
+@@ -352 +354 @@ func typeErrorElement(buf []byte, cursor int64, p *pendingTypeError) (int, int64
+-func typeErrorEntry(buf []byte, cursor int64, p *pendingTypeError) (string, int64, bool) {
++func typeErrorEntry(buf []byte, cursor int64, p *pendingTypeError, preserve bool) (string, int64, bool) {
+@@ -364 +366 @@ func typeErrorEntry(buf []byte, cursor int64, p *pendingTypeError) (string, int6
+-		key = decodeLiteral(key, info)
++		key = decodeLiteral(key, info, preserve)
+diff --git a/internal/decoder/type_error_legacy.go b/internal/decoder/type_error_legacy.go
+index a026365..65e8496 100644
+--- a/internal/decoder/type_error_legacy.go
++++ b/internal/decoder/type_error_legacy.go
+@@ -12 +12 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/type_error_v2.go b/internal/decoder/type_error_v2.go
+index e021554..8b0da1d 100644
+--- a/internal/decoder/type_error_v2.go
++++ b/internal/decoder/type_error_v2.go
+@@ -13 +13 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/decoder/unmarshal_json.go b/internal/decoder/unmarshal_json.go
+index f459638..cfc7d71 100644
+--- a/internal/decoder/unmarshal_json.go
++++ b/internal/decoder/unmarshal_json.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/unmarshal_text.go b/internal/decoder/unmarshal_text.go
+index fd671cd..7e2bbe1 100644
+--- a/internal/decoder/unmarshal_text.go
++++ b/internal/decoder/unmarshal_text.go
+@@ -12 +12 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/decoder/wrapped_string.go b/internal/decoder/wrapped_string.go
+index f46abda..45840db 100644
+--- a/internal/decoder/wrapped_string.go
++++ b/internal/decoder/wrapped_string.go
+@@ -79 +79 @@ func (d *wrappedStringDecoder) Decode(ctx *RuntimeContext, cursor, depth int64,
+-	bytes, c, err := d.stringDecoder.decodeByte(buf, cursor)
++	bytes, c, err := d.stringDecoder.decodeByte(buf, cursor, preserveInvalidUTF8(ctx.Option.Flags))
+diff --git a/internal/encoder/code.go b/internal/encoder/code.go
+index 31bf39c..5147f62 100644
+--- a/internal/encoder/code.go
++++ b/internal/encoder/code.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/compact.go b/internal/encoder/compact.go
+index 4c42ea2..9dab30f 100644
+--- a/internal/encoder/compact.go
++++ b/internal/encoder/compact.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/encoder/compiler.go b/internal/encoder/compiler.go
+index 0205e4e..7950435 100644
+--- a/internal/encoder/compiler.go
++++ b/internal/encoder/compiler.go
+@@ -12,2 +12,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+@@ -552 +552 @@ func (c *Compiler) listElemCode(typ reflect.Type) (Code, error) {
+-		// See here for related issues: https://github.com/goccy/go-json/issues/370
++		// See here for related issues: https://github.com/orneryd/go-json/issues/370
+diff --git a/internal/encoder/compiler_race_test.go b/internal/encoder/compiler_race_test.go
+index 619fa37..e68cb92 100644
+--- a/internal/encoder/compiler_race_test.go
++++ b/internal/encoder/compiler_race_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/context.go b/internal/encoder/context.go
+index ddd8818..55b2a4e 100644
+--- a/internal/encoder/context.go
++++ b/internal/encoder/context.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/encoder.go b/internal/encoder/encoder.go
+index 9a12473..d34c947 100644
+--- a/internal/encoder/encoder.go
++++ b/internal/encoder/encoder.go
+@@ -18,2 +18,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/frame.go b/internal/encoder/frame.go
+index 77f8435..61ca8b4 100644
+--- a/internal/encoder/frame.go
++++ b/internal/encoder/frame.go
+@@ -115 +115,7 @@ func (c *RuntimeContext) EnterInterface(code *Opcode, p unsafe.Pointer) (*Opcode
+-		if err := c.recordSeen(code, p); err != nil {
++		identity := p
++		if !codeSet.DataWordIsAddr {
++			// Map values copied into interface slots keep the same map data
++			// pointer even when each traversal allocates a fresh slot.
++			identity = ifacePtr
++		}
++		if err := c.recordSeen(code, identity); err != nil {
+diff --git a/internal/encoder/indent.go b/internal/encoder/indent.go
+index dfe04b5..bcd53d2 100644
+--- a/internal/encoder/indent.go
++++ b/internal/encoder/indent.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/errors"
+diff --git a/internal/encoder/map_collect.go b/internal/encoder/map_collect.go
+index 2807e57..13d9f52 100644
+--- a/internal/encoder/map_collect.go
++++ b/internal/encoder/map_collect.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/map_key_interface.go b/internal/encoder/map_key_interface.go
+index 780302d..9d51ea1 100644
+--- a/internal/encoder/map_key_interface.go
++++ b/internal/encoder/map_key_interface.go
+@@ -14,2 +14,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/map_key_interface_legacy.go b/internal/encoder/map_key_interface_legacy.go
+index 4913b2d..e614953 100644
+--- a/internal/encoder/map_key_interface_legacy.go
++++ b/internal/encoder/map_key_interface_legacy.go
+@@ -10,2 +10,2 @@ import (
+-	"github.com/goccy/go-json/internal/errors"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/errors"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/marshaler.go b/internal/encoder/marshaler.go
+index b871c43..1a6f8e0 100644
+--- a/internal/encoder/marshaler.go
++++ b/internal/encoder/marshaler.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/omit_zero.go b/internal/encoder/omit_zero.go
+index 163482f..c6dc84e 100644
+--- a/internal/encoder/omit_zero.go
++++ b/internal/encoder/omit_zero.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/opcode.go b/internal/encoder/opcode.go
+index f2b95d1..18656b2 100644
+--- a/internal/encoder/opcode.go
++++ b/internal/encoder/opcode.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/recent_code_set_variants_test.go b/internal/encoder/recent_code_set_variants_test.go
+index f3c12fc..6e3e797 100644
+--- a/internal/encoder/recent_code_set_variants_test.go
++++ b/internal/encoder/recent_code_set_variants_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/string_scan_amd64.go b/internal/encoder/string_scan_amd64.go
+index de5fa33..1166adc 100644
+--- a/internal/encoder/string_scan_amd64.go
++++ b/internal/encoder/string_scan_amd64.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/string_scan_amd64_test.go b/internal/encoder/string_scan_amd64_test.go
+index 94f198b..00960ab 100644
+--- a/internal/encoder/string_scan_amd64_test.go
++++ b/internal/encoder/string_scan_amd64_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/vm/debug_vm.go b/internal/encoder/vm/debug_vm.go
+index 82b6dd4..8e6be24 100644
+--- a/internal/encoder/vm/debug_vm.go
++++ b/internal/encoder/vm/debug_vm.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm/hack.go b/internal/encoder/vm/hack.go
+index 65252b4..8d61a95 100644
+--- a/internal/encoder/vm/hack.go
++++ b/internal/encoder/vm/hack.go
+@@ -8 +8 @@ import (
+-	_ "github.com/goccy/go-json/internal/encoder/vm_indent"
++	_ "github.com/orneryd/go-json/internal/encoder/vm_indent"
+diff --git a/internal/encoder/vm/util.go b/internal/encoder/vm/util.go
+index 90256b8..fb4112a 100644
+--- a/internal/encoder/vm/util.go
++++ b/internal/encoder/vm/util.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/vm/vm.go b/internal/encoder/vm/vm.go
+index 72e04e9..9941dfe 100644
+--- a/internal/encoder/vm/vm.go
++++ b/internal/encoder/vm/vm.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_color/debug_vm.go b/internal/encoder/vm_color/debug_vm.go
+index 925f61e..e9fd315 100644
+--- a/internal/encoder/vm_color/debug_vm.go
++++ b/internal/encoder/vm_color/debug_vm.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_color/hack.go b/internal/encoder/vm_color/hack.go
+index 12ec56c..79f5076 100644
+--- a/internal/encoder/vm_color/hack.go
++++ b/internal/encoder/vm_color/hack.go
+@@ -8 +8 @@ import (
+-	_ "github.com/goccy/go-json/internal/encoder/vm_color_indent"
++	_ "github.com/orneryd/go-json/internal/encoder/vm_color_indent"
+diff --git a/internal/encoder/vm_color/util.go b/internal/encoder/vm_color/util.go
+index fad5913..5995043 100644
+--- a/internal/encoder/vm_color/util.go
++++ b/internal/encoder/vm_color/util.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/vm_color/vm.go b/internal/encoder/vm_color/vm.go
+index b624d6d..6b12fe4 100644
+--- a/internal/encoder/vm_color/vm.go
++++ b/internal/encoder/vm_color/vm.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_color_indent/debug_vm.go b/internal/encoder/vm_color_indent/debug_vm.go
+index dd4cd48..208f8db 100644
+--- a/internal/encoder/vm_color_indent/debug_vm.go
++++ b/internal/encoder/vm_color_indent/debug_vm.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_color_indent/util.go b/internal/encoder/vm_color_indent/util.go
+index ddad2fc..89ac29b 100644
+--- a/internal/encoder/vm_color_indent/util.go
++++ b/internal/encoder/vm_color_indent/util.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/vm_color_indent/vm.go b/internal/encoder/vm_color_indent/vm.go
+index 70c6bc5..a50d8fd 100644
+--- a/internal/encoder/vm_color_indent/vm.go
++++ b/internal/encoder/vm_color_indent/vm.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_indent/debug_vm.go b/internal/encoder/vm_indent/debug_vm.go
+index 9939538..470443e 100644
+--- a/internal/encoder/vm_indent/debug_vm.go
++++ b/internal/encoder/vm_indent/debug_vm.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_indent/hack.go b/internal/encoder/vm_indent/hack.go
+index 9e245bf..a5abff8 100644
+--- a/internal/encoder/vm_indent/hack.go
++++ b/internal/encoder/vm_indent/hack.go
+@@ -8 +8 @@ import (
+-	_ "github.com/goccy/go-json/internal/encoder/vm_color"
++	_ "github.com/orneryd/go-json/internal/encoder/vm_color"
+diff --git a/internal/encoder/vm_indent/util.go b/internal/encoder/vm_indent/util.go
+index 942b74a..a14543f 100644
+--- a/internal/encoder/vm_indent/util.go
++++ b/internal/encoder/vm_indent/util.go
+@@ -9,2 +9,2 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
+-	"github.com/goccy/go-json/internal/runtime"
++	"github.com/orneryd/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/runtime"
+diff --git a/internal/encoder/vm_indent/vm.go b/internal/encoder/vm_indent/vm.go
+index 5f8bbe1..a50d79b 100644
+--- a/internal/encoder/vm_indent/vm.go
++++ b/internal/encoder/vm_indent/vm.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/internal/encoder/vm_jump_table_test.go b/internal/encoder/vm_jump_table_test.go
+index 0389dd3..98dbd89 100644
+--- a/internal/encoder/vm_jump_table_test.go
++++ b/internal/encoder/vm_jump_table_test.go
+@@ -23 +23 @@ func TestVMDispatchIsJumpTable(t *testing.T) {
+-			cmd := exec.Command("go", "build", "-gcflags=-S", "github.com/goccy/go-json/internal/encoder/"+vm)
++			cmd := exec.Command("go", "build", "-gcflags=-S", "github.com/orneryd/go-json/internal/encoder/"+vm)
+diff --git a/json.go b/json.go
+index 0f3e22c..0c9fdd4 100644
+--- a/json.go
++++ b/json.go
+@@ -8,2 +8,2 @@ import (
+-	"github.com/goccy/go-json/internal/decoder"
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/decoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/json_test.go b/json_test.go
+index 01b8c89..1bba51a 100644
+--- a/json_test.go
++++ b/json_test.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/number_test.go b/number_test.go
+index 4c5e3ef..d6b0f65 100644
+--- a/number_test.go
++++ b/number_test.go
+@@ -11 +11 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/option.go b/option.go
+index ec26365..48a77cc 100644
+--- a/option.go
++++ b/option.go
+@@ -6,2 +6,2 @@ import (
+-	"github.com/goccy/go-json/internal/decoder"
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/decoder"
++	"github.com/orneryd/go-json/internal/encoder"
+@@ -106,0 +107,13 @@ func DecodeNoCopyString() DecodeOptionFunc {
++
++// DecodePreserveInvalidUTF8 keeps the invalid UTF-8 of a decoded string as the bytes the input has, instead of
++// replacing it with utf8.RuneError as encoding/json does: the bytes of a string, of a map key or of a field key,
++// and the strings decoded by a Stream or a Path, keep them as they are, so that a string may be the one the input
++// holds, byte for byte, including the encodings of a surrogate which WTF-8 makes.
++//
++// The escapes are decoded as they are without the option, and a lone escaped surrogate is still written as
++// utf8.RuneError: only the bytes of the input are kept.
++func DecodePreserveInvalidUTF8() DecodeOptionFunc {
++	return func(opt *DecodeOption) {
++		opt.Flags |= decoder.PreserveInvalidUTF8Option
++	}
++}
+diff --git a/path.go b/path.go
+index ab504b7..f57adc1 100644
+--- a/path.go
++++ b/path.go
+@@ -6 +6 @@ import (
+-	"github.com/goccy/go-json/internal/decoder"
++	"github.com/orneryd/go-json/internal/decoder"
+@@ -70 +70 @@ func (p *Path) Unmarshal(data []byte, v any, optFuncs ...DecodeOptionFunc) error
+-		if err := Unmarshal(content, &result); err != nil {
++		if err := UnmarshalWithOption(content, &result, optFuncs...); err != nil {
+diff --git a/path_test.go b/path_test.go
+index 038b57b..588a280 100644
+--- a/path_test.go
++++ b/path_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/query.go b/query.go
+index 4b11cf2..8db55a2 100644
+--- a/query.go
++++ b/query.go
+@@ -4 +4 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/query_test.go b/query_test.go
+index d8cac61..6fc7392 100644
+--- a/query_test.go
++++ b/query_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/size_test.go b/size_test.go
+index a57d663..11dd7ee 100644
+--- a/size_test.go
++++ b/size_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json/internal/encoder"
++	"github.com/orneryd/go-json/internal/encoder"
+diff --git a/stream_test.go b/stream_test.go
+index 848037e..784a6b2 100644
+--- a/stream_test.go
++++ b/stream_test.go
+@@ -21 +21 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/tagkey_test.go b/tagkey_test.go
+index fe38911..fc92185 100644
+--- a/tagkey_test.go
++++ b/tagkey_test.go
+@@ -10 +10 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_array_test.go b/test/cover/cover_array_test.go
+index 34455fb..1b1b761 100644
+--- a/test/cover/cover_array_test.go
++++ b/test/cover/cover_array_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_bool_test.go b/test/cover/cover_bool_test.go
+index 47afdac..f41b351 100644
+--- a/test/cover/cover_bool_test.go
++++ b/test/cover/cover_bool_test.go
+@@ -9 +9 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_bytes_test.go b/test/cover/cover_bytes_test.go
+index ca66cc9..13c6dd7 100644
+--- a/test/cover/cover_bytes_test.go
++++ b/test/cover/cover_bytes_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_float32_test.go b/test/cover/cover_float32_test.go
+index b644750..3e77916 100644
+--- a/test/cover/cover_float32_test.go
++++ b/test/cover/cover_float32_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_float64_test.go b/test/cover/cover_float64_test.go
+index f6f9900..3975099 100644
+--- a/test/cover/cover_float64_test.go
++++ b/test/cover/cover_float64_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_helper_test.go b/test/cover/cover_helper_test.go
+index cf91404..e5d0dcc 100644
+--- a/test/cover/cover_helper_test.go
++++ b/test/cover/cover_helper_test.go
+@@ -7 +7 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_int16_test.go b/test/cover/cover_int16_test.go
+index 4ba4f51..113d04a 100644
+--- a/test/cover/cover_int16_test.go
++++ b/test/cover/cover_int16_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_int32_test.go b/test/cover/cover_int32_test.go
+index 88441a1..cf627c7 100644
+--- a/test/cover/cover_int32_test.go
++++ b/test/cover/cover_int32_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_int64_test.go b/test/cover/cover_int64_test.go
+index 3b6155e..62a85ed 100644
+--- a/test/cover/cover_int64_test.go
++++ b/test/cover/cover_int64_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_int8_test.go b/test/cover/cover_int8_test.go
+index 9056ef2..7e873ad 100644
+--- a/test/cover/cover_int8_test.go
++++ b/test/cover/cover_int8_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_int_test.go b/test/cover/cover_int_test.go
+index f65a1a2..6748a30 100644
+--- a/test/cover/cover_int_test.go
++++ b/test/cover/cover_int_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_map_test.go b/test/cover/cover_map_test.go
+index 4052fe7..f156c02 100644
+--- a/test/cover/cover_map_test.go
++++ b/test/cover/cover_map_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_marshal_json_test.go b/test/cover/cover_marshal_json_test.go
+index bc9a581..cd76e2f 100644
+--- a/test/cover/cover_marshal_json_test.go
++++ b/test/cover/cover_marshal_json_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_marshal_text_test.go b/test/cover/cover_marshal_text_test.go
+index 69a38e7..1fa0bd1 100644
+--- a/test/cover/cover_marshal_text_test.go
++++ b/test/cover/cover_marshal_text_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_number_test.go b/test/cover/cover_number_test.go
+index d2932b3..758e826 100644
+--- a/test/cover/cover_number_test.go
++++ b/test/cover/cover_number_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_slice_test.go b/test/cover/cover_slice_test.go
+index e57e1dc..dd984d3 100644
+--- a/test/cover/cover_slice_test.go
++++ b/test/cover/cover_slice_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_string_test.go b/test/cover/cover_string_test.go
+index 0728a0d..ea45fa2 100644
+--- a/test/cover/cover_string_test.go
++++ b/test/cover/cover_string_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_uint16_test.go b/test/cover/cover_uint16_test.go
+index 3bcdeb8..ef7c295 100644
+--- a/test/cover/cover_uint16_test.go
++++ b/test/cover/cover_uint16_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_uint32_test.go b/test/cover/cover_uint32_test.go
+index f6afcee..7155da3 100644
+--- a/test/cover/cover_uint32_test.go
++++ b/test/cover/cover_uint32_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_uint64_test.go b/test/cover/cover_uint64_test.go
+index 8da93ab..470c363 100644
+--- a/test/cover/cover_uint64_test.go
++++ b/test/cover/cover_uint64_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_uint8_test.go b/test/cover/cover_uint8_test.go
+index 9e67453..51aba04 100644
+--- a/test/cover/cover_uint8_test.go
++++ b/test/cover/cover_uint8_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/cover/cover_uint_test.go b/test/cover/cover_uint_test.go
+index 0f4ed2d..577990a 100644
+--- a/test/cover/cover_uint_test.go
++++ b/test/cover/cover_uint_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/example/example_marshaling_test.go b/test/example/example_marshaling_test.go
+index 0119ecc..6148c3d 100644
+--- a/test/example/example_marshaling_test.go
++++ b/test/example/example_marshaling_test.go
+@@ -12 +12 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/example/example_query_test.go b/test/example/example_query_test.go
+index cca22ba..c226458 100644
+--- a/test/example/example_query_test.go
++++ b/test/example/example_query_test.go
+@@ -8 +8 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/example/example_test.go b/test/example/example_test.go
+index 904f3e8..7d1ad65 100644
+--- a/test/example/example_test.go
++++ b/test/example/example_test.go
+@@ -15 +15 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"
+diff --git a/test/example/example_text_marshaling_test.go b/test/example/example_text_marshaling_test.go
+index 090cd63..1a6767b 100644
+--- a/test/example/example_text_marshaling_test.go
++++ b/test/example/example_text_marshaling_test.go
+@@ -12 +12 @@ import (
+-	"github.com/goccy/go-json"
++	"github.com/orneryd/go-json"

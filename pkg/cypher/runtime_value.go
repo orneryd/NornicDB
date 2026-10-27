@@ -92,7 +92,7 @@ func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error)
 		return plan.expressions, plan.err
 	}
 	var expressions []pipelinePropertyExpression
-	err := forEachMapEntry(text, func(key, expr string) {
+	err := forEachMapEntry(text, mapSourceText, func(key, expr string) {
 		expressions = append(expressions, pipelinePropertyExpression{key: key, expr: expr})
 	})
 	propertyExpressionPlans.put(text, propertyExpressionPlan{expressions: expressions, err: err})

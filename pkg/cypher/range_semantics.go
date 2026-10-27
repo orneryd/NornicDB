@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"iter"
 	"strings"
@@ -150,18 +151,18 @@ func namedFunctionArguments(expression, function string) []string {
 			continue
 		}
 		open := index + len(function)
-		if open < len(lower) && isIdentByte(lower[open]) {
+		if open < len(lower) && cyphertext.NamePartAt(lower, open) {
 			index++
 			continue
 		}
-		for open < len(lower) && isWhitespace(lower[open]) {
+		for open < len(lower) && cyphertext.IsWhitespaceAt(lower, open) {
 			open++
 		}
 		if open >= len(lower) || lower[open] != '(' {
 			index++
 			continue
 		}
-		close := findMatchingDelimiter(expression, open, '(', ')')
+		close := cyphertext.FindMatchingDelimiter(expression, open, '(', ')', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			return arguments
 		}

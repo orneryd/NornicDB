@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
+
 ### Added
 
 - Add opt-in CUDA and Vulkan HNSW qualification beyond 4 GiB of resident
@@ -19,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
 
 ### Changed
+
+- Standard Go database creation uses `DatabaseCreateRequest{Name, Options}`.
+  CREATE DATABASE initial options now publish atomically with its name through
+  one authoritative catalog commit; standalone ALTER options remain separate.
+
+- Go catalog construction and all catalog mutations now take an explicit context.
+  Custom catalog storage must expose authoritative commit receipts; migrate
+  callers and adapters using the [catalog API guide](docs/development/catalog-context-api.md).
 
 - Go access-metadata reads use `ReadAccessMeta(AccessMetaReadRequest)` with
   `AccessMetaReadPoint` or `AccessMetaReadAll`. Migrate `GetAccessMeta` results
@@ -60,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Fix recursive graph-component JSON encoding while preserving exact admitted UTF-16 identities through an opt-in decoder policy.
+
+- Encrypt saved remote constituent credentials and resolve runtime identities
+  through the database manager. Enforce constituent access modes before remote
+  dispatch, including dynamic graph selections and execution without a grant
+  resolver; preserve read-only alias reads and writable-alias writes.
 
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;

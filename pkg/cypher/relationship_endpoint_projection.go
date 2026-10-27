@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
 	"strings"
 
@@ -114,8 +115,10 @@ type rowEndpointPropertyNode struct {
 }
 
 func endpointPropertyNode(base, property string) *rowEndpointPropertyNode {
-	function, argument, call := parseFunctionCallWS(base)
-	if !call || (!equalFoldASCII(function, "startNode") && !equalFoldASCII(function, "endNode")) || !isValidIdentifier(property) {
+	var callFacts1 functionCallFacts
+	call := inspectFunctionCall(base, qualifiedFunctionCall, "", &callFacts1)
+	function, argument := callFacts1.name, callFacts1.inner
+	if !call || (!equalFoldASCII(function, "startNode") && !equalFoldASCII(function, "endNode")) || !cyphertext.IsIdentifier(property) {
 		return nil
 	}
 	return &rowEndpointPropertyNode{argument: strings.TrimSpace(argument), property: property, end: equalFoldASCII(function, "endNode")}

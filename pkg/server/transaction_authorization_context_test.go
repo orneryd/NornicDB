@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -16,7 +18,7 @@ import (
 func TestExplicitTransaction_UsesEffectiveGraphForAuthorization(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
-	require.NoError(t, server.dbManager.CreateDatabase("private"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private"}))
 	require.NotNil(t, server.allowlistStore)
 	require.NotNil(t, server.privilegesStore)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{dbName}))
@@ -82,7 +84,7 @@ func TestInlineShellUseExecutesStatementAndChecksDatabase(t *testing.T) {
 		require.Len(t, response.Results[0].Data, 1)
 		require.Equal(t, []interface{}{"two  spaces"}, response.Results[0].Data[0].Row)
 	}
-	require.NoError(t, server.dbManager.CreateDatabase("inline_target"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "inline_target"}))
 	response, _ := systemProcedureResponse(t, server, token, database, ":USE inline_target CREATE (:InlineSelectionProof {value: 7}) RETURN 7 AS value", false)
 	require.Empty(t, response.Errors)
 	require.Len(t, response.Results, 1)

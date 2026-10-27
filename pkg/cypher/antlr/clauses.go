@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // ClauseInfo contains extracted clause CONTENT from AST (without keywords)
@@ -100,6 +101,9 @@ func getChildText(ctx antlr.ParserRuleContext) string {
 	if input == nil {
 		return strings.TrimSpace(ctx.GetText())
 	}
+	if source, ok := input.(interface{ OriginalText(int, int) string }); ok {
+		return strings.TrimSpace(source.OriginalText(start.GetStart(), stop.GetStop()))
+	}
 	return strings.TrimSpace(input.GetText(start.GetStart(), stop.GetStop()))
 }
 
@@ -116,6 +120,9 @@ func getFullText(ctx antlr.ParserRuleContext) string {
 	input := start.GetInputStream()
 	if input == nil {
 		return strings.TrimSpace(ctx.GetText())
+	}
+	if source, ok := input.(interface{ OriginalText(int, int) string }); ok {
+		return source.OriginalText(start.GetStart(), stop.GetStop())
 	}
 	return input.GetText(start.GetStart(), stop.GetStop())
 }
@@ -287,7 +294,7 @@ func (w *clauseWalker) EnterUnwindSt(ctx *UnwindStContext) {
 		w.info.UnwindExpr = getChildText(expr)
 	}
 	if symbol := ctx.Symbol(); symbol != nil {
-		w.info.UnwindAs = getChildText(symbol)
+		w.info.UnwindAs = cyphertext.SymbolicNameValue(symbol.GetText())
 	}
 }
 
@@ -365,7 +372,7 @@ func (w *clauseWalker) EnterQueryCallSt(ctx *QueryCallStContext) {
 
 // EnterSymbol captures variable names
 func (w *clauseWalker) EnterSymbol(ctx *SymbolContext) {
-	varName := strings.TrimSpace(ctx.GetText())
+	varName := cyphertext.SymbolicNameValue(strings.TrimSpace(ctx.GetText()))
 	if varName != "" {
 		// Deduplicate
 		for _, v := range w.info.Variables {

@@ -56,6 +56,11 @@ require (
 )
 
 require (
+	github.com/goccy/go-json v0.10.6 // indirect
+	github.com/orneryd/go-json v0.11.3-0.20261027022034-ec39cafc98b3
+)
+
+require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.22.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
@@ -93,7 +98,6 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/gofrs/uuid v4.3.1+incompatible // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect

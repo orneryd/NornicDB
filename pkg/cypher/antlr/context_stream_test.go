@@ -1,6 +1,8 @@
 package antlr
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"strings"
 	"testing"
@@ -27,7 +29,7 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	during := &cancelDuringLookahead{Context: ctx, cancel: cancel}
-	require.ErrorIs(t, ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n"), context.Canceled)
+	require.ErrorIs(t, ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n", cyphertext.RawSource), context.Canceled)
 	require.GreaterOrEqual(t, during.checks, 6, "cancellation must occur inside lookahead")
 	require.NoError(t, Validate("RETURN 1"), "a canceled product must not contaminate later validation")
 	require.Error(t, Validate("MATCH ("), "cancellation must not leave the next validation accepted")
@@ -36,7 +38,7 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 func TestValidateContextAlreadyCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, ValidateContext(ctx, "RETURN 1"), context.Canceled)
+	require.ErrorIs(t, ValidateContext(ctx, "RETURN 1", cyphertext.RawSource), context.Canceled)
 }
 
 type panicDuringLookahead struct {
@@ -57,7 +59,7 @@ func TestValidateContextUnrelatedPanicPropagates(t *testing.T) {
 	defer cancel()
 	during := &panicDuringLookahead{Context: ctx}
 	require.PanicsWithValue(t, "unrelated prediction panic", func() {
-		_ = ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n")
+		_ = ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n", cyphertext.RawSource)
 	})
 	require.NoError(t, Validate("RETURN 1"), "panic unwind releases the validator")
 }
@@ -76,34 +78,65 @@ func (c *cancelAtCheck) Err() error {
 	return c.Context.Err()
 }
 
-func TestValidateContextSingleTokenCancellation(t *testing.T) {
-	for _, query := range []string{
-		"/*" + strings.Repeat("x", 1<<20) + "*/ RETURN 1",
-		"RETURN '" + strings.Repeat("x", 1<<20) + "'",
-		"RETURN " + strings.Repeat("x", 1<<20),
-	} {
-		ctx, cancel := context.WithCancel(t.Context())
-		// Beyond the bounded ASCII preflight, but inside the first long token.
-		during := &cancelAtCheck{Context: ctx, cancel: cancel, target: len(query)/1024 + 16}
-		require.ErrorIs(t, ValidateContext(during, query), context.Canceled)
-		require.GreaterOrEqual(t, during.checks, during.target)
-		cancel()
-		require.NoError(t, Validate("RETURN 1"))
+// TestContextCancellationProtocols retains the lexer/validator assertions over
+// one cancellation fixture. Each call gets its own context and counter; no
+// canceled product may escape or contaminate later validation.
+func TestContextCancellationProtocols(t *testing.T) {
+	spaces := strings.Repeat(" ", 1<<20)
+	cases := []struct {
+		name, raw, accepted string
+		target              int
+		singleToken         bool
+	}{
+		{"comment", "/*" + strings.Repeat("x", 1<<20) + "*/ RETURN 1", "", 0, true},
+		{"string", "RETURN '" + strings.Repeat("x", 1<<20) + "'", "", 0, true},
+		{"identifier", "RETURN " + strings.Repeat("x", 1<<20), "", 0, true},
+		{"unicode-preparation", "RETURN '" + strings.Repeat("界", 1<<20) + "'", "", 32, false},
+		{"ASCII-whitespace", spaces, spaces, 16, false},
+		{"Unicode-whitespace", strings.Repeat(" ", 1<<20), spaces, 16, false},
 	}
-}
-
-func TestLexContextSingleTokenCancellation(t *testing.T) {
-	for _, query := range []string{
-		"/*" + strings.Repeat("x", 1<<20) + "*/ RETURN 1",
-		"RETURN '" + strings.Repeat("x", 1<<20) + "'",
-		"RETURN " + strings.Repeat("x", 1<<20),
-	} {
-		ctx, cancel := context.WithCancel(t.Context())
-		during := &cancelAtCheck{Context: ctx, cancel: cancel, target: len(query)/1024 + 16}
-		tokens, err := LexContext(during, query)
-		cancel()
-		require.ErrorIs(t, err, context.Canceled)
-		require.Nil(t, tokens)
+	operations := []struct {
+		name string
+		lex  bool
+		run  func(context.Context, string, SourceStage) ([]antlr.Token, error)
+	}{
+		{"validate", false, func(ctx context.Context, query string, stage SourceStage) ([]antlr.Token, error) {
+			return nil, ValidateContext(ctx, query, stage)
+		}},
+		{"lex", true, LexContext},
+	}
+	for _, tc := range cases {
+		for _, stage := range []SourceStage{RawSource, AcceptedSource} {
+			for _, operation := range operations {
+				stageName := "raw"
+				query := tc.raw
+				if stage == AcceptedSource {
+					stageName = "accepted"
+					if tc.accepted != "" {
+						query = tc.accepted
+					}
+				}
+				t.Run(tc.name+"/"+stageName+"/"+operation.name, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					target := tc.target
+					if tc.singleToken {
+						target = len(query)/1024 + 16
+					}
+					during := &cancelAtCheck{Context: ctx, cancel: cancel, target: target}
+					tokens, err := operation.run(during, query, stage)
+					require.ErrorIs(t, err, context.Canceled)
+					if operation.lex {
+						require.Nil(t, tokens)
+					}
+					if tc.singleToken && !operation.lex {
+						require.GreaterOrEqual(t, during.checks, during.target)
+						cancel()
+						require.NoError(t, Validate("RETURN 1"))
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -120,19 +153,12 @@ func TestContextLexerUnwindEscapesSafeMatch(t *testing.T) {
 				during = &cancelDuringLookahead{Context: ctx, cancel: cancel}
 			}
 			query := "RETURN '" + strings.Repeat("界", 1<<16) + "'"
-			var input antlr.CharStream
 			if ascii {
 				query = "RETURN '" + strings.Repeat("x", 1<<16) + "'"
-				input = &contextASCIICharStream{
-					asciiCharStream:         *newASCIICharStream(query),
-					contextCharCancellation: contextCharCancellation{ctx: during},
-				}
-			} else {
-				input = &contextCharStream{
-					CharStream:              antlr.NewInputStream(query),
-					contextCharCancellation: contextCharCancellation{ctx: during},
-				}
 			}
+			source, _ := sourceInputStream(context.Background(), cyphertext.NewSource(t.Context(), query, cyphertext.AcceptedSource))
+			input := &contextSourceCharStream{sourceCharStream: *source, contextCharCancellation: contextCharCancellation{ctx: during}}
+
 			lex := func() (err error) {
 				defer recoverPredictionCancellation(&err)
 				lexer := NewCypherLexer(input)
@@ -147,28 +173,5 @@ func TestContextLexerUnwindEscapesSafeMatch(t *testing.T) {
 			}
 			cancel()
 		}
-	}
-}
-
-func TestContextUnicodeInputPreparationCancellation(t *testing.T) {
-	query := "RETURN '" + strings.Repeat("界", 1<<20) + "'"
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	during := &cancelAtCheck{Context: ctx, cancel: cancel, target: 32}
-	require.ErrorIs(t, ValidateContext(during, query), context.Canceled)
-	ctx2, cancel2 := context.WithCancel(t.Context())
-	defer cancel2()
-	during2 := &cancelAtCheck{Context: ctx2, cancel: cancel2, target: 32}
-	tokens, err := LexContext(during2, query)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Nil(t, tokens)
-}
-
-func TestContextWhitespacePreparationCancellation(t *testing.T) {
-	for _, query := range []string{strings.Repeat(" ", 1<<20), strings.Repeat(" ", 1<<20)} {
-		ctx, cancel := context.WithCancel(t.Context())
-		during := &cancelAtCheck{Context: ctx, cancel: cancel, target: 16}
-		require.ErrorIs(t, ValidateContext(during, query), context.Canceled)
-		cancel()
 	}
 }

@@ -20,6 +20,48 @@ type resultHeaderCase struct {
 	columns     []string
 }
 
+// assertResultHeaderViews owns the public header contract: each query must
+// report the same columns through the reference driver (when available), the
+// executor's Columns, and StatementColumns, under auto-commit and/or explicit
+// transactions, for the plain, PROFILE and EXPLAIN prefixes.
+func assertResultHeaderViews(t *testing.T, ctx context.Context, exec *StorageExecutor, reference neo4j.DriverWithContext, tc resultHeaderCase, transactions []bool) {
+	t.Helper()
+	if reference != nil {
+		t.Run("neo4j", func(t *testing.T) {
+			for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
+				result, err := neo4j.ExecuteQuery(ctx, reference, prefix+tc.query, nil, neo4j.EagerResultTransformer)
+				require.NoError(t, err, "%s%s", prefix, tc.query)
+				require.Equal(t, tc.columns, result.Keys, "%s%s", prefix, tc.query)
+			}
+		})
+	}
+
+	for _, transaction := range transactions {
+		name := "auto_commit"
+		if transaction {
+			name = "explicit_transaction"
+		}
+		t.Run(name, func(t *testing.T) {
+			if transaction {
+				_, err := exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				defer func() {
+					_, err := exec.Execute(ctx, "ROLLBACK", nil)
+					require.NoError(t, err)
+				}()
+			}
+
+			for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
+				result, err := exec.Execute(ctx, prefix+tc.query, nil)
+				if assert.NoError(t, err, "%s%s", prefix, tc.query) {
+					assert.Equal(t, tc.columns, result.Columns, "%s%s", prefix, tc.query)
+					assert.Equal(t, tc.columns, exec.StatementColumns(tc.query), "StatementColumns: %s", tc.query)
+				}
+			}
+		})
+	}
+}
+
 func generatedResultHeaderCases() []resultHeaderCase {
 	var cases []resultHeaderCase
 	add := func(name, query string, columns []string, union bool) {
@@ -116,41 +158,10 @@ func TestResultHeaderFamilyMatrix(t *testing.T) {
 	t.Logf("%d generated shapes, EXPLAIN/StatementColumns/execute/PROFILE, auto-commit and explicit transactions", len(cases))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if reference != nil {
-				t.Run("neo4j", func(t *testing.T) {
-					for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
-						result, err := neo4j.ExecuteQuery(ctx, reference, prefix+tc.query, nil, neo4j.EagerResultTransformer)
-						require.NoError(t, err, "%s%s", prefix, tc.query)
-						require.Equal(t, tc.columns, result.Keys, "%s%s", prefix, tc.query)
-					}
-				})
-			}
-			for _, transaction := range []bool{false, true} {
-				name := "auto_commit"
-				if transaction {
-					name = "explicit_transaction"
-				}
-				t.Run(name, func(t *testing.T) {
-					if transaction {
-						_, err := exec.Execute(ctx, "BEGIN", nil)
-						require.NoError(t, err)
-						defer func() {
-							_, err := exec.Execute(ctx, "ROLLBACK", nil)
-							require.NoError(t, err)
-						}()
-					}
-
-					for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
-						result, err := exec.Execute(ctx, prefix+tc.query, nil)
-						if assert.NoError(t, err, "%s%s", prefix, tc.query) {
-							assert.Equal(t, tc.columns, result.Columns, "%s%s", prefix, tc.query)
-							assert.Equal(t, tc.columns, exec.StatementColumns(tc.query), "StatementColumns: %s", tc.query)
-						}
-					}
-				})
-			}
+			assertResultHeaderViews(t, ctx, exec, reference, tc, []bool{false, true})
 		})
 	}
+
 }
 
 func BenchmarkResultHeaderUnionYield(b *testing.B) {
@@ -197,21 +208,7 @@ func TestResultHeaderUseMatrix(t *testing.T) {
 						full += op + query
 					}
 					t.Run(full, func(t *testing.T) {
-						if reference != nil {
-							for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
-								result, err := neo4j.ExecuteQuery(ctx, reference, prefix+full, nil, neo4j.EagerResultTransformer)
-								require.NoError(t, err)
-								require.Equal(t, columns, result.Keys)
-							}
-						}
-
-						for _, prefix := range []string{"", "PROFILE ", "EXPLAIN "} {
-							result, err := exec.Execute(ctx, prefix+full, nil)
-							if assert.NoError(t, err) {
-								assert.Equal(t, columns, result.Columns)
-								assert.Equal(t, columns, exec.StatementColumns(full))
-							}
-						}
+						assertResultHeaderViews(t, ctx, exec, reference, resultHeaderCase{name: full, query: full, columns: columns}, []bool{false})
 					})
 				}
 			}
@@ -225,7 +222,7 @@ func TestResultHeaderUseMatrix(t *testing.T) {
 			require.Nil(t, exec.StatementColumns(query), "unknown must not be a fabricated empty header or wildcard")
 			_, err := exec.Execute(ctx, "EXPLAIN "+query, nil)
 			require.Error(t, err, "unresolved metadata must not be successful EXPLAIN")
-			exec.StatementFacts(query, resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) {
+			exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {
 				t.Fatal("incomplete statement became known")
 			}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
 				require.Error(t, reason.Err)
