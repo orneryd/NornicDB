@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
@@ -244,14 +245,18 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 
 // atoiOr is the integer text holds, or fallback.
 func atoiOr(text string, fallback int) int {
-	number := 0
-	for _, c := range text {
-		if c < '0' || c > '9' || number > 1<<30 {
-			return fallback
-		}
-		number = number*10 + int(c-'0')
+	if text == "" {
+		return 0
 	}
-	return number
+	token, ok := cyphertext.ScanNumber(text, 0)
+	if !ok || token.Invalid || token.End != len(text) || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
+		return fallback
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil || value > (1<<30)*10+9 {
+		return fallback
+	}
+	return value
 }
 
 // propertyMapPredicates writes a property map ({k: v, …}) of the element
@@ -269,7 +274,7 @@ func propertyMapPredicates(variable, properties string) []string {
 			continue
 		}
 		key := normalizePropertyKey(pair[:colon])
-		predicates = append(predicates, variable+".`"+strings.ReplaceAll(key, "`", "``")+"` = ("+strings.TrimSpace(pair[colon+1:])+")")
+		predicates = append(predicates, variable+"."+cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)+" = ("+strings.TrimSpace(pair[colon+1:])+")")
 	}
 	return predicates
 }
@@ -860,13 +865,11 @@ func readsPatternVariable(term, name string) bool {
 			if len(brackets) > 0 {
 				brackets = brackets[:len(brackets)-1]
 			}
-		case isIdentByte(c):
+		case cyphertext.NamePartAt(term, i):
 			end := i + 1
-			for end < len(term) && isIdentByte(term[end]) {
-				end++
-			}
-			if term[i:end] == name && (i == 0 || !isIdentByte(term[i-1]) && term[i-1] != '$') && prevNonSpaceByte(term, i) != '.' &&
-				!(nextNonSpaceByte(term, end) == ':' && len(brackets) > 0 && brackets[len(brackets)-1] == '{') {
+			end = cyphertext.NamePartEnd(term, end)
+			if term[i:end] == name && (i == 0 || !cyphertext.NamePartAt(term, i-1) && term[i-1] != '$') && cyphertext.NeighborByte(term, i, cyphertext.Before) != '.' &&
+				!(cyphertext.NeighborByte(term, end, cyphertext.AtOrAfter) == ':' && len(brackets) > 0 && brackets[len(brackets)-1] == '{') {
 				return true
 			}
 			i = end - 1

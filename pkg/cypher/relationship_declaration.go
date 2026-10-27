@@ -1,6 +1,10 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
 
 // A relationship pattern's inside ([r:A|B *1..2 {k: v}]) is read by one
 // scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf, and
@@ -148,7 +152,7 @@ func blankRelationshipExpressions(text string) string {
 		if text[index] != '(' {
 			continue
 		}
-		end := findMatchingDelimiter(text, index, '(', ')')
+		end := cyphertext.FindMatchingDelimiter(text, index, '(', ')', cyphertext.OpeningDelimiter)
 		if end < 0 {
 			break
 		}
@@ -178,7 +182,7 @@ func (declaration *relationshipDeclaration) addType(item string) {
 			declaration.invalidType = written
 		}
 	case hasDynamicToken(item):
-	case !isValidIdentifier(item) && declaration.invalidType == "":
+	case !cyphertext.IsIdentifier(item) && declaration.invalidType == "":
 		declaration.invalidType = item
 	}
 	declaration.types = append(declaration.types, item)

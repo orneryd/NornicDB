@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"fmt"
 	"strings"
@@ -354,7 +356,7 @@ func TestMonster531TypedIndexDDLMatrix(t *testing.T) {
 			result, err := exec.Execute(ctx, "SHOW INDEXES YIELD name, type, createStatement WHERE type <> 'LOOKUP' RETURN name, type, createStatement", nil)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
-			_, err = exec.Execute(ctx, "DROP INDEX "+quoteSchemaName(result.Rows[0][0].(string)), nil)
+			_, err = exec.Execute(ctx, "DROP INDEX "+cyphertext.PrintIdentifier(result.Rows[0][0].(string), nil, cyphertext.RawSource), nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, result.Rows[0][2].(string), nil)
 			require.NoError(t, err)

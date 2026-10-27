@@ -24,12 +24,16 @@ type heldPointDeletion struct {
 	resume  chan struct{}
 }
 
-func (e *heldPointDeletion) DeleteNode(id storage.NodeID) error {
-	if strings.HasSuffix(string(id), e.suffix) {
+// Preserve native preparation and receipts while holding the actual managed
+// mutation boundary, rather than the direct Engine facade it no longer uses.
+func (e *heldPointDeletion) GetInnerEngine() storage.Engine { return e.Engine }
+
+func (e *heldPointDeletion) WithEntityChange(operation storage.Operation, apply func() error) error {
+	if operation.Type == storage.OpDeleteNode && strings.HasSuffix(string(operation.NodeID), e.suffix) {
 		close(e.entered)
 		<-e.resume
 	}
-	return e.Engine.DeleteNode(id)
+	return apply()
 }
 
 type heldPointPopulation struct {
@@ -67,7 +71,7 @@ func TestSharedIndexDeleteOrdersStorageBeforePopulationBoundary(t *testing.T) {
 	memory := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, memory.Close()) })
 	base := &heldPointDeletion{Engine: memory, suffix: string(pointIDToNodeID(id)), entered: make(chan struct{}), resume: make(chan struct{})}
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	var providerMu sync.Mutex
 	var svc *search.Service

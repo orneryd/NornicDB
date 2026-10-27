@@ -91,11 +91,11 @@ func TestDynamicLabelRoutedClientBoundary(t *testing.T) {
 }
 
 func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	require.NoError(t, manager.CreateDatabase("dynamic_target"))
-	require.NoError(t, manager.CreateCompositeDatabase("dynamic_composite", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "dynamic_target"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "dynamic_composite", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "dynamic_target", Type: "local", AccessMode: "read_write"},
 	}))
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())
@@ -139,18 +139,18 @@ func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: uri, Database: "neo4j"})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, remote.Close()) })
-	_, _, err = remote.QueryCypher(ctx, "MATCH (n) DETACH DELETE n", nil)
+	_, _, err = remote.QueryCypher(ctx, "MATCH (n) DETACH DELETE n", nil, storage.RemoteAccessWrite)
 	require.NoError(t, err)
-	_, _, err = remote.QueryCypher(ctx, dynamiclabels.Fixture, nil)
+	_, _, err = remote.QueryCypher(ctx, dynamiclabels.Fixture, nil, storage.RemoteAccessWrite)
 	require.NoError(t, err)
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 		},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	require.NoError(t, manager.CreateCompositeDatabase("dynamic_remote", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "dynamic_remote", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "neo4j", URI: uri, Type: "remote", AccessMode: "read_write", AuthMode: "oidc_forwarding"},
 	}))
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())

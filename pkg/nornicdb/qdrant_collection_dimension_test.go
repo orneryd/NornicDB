@@ -30,7 +30,7 @@ func TestQdrantCollectionOfOtherDimensionRejectsPointsBeforeStoring(t *testing.T
 	defer db.Close()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	collections, err := qdrantgrpc.NewDatabaseCollectionStore(manager, nil)
 	require.NoError(t, err)

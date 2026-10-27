@@ -27,7 +27,7 @@ func BenchmarkGRPCDatabaseReadSelections(b *testing.B) {
 	if err := server.qdrantGRPCServer.CollectionStore().Create(ctx, "grpc_physical", 4, qpb.Distance_Cosine); err != nil {
 		b.Fatal(err)
 	}
-	if err := server.dbManager.CreateCompositeDatabase("grpc_portfolio", []multidb.ConstituentRef{
+	if err := server.dbManager.CreateCompositeDatabase(b.Context(), "grpc_portfolio", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "grpc_physical", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		b.Fatal(err)

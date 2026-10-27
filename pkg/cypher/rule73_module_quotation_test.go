@@ -42,3 +42,16 @@ func TestRule73ModuleQuotationPublicMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestRule73UppercaseUnicodeLiteralRangeRejection(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			t.Setenv("NORNIC_CYPHER_PARSER", parser)
+			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "u8range"))
+			for index, literal := range []string{`'\U00110000'`, `'\UFFFFFFFF'`, `'\U0000D800'`, `'\U0000DC00'`, `'\U0000ZZZZ'`, `'\U001F60'`} {
+				_, err := executor.Execute(t.Context(), fmt.Sprintf("CREATE CONSTRAINT bad_%d FOR (n:U8Range) REQUIRE { n.name IN [%s, 'Other'] }", index, literal), nil)
+				require.Error(t, err, literal)
+			}
+		})
+	}
+}

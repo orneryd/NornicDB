@@ -112,6 +112,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"io"
 	"log/slog"
 	"net/http"
@@ -119,7 +120,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -133,6 +133,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
 )
 
@@ -176,6 +177,10 @@ func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 		switch cypherLexicalByte(query[i]) {
 		case cypherQuoteClass:
 			i = skipQuotedSemanticText(query, i) - 1
+		case '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end - 1
+			}
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -194,7 +199,7 @@ func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
 func callSubqueryAt(ctx context.Context, query string, i int) bool {
-	if !matchKeywordAt(query, i, "CALL") {
+	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(query, i, i+len("CALL"), "CALL") {
 		return false
 	}
 	// Classification consumes the same CALL frame as scope and execution.
@@ -235,13 +240,8 @@ func hasKeywordFollowedByBrace(query, keyword string) bool {
 }
 
 func skipSpaces(s string, i int) int {
-	for i < len(s) {
-		switch s[i] {
-		case ' ', '\t', '\n', '\r':
-			i++
-		default:
-			return i
-		}
+	for i < len(s) && cyphertext.IsWhitespaceAt(s, i) {
+		i++
 	}
 	return i
 }
@@ -250,10 +250,10 @@ func matchKeywordAt(s string, i int, keyword string) bool {
 	if i < 0 || i+len(keyword) > len(s) {
 		return false
 	}
-	if i > 0 && isIdentByte(s[i-1]) {
+	if i > 0 && cyphertext.NamePartAt(s, i-1) {
 		return false
 	}
-	if i+len(keyword) < len(s) && isIdentByte(s[i+len(keyword)]) {
+	if i+len(keyword) < len(s) && cyphertext.NamePartAt(s, i+len(keyword)) {
 		return false
 	}
 	return strings.EqualFold(s[i:i+len(keyword)], keyword)
@@ -637,25 +637,26 @@ type hotPathTraceState struct {
 	trace HotPathTrace
 }
 
-// DatabaseManagerInterface is a minimal interface to avoid import cycles with multidb package.
-// This allows the executor to call database management operations without directly
-// depending on the multidb package.
+// DatabaseManagerInterface is the query layer's database-management contract.
+// Atomic standard creation carries the shared typed catalog request.
+// Catalog mutations receive the operation context through every adapter.
+// Read-only resolution/storage APIs retain their existing signatures.
 type DatabaseManagerInterface interface {
-	CreateDatabase(name string) error
-	DropDatabase(name string) error
+	CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error
+	DropDatabase(ctx context.Context, name string) error
 	ListDatabases() []DatabaseInfoInterface
 	Exists(name string) bool
-	CreateAlias(alias, databaseName string) error
-	DropAlias(alias string) error
+	CreateAlias(ctx context.Context, alias, databaseName string) error
+	DropAlias(ctx context.Context, alias string) error
 	ListAliases(databaseName string) map[string]string
 	ResolveDatabase(nameOrAlias string) (string, error)
-	SetDatabaseLimits(databaseName string, limits interface{}) error
+	SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error
 	GetDatabaseLimits(databaseName string) (interface{}, error)
 	// Composite database methods
-	CreateCompositeDatabase(name string, constituents []interface{}) error
-	DropCompositeDatabase(name string) error
-	AddConstituent(compositeName string, constituent interface{}) error
-	RemoveConstituent(compositeName string, alias string) error
+	CreateCompositeDatabase(ctx context.Context, name string, constituents []interface{}) error
+	DropCompositeDatabase(ctx context.Context, name string) error
+	AddConstituent(ctx context.Context, compositeName string, constituent interface{}) error
+	RemoveConstituent(ctx context.Context, compositeName string, alias string) error
 	GetCompositeConstituents(compositeName string) ([]interface{}, error)
 	ListCompositeDatabases() []DatabaseInfoInterface
 	IsCompositeDatabase(name string) bool
@@ -676,13 +677,7 @@ type DatabaseIdentityProvider interface {
 }
 
 // DatabaseInfoInterface provides database metadata without importing multidb.
-type DatabaseInfoInterface interface {
-	Name() string
-	Type() string
-	Status() string
-	IsDefault() bool
-	CreatedAt() time.Time
-}
+type DatabaseInfoInterface = catalogadapter.DatabaseInfoInterface
 
 // QueryEmbedder generates embeddings for search queries.
 // This is a minimal interface to avoid import cycles with embed package.
@@ -1370,69 +1365,10 @@ func trimTrailingStatementDelimiters(query string) string {
 }
 
 func normalizeCypherSyntaxConfusables(query string) string {
-	if query == "" {
-		return query
-	}
-	// Fast path: common ASCII-only Cypher text has no confusables to normalize.
-	if isLikelyPlainASCIICypher(query) {
-		return query
-	}
-
-	runes := []rune(query)
-	var builder strings.Builder
-	builder.Grow(len(query) + 8)
-	changed := false
-	for i := 0; i < len(runes); i++ {
-		if end, quoted := cyphertext.SkipTokenRunes(runes, i); quoted {
-			for _, character := range runes[i:end] {
-				builder.WriteRune(character)
-			}
-			i = end - 1
-			continue
-		}
-		r := runes[i]
-
-		if replacement, ok := cypherArrowReplacement(runes, i); ok {
-			builder.WriteByte(replacement)
-			changed = true
-			continue
-		}
-
-		if replacement, ok := cypherSyntaxConfusableReplacement(r); ok {
-			builder.WriteString(replacement)
-			changed = changed || replacement != string(r)
-			continue
-		}
-
-		if replacement, ok := cypherWhitespaceReplacement(r); ok {
-			builder.WriteRune(replacement)
-			changed = changed || replacement != r
-			continue
-		}
-
-		if isIgnorableCypherFormatRune(r) {
-			changed = true
-			continue
-		}
-
-		builder.WriteRune(r)
-	}
-
-	if !changed {
-		return query
-	}
-
-	return builder.String()
+	return cyphertext.NormalizeSource(query).Text
 }
 
-func isLikelyPlainASCIICypher(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if query[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
+func isLikelyPlainASCIICypher(query string) bool { return cyphertext.PlainASCII(query) }
 
 // ensureUpperQueryCache lazily installs the upper-query cache pointer with
 // sync.Once so concurrent CALL { ... } subqueries cannot race on the
@@ -1446,115 +1382,8 @@ func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 	return e.upperQueryCache
 }
 
-func cypherSyntaxConfusableReplacement(r rune) (string, bool) {
-	switch r {
-	case '→':
-		return "->", true
-	case '←':
-		return "<-", true
-	case '（':
-		return "(", true
-	case '）':
-		return ")", true
-	case '［':
-		return "[", true
-	case '］':
-		return "]", true
-	case '｛':
-		return "{", true
-	case '｝':
-		return "}", true
-	case '，':
-		return ",", true
-	case '：':
-		return ":", true
-	case '；':
-		return ";", true
-	case '．':
-		return ".", true
-	case '＝':
-		return "=", true
-	case '＜':
-		return "<", true
-	case '＞':
-		return ">", true
-	case '＄':
-		return "$", true
-	default:
-		return "", false
-	}
-}
-
-// cypherArrowReplacement is the ASCII form of runes[i] when it is a Unicode
-// dash or arrowhead in a relationship arrow, as Neo4j's lexer reads them:
-// ‐ ‑ ‒ – — ― ﹘ ﹣ － and the soft hyphen as -, ⟨ 〈 ﹤ before a dash as <,
-// ⟩ 〉 ﹥ after one as >. A dash is in an arrow when it follows a node, a
-// relationship, a head or another dash and precedes one of those:
-// (a)—[r]—>(b), (a)<—(b). Elsewhere they aren't operators (RETURN 2—1 is
-// rejected by validateUnicodeOperators) and the soft hyphen is part of a
-// name.
-func cypherArrowReplacement(runes []rune, i int) (byte, bool) {
-	neighbour := func(step int) rune {
-		for j := i + step; j >= 0 && j < len(runes); j += step {
-			if !unicode.IsSpace(runes[j]) {
-				return runes[j]
-			}
-		}
-		return 0
-	}
-	switch r := runes[i]; {
-	case isArrowDashRune(r):
-		previous, next := neighbour(-1), neighbour(1)
-		before := previous == ')' || previous == ']' || previous == '<' || previous == '-' || isArrowDashRune(previous) || isArrowLeftHeadRune(previous)
-		after := next == '(' || next == '[' || next == '>' || next == '-' || isArrowDashRune(next) || isArrowRightHeadRune(next)
-		return '-', before && after
-	case isArrowLeftHeadRune(r):
-		next := neighbour(1)
-		return '<', next == '-' || isArrowDashRune(next)
-	case isArrowRightHeadRune(r):
-		previous := neighbour(-1)
-		return '>', previous == '-' || isArrowDashRune(previous)
-	}
-	return 0, false
-}
-
-func isArrowDashRune(r rune) bool {
-	switch r {
-	case '\u00AD', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－':
-		return true
-	}
-	return false
-}
-
-func isArrowLeftHeadRune(r rune) bool {
-	return r == '⟨' || r == '〈' || r == '﹤' || r == '＜'
-}
-
-func isArrowRightHeadRune(r rune) bool {
-	return r == '⟩' || r == '〉' || r == '﹥' || r == '＞'
-}
-
-func cypherWhitespaceReplacement(r rune) (rune, bool) {
-	switch r {
-	case '\u0085', '\u2028', '\u2029':
-		return '\n', true
-	case ' ', '\t', '\n', '\r':
-		return 0, false
-	default:
-		if unicode.IsSpace(r) {
-			return ' ', true
-		}
-		return 0, false
-	}
-}
-
-func isIgnorableCypherFormatRune(r rune) bool {
-	switch r {
-	case '\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF':
-		return true
-	default:
-		return false
-	}
+func cypherSyntaxConfusableReplacement(character rune) (string, bool) {
+	return cyphertext.SyntaxConfusableReplacement(character)
 }
 
 // TransactionCapableEngine is an engine that supports ACID transactions.
@@ -1847,7 +1676,16 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
-	if err := e.commitStorageTransaction(ctx, tx); err != nil {
+	commitCtx, admissionErr := txphase.CommitContext(ctx)
+	if admissionErr != nil {
+		_ = tx.Rollback()
+		txExec.invalidateNodeLookupCache()
+		if wal != nil && walSeqStart > 0 {
+			_, _ = wal.AppendTxAbort(dbName, txID, admissionErr.Error())
+		}
+		return nil, admissionErr
+	}
+	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
@@ -1979,18 +1817,36 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	return nil
 }
 
+// stripWithEmbeddingSuffix removes the WITH EMBEDDING execution option where
+// it ends the statement (or its UNION branch). A nonterminal WITH EMBEDDING is
+// a projection candidate that the scope compiler and pipeline frame resolve.
 func stripWithEmbeddingSuffix(cypher string) (string, bool) {
-	idx := findKeywordIndex(cypher, "WITH EMBEDDING")
+	idx, embeddingStart := -1, -1
+	for from := 0; from < len(cypher); {
+		at := keywordIndexFrom(cypher, "WITH", from, defaultKeywordScanOpts())
+		if at < 0 {
+			break
+		}
+		next := queryGapEnd(cypher, at+len("WITH"))
+		if startsWithKeywordFold(cypher[next:], "EMBEDDING") {
+			idx, embeddingStart = at, next
+			break
+		}
+		from = at + len("WITH")
+	}
 	if idx < 0 {
 		return cypher, false
 	}
 	before := strings.TrimSpace(cypher[:idx])
-	after := strings.TrimSpace(cypher[idx+len("WITH EMBEDDING"):])
+	after := strings.TrimSpace(cypher[embeddingStart+len("EMBEDDING"):])
 	if before == "" {
 		return cypher, false
 	}
 	if after == "" {
 		return before, true
+	}
+	if !startsWithKeywordFold(after, "UNION") {
+		return cypher, false
 	}
 	return strings.TrimSpace(before + " " + after), true
 }
@@ -2172,7 +2028,7 @@ func graphReadingExpression(cypher string) string {
 			}
 			// EXISTS((n)-->(m)): a pattern between the parentheses.
 			if keyword == "EXISTS" && open < len(cypher) && cypher[open] == '(' {
-				if close := findMatchingDelimiter(cypher, open, '(', ')'); close > open {
+				if close := cyphertext.FindMatchingDelimiter(cypher, open, '(', ')', cyphertext.OpeningDelimiter); close > open {
 					inner := strings.TrimSpace(cypher[open+1 : close])
 					if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") {
 						return graphReadingPattern

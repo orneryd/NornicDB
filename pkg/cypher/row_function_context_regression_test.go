@@ -128,11 +128,11 @@ func testRowFunctionSelectedDatabase(t *testing.T) {
 }
 
 func testRowFunctionDatabaseRouting(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	require.NoError(t, manager.CreateDatabase("row_context_target"))
-	require.NoError(t, manager.CreateCompositeDatabase("row_context_composite", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "row_context_target"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "row_context_composite", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "row_context_target", Type: "local", AccessMode: "read_write"},
 	}))
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())
@@ -204,11 +204,11 @@ func testRowFunctionStorage(t *testing.T) {
 }
 
 func testRowFunctionGraphCatalog(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	require.NoError(t, manager.CreateDatabase("row_context_graph"))
-	require.NoError(t, manager.CreateCompositeDatabase("row_context_catalog", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "row_context_graph"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "row_context_catalog", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "row_context_graph", Type: "local", AccessMode: "read_write"},
 	}))
 	store, err := manager.GetStorage("row_context_catalog")

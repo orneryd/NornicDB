@@ -14,18 +14,18 @@ import (
 func TestRule73HeimdallPublicColdAdmission(t *testing.T) {
 	for _, form := range []string{"direct", "use", "fabric"} {
 		t.Run(form, func(t *testing.T) {
-			manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer manager.Close()
-			if err := manager.CreateDatabase("gate_heimdall_leaf"); err != nil {
+			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_heimdall_leaf"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateAlias("gate_heimdall_alias", "gate_heimdall_leaf"); err != nil {
+			if err := manager.CreateAlias(t.Context(), "gate_heimdall_alias", "gate_heimdall_leaf"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("gate_heimdall_comp", []multidb.ConstituentRef{{Alias: "leaf", DatabaseName: "gate_heimdall_leaf", Type: "local", AccessMode: "read_write"}}); err != nil {
+			if err := manager.CreateCompositeDatabase(t.Context(), "gate_heimdall_comp", []multidb.ConstituentRef{{Alias: "leaf", DatabaseName: "gate_heimdall_leaf", Type: "local", AccessMode: "read_write"}}); err != nil {
 				t.Fatal(err)
 			}
 			owners := []*cypher.StatementCaches{}

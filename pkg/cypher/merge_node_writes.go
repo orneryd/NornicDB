@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -83,7 +84,7 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 				writes.add(item.variable, renamed)
 			}
 		case pipelineClauseMerge:
-			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
+			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
 			bound := make(map[string]struct{})
 			eachPatternElement(actions.pattern, func(opener byte, element string) {
 				if opener == '(' {
@@ -96,7 +97,7 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 		case pipelineClauseDelete:
 			body := pipelineClauseBody(pipelineClauseBody(clause.text, "DETACH"), "DELETE")
 			for _, item := range splitTopLevelComma(body) {
-				if item = strings.TrimSpace(item); !isValidIdentifier(item) {
+				if item = strings.TrimSpace(item); !cyphertext.IsIdentifier(item) {
 					item = ""
 				}
 				writes.add(item, renamed)

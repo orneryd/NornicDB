@@ -39,7 +39,7 @@ func (e *StorageExecutor) withStatementPropertyViews(ctx context.Context, query 
 	if e.statementPropertyViews != nil || !e.queryPropertyDecayEnabled() {
 		return nil
 	}
-	requirements := QueryPermissionRequirements(ctx, query)
+	requirements := QueryPermissionRequirements(ctx, query, AcceptedSource)
 	if requirements.Write || requirements.Schema || requirements.Admin || !deterministicExecution(ctx, query, 0) {
 		return nil
 	}

@@ -19,11 +19,11 @@ func newBoltQuotaFixture(t *testing.T, limits *multidb.Limits, decorate func(*st
 	if decorate != nil {
 		engine = decorate(base)
 	}
-	manager, err := multidb.NewDatabaseManager(engine, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
-	require.NoError(t, manager.CreateDatabase("quota"))
-	require.NoError(t, manager.SetDatabaseLimits("quota", limits))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, manager)
 	return manager, startBoltTestServer(t, server)
 }

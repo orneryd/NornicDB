@@ -30,10 +30,10 @@ func (admission boundScopeAdmission) verifyColumns(actual []string) error {
 func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string) (boundScopeAdmission, error) {
 	// Extensions have a real command continuation with its own syntax and
 	// result contract. The graph grammar must not reject them before routing.
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isSystemCommandNoGraph(source) {
+	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isMetadataCommand(source, metadataCatalogExecution) {
 		return boundScopeAdmission{command: true}, nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return boundScopeAdmission{}, err
 	}
@@ -42,7 +42,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		if startsWithKeywordFold(strings.TrimSpace(source), "SHOW") || startsWithKeywordFold(strings.TrimSpace(source), "DROP") {
 			return boundScopeAdmission{command: true}, nil
 		}
-		return boundScopeAdmission{}, syntaxAdmissionError(source, err)
+		return boundScopeAdmission{}, syntaxAdmissionError(ctx, source, AcceptedSource, err)
 	}
 	query := statementSyntaxQuery(syntax)
 	if !query.Valid() {

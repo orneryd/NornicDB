@@ -15,6 +15,7 @@ import (
 func TestOpenGenuinePreIdentityWALUpgrade(t *testing.T) {
 	dir := fixtureowner.ExtractZip(t, filepath.Join("..", "storage", "testdata", "wal-pre-identity", "release.zip"), "data/")
 	cfg := config.LoadDefaults()
+	cfg.Database.AllowStorageUpgrade = true
 	cfg.Database.StrictDurability = false
 	cfg.Database.AsyncWritesEnabled = true
 	cfg.Database.WALAutoCompactionEnabled = false

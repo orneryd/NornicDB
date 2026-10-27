@@ -49,6 +49,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -173,16 +174,6 @@ func normalizePropertyKey(key string) string {
 
 func findTopLevelMapKeyValueSeparator(pair string) int {
 	return findTopLevelOperator(pair, ":", false, true)
-}
-func isBackslashEscaped(s string, idx int) bool {
-	if idx <= 0 {
-		return false
-	}
-	backslashes := 0
-	for i := idx - 1; i >= 0 && s[i] == '\\'; i-- {
-		backslashes++
-	}
-	return backslashes%2 == 1
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.
@@ -343,12 +334,12 @@ func looksLikeFunctionCall(s string) bool {
 	for i, c := range name {
 		if i == 0 {
 			// First char must be letter or underscore
-			if !isIdentStartRune(c) {
+			if !cyphertext.NameStart(c) {
 				return false
 			}
 		} else {
 			// Subsequent chars can be alphanumeric, underscore, or dot
-			if !(isIdentRune(c) || c == '.') {
+			if !(cyphertext.NamePart(c) || c == '.') {
 				return false
 			}
 		}

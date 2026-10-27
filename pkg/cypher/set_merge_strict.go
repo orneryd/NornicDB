@@ -21,7 +21,7 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 // preserving each value expression for evaluation against an individual row.
 func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
 	expressions := make(map[string]string)
-	if err := forEachMapEntry(s, func(key, value string) {
+	if err := forEachMapEntry(s, mapSourceText, func(key, value string) {
 		expressions[key] = value
 	}); err != nil {
 		return nil, err
@@ -33,13 +33,23 @@ func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
 // parseSetMergeMapExpressionsStrict without building anything (hot CREATE
 // paths validate every row's property map).
 func validateMapLiteralSyntax(s string) error {
-	return forEachMapEntry(s, func(string, string) {})
+	return forEachMapEntry(s, mapSourceText, func(string, string) {})
 }
+
+type mapEntryText uint8
+
+const (
+	mapSourceText mapEntryText = iota
+	mapCodeText
+)
 
 // forEachMapEntry validates map structure over the canonical Cypher token
 // reader. It owns map grammar, not quotation, comments or delimiter scanning.
-func forEachMapEntry(s string, entry func(key, value string)) error {
-	s = strings.TrimSpace(StripComments(s))
+func forEachMapEntry(s string, source mapEntryText, entry func(key, value string)) error {
+	if source == mapSourceText {
+		s = StripComments(s)
+	}
+	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapLiteralEnclosureRequired())
 	}

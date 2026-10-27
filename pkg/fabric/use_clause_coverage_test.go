@@ -2,22 +2,25 @@ package fabric
 
 import (
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 )
 
-// TestParseUseClause_StaticGraphReferences pins how a USE clause naming a
-// graph is read: the optional GRAPH keyword, dotted and backtick-quoted name
-// parts (with “ escaping a backtick), spaces and comments around the name
-// and its dots, and the query that follows the clause.
-func TestParseUseClause_StaticGraphReferences(t *testing.T) {
+// TestParseUseClause_GraphReferences preserves static and dynamic graph names,
+// argument boundaries, display text and the grammar extent of the USE clause.
+func TestParseUseClause_GraphReferences(t *testing.T) {
 	tests := []struct {
 		name          string
 		query         string
 		inSubquery    bool
 		wantName      string
+		wantFunction  string
+		wantArgs      []string
+		wantText      string
 		wantRemaining string
 	}{
 		{name: "plain name", query: "USE db MATCH (n) RETURN n", wantName: "db", wantRemaining: "MATCH (n) RETURN n"},
@@ -34,47 +37,6 @@ func TestParseUseClause_StaticGraphReferences(t *testing.T) {
 		{name: "block comments around the name", query: "USE /* c */ db /* d */ RETURN 1", wantName: "db", wantRemaining: "/* d */ RETURN 1"},
 		{name: "SHOW USER DEFINED FUNCTIONS is a query, not an administration command", query: "USE db SHOW USER DEFINED FUNCTIONS", wantName: "db", wantRemaining: "SHOW USER DEFINED FUNCTIONS"},
 		{name: "subquery USE", query: "USE cmp.a MATCH (n) RETURN n", inSubquery: true, wantName: "cmp.a", wantRemaining: "MATCH (n) RETURN n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			clause, remaining, hasUse, err := ParseUseClause(tt.query, tt.inSubquery)
-			require.NoError(t, err)
-			require.True(t, hasUse)
-			require.Equal(t, UseClause{Name: tt.wantName}, clause)
-			require.False(t, clause.IsDynamic())
-			require.Equal(t, tt.wantName, clause.Text())
-			require.Equal(t, tt.wantRemaining, remaining)
-		})
-	}
-}
-
-// TestParseUseClause_NoUseClause pins that a statement not starting with the
-// word USE is returned unchanged with hasUse false, including a name that
-// merely starts with the letters USE.
-func TestParseUseClause_NoUseClause(t *testing.T) {
-	for _, query := range []string{"MATCH (n) RETURN n", "  RETURN 1", "USERS", "user_count RETURN 1"} {
-		clause, remaining, hasUse, err := ParseUseClause(query, false)
-		require.NoError(t, err, query)
-		require.False(t, hasUse, query)
-		require.Equal(t, UseClause{}, clause, query)
-		require.Equal(t, query, remaining, query)
-	}
-}
-
-// TestParseUseClause_DynamicGraphReferences pins that a function call after
-// USE is a dynamic graph reference: the function name without the spaces
-// around its dots, the arguments split at top-level commas only (not inside
-// calls, lists, maps or string literals), and Text() printing the call as
-// Neo4j does in messages, with single-quoted strings in double quotes.
-func TestParseUseClause_DynamicGraphReferences(t *testing.T) {
-	tests := []struct {
-		name          string
-		query         string
-		wantFunction  string
-		wantArgs      []string
-		wantText      string
-		wantRemaining string
-	}{
 		{
 			name:          "graph.byName with a string literal",
 			query:         "USE graph.byName('cmp.a') MATCH (n) RETURN n",
@@ -126,16 +88,36 @@ func TestParseUseClause_DynamicGraphReferences(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clause, remaining, hasUse, err := ParseUseClause(tt.query, false)
+			clause, remaining, hasUse, err := ParseUseClause(t.Context(), tt.query, tt.inSubquery, cyphertext.RawSource)
 			require.NoError(t, err)
 			require.True(t, hasUse)
-			require.True(t, clause.IsDynamic())
-			require.Empty(t, clause.Name)
+			require.Equal(t, tt.wantName, clause.Name)
 			require.Equal(t, tt.wantFunction, clause.Function)
 			require.Equal(t, tt.wantArgs, clause.Args)
-			require.Equal(t, tt.wantText, clause.Text())
+			require.Equal(t, tt.wantFunction != "", clause.IsDynamic())
+			wantText := tt.wantText
+			if tt.wantFunction == "" {
+				wantText = tt.wantName
+			}
+			require.Equal(t, wantText, clause.Text())
 			require.Equal(t, tt.wantRemaining, remaining)
+			reference, _, _, readErr := ReadUseClause(t.Context(), tt.query, tt.inSubquery, cyphertext.RawSource)
+			require.NoError(t, readErr)
+			require.Equal(t, tt.wantRemaining, strings.TrimSpace(tt.query[reference.End:]), "grammar extent")
 		})
+	}
+}
+
+// TestParseUseClause_NoUseClause pins that a statement not starting with the
+// word USE is returned unchanged with hasUse false, including a name that
+// merely starts with the letters USE.
+func TestParseUseClause_NoUseClause(t *testing.T) {
+	for _, query := range []string{"MATCH (n) RETURN n", "  RETURN 1", "USERS", "user_count RETURN 1"} {
+		clause, remaining, hasUse, err := ParseUseClause(t.Context(), query, false, cyphertext.RawSource)
+		require.NoError(t, err, query)
+		require.False(t, hasUse, query)
+		require.Equal(t, UseClause{}, clause, query)
+		require.Equal(t, query, remaining, query)
 	}
 }
 
@@ -143,7 +125,7 @@ func TestParseUseClause_DynamicGraphReferences(t *testing.T) {
 // escape inside a string argument does not end the literal, so the ')'
 // after it still closes the call.
 func TestParseUseClause_DynamicArgumentWithEscapedQuote(t *testing.T) {
-	clause, remaining, hasUse, err := ParseUseClause(`USE graph.byName('it\'s)') RETURN 1`, false)
+	clause, remaining, hasUse, err := ParseUseClause(t.Context(), `USE graph.byName('it\'s)') RETURN 1`, false, cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "graph.byName", clause.Function)
@@ -231,7 +213,7 @@ func TestParseUseClause_SyntaxErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clause, remaining, hasUse, err := ParseUseClause(tt.query, tt.inSubquery)
+			clause, remaining, hasUse, err := ParseUseClause(t.Context(), tt.query, tt.inSubquery, cyphertext.RawSource)
 			require.Error(t, err)
 			require.True(t, hasUse)
 			require.Equal(t, UseClause{}, clause)
@@ -252,12 +234,12 @@ func TestParseUseClause_SyntaxErrors(t *testing.T) {
 // (ALTER, START DATABASE, …) and ends with <EOF>; the subquery list does
 // not and ends with '}'.
 func TestParseUseClause_InvalidFollowerMessages(t *testing.T) {
-	_, _, _, err := ParseUseClause("USE db EXPLAIN MATCH (n) RETURN n", false)
+	_, _, _, err := ParseUseClause(t.Context(), "USE db EXPLAIN MATCH (n) RETURN n", false, cyphertext.RawSource)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Invalid input 'EXPLAIN': expected a database name, '(', 'FOREACH', '.', 'ALTER', 'ORDER BY'")
 	require.Contains(t, err.Error(), "'USE', 'WITH' or <EOF>")
 
-	_, _, _, err = ParseUseClause("USE db EXPLAIN MATCH (n) RETURN n", true)
+	_, _, _, err = ParseUseClause(t.Context(), "USE db EXPLAIN MATCH (n) RETURN n", true, cyphertext.RawSource)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Invalid input 'EXPLAIN': expected a database name, '(', 'FOREACH', '.', 'ORDER BY'")
 	require.NotContains(t, err.Error(), "'ALTER'")

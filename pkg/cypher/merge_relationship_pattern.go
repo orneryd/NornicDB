@@ -56,7 +56,7 @@ func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRel
 		pattern = strings.TrimSpace(pattern[strings.Index(pattern, "=")+1:])
 	}
 
-	openBracket, closeBracket := firstRelationshipBracket(pattern)
+	openBracket, closeBracket := readRelationshipBracket(pattern, 0, requireClosedRelationship)
 	if openBracket < 0 || closeBracket < 0 {
 		return nil, localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
 	}

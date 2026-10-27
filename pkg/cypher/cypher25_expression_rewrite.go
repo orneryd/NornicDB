@@ -108,11 +108,11 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		// Neo4j: it stays one, quoted.
 		if matchKeywordAt(query, next, "DISTINCT") {
 			distinctEnd := next + len("DISTINCT")
-			if after := skipASCIISpaces(query, distinctEnd, len(query)); after > distinctEnd && after < len(query) && startsOperand(query[after]) &&
+			if after := skipASCIISpaces(query, distinctEnd, len(query)); after > distinctEnd && after < len(query) && startsOperand(query, after) &&
 				startsProjectedExpression(query, after) && !startsWithClauseKeyword(query[after:]) && !matchKeywordAt(query, after, "GROUP") {
 				token := strings.Fields(query[after:])[0]
-				if _, identifierEnd, identifier := scanIdentifierToken(query, after); identifier {
-					token = query[after:identifierEnd]
+				if identifierEnd, identifier := cyphertext.ScanIdentifier(query, after); identifier {
+					token = query[after:identifierEnd.End]
 				}
 				err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCoreInvalidInput(token))
 				return
@@ -127,8 +127,9 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 
 // startsOperand reports whether an operand (a name, a number, a string or a
 // parameter) starts with c.
-func startsOperand(c byte) bool {
-	return isIdentStartByte(c) || isDigitByte(c) || isCypherQuoteByte(c) || c == '$'
+func startsOperand(query string, at int) bool {
+	c := query[at]
+	return cyphertext.NameStartAt(query, at) || isDigitByte(c) || isCypherQuoteByte(c) || c == '$'
 }
 
 // startsProjectedExpression reports whether an expression, rather than a
@@ -151,7 +152,7 @@ func startsProjectedExpression(query string, at int) bool {
 func precededByWord(query string, start int, words ...string) bool {
 	end := skipBackSpaces(query, start)
 	for _, word := range words {
-		if end >= len(word) && strings.EqualFold(query[end-len(word):end], word) && (end == len(word) || !isIdentByte(query[end-len(word)-1])) {
+		if end >= len(word) && strings.EqualFold(query[end-len(word):end], word) && (end == len(word) || !cyphertext.NamePartAt(query, end-len(word)-1)) {
 			return true
 		}
 	}
@@ -169,14 +170,12 @@ func forEachQueryWord(query string, visit func(start, end int)) {
 			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 			}
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > 0 && (isIdentByte(query[i-1]) || query[i-1] == '$') {
+		case cyphertext.NamePartAt(query, i) && !isDigitByte(c):
+			if i > 0 && (cyphertext.NamePartAt(query, i-1) || query[i-1] == '$') {
 				continue
 			}
 			j := i
-			for j < len(query) && isIdentByte(query[j]) {
-				j++
-			}
+			j = cyphertext.NamePartEnd(query, j)
 			visit(i, j)
 			i = j - 1
 		}
@@ -193,7 +192,7 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 		case isCypherBacktickByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case isCypherStringQuoteByte(c):
-			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !isIdentByte(query[i-2]) && query[i-2] != '.' && query[i-2] != '$') {
+			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !cyphertext.NamePartAt(query, i-2) && query[i-2] != '.' && query[i-2] != '$') {
 				text, end, err := interpolatedStringText(query, i)
 				if err != nil {
 					return nil, err
@@ -353,7 +352,7 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '{':
-			close := findMatchingDelimiter(query, i, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(query, i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return edits, nil
 			}
@@ -374,13 +373,13 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 //	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
 //	    [v IN [m[k]] | [key, value]][0]])
 func mapComprehensionText(body string) (string, bool) {
-	key, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, 0, len(body)))
-	colon := skipASCIISpaces(body, end, len(body))
+	key, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, 0, len(body)))
+	colon := skipASCIISpaces(body, key.End, len(body))
 	if !ok || colon >= len(body) || body[colon] != ':' {
 		return "", false
 	}
-	value, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, colon+1, len(body)))
-	in := skipASCIISpaces(body, end, len(body))
+	value, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, colon+1, len(body)))
+	in := skipASCIISpaces(body, value.End, len(body))
 	if !ok || !matchKeywordAt(body, in, "IN") {
 		return "", false
 	}
@@ -408,7 +407,7 @@ func mapComprehensionText(body string) (string, bool) {
 			*part, _ = applyLabelRewriteEdits(*part, edits, true)
 		}
 	}
-	keyName, valueName := labelExpressionNameText(key), labelExpressionNameText(value)
+	keyName, valueName := labelExpressionNameText(key.Value), labelExpressionNameText(value.Value)
 	entry := "[(" + source + ")[" + keyName + "]]"
 	filter := ""
 	if predicate != "" {

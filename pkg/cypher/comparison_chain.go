@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 type comparisonOperatorSpan struct {
 	offset int
@@ -287,7 +290,7 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 			if incomingArrowAt(expression, index) {
 				continue
 			}
-			if index > 0 && isIdentByte(expression[index-1]) && typeConstructorBefore(expression, index) {
+			if index > 0 && cyphertext.NamePartAt(expression, index-1) && typeConstructorBefore(expression, index) {
 				return comparisonChainScan{}, false, true
 			}
 			operatorLength = 1
@@ -350,7 +353,7 @@ func operandMayContainCase(operand string) bool {
 // position index (LIST<INTEGER> in a type predicate, #838).
 func typeConstructorBefore(expression string, index int) bool {
 	start := index
-	for start > 0 && isIdentByte(expression[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(expression, start-1) {
 		start--
 	}
 	switch upperASCII(expression[start:index]) {

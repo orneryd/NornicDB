@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
-	"log/slog"
 	"net/http"
 	"reflect"
 	"sort"
@@ -16,6 +18,7 @@ import (
 
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -26,6 +29,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 )
 
@@ -199,9 +203,9 @@ func (s *Server) invalidateAllExecutors() {
 // databaseManagerAdapter wraps multidb.DatabaseManager to implement
 // cypher.DatabaseManagerInterface, avoiding import cycles.
 type databaseManagerAdapter struct {
-	manager *multidb.DatabaseManager
-	db      *nornicdb.DB
-	server  *Server // Reference to server for cache invalidation
+	catalogadapter.Catalog
+	db     *nornicdb.DB
+	server *Server // Reference to server for cache invalidation
 }
 
 // databaseManager is the server's database administration (CREATE, DROP and
@@ -209,27 +213,27 @@ type databaseManagerAdapter struct {
 // the state the server derives from a database (search services, cached
 // executors) in step with it.
 func (s *Server) databaseManager() *databaseManagerAdapter {
-	return &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
+	return &databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: s.dbManager}, db: s.db, server: s}
 }
 
-func (a *databaseManagerAdapter) CreateDatabase(name string) error {
-	return a.manager.CreateDatabase(name)
+func (a *databaseManagerAdapter) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
+	return a.Manager.CreateDatabase(ctx, request)
 }
 
 func (a *databaseManagerAdapter) ServerIdentity() (string, time.Time) {
-	return a.manager.ServerIdentity()
+	return a.Manager.ServerIdentity()
 }
 
 func (a *databaseManagerAdapter) SystemDatabaseName() string {
-	return a.manager.SystemDatabaseName()
+	return a.Manager.SystemDatabaseName()
 }
 
 func (a *databaseManagerAdapter) DatabaseIdentity(name string) (string, time.Time) {
-	return a.manager.DatabaseIdentity(name)
+	return a.Manager.DatabaseIdentity(name)
 }
 
-func (a *databaseManagerAdapter) DropDatabase(name string) error {
-	if err := a.manager.DropDatabase(name); err != nil {
+func (a *databaseManagerAdapter) DropDatabase(ctx context.Context, name string) error {
+	if err := a.Manager.DropDatabase(ctx, name); err != nil {
 		return err
 	}
 	// Search drops the database's state on storage's namespace reset, for
@@ -247,78 +251,41 @@ func (a *databaseManagerAdapter) DropDatabase(name string) error {
 	return nil
 }
 
-func (a *databaseManagerAdapter) ListDatabases() []cypher.DatabaseInfoInterface {
-	dbs := a.manager.ListDatabases()
-	result := make([]cypher.DatabaseInfoInterface, len(dbs))
-	for i, db := range dbs {
-		result[i] = &databaseInfoAdapter{info: db}
-	}
-	return result
-}
-
 func (a *databaseManagerAdapter) Exists(name string) bool {
-	return a.manager.Exists(name)
+	return a.Manager.Exists(name)
 }
 
-func (a *databaseManagerAdapter) CreateAlias(alias, databaseName string) error {
-	return a.manager.CreateAlias(alias, databaseName)
+func (a *databaseManagerAdapter) CreateAlias(ctx context.Context, alias, databaseName string) error {
+	return a.Manager.CreateAlias(ctx, alias, databaseName)
 }
 
-func (a *databaseManagerAdapter) DropAlias(alias string) error {
-	return a.manager.DropAlias(alias)
+func (a *databaseManagerAdapter) DropAlias(ctx context.Context, alias string) error {
+	return a.Manager.DropAlias(ctx, alias)
 }
 
 func (a *databaseManagerAdapter) ListAliases(databaseName string) map[string]string {
-	return a.manager.ListAliases(databaseName)
+	return a.Manager.ListAliases(databaseName)
 }
 
 func (a *databaseManagerAdapter) ResolveDatabase(nameOrAlias string) (string, error) {
-	return a.manager.ResolveDatabase(nameOrAlias)
+	return a.Manager.ResolveDatabase(nameOrAlias)
 }
 
-func (a *databaseManagerAdapter) SetDatabaseLimits(databaseName string, limits interface{}) error {
+func (a *databaseManagerAdapter) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
 	// Convert interface{} to *multidb.Limits
 	limitsPtr, ok := limits.(*multidb.Limits)
 	if !ok {
 		return fmt.Errorf("invalid limits type")
 	}
-	return a.manager.SetDatabaseLimits(databaseName, limitsPtr)
+	return a.Manager.SetDatabaseLimits(ctx, databaseName, limitsPtr)
 }
 
 func (a *databaseManagerAdapter) GetDatabaseLimits(databaseName string) (interface{}, error) {
-	return a.manager.GetDatabaseLimits(databaseName)
+	return a.Manager.GetDatabaseLimits(databaseName)
 }
 
-func (a *databaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
-	// Convert []interface{} to []multidb.ConstituentRef
-	refs := make([]multidb.ConstituentRef, len(constituents))
-	for i, c := range constituents {
-		ref, ok := c.(multidb.ConstituentRef)
-		if !ok {
-			// Try to convert from map
-			if m, ok := c.(map[string]interface{}); ok {
-				ref = multidb.ConstituentRef{
-					Alias:        getString(m, "alias"),
-					DatabaseName: getString(m, "database_name"),
-					Type:         getString(m, "type"),
-					AccessMode:   getString(m, "access_mode"),
-					URI:          getString(m, "uri"),
-					SecretRef:    getString(m, "secret_ref"),
-					AuthMode:     getString(m, "auth_mode"),
-					User:         getString(m, "user"),
-					Password:     getString(m, "password"),
-				}
-			} else {
-				return fmt.Errorf("invalid constituent type at index %d", i)
-			}
-		}
-		refs[i] = ref
-	}
-	return a.manager.CreateCompositeDatabase(name, refs)
-}
-
-func (a *databaseManagerAdapter) DropCompositeDatabase(name string) error {
-	if err := a.manager.DropCompositeDatabase(name); err != nil {
+func (a *databaseManagerAdapter) DropCompositeDatabase(ctx context.Context, name string) error {
+	if err := a.Manager.DropCompositeDatabase(ctx, name); err != nil {
 		return err
 	}
 	// Invalidate any cached executors that might reference this composite database
@@ -333,95 +300,16 @@ func (a *databaseManagerAdapter) DropCompositeDatabase(name string) error {
 	return nil
 }
 
-func (a *databaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {
-	var ref multidb.ConstituentRef
-	if m, ok := constituent.(map[string]interface{}); ok {
-		ref = multidb.ConstituentRef{
-			Alias:        getString(m, "alias"),
-			DatabaseName: getString(m, "database_name"),
-			Type:         getString(m, "type"),
-			AccessMode:   getString(m, "access_mode"),
-			URI:          getString(m, "uri"),
-			SecretRef:    getString(m, "secret_ref"),
-			AuthMode:     getString(m, "auth_mode"),
-			User:         getString(m, "user"),
-			Password:     getString(m, "password"),
-		}
-	} else if r, ok := constituent.(multidb.ConstituentRef); ok {
-		ref = r
-	} else {
-		return fmt.Errorf("invalid constituent type")
-	}
-	return a.manager.AddConstituent(compositeName, ref)
-}
-
-func (a *databaseManagerAdapter) RemoveConstituent(compositeName string, alias string) error {
-	return a.manager.RemoveConstituent(compositeName, alias)
-}
-
-func (a *databaseManagerAdapter) GetCompositeConstituents(compositeName string) ([]interface{}, error) {
-	constituents, err := a.manager.GetCompositeConstituents(compositeName)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]interface{}, len(constituents))
-	for i, c := range constituents {
-		result[i] = c
-	}
-	return result, nil
-}
-
-func (a *databaseManagerAdapter) ListCompositeDatabases() []cypher.DatabaseInfoInterface {
-	dbs := a.manager.ListCompositeDatabases()
-	result := make([]cypher.DatabaseInfoInterface, len(dbs))
-	for i, db := range dbs {
-		result[i] = &databaseInfoAdapter{info: db}
-	}
-	return result
+func (a *databaseManagerAdapter) RemoveConstituent(ctx context.Context, compositeName string, alias string) error {
+	return a.Manager.RemoveConstituent(ctx, compositeName, alias)
 }
 
 func (a *databaseManagerAdapter) IsCompositeDatabase(name string) bool {
-	return a.manager.IsCompositeDatabase(name)
+	return a.Manager.IsCompositeDatabase(name)
 }
 
 func (a *databaseManagerAdapter) GetStorageForUse(name string, authToken string) (interface{}, error) {
-	return a.manager.GetStorageWithAuth(name, authToken)
-}
-
-// Helper function to get string from map
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-// databaseInfoAdapter wraps multidb.DatabaseInfo to implement
-// cypher.DatabaseInfoInterface.
-type databaseInfoAdapter struct {
-	info *multidb.DatabaseInfo
-}
-
-func (a *databaseInfoAdapter) Name() string {
-	return a.info.Name
-}
-
-func (a *databaseInfoAdapter) Type() string {
-	return a.info.Type
-}
-
-func (a *databaseInfoAdapter) Status() string {
-	return a.info.Status
-}
-
-func (a *databaseInfoAdapter) IsDefault() bool {
-	return a.info.IsDefault
-}
-
-func (a *databaseInfoAdapter) CreatedAt() time.Time {
-	return a.info.CreatedAt
+	return a.Manager.GetStorageWithAuth(name, authToken)
 }
 
 // handleDatabaseInfo returns database information for the specified database.
@@ -494,7 +382,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 			}
 		}
 		sort.Slice(constituents, func(i, j int) bool {
-			return strings.ToLower(constituents[i].Alias) < strings.ToLower(constituents[j].Alias)
+			return cyphertext.NameLower(constituents[i].Alias) < cyphertext.NameLower(constituents[j].Alias)
 		})
 		consList := make([]map[string]interface{}, 0, len(constituents))
 		for _, c := range constituents {
@@ -504,8 +392,10 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 				"type":         c.Type,
 				"accessMode":   c.AccessMode,
 			}
-			if c.Type == "remote" && c.URI != "" {
-				entry["uri"] = observability.RedactURL(c.URI)
+			if c.Type == "remote" {
+				if view, err := s.dbManager.RemoteConstituentForDisplay(c); err == nil && view.URI != "" {
+					entry["uri"] = observability.RedactURL(view.URI)
+				}
 			}
 			consList = append(consList, entry)
 		}
@@ -577,7 +467,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 			"statsPartial":          partial,
 			"statsProvenance":       stats,
 		}
-		s.writeJSON(w, http.StatusOK, response)
+		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 
@@ -621,7 +511,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 		"searchRate":            searchStatus.RateNodesPerSec,
 		"searchEtaSeconds":      searchStatus.ETASeconds,
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) compositeConstituentStats(r *http.Request, compositeName string) ([]map[string]interface{}, bool) {
@@ -630,7 +520,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 		return nil, true
 	}
 	sort.Slice(constituents, func(i, j int) bool {
-		return strings.ToLower(constituents[i].Alias) < strings.ToLower(constituents[j].Alias)
+		return cyphertext.NameLower(constituents[i].Alias) < cyphertext.NameLower(constituents[j].Alias)
 	})
 	authToken := strings.TrimSpace(r.Header.Get("Authorization"))
 	stats := make([]map[string]interface{}, 0, len(constituents))
@@ -711,7 +601,7 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 		"database": dbName,
 		"status":   "online",
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleTransactionEndpoint routes transaction-related requests
@@ -771,16 +661,16 @@ func (s *Server) writeRequestAdmissionError(w http.ResponseWriter, r *http.Reque
 // TransactionRequest follows Neo4j HTTP API format. TransactionMetadata is
 // NornicDB's HTTP equivalent of Bolt BEGIN's standard tx_metadata field.
 type TransactionRequest struct {
-	Statements          []StatementRequest     `json:"statements"`
-	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
+	Statements          []StatementRequest `json:"statements"`
+	TransactionMetadata jsontext.NumberMap `json:"tx_metadata,omitempty"`
 }
 
 // StatementRequest is a single Cypher statement.
 type StatementRequest struct {
-	Statement          string                 `json:"statement"`
-	Parameters         map[string]interface{} `json:"parameters,omitempty"`
-	ResultDataContents []string               `json:"resultDataContents,omitempty"` // ["row", "graph"]
-	IncludeStats       bool                   `json:"includeStats,omitempty"`
+	Statement          string             `json:"statement"`
+	Parameters         jsontext.NumberMap `json:"parameters,omitempty"`
+	ResultDataContents []string           `json:"resultDataContents,omitempty"` // ["row", "graph"]
+	IncludeStats       bool               `json:"includeStats,omitempty"`
 }
 
 // decodeTransactionRequest decodes a transaction request body like Neo4j's
@@ -793,9 +683,16 @@ type StatementRequest struct {
 // converted in place.
 var errInvalidTransactionRequestFormat = errors.New("invalid transaction request format")
 
-func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
-	decoder := json.NewDecoder(body)
-	decoder.UseNumber()
+type transactionRequestLimit struct {
+	bounded bool
+	bytes   int64
+}
+
+func decodeTransactionRequest(body io.Reader, req *TransactionRequest, limit transactionRequestLimit) error {
+	if limit.bounded {
+		body = http.MaxBytesReader(nil, io.NopCloser(body), limit.bytes)
+	}
+	decoder := jsontext.NewDecoder(body)
 	if err := decoder.Decode(req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.Is(err, io.EOF) || errors.As(err, &tooLarge) {
@@ -820,9 +717,6 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 // readTransactionRequest reads a transaction request body (size-limited like
 // readJSON) through decodeTransactionRequest. Every transaction endpoint
 // reads its statements through here.
-func (s *Server) readTransactionRequest(r *http.Request, req *TransactionRequest) error {
-	return decodeTransactionRequest(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize), req)
-}
 
 // TransactionResponse follows Neo4j HTTP API format exactly.
 type TransactionResponse struct {
@@ -954,7 +848,7 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 	failure := statementError(err)
 	localizeStatementError(&failure, err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
-		columns, columnErr := executor.StatementResultColumnsContext(ctx, query)
+		columns, columnErr := executor.StatementResultColumnsContext(ctx, query, cypher.RawSource)
 		if columnErr != nil {
 			// The engine's failure is authoritative. A failed statement does
 			// not become a successful empty result when no fixed header is
@@ -1001,7 +895,7 @@ type NotificationPos struct {
 // This is the main query endpoint: POST /db/{dbName}/tx/commit
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
 	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
@@ -1056,7 +950,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	s.writeJSON(w, status, response)
+	httpresponse.WriteJSON(w, status, response)
 }
 
 // grantAccessToNewDatabase grants the admin role and the creating principal's roles full access
@@ -1535,7 +1429,7 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 // The executor owns USE, :USE and the transaction's database selection rules.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(ctx), session, query, params)
+		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), session, query, params)
 		return result, session.Executor, err
 	}
 }
@@ -1625,17 +1519,10 @@ func (s *Server) runRequestStatements(
 			return &queryErr
 		}
 
-		// Auto-grant access when a new database is created: admins and the creating principal get full access.
-		if isCreateDatabaseStatement(queryStatement) {
-			if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
-				s.grantAccessToNewDatabase(ctx, createdName, claims)
-				// Ensure CREATE DATABASE always returns a proper result (name + row).
-				if len(result.Columns) == 0 && len(result.Rows) == 0 {
-					s.logEvent(ctx, slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
-					result.Columns = []string{"name"}
-					result.Rows = [][]interface{}{{createdName}}
-				}
-			}
+		// The administration owner supplies the resolved identity only after
+		// successful creation. Source spelling and ordinary rows are not authority.
+		if result != nil && result.Administration != nil && result.Administration.CreatedDatabase != "" {
+			s.grantAccessToNewDatabase(ctx, result.Administration.CreatedDatabase, claims)
 		}
 
 		// Per-database RBAC: SHOW DATABASES lists only the databases the principal may see.
@@ -1822,7 +1709,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 
 	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 		return
 	}
@@ -1834,7 +1721,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if openErr.Code == "Neo.ClientError.Database.DatabaseNotFound" {
 			status = http.StatusNotFound
 		}
-		s.writeJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
+		httpresponse.WriteJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
 		return
 	}
 
@@ -1843,7 +1730,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expires),
+			Expires: transactionExpires(txSession.Expiration()),
 		},
 	}
 
@@ -1851,12 +1738,12 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
 			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expires)
+		response.Transaction.Expires = transactionExpires(txSession.Expiration())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	w.Header().Set("Location", s.transactionURL(r, dbName, txSession.ID))
-	s.writeJSON(w, http.StatusCreated, response)
+	httpresponse.WriteJSON(w, http.StatusCreated, response)
 }
 
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1873,7 +1760,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil {
+	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil {
 		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
@@ -1894,7 +1781,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	response.Transaction.Expires = transactionExpires(tx.Expires)
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1919,7 +1806,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	}
 
 	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
 		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
@@ -1929,13 +1816,13 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
 		s.rollbackFailedTransaction(r.Context(), tx, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
-		s.writeJSON(w, http.StatusOK, response)
+		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 
 	s.commitRequestTransaction(r.Context(), tx, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1958,11 +1845,11 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 		Errors:  make([]QueryError, 0),
 	}
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (a *databaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
-	return a.manager.StatementCacheScope(name)
+	return a.Manager.StatementCacheScope(name)
 }
 
 func (s *Server) bindStatementCacheIndex() {

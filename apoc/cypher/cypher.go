@@ -7,6 +7,8 @@ package cypher
 import (
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Result represents a Cypher query result.
@@ -35,13 +37,12 @@ func Run(query string, params map[string]interface{}) (*Result, error) {
 //
 //	apoc.cypher.runMany('CREATE (n:Person {name: $name}); MATCH (n) RETURN n;', {name: 'Alice'})
 func RunMany(queries string, params map[string]interface{}) ([]*Result, error) {
-	// Split by semicolon
-	queryList := strings.Split(queries, ";")
+	source := cyphertext.NormalizeSource(queries)
 	results := make([]*Result, 0)
 
-	for _, query := range queryList {
-		query = strings.TrimSpace(query)
-		if query == "" {
+	for _, span := range source.StatementSpans() {
+		query := strings.TrimSpace(queries[span.Start:span.End])
+		if start, _ := cyphertext.GapEnd(query, 0); start == len(query) {
 			continue
 		}
 

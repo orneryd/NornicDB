@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -34,8 +35,10 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 	}
 	require.NoError(t, archive.Close())
+	plan, err := multidb.NewCatalogUpgradeV4("system", "")
+	require.NoError(t, err)
 	open := func() (*storage.BadgerEngine, storage.Engine, *Service) {
-		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: filepath.Join(dir, "graph"), AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
 		if base != nil {
 			fixtureowner.Own(t, base)
 		}

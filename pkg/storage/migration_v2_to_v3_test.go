@@ -228,7 +228,7 @@ func TestStoragePrefixAssignmentsRemainStable(t *testing.T) {
 }
 
 func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
-	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
+	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 	if engine != nil {
 		fixtureowner.Own(t, engine)
@@ -296,7 +296,7 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 }
 
 func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
-	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
+	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 	if engine != nil {
 		fixtureowner.Own(t, engine)
@@ -329,7 +329,7 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
-	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
+	require.Equal(t, storageVersionCurrent, version)
 	got, err := engine.GetEdge(edge.ID)
 	require.NoError(t, err)
 	require.Equal(t, edge.ID, got.ID)
@@ -346,7 +346,7 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 
 func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
-	options := BadgerOptions{DataDir: dataDir}
+	options := BadgerOptions{DataDir: dataDir, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 	if engine != nil {
 		fixtureowner.Own(t, engine)
@@ -412,7 +412,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
-	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
+	require.Equal(t, storageVersionCurrent, version)
 
 	require.Equal(t, exactLabelKeys, keysUnder(t, engine, prefixLabelIndex))
 	require.Equal(t, exactTypeKeys, keysUnder(t, engine, prefixEdgeTypeIndex))

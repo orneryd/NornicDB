@@ -140,7 +140,7 @@ the one-way upgrade
 | V1 → V2   | on-disk version 1   | Eager rewrite of every node + edge body to the tokenized codec. Bumps version on clean pass.    |
 | V2 → V3   | on-disk version 2   | Restore missing versioned edge adjacency from live bodies and retained edge versions; body encoding remains V2. |
 
-A V0 store with `--upgrade-storage` runs all applicable arms in sequence through V3. The V2→V3 repair uses bounded scans and only advances the version after both passes succeed; an interrupted upgrade retries safely. It preserves existing adjacency entries and tombstones. Historical adjacency can only be restored where the corresponding edge version body is still retained; pruned history cannot be recreated.
+A V0 store with `--upgrade-storage` runs all applicable arms in sequence through V4. The V2→V3 repair uses bounded scans and only advances the version after both passes succeed; an interrupted upgrade retries safely. It preserves existing adjacency entries and tombstones. Historical adjacency can only be restored where the corresponding edge version body is still retained; pruned history cannot be recreated.
 
 ### V1→V2 rewrite
 
@@ -218,3 +218,48 @@ All new files (`property_key_dictionary.go`, `property_codec.go`, `migration_v1_
 5. Subsequent starts don't need the flag — the version is already current.
 
 Downgrade is not supported. Operators who need to revert restore from the pre-upgrade backup.
+
+
+## Catalog credentials (Storage V4)
+
+The current startup runner includes one V3→V4 arm. It uses the configured
+system database's exact catalog node and the canonical multidb credential
+transformer. Credential-bearing remote connections become one explicitly tagged,
+encrypted descriptor containing the original URI and explicit credentials. Legacy
+URI text, including query values beginning with `enc:v1:`, retains its literal
+meaning; only the old separate Password field keeps its established ciphertext
+interpretation. The catalog record and V4 marker commit in the same native
+transaction. Other stored keys and unrelated catalog fields retain their meaning.
+
+Before upgrading, stop the server and preserve a restorable backup. Configure a
+stable credential key when the selected catalog contains credentials:
+`NORNICDB_REMOTE_CREDENTIALS_KEY` takes precedence, then an explicitly configured
+database encryption password, then an explicitly configured JWT signing secret.
+An automatically generated JWT default is not a durable credential key. Keep the
+same selected material for subsequent opens; losing it prevents recovery of the
+encrypted remote connections. Missing required key material, or a key that cannot decrypt an existing legacy
+Password ciphertext, aborts the V4 catalog transaction. Bootstrap freezes the selection for migration and runtime.
+
+Authorize the existing startup upgrade with `--upgrade-storage` (or
+`NORNICDB_UPGRADE_STORAGE=1`). Catalog replacement is startup-only, before a
+DatabaseManager can retain an old catalog snapshot. The native maintenance lease
+excludes concurrent storage writes but cannot refresh an existing manager's
+logical snapshot, so manual migration of an older store requires closing and
+reopening it. New empty stores require no upgrade authorization.
+
+Direct native embeddings opening existing nonempty stores must supply
+`BadgerOptions.CatalogUpgradeV4`, built with
+`multidb.NewCatalogUpgradeV4(actualSystemDatabase, stableKey)`. Use the exact
+configured catalog namespace, including custom roots; storage does not scan or
+guess metadata nodes. This explicit plan remains required when its selected
+catalog record is absent. Durable custom engines must apply the same pure
+transform through their authoritative upgrade owner before manager construction;
+manager load/save does not silently migrate credentials.
+
+A process interrupted before the catalog transaction commits retains V3 and the
+old catalog; reopening retries the arm. After commit, both the descriptor and V4
+marker are present. This is a one-way supported upgrade: restore the original
+backup to return to an older binary. Older binaries are not guaranteed to reject
+a newer version marker. Migration changes authoritative logical records; it does
+not erase historical physical pages or rewrite existing backups. Handle old
+copies and credential rotation according to the operator's security policy.

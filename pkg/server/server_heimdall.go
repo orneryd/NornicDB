@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -152,7 +153,7 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (
 	// Enable multi-db commands (SHOW/CREATE/DROP DATABASE...) when supported.
 	// The adapter lives in server_db.go (same package), so we can reuse it here.
 	if r.dbManager != nil {
-		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, server: nil})
+		exec.SetDatabaseManager(&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: r.dbManager}, db: r.db, server: nil})
 	}
 	return exec, nil
 }

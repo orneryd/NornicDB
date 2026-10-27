@@ -13,20 +13,20 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 	for _, removal := range []string{"database", "alias", "constituent", "composite"} {
 		t.Run(removal, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
-			manager, err := multidb.NewDatabaseManager(store, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = manager.Close() })
 			for _, name := range []string{"sol_live", "sol_removed"} {
-				if err := manager.CreateDatabase(name); err != nil {
+				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := manager.CreateAlias("sol_alias", "sol_removed"); err != nil {
+			if err := manager.CreateAlias(t.Context(), "sol_alias", "sol_removed"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("sol_comp", []multidb.ConstituentRef{
+			if err := manager.CreateCompositeDatabase(t.Context(), "sol_comp", []multidb.ConstituentRef{
 				{Alias: "leaf", DatabaseName: "sol_removed", Type: "local", AccessMode: "read_write"},
 			}); err != nil {
 				t.Fatal(err)
@@ -52,13 +52,13 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 			}
 			switch removal {
 			case "database":
-				err = manager.DropDatabase("sol_removed")
+				err = manager.DropDatabase(t.Context(), "sol_removed")
 			case "alias":
-				err = manager.DropAlias("sol_alias")
+				err = manager.DropAlias(t.Context(), "sol_alias")
 			case "constituent":
-				err = manager.RemoveConstituent("sol_comp", "leaf")
+				err = manager.RemoveConstituent(t.Context(), "sol_comp", "leaf")
 			case "composite":
-				err = manager.DropCompositeDatabase("sol_comp")
+				err = manager.DropCompositeDatabase(t.Context(), "sol_comp")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -75,15 +75,15 @@ func TestStatementCacheFamilySurvivingUseOwner(t *testing.T) {
 
 func TestStatementCacheFamilyPublicColdAndRetiredOwner(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = manager.Close() })
-	if err := manager.CreateDatabase("sol_leaf"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "sol_leaf"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.CreateCompositeDatabase("sol_comp", []multidb.ConstituentRef{
+	if err := manager.CreateCompositeDatabase(t.Context(), "sol_comp", []multidb.ConstituentRef{
 		{Alias: "leaf", DatabaseName: "sol_leaf", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestStatementCacheFamilyPublicColdAndRetiredOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.DropDatabase("sol_leaf"); err != nil {
+	if err := manager.DropDatabase(t.Context(), "sol_leaf"); err != nil {
 		t.Fatal(err)
 	}
 	if owner.Disposed() {
@@ -146,21 +146,21 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 	for _, removal := range []string{"database", "alias", "constituent", "composite"} {
 		t.Run(removal, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
-			manager, err := multidb.NewDatabaseManager(store, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer manager.Close()
 			for _, name := range []string{"cache_live", "cache_removed"} {
-				if err := manager.CreateDatabase(name); err != nil {
+				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := manager.CreateAlias("cache_alias", "cache_removed"); err != nil {
+			if err := manager.CreateAlias(t.Context(), "cache_alias", "cache_removed"); err != nil {
 				t.Fatal(err)
 			}
 			constituent := multidb.ConstituentRef{Alias: "leaf", DatabaseName: "cache_removed", Type: "local", AccessMode: "read_write"}
-			if err := manager.CreateCompositeDatabase("cache_comp", []multidb.ConstituentRef{constituent}); err != nil {
+			if err := manager.CreateCompositeDatabase(t.Context(), "cache_comp", []multidb.ConstituentRef{constituent}); err != nil {
 				t.Fatal(err)
 			}
 			owner, err := DatabaseStatementCaches(manager, "nornic")
@@ -201,19 +201,19 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 				t.Fatal("routed body was not cached")
 			}
 			// Full text/explain and uppercase routing entries reference the same selection.
-			if err := root.validateSyntax(context.Background(), query, false); err != nil {
+			if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
 				t.Fatal(err)
 			}
 			root.cachedUpperQuery(query)
 			switch removal {
 			case "database":
-				err = manager.DropDatabase("cache_removed")
+				err = manager.DropDatabase(t.Context(), "cache_removed")
 			case "alias":
-				err = manager.DropAlias("cache_alias")
+				err = manager.DropAlias(t.Context(), "cache_alias")
 			case "constituent":
-				err = manager.RemoveConstituent("cache_comp", "leaf")
+				err = manager.RemoveConstituent(t.Context(), "cache_comp", "leaf")
 			case "composite":
-				err = manager.DropCompositeDatabase("cache_comp")
+				err = manager.DropCompositeDatabase(t.Context(), "cache_comp")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -242,13 +242,13 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			}
 			switch removal {
 			case "database":
-				err = manager.CreateDatabase("cache_removed")
+				err = manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cache_removed"})
 			case "alias":
-				err = manager.CreateAlias("cache_alias", "cache_removed")
+				err = manager.CreateAlias(t.Context(), "cache_alias", "cache_removed")
 			case "constituent":
-				err = manager.AddConstituent("cache_comp", constituent)
+				err = manager.AddConstituent(t.Context(), "cache_comp", constituent)
 			case "composite":
-				err = manager.CreateCompositeDatabase("cache_comp", []multidb.ConstituentRef{constituent})
+				err = manager.CreateCompositeDatabase(t.Context(), "cache_comp", []multidb.ConstituentRef{constituent})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -271,16 +271,16 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 
 func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if err := manager.CreateDatabase("cache_leaf"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cache_leaf"}); err != nil {
 		t.Fatal(err)
 	}
 	ref := multidb.ConstituentRef{Alias: "leaf", DatabaseName: "cache_leaf", Type: "local", AccessMode: "read_write"}
-	if err := manager.CreateCompositeDatabase("cache_dynamic", []multidb.ConstituentRef{ref}); err != nil {
+	if err := manager.CreateCompositeDatabase(t.Context(), "cache_dynamic", []multidb.ConstituentRef{ref}); err != nil {
 		t.Fatal(err)
 	}
 	owner, err := DatabaseStatementCaches(manager, "cache_dynamic")
@@ -311,7 +311,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 		t.Fatal("dynamic outer text lost its resolved dependency")
 	}
 	root.cachedUpperQuery(query)
-	if err := manager.RemoveConstituent("cache_dynamic", "leaf"); err != nil {
+	if err := manager.RemoveConstituent(t.Context(), "cache_dynamic", "leaf"); err != nil {
 		t.Fatal(err)
 	}
 	if owner.Disposed() || root.hasCachedValidSyntax(body, activeSyntaxValidator()) {
@@ -326,7 +326,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if retained || upperRetained {
 		t.Fatal("dynamic outer text retained a removed dependency")
 	}
-	if err := manager.AddConstituent("cache_dynamic", ref); err != nil {
+	if err := manager.AddConstituent(t.Context(), "cache_dynamic", ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := root.Execute(context.Background(), query, map[string]interface{}{"graph": "cache_dynamic.leaf"}); err != nil {
@@ -339,12 +339,12 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 
 func TestStatementCacheFamilyConcurrentReferenceRemoval(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if err := manager.CreateAlias("cache_concurrent_alias", "nornic"); err != nil {
+	if err := manager.CreateAlias(t.Context(), "cache_concurrent_alias", "nornic"); err != nil {
 		t.Fatal(err)
 	}
 	root := NewStorageExecutor(store)
@@ -380,7 +380,7 @@ func TestStatementCacheFamilyConcurrentReferenceRemoval(t *testing.T) {
 		})
 	}
 	close(start)
-	if err := manager.DropAlias("cache_concurrent_alias"); err != nil {
+	if err := manager.DropAlias(t.Context(), "cache_concurrent_alias"); err != nil {
 		t.Fatal(err)
 	}
 	workers.Wait()

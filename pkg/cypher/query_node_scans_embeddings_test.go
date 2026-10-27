@@ -19,10 +19,10 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	fixtureowner.Own(t, engine)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	manager, err := multidb.NewDatabaseManager(engine, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
-	require.NoError(t, manager.CreateDatabase("test"))
-	require.NoError(t, manager.CreateCompositeDatabase("scans", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "test"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "scans", []multidb.ConstituentRef{
 		{Alias: "docs", DatabaseName: "test", Type: "local", AccessMode: "read_write"},
 	}))
 	g := newLargeEmbeddingGraphOn(t, 4, engine)
@@ -62,7 +62,7 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	g.engine = engine
 	g.store = storage.NewNamespacedEngine(engine, "test")
 	g.exec = NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
-	manager, err = multidb.NewDatabaseManager(engine, nil)
+	manager, err = multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	g.exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	return g
@@ -209,7 +209,7 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 			spy := &queryNodeReadSpy{Engine: g.store}
 			exec := g.exec.cloneForStorage(spy)
 			fabric := &cypherFabricExecutor{base: g.exec}
-			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil)
+			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.eligible, exec.readOnlyQueryNodes)
 			if tc.eligible {

@@ -45,7 +45,7 @@ func TestCanonicalStatementPublicMatrix(t *testing.T) {
 						}
 					}
 					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j"))
-					columns, err := executor.StatementResultColumns(sample.Query)
+					columns, err := executor.StatementResultColumns(sample.Query, RawSource)
 					if sample.Code != "" {
 						require.Error(t, err)
 						requireStatusCode(t, err, sample.Code)

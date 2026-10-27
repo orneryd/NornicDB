@@ -29,7 +29,7 @@ func TestObservabilityTenantLabelsResolvedEvent(t *testing.T) {
 		{language.EuropeanSpanish, "se resolvió la activación de etiquetas de inquilino"},
 		{language.MustParse("en-XA"), "[!! resolved tenant labels enabled !!]"},
 	} {
-		got, _, renderErr := manager.Render(WithPreferences(context.Background(), locale.tag), event.Message)
+		got, _, renderErr := manager.Render(WithPreferences(context.Background(), locale.tag), MessageRequest(event.Message))
 		require.NoError(t, renderErr)
 		require.Equal(t, locale.want, got)
 	}

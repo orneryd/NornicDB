@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // casePrefixEndRequired asks whether treating the candidate END as a prefix
 // operand leaves no complete CASE parse. A state records the CASE stack at one
@@ -122,11 +125,11 @@ func caseClosureStateContains(states []string, wanted string) bool {
 
 func caseEndFollowsBarePrefix(text string, end int) bool {
 	i := end - 1
-	for i >= 0 && isASCIISpace(text[i]) {
+	for i >= 0 && cyphertext.IsWhitespaceAt(text, i) {
 		i--
 	}
 	finish := i + 1
-	for i >= 0 && isIdentByte(text[i]) {
+	for i >= 0 && cyphertext.NamePartAt(text, i) {
 		i--
 	}
 	if i >= 0 && (text[i] == '.' || text[i] == ':' || text[i] == '$') {

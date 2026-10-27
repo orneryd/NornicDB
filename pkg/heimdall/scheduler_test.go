@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -347,40 +348,36 @@ func TestManager_Generate(t *testing.T) {
 	assert.Equal(t, int64(1), mockGen.GetGenerateCount())
 }
 
-func TestManagerGenerateRedactsCredentialURLBeforeModelAndOutput(t *testing.T) {
+func TestManagerGenerateRedactsCredentialURL(t *testing.T) {
 	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
-	var receivedPrompt string
-	mockGen := NewMockGenerator("/test/model.gguf")
-	mockGen.generateFunc = func(_ context.Context, prompt string, _ GenerateParams) (string, error) {
-		receivedPrompt = prompt
-		return rawEndpoint, nil
+	for _, fails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "output", true: "error"}[fails], func(t *testing.T) {
+			var receivedPrompt string
+			mockGen := NewMockGenerator("/test/model.gguf")
+			mockGen.generateFunc = func(_ context.Context, prompt string, _ GenerateParams) (string, error) {
+				receivedPrompt = prompt
+				if fails {
+					return "", errors.New(rawEndpoint)
+				}
+				return rawEndpoint, nil
+			}
+			manager := newTestManager(mockGen)
+			response, err := manager.Generate(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams())
+			if fails {
+				if err == nil {
+					t.Fatal("expected the generator error")
+				}
+				response = err.Error()
+			} else if err != nil {
+				t.Fatal("generation unexpectedly failed")
+			}
+			testfixture.RequireMarkersAbsent(t, receivedPrompt, "synthetic-user", "synthetic-pass", "synthetic-key")
+			testfixture.RequireMarkersAbsent(t, response, "synthetic-user", "synthetic-pass", "synthetic-key")
+			if !strings.Contains(receivedPrompt, "example.invalid") {
+				t.Fatal("redaction unexpectedly removed the endpoint context")
+			}
+		})
 	}
-	manager := newTestManager(mockGen)
-
-	response, err := manager.Generate(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams())
-	if err != nil {
-		t.Fatal("generation unexpectedly failed")
-	}
-	assertNoSyntheticCredential(t, receivedPrompt)
-	assertNoSyntheticCredential(t, response)
-	if !strings.Contains(receivedPrompt, "example.invalid") {
-		t.Fatal("redaction unexpectedly removed the endpoint context")
-	}
-}
-
-func TestManagerGenerateRedactsCredentialURLFromErrors(t *testing.T) {
-	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
-	mockGen := NewMockGenerator("/test/model.gguf")
-	mockGen.generateFunc = func(_ context.Context, _ string, _ GenerateParams) (string, error) {
-		return "", errors.New(rawEndpoint)
-	}
-	manager := newTestManager(mockGen)
-
-	_, err := manager.Generate(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams())
-	if err == nil {
-		t.Fatal("expected the generator error")
-	}
-	assertNoSyntheticCredential(t, err.Error())
 }
 
 func TestManagerGenerateStreamRedactsCredentialURLAcrossChunks(t *testing.T) {
@@ -407,8 +404,8 @@ func TestManagerGenerateStreamRedactsCredentialURLAcrossChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal("stream generation unexpectedly failed")
 	}
-	assertNoSyntheticCredential(t, receivedPrompt)
-	assertNoSyntheticCredential(t, response.String())
+	testfixture.RequireMarkersAbsent(t, receivedPrompt, "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, response.String(), "synthetic-user", "synthetic-pass", "synthetic-key")
 	if callbackCount != 1 {
 		t.Fatal("credential-bearing output was not redacted as a complete response")
 	}
@@ -455,23 +452,14 @@ func TestManagerGenerateWithToolsRedactsCredentialURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal("tool generation unexpectedly failed")
 	}
-	assertNoSyntheticCredential(t, toolGenerator.messages[0].Content)
-	assertNoSyntheticCredential(t, toolGenerator.messages[0].ToolCalls[0].Arguments)
-	assertNoSyntheticCredential(t, toolGenerator.tools[0].Description)
-	assertNoSyntheticCredential(t, string(toolGenerator.tools[0].InputSchema))
-	assertNoSyntheticCredential(t, content)
-	assertNoSyntheticCredential(t, calls[0].Arguments)
+	testfixture.RequireMarkersAbsent(t, toolGenerator.messages[0].Content, "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, toolGenerator.messages[0].ToolCalls[0].Arguments, "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, toolGenerator.tools[0].Description, "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, string(toolGenerator.tools[0].InputSchema), "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, content, "synthetic-user", "synthetic-pass", "synthetic-key")
+	testfixture.RequireMarkersAbsent(t, calls[0].Arguments, "synthetic-user", "synthetic-pass", "synthetic-key")
 	if !strings.Contains(messages[0].Content, "synthetic-pass") {
 		t.Fatal("input was mutated instead of copied for redaction")
-	}
-}
-
-func assertNoSyntheticCredential(t *testing.T, value string) {
-	t.Helper()
-	for _, marker := range []string{"synthetic-user", "synthetic-pass", "synthetic-key"} {
-		if strings.Contains(value, marker) {
-			t.Fatal("credential material escaped the generation redaction boundary")
-		}
 	}
 }
 

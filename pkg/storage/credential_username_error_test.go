@@ -29,7 +29,7 @@ func TestCredentialRemoteUserErrorProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer engine.Close()
-	_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil)
+	_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 	if err == nil {
 		t.Fatal("synthetic provider rejection was lost")
 	}

@@ -30,7 +30,7 @@ func TestApocDoItUsesCallingTransaction(t *testing.T) {
 
 func TestApocDoItDeclarationAndBoundaries(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "do_it_boundaries"))
-	requirements := QueryPermissionRequirements(t.Context(), "CALL apoc.cypher.doIt('RETURN 1', {})")
+	requirements := QueryPermissionRequirements(t.Context(), "CALL apoc.cypher.doIt('RETURN 1', {})", RawSource)
 	require.True(t, requirements.Write)
 	readOnly := WithPermissionChecker(context.Background(), func(permission string) bool { return permission == "read" })
 	_, err := e.Execute(readOnly, "CALL apoc.cypher.doIt('CREATE (:Forbidden)',{})", nil)

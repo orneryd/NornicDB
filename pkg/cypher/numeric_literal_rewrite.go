@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // Numeric literals may group their digits with underscores, as in Neo4j 5
 // (#907): 1_000, 1_000.5, 1.0_5, 1e1_0, 0x_1F, 0x1_F, 0o1_7. A single
@@ -47,13 +50,13 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 		end, grouped := groupedNumericLiteralEnd(query, index)
 		if grouped {
 			if rewrite == nil {
-				rewrite = &queryRewrite{original: query}
+				rewrite = &queryRewrite{Source: cyphertext.Source{Original: query}}
 				out.Grow(len(query))
 			}
 			out.WriteString(query[last:index])
 			canonStart := out.Len()
 			out.WriteString(strings.ReplaceAll(query[index:end], "_", ""))
-			rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: index, origEnd: end, canonStart: canonStart, canonEnd: out.Len()})
+			rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: index, End: end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 			last = end
 		}
 		index = end
@@ -62,8 +65,8 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 		return query, nil
 	}
 	out.WriteString(query[last:])
-	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite
+	rewrite.Text = out.String()
+	return rewrite.Text, rewrite
 }
 
 // mayHaveGroupedNumericLiteral reports whether query has an underscore at
@@ -72,7 +75,7 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 func mayHaveGroupedNumericLiteral(query string) bool {
 	for index := strings.IndexByte(query, '_'); index >= 0; {
 		start := index
-		for start > 0 && isIdentByte(query[start-1]) {
+		for start > 0 && cyphertext.NamePartAt(query, start-1) {
 			start--
 		}
 		if start < index && isASCIIDigit(query[start]) {
@@ -92,15 +95,7 @@ func mayHaveGroupedNumericLiteral(query string) bool {
 // name or a parameter ($1_0 is the parameter named 1_0). The rewrite and
 // validateNumericLiterals read literals from the same starts.
 func numericLiteralStartsAt(query string, index int) bool {
-	c := query[index]
-	if !isASCIIDigit(c) && !(c == '.' && index+1 < len(query) && isASCIIDigit(query[index+1])) {
-		return false
-	}
-	if index == 0 {
-		return true
-	}
-	previous := query[index-1]
-	return !isIdentByte(previous) && previous != '$' && !(c == '.' && previous == '.')
+	return cyphertext.NumberStartsAt(query, index)
 }
 
 // groupedNumericLiteralEnd returns the end of the numeric literal at
@@ -108,57 +103,18 @@ func numericLiteralStartsAt(query string, index int) bool {
 // with underscores as Neo4j allows. A decimal integer with a leading zero
 // (0_1, the legacy octal form) is not one.
 func groupedNumericLiteralEnd(query string, start int) (int, bool) {
-	if start+1 < len(query) && query[start] == '0' && (query[start+1] == 'x' || query[start+1] == 'o') {
-		digit := isASCIIHexDigit
-		if query[start+1] == 'o' {
-			digit = isASCIIOctalDigit
-		}
-		end, valid, grouped := numericDigitRun(query, start+2, digit, true)
-		return end, valid && grouped
+	token, ok := cyphertext.ScanNumber(query, start)
+	if !ok {
+		return start, false
 	}
-	end, valid, grouped := start, true, false
-	if query[start] != '.' {
-		end, valid, grouped = numericDigitRun(query, start, isASCIIDigit, false)
-	}
-	integerEnd := end
-	floating := false
-	if end+1 < len(query) && query[end] == '.' && isASCIIDigit(query[end+1]) {
-		var fractionValid, fractionGrouped bool
-		end, fractionValid, fractionGrouped = numericDigitRun(query, end+1, isASCIIDigit, false)
-		valid, grouped, floating = valid && fractionValid, grouped || fractionGrouped, true
-	}
-	if end+1 < len(query) && (query[end] == 'e' || query[end] == 'E') {
-		exponent := end + 1
-		if query[exponent] == '+' || query[exponent] == '-' {
-			exponent++
-		}
-		if exponent < len(query) && (isASCIIDigit(query[exponent]) || query[exponent] == '_') {
-			var exponentValid, exponentGrouped bool
-			end, exponentValid, exponentGrouped = numericDigitRun(query, exponent, isASCIIDigit, false)
-			valid, grouped, floating = valid && exponentValid, grouped || exponentGrouped, true
-		}
-	}
-	if !floating && query[start] == '0' && integerEnd-start > 1 {
+	valid := !token.Invalid && token.Grouped && token.Suffix == 0
+	if token.Base == 10 && !token.Fraction && !token.Exponent && query[start] == '0' && token.IntegerEnd-start > 1 {
 		valid = false
 	}
-	return end, valid && grouped
-}
-
-// numericDigitRun reads the run of digits and underscores at query[start].
-// It is valid when it has a digit, ends with one, never has two underscores
-// in a row and, unless leadingUnderscore, starts with a digit; grouped when it
-// has an underscore.
-func numericDigitRun(query string, start int, digit func(byte) bool, leadingUnderscore bool) (end int, valid, grouped bool) {
-	end = start
-	for end < len(query) && (digit(query[end]) || query[end] == '_') {
-		end++
+	// Preserve the existing extension: uppercase radix prefixes accept digits,
+	// while digit grouping is admitted only for the lowercase radix spellings.
+	if token.Base != 10 && (query[start+1] == 'X' || query[start+1] == 'O') {
+		valid = false
 	}
-	run := query[start:end]
-	grouped = strings.IndexByte(run, '_') >= 0
-	valid = run != "" && run[len(run)-1] != '_' && !strings.Contains(run, "__") && (leadingUnderscore || run[0] != '_')
-	return end, valid, grouped
+	return token.TailEnd, valid
 }
-
-func isASCIIHexDigit(value byte) bool { return isDigitForBase(value, 16) }
-
-func isASCIIOctalDigit(value byte) bool { return isDigitForBase(value, 8) }

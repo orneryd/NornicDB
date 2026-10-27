@@ -491,7 +491,7 @@ const (
 	ManagedEntityUsageRestored
 )
 
-// invalidateManagedEntityUsage runs under Restore's exclusive lifecycle lease.
+// invalidateManagedEntityUsage runs under an exclusive Restore or migration lease.
 // Existing views retain their runtime and initialize against the restored graph.
 func (b *BadgerEngine) invalidateManagedEntityUsage() {
 	registry := b.storedEntityObservers.Load()

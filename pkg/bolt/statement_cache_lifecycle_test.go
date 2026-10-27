@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,17 +17,17 @@ import (
 // after repeated create/query/drop cycles, including drops through another adapter.
 func TestStatementCacheFamilyDroppedDatabaseCaches(t *testing.T) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = manager.Close() })
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
-	adapter := &boltDatabaseManagerAdapter{manager: manager}
+	adapter := &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: manager}}
 	session := &Session{server: server, forwardedAuthHeader: "Bearer lifecycle-test"}
 	for i := range 64 {
 		name := fmt.Sprintf("cache_tenant_%d", i)
-		if err := adapter.CreateDatabase(name); err != nil {
+		if err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		executor, err := session.getExecutorForDatabase(name)
@@ -36,7 +37,7 @@ func TestStatementCacheFamilyDroppedDatabaseCaches(t *testing.T) {
 		if _, err := executor.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := adapter.DropDatabase(name); err != nil {
+		if err := adapter.DropDatabase(t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 		retired := executor.(*boltQueryExecutorAdapter).executor

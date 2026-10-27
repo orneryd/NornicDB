@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -105,7 +106,7 @@ func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relat
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '[', '{':
 			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(pattern, i, rune(c), rune(closeBy)); close > i {
+			if close := cyphertext.FindMatchingDelimiter(pattern, i, rune(c), rune(closeBy), cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '(':
@@ -256,7 +257,7 @@ func lastNodePatternStart(chain string) int {
 		switch c := chain[i]; c {
 		case '[', '{':
 			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(chain, i, rune(c), rune(closeBy)); close > i {
+			if close := cyphertext.FindMatchingDelimiter(chain, i, rune(c), rune(closeBy), cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '(':
@@ -526,7 +527,7 @@ func elementPredicateSpans(pattern string, from, to int) [][2]int {
 			index = skipCypherQuotedText(pattern, index, c) - 1
 		case '(', '[':
 			closeBy := map[byte]byte{'(': ')', '[': ']'}[c]
-			close := findMatchingDelimiter(pattern, index, rune(c), rune(closeBy))
+			close := cyphertext.FindMatchingDelimiter(pattern, index, rune(c), rune(closeBy), cyphertext.OpeningDelimiter)
 			if close < 0 || close > to {
 				return spans
 			}

@@ -68,7 +68,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx, materializedPattern, prepareErr := e.preparePatternRow(withValueBindings(ctx, row), pattern, row)
+		rowCtx, materializedPattern, prepareErr := e.bindPatternProperties(withValueBindings(ctx, row), pattern, row)
 		if prepareErr != nil {
 			return nil, true, prepareErr
 		}

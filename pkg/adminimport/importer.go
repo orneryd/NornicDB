@@ -2,13 +2,13 @@ package adminimport
 
 import (
 	"archive/zip"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"io"
 	"os"
 	"path/filepath"
@@ -1027,20 +1027,43 @@ func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaMana
 	return nil
 }
 
-func splitCypherStatements(s string) []string {
-	var out []string
-	scanner := bufio.NewScanner(strings.NewReader(s))
-	var b strings.Builder
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+func splitCypherStatements(source string) []string {
+	// Hash-prefixed lines belong to the import script wrapper, not Cypher.
+	// Remove wrapper/full-line comments only outside opaque Cypher tokens.
+	var text strings.Builder
+	lineStart := true
+	for index := 0; index < len(source); {
+		character := source[index]
+		if lineStart && character == '#' {
+			// Hash comments are the script wrapper's separate line grammar.
+			end := strings.IndexAny(source[index:], "\r\n")
+			if end < 0 {
+				break
+			}
+			index += end
 			continue
 		}
-		b.WriteString(line)
-		b.WriteByte('\n')
+		if lineStart && strings.HasPrefix(source[index:], "//") {
+			index = cyphertext.CommentEnd(source, index)
+			continue
+		}
+		if end, opaque := cyphertext.SkipToken(source, index); opaque {
+			text.WriteString(source[index:end])
+			index, lineStart = end, false
+			continue
+		}
+		text.WriteByte(character)
+		if character == '\n' || character == '\r' {
+			lineStart = true
+		} else if !cyphertext.IsWhitespaceAt(source, index) {
+			lineStart = false
+		}
+		index++
 	}
-	for _, stmt := range strings.Split(b.String(), ";") {
-		out = append(out, strings.TrimSpace(stmt))
+	script := text.String()
+	var out []string
+	for _, span := range cyphertext.StatementSpans(script) {
+		out = append(out, strings.TrimSpace(script[span.Start:span.End]))
 	}
 	return out
 }

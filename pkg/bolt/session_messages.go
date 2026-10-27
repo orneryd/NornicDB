@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -43,7 +44,7 @@ func (s *Session) localize(message localization.Message) string {
 		match := s.server.config.Localizer.Resolve("bolt", s.language)
 		ctx = localization.WithPreferences(ctx, match.Tag)
 	}
-	text, _, err := s.server.config.Localizer.Render(ctx, message)
+	text, _, err := s.server.config.Localizer.Render(ctx, localization.MessageRequest(message))
 	if err != nil {
 		return message.Fallback
 	}
@@ -124,7 +125,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Resolve registered procedure modes in addition to preserving the existing
 	// Cypher classification. Procedure arguments can hide a mutation from the
 	// outer query text, so keyword matching alone is not an authorization boundary.
-	requirements := cypher.QueryPermissionRequirements(parentCtx, query)
+	requirements := cypher.QueryPermissionRequirements(parentCtx, query, cypher.RawSource)
 	isWrite := requirements.Write
 
 	// Log query if enabled
@@ -137,12 +138,11 @@ func (s *Session) handleRun(data []byte) error {
 		if s.authResult != nil {
 			user = s.authResult.Username
 		}
-		// D-10a: "[BOLT]" bracket dropped (component attribute carries
-		// it). D-03a: any "credentials"/"password"/"token" key in the
-		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
-		// chain via DefaultRedactKeys.
+		// Project parameters against the original query before literal redaction
+		// and truncation discard credential context. Execution retains params.
+		logParams := cypher.QueryDiagnosticParameters(parentCtx, query, params)
 		s.server.logEvent(context.Background(), slog.LevelDebug,
-			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), params))
+			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), logParams))
 	}
 
 	// Resolve effective database name (Neo4j-compatible precedence):
@@ -986,7 +986,6 @@ func databaseFromMetadata(metadata map[string]any) (string, bool) {
 	}
 	if raw, ok := metadata["db"]; ok {
 		if db, ok := raw.(string); ok {
-			db = strings.TrimSpace(db)
 			if db != "" {
 				return db, true
 			}
@@ -994,7 +993,6 @@ func databaseFromMetadata(metadata map[string]any) (string, bool) {
 	}
 	if raw, ok := metadata["database"]; ok {
 		if db, ok := raw.(string); ok {
-			db = strings.TrimSpace(db)
 			if db != "" {
 				return db, true
 			}
@@ -1771,7 +1769,7 @@ func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.Principal
 }
 
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's
-// database, and the database its data is in (cypher.GraphAccess: a
+// database, and the database its data is in (cypher.GraphAccessTarget: a
 // composite constituent needs its composite and its database, as the
 // executor checks a USE of the same name). A nil mode allows every
 // database.
@@ -1779,14 +1777,15 @@ func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataD
 	var manager cypher.DatabaseManagerInterface
 	if s.server != nil {
 		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-			manager = &boltDatabaseManagerAdapter{manager: mgr}
+			manager = &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}}
 		}
 	}
 	var canAccess func(string) bool
 	if mode != nil {
 		canAccess = mode.CanAccessDatabase
 	}
-	return cypher.GraphAccess(manager, graph, canAccess)
+	dataDatabase, _, allowed = cypher.GraphAccessTarget(manager, graph, canAccess)
+	return dataDatabase, allowed
 }
 
 // refreshAuthResult reads the session's roles and permissions again, from

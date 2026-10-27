@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 func validateExpressionOperandCompleteness(expression string) error {
 	expression = strings.TrimSpace(expression)
@@ -58,8 +61,8 @@ func containsNotInOperator(cypher string) bool {
 		// owner as the list/quantifier evaluators, rather than an infix NOT.
 		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
 			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
-				_, end, _ := scanIdentifierToken(cypher, at)
-				i = end - 1
+				end, _ := cyphertext.ScanIdentifier(cypher, at)
+				i = end.End - 1
 				continue
 			}
 		}
@@ -222,7 +225,7 @@ func lastTopLevelClauseWord(s string) string {
 		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
 			continue
 		}
-		if i > 0 && isIdentByte(s[i-1]) {
+		if i > 0 && cyphertext.NamePartAt(s, i-1) {
 			continue
 		}
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
@@ -267,7 +270,7 @@ func forIterationClauseAt(s string, pos int) bool {
 		return false
 	}
 	end += 2
-	return end == len(s) || !isIdentByte(s[end])
+	return end == len(s) || !cyphertext.NamePartAt(s, end)
 }
 
 // isExpressionWith reports whether the top-level word WITH at s[start:end] is
@@ -284,31 +287,11 @@ func isExpressionWith(s string, start, end int) bool {
 // previousSignificantWord returns the word immediately before position i,
 // skipping whitespace and comments, or "".
 func previousSignificantWord(s string, i int) string {
-	j := i
-	for {
-		for j > 0 && isWhitespace(s[j-1]) {
-			j--
-		}
-		if j >= 2 && s[j-2] == '*' && s[j-1] == '/' {
-			open := strings.LastIndex(s[:j-1], "/*")
-			if open < 0 {
-				return ""
-			}
-			j = open
-			continue
-		}
-		if j >= 2 && s[j-2] == '/' && s[j-1] == '/' {
-			line := strings.LastIndex(s[:j], "\n")
-			if line >= 0 {
-				j = line
-				continue
-			}
-			return ""
-		}
-		break
-	}
+	// Scan opaque extents forward through the existing significant-byte
+	// owner, then retain this reader's reverse name-continuation question.
+	j := lastLiveByte(s, i) + 1
 	end := j
-	for j > 0 && isIdentByte(s[j-1]) {
+	for j > 0 && cyphertext.NamePartAt(s, j-1) {
 		j--
 	}
 	if j == end {
@@ -322,30 +305,13 @@ func previousSignificantWord(s string, i int) string {
 func nextSignificantWords(s string, j int) [2]string {
 	var result [2]string
 	read := func() string {
-		for {
-			for j < len(s) && isWhitespace(s[j]) {
-				j++
-			}
-			if j+1 < len(s) && s[j] == '/' && s[j+1] == '*' {
-				if close := strings.Index(s[j+2:], "*/"); close >= 0 {
-					j += 2 + close + 2
-					continue
-				}
-				return ""
-			}
-			if j+1 < len(s) && s[j] == '/' && s[j+1] == '/' {
-				if nl := strings.IndexAny(s[j:], "\r\n"); nl >= 0 {
-					j += nl
-					continue
-				}
-				return ""
-			}
-			break
+		var unclosed int
+		j, unclosed = cyphertext.GapEnd(s, j)
+		if unclosed >= 0 {
+			return ""
 		}
 		start := j
-		for j < len(s) && isIdentByte(s[j]) {
-			j++
-		}
+		j = cyphertext.NamePartEnd(s, j)
 		return s[start:j]
 	}
 	result[0] = read()

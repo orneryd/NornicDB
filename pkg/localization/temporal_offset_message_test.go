@@ -18,7 +18,7 @@ func TestTemporalOffsetMismatchRendersEveryBundledLocale(t *testing.T) {
 	} {
 		t.Run(tc.locale, func(t *testing.T) {
 			locale := language.MustParse(tc.locale)
-			actual, tag, err := manager.Render(WithPreferences(context.Background(), locale), CypherCoreTemporalOffsetMismatch(input))
+			actual, tag, err := manager.Render(WithPreferences(context.Background(), locale), MessageRequest(CypherCoreTemporalOffsetMismatch(input)))
 			require.NoError(t, err)
 			require.Equal(t, locale, tag)
 			expected := tc.prefix + input

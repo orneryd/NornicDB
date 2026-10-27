@@ -62,6 +62,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -96,15 +97,11 @@ func hasSuffixFoldASCII(text, suffix string) bool {
 	return len(text) >= len(suffix) && equalFoldASCII(text[len(text)-len(suffix):], suffix)
 }
 
-func isASCIIWhitespace(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
-}
-
 func hasKeywordPrefixFoldASCII(text, keyword string) bool {
 	if len(text) < len(keyword) || !equalFoldASCII(text[:len(keyword)], keyword) {
 		return false
 	}
-	return len(text) == len(keyword) || isASCIIWhitespace(text[len(keyword)])
+	return len(text) == len(keyword) || cyphertext.IsWhitespaceAt(text, len(keyword))
 }
 
 func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
@@ -117,14 +114,14 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 				return false
 			}
 			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
-			if !ok || !keywordRightBoundaryOK(expr, end, keywordBoundaryWord) {
+			if !ok || !keywordBoundaryOK(expr, end, keywordBoundaryWord, keywordAfter) {
 				return false
 			}
 			if !caseInsensitive {
 				at := start
 				for index := 0; index < len(word); index++ {
-					if isASCIISpace(word[index]) {
-						for at < end && isASCIISpace(expr[at]) {
+					if cyphertext.IsWhitespaceAt(word, index) {
+						for at < end && cyphertext.IsWhitespaceAt(expr, at) {
 							at++
 						}
 					} else {
@@ -619,7 +616,7 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	// A relationship pattern or a map projection has - and * that aren't
 	// arithmetic.
-	if !isOperatorExpressionText(expr) {
+	if !expressionTextAccepted(expr, expressionTextOperator) {
 		return nil, false
 	}
 	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {

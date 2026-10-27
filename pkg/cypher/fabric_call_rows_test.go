@@ -28,11 +28,11 @@ func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 	if len(narrow) != 0 && narrow[0] {
 		base = runtimeFixtureOwner.Own(t, base)
 	}
-	mgr, err := multidb.NewDatabaseManager(base, config)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 	for _, db := range []string{"one", "two"} {
-		require.NoError(t, mgr.CreateDatabase(db))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 		store, err := mgr.GetStorage(db)
 		require.NoError(t, err)
 		var properties map[string]interface{}
@@ -42,7 +42,7 @@ func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}, Properties: properties})
 		require.NoError(t, err)
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "one", Type: "local", AccessMode: "read_write"},
 		{Alias: "two", DatabaseName: "two", Type: "local", AccessMode: "read_write"},
 	}))
@@ -303,7 +303,7 @@ func TestFabricCallRowsRemote(t *testing.T) {
 	ctx := context.Background()
 	exec := newFabricCallRowsExecutor(t)
 	mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
-	require.NoError(t, mgr.AddConstituent("comp", multidb.ConstituentRef{Alias: "remote", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: uri}))
+	require.NoError(t, mgr.AddConstituent(t.Context(), "comp", multidb.ConstituentRef{Alias: "remote", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: uri}))
 	for _, query := range []string{
 		"USE comp CALL { USE comp.remote UNWIND [2,1] AS k RETURN k } WITH k ORDER BY k RETURN collect(k) AS ks",
 		"USE comp CALL { USE comp.one RETURN 2 AS k UNION ALL USE comp.remote RETURN 1 AS k } WITH k ORDER BY k RETURN collect(k) AS ks",

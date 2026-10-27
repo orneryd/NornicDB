@@ -16,13 +16,13 @@ package cypher
 //     branch via fastTraversalExprValue (including has_embedding and the
 //     single-"value" scalar-wrapper pseudo-node),
 //   - whole-expression function calls reproduce the registered-function
-//     dispatch (functions_eval_functions.go): same parseFunctionCallWS /
+//     dispatch (functions_eval_functions.go): same inspectFunctionCall /
 //     splitFunctionArgs inputs, same cypherfn.Context construction, same
 //     found/err handling, and a full-evaluator fallback when the registry
 //     does not know the function.
 //
 // A function call is only compiled when the full evaluator would provably
-// reach the registered-function dispatch for it: parseFunctionCallWS must
+// reach the registered-function dispatch for it: inspectFunctionCall must
 // match the whole expression (which rules out param refs, quoted strings,
 // numbers, parenthesized expressions, map literals, and trailing operators or
 // indexing), hasTopLevelExpressionOperator must be false, and it must not be
@@ -30,6 +30,8 @@ package cypher
 // falls back to the full evaluator, preserving semantics exactly.
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"strconv"
 	"strings"
@@ -94,7 +96,7 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 
 	// Literals — replicate evaluateExpressionFastLeaf's order and results.
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+		if decoded, ok := cyphertext.DecodeString(expr, cyphertext.AcceptedSource); ok {
 			return func(traversalOptRow) interface{} { return decoded }, true
 		}
 	}
@@ -109,7 +111,7 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 		// nil; the compiled result is identical.
 		return func(traversalOptRow) interface{} { return nil }, true
 	}
-	if exprCanBeNumber(expr) {
+	if numericExpressionAccepted(expr, numericValuePrefix) {
 		if num, err := strconv.ParseInt(expr, 10, 64); err == nil {
 			return func(traversalOptRow) interface{} { return num }, true
 		}
@@ -151,7 +153,9 @@ func isCompilableTraversalVarExpr(expr string) bool {
 // their compiled form when the function requests lazy evaluation via
 // Context.Eval, and everything else routes through the full evaluator.
 func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
-	name, inner, ok := parseFunctionCallWS(expr)
+	var callFacts1 functionCallFacts
+	ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1)
+	name, inner := callFacts1.name, callFacts1.inner
 	if !ok {
 		return nil, false
 	}

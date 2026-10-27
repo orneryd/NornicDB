@@ -82,7 +82,7 @@ func TestStatementColumnsPreservesUnknownYieldScope(t *testing.T) {
 	// deliberate owner error; it cannot succeed with a guessed partial header.
 	prefix := "LOAD CSV FROM 'file:///rows.csv' AS row CALL db.labels() YIELD label AS kind "
 	for _, projection := range []string{"RETURN *", "RETURN *, 1 AS extra", "RETURN kind, 1 AS extra"} {
-		columns, err := exec.StatementResultColumns(prefix + projection)
+		columns, err := exec.StatementResultColumns(prefix+projection, RawSource)
 		require.Error(t, err)
 		require.Nil(t, columns)
 	}

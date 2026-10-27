@@ -176,11 +176,11 @@ func TestStorageClientCatalogsRenderCountsIDsAndCauses(t *testing.T) {
 	require.Equal(t, 4, message.Data["DeletesFailed"])
 	require.Equal(t, "node tenant:42 failed", message.Data["Details"])
 
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "vaciado incompleto: fallaron 2 nodos, 3 relaciones y 4 eliminaciones (node tenant:42 failed)", spanish)
 
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.StorageClientNodeIDNamespaceRequired("tenant:42"))
+	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(localization.StorageClientNodeIDNamespaceRequired("tenant:42")))
 	require.NoError(t, err)
 	require.Equal(t, "[!! node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: tenant:42 !!]", pseudo)
 }

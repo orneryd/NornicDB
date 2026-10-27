@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -918,7 +919,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 	}
 
 	var list []interface{}
-	if paramName := strings.TrimPrefix(right, "$"); paramName != right && isValidIdentifier(paramName) {
+	if paramName := strings.TrimPrefix(right, "$"); paramName != right && cyphertext.IsIdentifier(paramName) {
 		if params == nil {
 			return nil, false, nil
 		}
@@ -1007,7 +1008,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	orderSpecs, ok := e.parseIndexedNodeOrderSpecs(orderExpr, nodePattern.variable)
+	orderSpecs, ok := e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1066,7 +1067,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	orderSpecs, ok := e.parseIndexedNodeOrderSpecs(orderExpr, nodePattern.variable)
+	orderSpecs, ok := e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1480,7 +1481,7 @@ func unwrapOuterParens(clause string) string {
 	out := lexicalExpressionText(clause)
 	// Only a pair that encloses the whole clause: (a) OR (b) starts and ends
 	// with a parenthesis, but they don't match each other.
-	for strings.HasPrefix(out, "(") && findMatchingDelimiter(out, 0, '(', ')') == len(out)-1 {
+	for strings.HasPrefix(out, "(") && cyphertext.FindMatchingDelimiter(out, 0, '(', ')', cyphertext.OpeningDelimiter) == len(out)-1 {
 		out = strings.TrimSpace(out[1 : len(out)-1])
 	}
 	return out
@@ -1543,9 +1544,9 @@ func splitTopLevelAndConjuncts(clause string) []string {
 			}
 		}
 		if paren == 0 && bracket == 0 && brace == 0 && caseDepth == 0 && i+3 <= len(clause) && strings.EqualFold(clause[i:i+3], "AND") {
-			prevOK := i == 0 || isWhitespace(clause[i-1]) || clause[i-1] == '('
+			prevOK := i == 0 || cyphertext.IsWhitespaceAt(clause, i-1) || clause[i-1] == '('
 			nextIdx := i + 3
-			nextOK := nextIdx >= len(clause) || isWhitespace(clause[nextIdx]) || clause[nextIdx] == ')'
+			nextOK := nextIdx >= len(clause) || cyphertext.IsWhitespaceAt(clause, nextIdx) || clause[nextIdx] == ')'
 			if prevOK && nextOK {
 				parts = append(parts, strings.TrimSpace(clause[start:i]))
 				start = nextIdx
@@ -1593,7 +1594,7 @@ func topLevelSymbolIndex(expr, sym string) int {
 
 func parseLiteralValue(raw string) (interface{}, bool) {
 	s := strings.TrimSpace(raw)
-	if value, quoted := decodeCypherQuotedString(s); quoted {
+	if value, quoted := cyphertext.DecodeString(s, cyphertext.AcceptedSource); quoted {
 		return value, true
 	}
 	if strings.EqualFold(s, "true") {

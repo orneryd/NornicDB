@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -33,7 +35,7 @@ func TestHandleSearch_BothDisabled_503(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 
 	const dbName = "search_off"
-	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))
 	server.db.SetDbSearchFlagsResolver(flagsResolver(dbName, false, false, "startup", "startup"))
 
 	resp := makeRequest(t, server, http.MethodPost, "/nornicdb/search", map[string]interface{}{
@@ -65,7 +67,7 @@ func TestHandleSearch_BothLazy_FirstQueryWaitsAndReturns200(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 
 	const dbName = "search_lazy"
-	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))
 	server.db.SetDbSearchFlagsResolver(flagsResolver(dbName, true, true, "lazy", "lazy"))
 
 	// Boot loop should NOT have created+started a build for this DB. Probe
@@ -98,7 +100,7 @@ func TestHandleSearch_GlobalOffPerDBOn_OverrideWins(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 
 	const dbName = "tenant_with_search"
-	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))
 
 	// Resolver: this DB gets enabled even though the "global" (default branch
 	// in the closure) returns true,true. We simulate global-off by returning
@@ -156,7 +158,7 @@ func TestAdminPutSearchFlags_TeardownAndRebuild(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 
 	const dbName = "search_flag_flip"
-	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))
 
 	// 1. Initial state: defaults — both indexes enabled.
 	resp := makeRequest(t, server, http.MethodGet, "/admin/databases/"+dbName+"/config",
@@ -222,7 +224,7 @@ func TestAdminPutMissingStemmerPreservesExistingService(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
 	const dbName = "stemmer_rollback"
-	require.NoError(t, server.dbManager.CreateDatabase(dbName))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName}))
 
 	before, err := server.db.GetOrCreateSearchService(dbName, nil)
 	require.NoError(t, err)

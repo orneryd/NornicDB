@@ -27,14 +27,14 @@ func TestHTTPTransactionQuotaReadFailureRetiresTransactionAndKeepsConnection(t *
 			require.True(t, ok)
 			injected := errors.New("injected HTTP quota admission read failure")
 			faults := storagefault.NewReadFailureEngine(real.(storagefault.ReadEngine), stored, injected)
-			manager, err := multidb.NewDatabaseManager(faults, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), faults, nil)
 			require.NoError(t, err)
-			require.NoError(t, manager.CreateDatabase("quota"))
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
 			limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 100, MaxEdges: 100}}
 			if mode == storagefault.NodeStreamRead {
 				limits = &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: 100000}}
 			}
-			require.NoError(t, manager.SetDatabaseLimits("quota", limits))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 			server.dbManager = manager
 			t.Cleanup(func() { stopTestServer(t, server); _ = manager.Close() })
 			endpoint := httptest.NewServer(server.buildRouter())

@@ -15,7 +15,7 @@ func TestHTTPCompositeReviewRetrieval(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	for _, database := range []string{"review_one", "review_two"} {
-		require.NoError(t, s.dbManager.CreateDatabase(database))
+		require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 		store, err := s.dbManager.GetStorage(database)
 		require.NoError(t, err)
 		_, err = store.CreateNode(&storage.Node{ID: "same", Labels: []string{"Review"}, Properties: map[string]interface{}{"content": "identityprobe"}})
@@ -24,7 +24,7 @@ func TestHTTPCompositeReviewRetrieval(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, svc.BuildIndexes(context.Background()))
 	}
-	require.NoError(t, s.dbManager.CreateCompositeDatabase("review_comp", []multidb.ConstituentRef{{Alias: "one", DatabaseName: "review_one", Type: "local", AccessMode: "read_write"}, {Alias: "two", DatabaseName: "review_two", Type: "local", AccessMode: "read_write"}}))
+	require.NoError(t, s.dbManager.CreateCompositeDatabase(t.Context(), "review_comp", []multidb.ConstituentRef{{Alias: "one", DatabaseName: "review_one", Type: "local", AccessMode: "read_write"}, {Alias: "two", DatabaseName: "review_two", Type: "local", AccessMode: "read_write"}}))
 	for _, explicit := range []bool{false, true} {
 		for _, procedure := range []string{"db.retrieve", "db.retrieveGraph"} {
 			t.Run(procedure+map[bool]string{false: "/auto", true: "/explicit"}[explicit], func(t *testing.T) {

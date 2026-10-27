@@ -15,11 +15,11 @@ import (
 
 func newProcedureAdmissionExecutor(t *testing.T, composite bool) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("admission_shard"))
-	require.NoError(t, manager.CreateCompositeDatabase("admission_comp", []multidb.ConstituentRef{{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "admission_shard"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "admission_comp", []multidb.ConstituentRef{{
 		Alias: "one", DatabaseName: "admission_shard", Type: "local", AccessMode: "read_write",
 	}}))
 	database := "admission_shard"

@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"time"
 
@@ -132,7 +133,7 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 
 	s.logAudit(r, req.UserID, "gdpr_delete", true, fmt.Sprintf("action: %s", action))
 
-	s.writeJSON(w, http.StatusOK, map[string]string{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  action,
 		"user_id": req.UserID,
 	})

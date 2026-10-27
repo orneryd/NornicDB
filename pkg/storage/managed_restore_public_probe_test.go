@@ -23,11 +23,11 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = base.Close() })
-				manager, err := multidb.NewDatabaseManager(base, nil)
+				manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close() })
-				require.NoError(t, manager.CreateDatabase("victim"))
-				require.NoError(t, manager.CreateDatabase("peer"))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
 				tenant, err := manager.GetStorage("victim")
 				require.NoError(t, err)
 				peer, err := manager.GetStorage("peer")
@@ -46,7 +46,7 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 				if quota == "bytes" {
 					limits.Storage = multidb.StorageLimits{MaxBytes: originalBytes}
 				}
-				require.NoError(t, manager.SetDatabaseLimits("victim", limits))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), "victim", limits))
 				sentinel := errors.New("DROP final metadata sync unavailable")
 				calls := 0
 				storage.ReviewSetDropTailFailure(base, func(prefix string) error {
@@ -117,11 +117,11 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = base.Close() })
-				manager, err := multidb.NewDatabaseManager(base, nil)
+				manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close() })
-				require.NoError(t, manager.CreateDatabase("victim"))
-				require.NoError(t, manager.CreateDatabase("peer"))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
 				tenant, err := manager.GetStorage("victim")
 				require.NoError(t, err)
 				peer, err := manager.GetStorage("peer")
@@ -139,7 +139,7 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 				if quota == "bytes" {
 					limits.Storage = multidb.StorageLimits{MaxBytes: originalBytes}
 				}
-				require.NoError(t, manager.SetDatabaseLimits("victim", limits))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), "victim", limits))
 				backup := filepath.Join(t.TempDir(), "nonempty.bak")
 				require.NoError(t, base.Backup(backup))
 				require.NoError(t, tenant.DeleteNode("old000"))

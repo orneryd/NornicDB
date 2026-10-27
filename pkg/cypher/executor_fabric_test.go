@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -20,9 +21,29 @@ func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"rows": []interface{}{}})
+	// Parameter names remain valid without quoting, including rows.
 	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
+	}
+}
+
+func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	bindings := map[string]interface{}{"rows": []interface{}{
+		map[string]interface{}{"textKey128": "a"},
+		map[string]interface{}{"textKey128": "b"},
+		map[string]interface{}{"textKey128": "a"},
+	}}
+	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
+	generated := stripLeadingWithImportsForFabricRecord(query, bindings)
+	result, err := exec.Execute(context.Background(), generated, bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]interface{}{{[]interface{}{"a", "b"}}}
+	if !reflect.DeepEqual(want, result.Rows) {
+		t.Fatalf("generated import must retain all distinct bound values: got %#v", result.Rows)
 	}
 }
 
@@ -71,17 +92,17 @@ func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T)
 
 func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_a"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_a failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_b"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_b"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_b failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "leaf_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "leaf_b", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
@@ -121,17 +142,17 @@ func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
 
 func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	mgr, err := multidb.NewDatabaseManager(inner, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_a"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_a failed: %v", err)
 	}
-	if err := mgr.CreateDatabase("leaf_b"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "leaf_b"}); err != nil {
 		t.Fatalf("CreateDatabase leaf_b failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "leaf_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "leaf_b", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
@@ -170,7 +191,7 @@ func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := exec.shouldUseFabricPlanner(tc.query)
+			got := exec.shouldUseFabricPlanner(t.Context(), tc.query)
 			if got != tc.want {
 				t.Fatalf("shouldUseFabricPlanner(%q) = %v, want %v", tc.query, got, tc.want)
 			}

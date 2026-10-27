@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ func (m *typedAccessTestManager) GetCompositeConstituents(name string) ([]multid
 	}
 	var refs []multidb.ConstituentRef
 	for _, item := range items {
-		if ref, ok := toConstituentRef(item); ok {
+		if ref, ok := catalogadapter.ConstituentRef(item, catalogadapter.StoredConstituentRecord); ok {
 			refs = append(refs, ref)
 		}
 	}
@@ -35,7 +36,7 @@ func TestTypedGraphSelectionMatchesLegacyAdapter(t *testing.T) {
 			require.Equal(t, wantErr, gotErr, selection)
 			for _, refused := range []string{"", "cmp", "dba", "dbb", "al", "target", "plain"} {
 				allows := func(database string) bool { return database != refused }
-				wantTarget, wantAllowed := GraphAccess(legacy, selection, allows)
+				wantTarget, _, wantAllowed := GraphAccessTarget(legacy, selection, allows)
 				gotTarget, remote, gotAllowed := GraphAccessTarget(typed, selection, allows)
 				require.False(t, remote)
 				require.Equal(t, wantTarget, gotTarget, selection)

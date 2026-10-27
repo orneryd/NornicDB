@@ -193,3 +193,101 @@ func TestRemotePublicBatchGetNodesSharesDeadline(t *testing.T) {
 	}
 	require.ErrorIs(t, shared.Err(), context.Canceled, "the shared batch context is released when the public call returns")
 }
+
+func TestRemotePublicReadCardinality(t *testing.T) {
+	node := map[string]interface{}{"id": "node:one", "properties": map[string]interface{}{"value": int64(3)}}
+	edge := map[string]interface{}{"id": "edge:one", "type": "LINK", "startNodeElementId": "node:a", "endNodeElementId": "node:b"}
+	firstNode := func(read func(*RemoteEngine) (*Node, error)) func(*RemoteEngine) ([]string, error) {
+		return func(engine *RemoteEngine) ([]string, error) {
+			value, err := read(engine)
+			if err != nil {
+				return nil, err
+			}
+			return []string{string(value.ID)}, nil
+		}
+	}
+	for _, operation := range []struct {
+		name string
+		one  bool
+		wire interface{}
+		id   string
+		run  func(*RemoteEngine) ([]string, error)
+	}{
+		{"node", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetNode("node:one") })},
+		{"first label", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetFirstNodeByLabel("Entity") })},
+		{"edge", true, edge, "edge:one", func(engine *RemoteEngine) ([]string, error) {
+			value, err := engine.GetEdge("edge:one")
+			if err != nil {
+				return nil, err
+			}
+			return []string{string(value.ID)}, nil
+		}},
+		{"all nodes", false, node, "node:one", func(engine *RemoteEngine) ([]string, error) {
+			values, err := engine.AllNodes()
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]string, 0, len(values))
+			for _, value := range values {
+				ids = append(ids, string(value.ID))
+			}
+			return ids, nil
+		}},
+		{"all edges", false, edge, "edge:one", func(engine *RemoteEngine) ([]string, error) {
+			values, err := engine.AllEdges()
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]string, 0, len(values))
+			for _, value := range values {
+				ids = append(ids, string(value.ID))
+			}
+			return ids, nil
+		}},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			transportErr := errors.New("read failed")
+			for _, response := range []struct {
+				name string
+				rows [][]interface{}
+				err  error
+			}{
+				{"no rows", nil, nil},
+				{"empty first row", [][]interface{}{{}, {operation.wire}}, nil},
+				{"valid before malformed", [][]interface{}{{operation.wire}, {42}}, nil},
+				{"malformed before valid", [][]interface{}{{42}, {operation.wire}}, nil},
+				{"transport failure", [][]interface{}{{operation.wire}}, transportErr},
+			} {
+				t.Run(response.name, func(t *testing.T) {
+					calls := 0
+					engine := &RemoteEngine{transport: &fakeRemoteTransport{queryModeFn: func(ctx context.Context, _ string, _ map[string]interface{}, mode RemoteAccessMode) ([]string, [][]interface{}, error) {
+						calls++
+						require.Equal(t, RemoteAccessRead, mode)
+						_, bounded := ctx.Deadline()
+						require.True(t, bounded)
+						return nil, response.rows, response.err
+					}}}
+					ids, err := operation.run(engine)
+					require.Equal(t, 1, calls)
+					switch {
+					case response.err != nil:
+						require.Same(t, transportErr, err)
+						require.Nil(t, ids)
+					case operation.one && (response.name == "no rows" || response.name == "empty first row"):
+						require.ErrorIs(t, err, ErrNotFound)
+						require.Nil(t, ids)
+					case response.name == "malformed before valid" || (!operation.one && response.name == "valid before malformed"):
+						require.Error(t, err)
+						require.Nil(t, ids, "list admission must discard partial decoded output")
+					case response.name == "no rows":
+						require.NoError(t, err)
+						require.Equal(t, []string{}, ids)
+					default:
+						require.NoError(t, err)
+						require.Equal(t, []string{operation.id}, ids)
+					}
+				})
+			}
+		})
+	}
+}

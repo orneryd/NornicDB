@@ -352,14 +352,18 @@ func testServerLogAcrossLocales(t *testing.T, eventID, english, spanish string, 
 		{name: "Spanish", tag: language.EuropeanSpanish, message: spanish},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			db, err := nornicdb.Open("", nil)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			// The database freezes key selection at Open; configure the real startup
+			// owner before the server consumes that selection for its log event.
 			t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
+			dbConfig := nornicdb.DefaultConfig()
 			if eventID == "server.remote_credentials.key_fallback" {
 				t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "")
 				t.Setenv("NORNICDB_ENCRYPTION_PASSWORD", "test-database-encryption-password")
+				dbConfig.Database.EncryptionPassword = "test-database-encryption-password"
 			}
+			db, err := nornicdb.Open("", dbConfig)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 			var output synchronizedLogBuffer
 			logger := slog.New(slog.NewJSONHandler(&output, nil))

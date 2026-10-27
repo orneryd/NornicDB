@@ -27,8 +27,8 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 	require.NoError(t, server.Start())
 	ctx := context.Background()
 	require.NoError(t, server.qdrantGRPCServer.CollectionStore().Create(ctx, "grpc_physical", 4, qpb.Distance_Cosine))
-	require.NoError(t, server.dbManager.CreateAlias("grpc_selected_alias", "grpc_physical"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("grpc_portfolio", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateAlias(t.Context(), "grpc_selected_alias", "grpc_physical"))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "grpc_portfolio", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "grpc_physical", Type: "local", AccessMode: "read_write"},
 	}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_portfolio", true, false))

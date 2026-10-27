@@ -28,7 +28,7 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
-	require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxNodes: count, MaxBytes: beforeTotal}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: count, MaxBytes: beforeTotal}}))
 	_, err = engine.CreateNode(&storage.Node{ID: "hidden", Labels: []string{"Replacement"}})
 	require.ErrorIs(t, err, storage.ErrAlreadyExists, "the same occupied ID is not misreported as quota exhaustion")
 	_, err = engine.CreateNode(&storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
@@ -43,7 +43,7 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 
 	// One added slot admits a genuinely fresh write; rejection did not poison
 	// the accounting cache.
-	require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxNodes: count + 1}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: count + 1}}))
 	_, err = engine.CreateNode(&storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
 	require.NoError(t, err)
 	nodeCount, err = engine.NodeCount()
@@ -101,7 +101,7 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 	edgeCount, err := engine.EdgeCount()
 	require.NoError(t, err)
-	require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxEdges: edgeCount}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxEdges: edgeCount}}))
 
 	// At capacity, the occupied physical ID is decided by storage, not
 	// misreported as quota exhaustion.

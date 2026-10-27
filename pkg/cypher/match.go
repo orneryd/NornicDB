@@ -13,16 +13,16 @@ import (
 
 // isAggregateFunc checks if expression is an aggregate function (whitespace-tolerant)
 func isAggregateFunc(expr string) bool {
-	return isFunctionCallWS(expr, "count") ||
-		isFunctionCallWS(expr, "sum") ||
-		isFunctionCallWS(expr, "avg") ||
-		isFunctionCallWS(expr, "min") ||
-		isFunctionCallWS(expr, "max") ||
-		isFunctionCallWS(expr, "collect") ||
-		isFunctionCallWS(expr, "stdev") ||
-		isFunctionCallWS(expr, "stdevp") ||
-		isFunctionCallWS(expr, "percentilecont") ||
-		isFunctionCallWS(expr, "percentiledisc")
+	return inspectFunctionCall(expr, namedFunctionCall, "count", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "sum", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "avg", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "min", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "max", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "collect", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "stdev", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "stdevp", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "percentilecont", nil) ||
+		inspectFunctionCall(expr, namedFunctionCall, "percentiledisc", nil)
 }
 
 // containsAggregateFunc checks if expression contains any aggregate function
@@ -33,7 +33,7 @@ func containsAggregateFunc(expr string) bool {
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)
 func isAggregateFuncName(expr, funcName string) bool {
-	return isFunctionCallWS(expr, funcName)
+	return inspectFunctionCall(expr, namedFunctionCall, funcName, nil)
 }
 
 // extractFuncInner extracts the inner expression from a function call (whitespace-tolerant)
@@ -190,7 +190,7 @@ func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable
 	if k <= 0 || len(nodes) <= k {
 		return nodes, false
 	}
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
+	specs, _ := e.parseNodeOrderSpecs(orderExpr, variable)
 	if len(specs) == 0 {
 		return nil, false
 	}

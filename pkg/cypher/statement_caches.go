@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
 
@@ -196,11 +197,11 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
 	for from := 0; ; {
-		at := keywordIndexFrom(query, "USE", from, opts)
+		at := useKeywordIndexFrom(query, from, opts)
 		if at < 0 {
 			break
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(query[at:], true)
+		use, _, hasUse, err := fabric.ParseUseClause(context.Background(), query[at:], true, cyphertext.AcceptedSource)
 		if hasUse && err == nil && !use.IsDynamic() {
 			scope, err := resolver.StatementCacheScope(use.Name)
 			if err != nil {

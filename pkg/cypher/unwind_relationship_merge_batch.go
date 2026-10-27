@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strconv"
@@ -745,5 +746,5 @@ func appendRelationshipBatchScalarKeyValue(b *strings.Builder, value interface{}
 }
 
 func findMatchingParenAt(s string, openIdx int) int {
-	return findMatchingDelimiter(s, openIdx, '(', ')')
+	return cyphertext.FindMatchingDelimiter(s, openIdx, '(', ')', cyphertext.OpeningDelimiter)
 }

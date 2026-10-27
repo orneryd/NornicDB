@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 )
 
@@ -404,7 +405,7 @@ func TestASTBuilder_ParseExpression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			expr := builder.parseExpression(tt.expr)
+			expr := builder.parseExpression(cyphertext.NormalizeSource(tt.expr))
 
 			if expr.Type != tt.wantType {
 				t.Errorf("Type = %v, want %v", expr.Type, tt.wantType)

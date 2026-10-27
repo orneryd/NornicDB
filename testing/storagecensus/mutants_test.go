@@ -281,6 +281,18 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(b.census
 	},
 
 	{
+		name: "static visible read in quota accounting", file: "pkg/multidb/zz_census_mutant.go",
+		src: `package multidb
+import "github.com/orneryd/nornicdb/pkg/storage"
+func (m *DatabaseManager) CensusMutantStaticVisible() error {
+ engine := storage.NewNamespacedEngine(m.inner,m.config.DefaultDatabase)
+ _,err := engine.GetNode(storage.NodeID("census-mutant"))
+ return err
+}
+`,
+		want: []string{"visible read in quota accounting: pkg/multidb.DatabaseManager.CensusMutantStaticVisible", "reads through GetNode"},
+	},
+	{
 		name: "visible prior sized for quota", file: "pkg/multidb/storage_transaction.go",
 		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
 		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.admitPrepared"},

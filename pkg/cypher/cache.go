@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"slices"
 	"strings"
@@ -817,14 +818,13 @@ func extractLabelsFromQuery(cypher string) []string {
 		if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, start) {
 			return nil
 		}
-		if first < 'A' || first > 'Z' {
+		if !cyphertext.NameStartAt(cypher, start) {
 			continue
 		}
 
 		end := start + 1
 		for end < len(cypher) {
-			c := cypher[end]
-			if isIdentByte(c) {
+			if cyphertext.NamePartAt(cypher, end) {
 				end++
 				continue
 			}
@@ -835,14 +835,14 @@ func extractLabelsFromQuery(cypher string) []string {
 		scan := end
 		for scan < len(cypher) {
 			j := scan
-			for j < len(cypher) && (cypher[j] == ' ' || cypher[j] == '\t' || cypher[j] == '\n' || cypher[j] == '\r') {
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
 				j++
 			}
 			if j >= len(cypher) || cypher[j] != '|' {
 				break
 			}
 			j++
-			for j < len(cypher) && (cypher[j] == ' ' || cypher[j] == '\t' || cypher[j] == '\n' || cypher[j] == '\r') {
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
 				j++
 			}
 			if j < len(cypher) && cypher[j] == ':' {
@@ -855,14 +855,13 @@ func extractLabelsFromQuery(cypher string) []string {
 			if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, j) {
 				return nil
 			}
-			if first < 'A' || first > 'Z' {
+			if !cyphertext.NameStartAt(cypher, j) {
 				break
 			}
 			altStart := j
 			j++
 			for j < len(cypher) {
-				c := cypher[j]
-				if isIdentByte(c) {
+				if cyphertext.NamePartAt(cypher, j) {
 					j++
 					continue
 				}
@@ -886,7 +885,7 @@ func extractLabelsFromQuery(cypher string) []string {
 // from defeating a hit. Column-name spelling remains part of the key.
 func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
 	source := trimTrailingStatementDelimiters(cypher)
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return ""
 	}
@@ -1110,8 +1109,8 @@ func normalizeQueryWithPresentation(cypher string, protected []statementPresenta
 			continue
 		}
 		c := cypher[i]
-		switch c {
-		case ' ', '\t', '\n', '\r', '\f', '\v':
+		switch {
+		case cyphertext.IsWhitespaceAt(cypher, i):
 			if !prevSpace {
 				b.WriteByte(' ')
 				prevSpace = true

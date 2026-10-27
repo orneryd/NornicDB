@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"slices"
 	"strings"
@@ -283,6 +284,15 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 		if err := expressionSubqueryClauseBindingError(ctx, clause, enclosing); err != nil {
 			return types, false, err
 		}
+		// An unresolved option candidate is validated as a normal projection
+		// whenever the engine's existing typed scope binds it. Otherwise defer
+		// the extension decision to the real execution frame, retaining input
+		// bindings for its permitted transparent-option interpretation.
+		if clause.embeddingCandidate != "" {
+			if _, bound := types[clause.embeddingCandidate]; !bound {
+				continue
+			}
+		}
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
 			// legal statement (RETURN 1 AS x RETURN 2 AS y is Neo4j's
@@ -483,7 +493,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			projection, rest := splitWithProjection(clause.text)
 			projectionBody, _ := cutDistinct(strings.TrimSpace(projection[len("WITH"):]))
 			for _, raw := range splitTopLevelComma(projectionBody) {
-				expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+				expression := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted).expression
 				if err := projectionItemTermError(expression); err != nil {
 					return types, false, err
 				}
@@ -608,7 +618,7 @@ func validateWithOrderBySemanticScope(ctx context.Context, input matchSemanticSc
 	projectionBody := strings.TrimSpace(body[:orderIndex])
 	hasProjectionAggregate := false
 	for _, item := range splitTopLevelComma(projectionBody) {
-		expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+		expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 		if containsAggregateFunc(expression) {
 			hasProjectionAggregate = true
 			break
@@ -699,7 +709,7 @@ func validateReturnSemanticScopeIn(ctx context.Context, scope matchSemanticScope
 		}
 	}
 	for _, raw := range splitTopLevelComma(body) {
-		expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+		expression := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted).expression
 		if err := projectionItemTermError(expression); err != nil {
 			return err
 		}
@@ -1216,7 +1226,7 @@ func maskNestedScopeBodies(text string) string {
 		if open >= len(text) || text[open] != '{' {
 			continue
 		}
-		close := findMatchingDelimiter(text, open, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(text, open, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			break
 		}
@@ -1396,22 +1406,22 @@ func projectionAliasScope(ctx context.Context, input staticTypeScope, clause str
 // is "Invalid input"). Before, the keyword was taken for a clause.
 func projectionItemTermError(expression string) error {
 	expression = strings.TrimSpace(expression)
-	name, next, ok := scanIdentifierToken(expression, 0)
-	if !ok || !isNameableClauseKeyword(name) {
+	name, ok := cyphertext.ScanIdentifier(expression, 0)
+	if !ok || !isNameableClauseKeyword(name.Value) {
 		return nil
 	}
-	rest := strings.TrimSpace(expression[next:])
-	if rest == "" || rest == expression[next:] {
+	rest := strings.TrimSpace(expression[name.End:])
+	if rest == "" || rest == expression[name.End:] {
 		return nil // the name alone, or followed directly by an operator
 	}
-	if c := rest[0]; isIdentByte(c) || isCypherQuoteByte(c) || c == '$' {
-		token, _, _ := scanIdentifierToken(rest, 0)
-		if token == "" {
-			token = rest[:1]
+	if c := rest[0]; cyphertext.NamePartAt(rest, 0) || isCypherQuoteByte(c) || c == '$' {
+		token, _ := cyphertext.ScanIdentifier(rest, 0)
+		if token.Value == "" {
+			token.Value = rest[:1]
 		}
-		if !isExpressionContinuationWord(token) {
+		if !isExpressionContinuationWord(token.Value) {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				localization.CypherCoreInvalidInputExpectedExpression(token))
+				localization.CypherCoreInvalidInputExpectedExpression(token.Value))
 		}
 	}
 	return nil
@@ -1421,13 +1431,13 @@ func projectionItemTermError(expression string) error {
 // alias, as written, is not one name (WITH n AS return n: the n after the
 // alias is "Invalid input"). A backtick-quoted alias is one name.
 func projectionAliasError(ctx context.Context, item string) error {
-	// The alias follows the item's own AS (projectionAliasIndex), so an alias
+	// The alias follows the item's retained AS, so an alias
 	// named as is a name (WITH n AS as, #894).
-	as := projectionAliasIndex(ctx, item)
-	if as < 0 {
+	itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+	if itemSource.as < 0 {
 		return nil
 	}
-	alias := strings.TrimSpace(item[as+len("AS"):])
+	alias := itemSource.rawAlias
 	if alias == "" {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherCoreInvalidInput(""))
@@ -1437,12 +1447,12 @@ func projectionAliasError(ctx context.Context, item string) error {
 		return nil
 	}
 	rest := strings.TrimSpace(alias[next:])
-	token, _, _ := scanIdentifierToken(rest, 0)
-	if token == "" {
-		token = rest[:1]
+	token, _ := cyphertext.ScanIdentifier(rest, 0)
+	if token.Value == "" {
+		token.Value = rest[:1]
 	}
 	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-		localization.CypherCoreInvalidInputExpectedExpression(token))
+		localization.CypherCoreInvalidInputExpectedExpression(token.Value))
 }
 
 // isExpressionContinuationWord reports whether word, after an operand,
@@ -1475,7 +1485,9 @@ func unwindSourceExpression(clause string) string {
 }
 
 func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
-	name, inner, ok := parseFunctionCallWS(expression)
+	var callFacts1 functionCallFacts
+	ok := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1)
+	name, inner := callFacts1.name, callFacts1.inner
 	if !ok || !strings.EqualFold(name, "coalesce") {
 		return matchBindingUnknown, false
 	}
@@ -1496,13 +1508,13 @@ func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBin
 
 func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	result := make(map[string]struct{})
-	for open, end := nextRelationshipBracket(pattern, 0); open >= 0; open, end = nextRelationshipBracket(pattern, end+1) {
+	for open, end := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0; open, end = readRelationshipBracket(pattern, end+1, requireClosedRelationship) {
 		declaration := relationshipDeclarationHead(pattern[open+1 : end])
 		if !declaration.hasLength {
 			continue
 		}
-		if name, _, ok := scanIdentifierToken(declaration.variable, 0); ok {
-			result[name] = struct{}{}
+		if name, ok := cyphertext.ScanIdentifier(declaration.variable, 0); ok {
+			result[name.Value] = struct{}{}
 		}
 	}
 	return result
@@ -1539,7 +1551,7 @@ func entityListLiteralKind(expression string, scope matchSemanticScope) (matchBi
 // or whose range is malformed. Only relationship brackets are read: a '[' in
 // a property map ($ids[i * 20 + 1], $ws[0..2]) is a subscript or a slice.
 func invalidRelationshipPattern(pattern string) bool {
-	for open, end := scanRelationshipBracket(pattern, 0); open >= 0; open, end = scanRelationshipBracket(pattern, end+1) {
+	for open, end := readRelationshipBracket(pattern, 0, reportUnclosedRelationship); open >= 0; open, end = readRelationshipBracket(pattern, end+1, reportUnclosedRelationship) {
 		if end < 0 {
 			return true
 		}
@@ -1629,7 +1641,7 @@ func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
 func isEntityPropertyAccess(expression, variable string) bool {
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expression), variable))
 	key := strings.TrimSpace(strings.TrimPrefix(rest, "."))
-	return isValidIdentifier(key) || isBacktickQuotedName(key)
+	return cyphertext.IsIdentifier(key) || isBacktickQuotedName(key)
 }
 
 // callSubqueryReturnsOuterUnchanged reports whether every branch of a CALL
@@ -1656,7 +1668,8 @@ func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []string, n
 				items, _ := projectionSemanticBodyAndTail(clause.text, keyword)
 				items, _ = cutDistinct(strings.TrimSpace(items))
 				for _, raw := range splitTopLevelComma(items) {
-					expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+					expression, alias := itemSource.expression, itemSource.alias
 					if normalizeProjectionColumnName(alias) == name && normalizeProjectionColumnName(expression) != name {
 						return false
 					}
@@ -1706,7 +1719,7 @@ func withPatternComprehensionBindings(scope staticTypeScope, text string, at int
 		default:
 			continue
 		}
-		close := findMatchingDelimiter(text, open, '[', ']')
+		close := cyphertext.FindMatchingDelimiter(text, open, '[', ']', cyphertext.OpeningDelimiter)
 		if close < at {
 			continue
 		}

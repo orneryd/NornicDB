@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 
@@ -92,18 +93,18 @@ func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entit
 
 // cutSchemaName reads a leading plain or backtick-quoted schema object name.
 func cutSchemaName(text string) (string, string, bool) {
-	name, end, ok := scanIdentifierToken(text, 0)
-	if !ok || name == "" {
+	name, ok := cyphertext.ScanIdentifier(text, 0)
+	if !ok || name.Value == "" {
 		return "", "", false
 	}
-	return name, strings.TrimSpace(text[end:]), true
+	return name.Value, strings.TrimSpace(text[name.End:]), true
 }
 
 // showLookupIndexCreateStatement is the statement that recreates a lookup
 // index.
 func showLookupIndexCreateStatement(name, entityType string) string {
 	if entityType == string(storage.ConstraintEntityRelationship) {
-		return "CREATE LOOKUP INDEX " + quoteSchemaName(name) + " FOR ()-[r]-() ON EACH type(r)"
+		return "CREATE LOOKUP INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR ()-[r]-() ON EACH type(r)"
 	}
-	return "CREATE LOOKUP INDEX " + quoteSchemaName(name) + " FOR (n) ON EACH labels(n)"
+	return "CREATE LOOKUP INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR (n) ON EACH labels(n)"
 }

@@ -23,7 +23,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 				t.Run(fmt.Sprint("buffered=", buffered), func(t *testing.T) {
 					base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered}))
 					require.NoError(t, err)
-					manager, err := NewDatabaseManager(base, nil)
+					manager, err := NewDatabaseManager(t.Context(), base, nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, manager.Close()) })
 					for _, entity := range []string{"node", "edge"} {
@@ -31,7 +31,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 							for _, quota := range []string{"count", "bytes"} {
 								t.Run(entity+"/"+operation+"/"+quota, func(t *testing.T) {
 									db := entity + "_" + strings.ReplaceAll(operation, "-", "_") + "_" + quota
-									require.NoError(t, manager.CreateDatabase(db))
+									require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: db}))
 									engine, err := manager.GetStorage(db)
 									require.NoError(t, err)
 									tracker := engine.(*sizeTrackingEngine)
@@ -82,7 +82,7 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 										if quota == "bytes" {
 											limits = &Limits{Storage: StorageLimits{MaxBytes: before}}
 										}
-										require.NoError(t, manager.SetDatabaseLimits(db, limits))
+										require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
 										props := map[string]any{"payload": "small"}
 										if operation == "remove" {
 											props = nil

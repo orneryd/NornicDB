@@ -88,7 +88,7 @@ func TestCypherAdminProcedurePrivilegeMessagesRender(t *testing.T) {
 			language.EuropeanSpanish: testCase.spanish,
 			pseudoTag:                "[!! " + testCase.english + " !!]",
 		} {
-			rendered, renderedTag, err := manager.Render(WithPreferences(context.Background(), tag), testCase.message)
+			rendered, renderedTag, err := manager.Render(WithPreferences(context.Background(), tag), MessageRequest(testCase.message))
 			require.NoError(t, err, id)
 			require.Equal(t, tag, renderedTag, id)
 			require.Equal(t, want, rendered, id)

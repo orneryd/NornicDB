@@ -344,7 +344,7 @@ func TestSizeTrackingEngine_ConnectedDeletionInitializationReturnsReadError(t *t
 
 func TestSizeTrackingEngineExposesInjectedQueryLimitChecker(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	require.NoError(t, manager.SetDatabaseLimits(dbName, &Limits{}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, &Limits{}))
 	manager.mu.Lock()
 	_, checker, err := manager.databaseViewLocked(dbName, false)
 	manager.mu.Unlock()
@@ -680,7 +680,7 @@ func assertManagedDeleteInitializationFailure(t *testing.T, manager *DatabaseMan
 	require.NoError(t, err)
 	injected := errors.New(message + ": relationship scan unavailable")
 	faults := storagefault.NewReadFailureEngine(base, base, injected)
-	require.NoError(t, manager.SetDatabaseLimits(database, &Limits{Storage: StorageLimits{MaxNodes: 100}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), database, &Limits{Storage: StorageLimits{MaxNodes: 100}}))
 	faults.SetFailure(storagefault.EdgeCountRead)
 	manager.mu.Lock()
 	_, checker, err := manager.databaseViewLocked(database, false)

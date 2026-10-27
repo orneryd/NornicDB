@@ -80,12 +80,5 @@ func (l *LocalFragmentExecutor) ExecuteWithRecord(ctx context.Context, loc *Loca
 // ExecuteWithRecordRows runs a Cypher query with correlated bindings and
 // returns a row iterator over the result.
 func (l *LocalFragmentExecutor) ExecuteWithRecordRows(ctx context.Context, loc *LocationLocal, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, RowIterator, error) {
-	res, err := l.ExecuteWithRecord(ctx, loc, query, params, recordBindings)
-	if err != nil {
-		return nil, nil, err
-	}
-	if res == nil {
-		return nil, NewResultRowIterator(nil), nil
-	}
-	return res.Columns, NewResultRowIterator(res), nil
+	return resultRows(l.ExecuteWithRecord(ctx, loc, query, params, recordBindings))
 }

@@ -3,6 +3,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 	"testing"
@@ -144,7 +145,7 @@ func TestParseReturn(t *testing.T) {
 				}
 				// Check the complete canonical expression product without depending
 				// on a second expression parser or a lossy rejoined token string.
-				want := NewASTBuilder().parseExpression(tc.raw[i])
+				want := NewASTBuilder().parseExpression(cyphertext.NormalizeSource(tc.raw[i]))
 				if !reflect.DeepEqual(item.Expression, want) {
 					t.Errorf("item %d expression = %#v, want %#v", i, item.Expression, want)
 				}

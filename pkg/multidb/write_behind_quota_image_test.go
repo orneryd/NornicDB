@@ -25,7 +25,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 						DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
 					}))
 					require.NoError(t, err)
-					manager, err := NewDatabaseManager(base, nil)
+					manager, err := NewDatabaseManager(t.Context(), base, nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = manager.Close() })
 					engine, err := manager.GetStorage("nornic")

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +23,7 @@ func BenchmarkMetricsDatabaseReadAdmission(b *testing.B) {
 			s, users := setupTestServer(b)
 			ctx := context.Background()
 			const role = "metrics-bench-reader"
-			require.NoError(b, s.dbManager.CreateDatabase("metrics_private"))
+			require.NoError(b, s.dbManager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "metrics_private"}))
 			require.NoError(b, s.roleStore.CreateRole(ctx, role))
 			require.NoError(b, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
 			require.NoError(b, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))

@@ -32,7 +32,7 @@ func (s *Server) renderMessage(ctx context.Context, message localization.Message
 		}
 		return string(message.ID), language.AmericanEnglish
 	}
-	text, tag, err := s.localizer.Render(ctx, message)
+	text, tag, err := s.localizer.Render(ctx, localization.MessageRequest(message))
 	if err != nil {
 		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
 	}

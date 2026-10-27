@@ -5,6 +5,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync"
 
@@ -474,8 +475,8 @@ func namedPathAssignmentPrefix(pattern string) bool {
 		return false
 	}
 	name := strings.TrimSpace(pattern[:i])
-	_, end, ok := scanIdentifierToken(name, 0)
-	if !ok || end != len(name) {
+	end, ok := cyphertext.ScanIdentifier(name, 0)
+	if !ok || end.End != len(name) {
 		return false
 	}
 	return strings.TrimSpace(pattern[i+1:]) != ""
@@ -539,7 +540,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 
 		if c == '$' && dynamicLabelStartsAt(pattern, i) {
 			// $(e): a dynamic label's or type's expression, not a node.
-			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				current.WriteString(pattern[i : end+1])
 				i = end
 				continue
@@ -547,6 +548,12 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 		}
 
 		// Normal parsing outside string literals
+		if cyphertext.IsWhitespaceAt(pattern, i) {
+			if depth > 0 || inRelationship {
+				current.WriteByte(c)
+			}
+			continue
+		}
 		switch c {
 		case '{':
 			braceDepth++
@@ -570,7 +577,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 				if depth == 0 {
 					// Check if next non-whitespace is a relationship operator
 					j := i + 1
-					for j < len(pattern) && (pattern[j] == ' ' || pattern[j] == '\t' || pattern[j] == '\n' || pattern[j] == '\r') {
+					for j < len(pattern) && (cyphertext.IsWhitespaceAt(pattern, j)) {
 						j++
 					}
 					if j < len(pattern) && (pattern[j] == '-' || pattern[j] == '<') {
@@ -596,11 +603,6 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 				continue
 			}
 			current.WriteByte(c)
-		case ' ', '\t', '\n', '\r':
-			if depth > 0 || inRelationship {
-				// Only keep whitespace inside patterns
-				current.WriteByte(c)
-			}
 		default:
 			if depth > 0 || inRelationship || c == '-' || c == '<' || c == '[' || c == ']' || c == '>' || c == ':' {
 				current.WriteByte(c)
@@ -612,7 +614,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 			// Preserve path assignment prefixes like "p=(:A)-[:R]->(:B)".
 			// We drop whitespace, but keep identifiers and "=" before the first "(".
 			if depth == 0 && !inRelationship {
-				if isIdentByte(byte(c)) || c == '=' {
+				if cyphertext.NamePartAt(pattern, i) || c == '=' {
 					current.WriteByte(c)
 				}
 			}
@@ -663,7 +665,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 		}
 		if c == '$' && dynamicLabelStartsAt(pattern, i) {
 			// $(e): a dynamic label's or type's expression, not a node.
-			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				if depth > 0 {
 					current.WriteString(pattern[i : end+1])
 				}
@@ -748,7 +750,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	// rejects a relationship without exactly one type.
 	declaration := relationshipDeclarationOf(relStr)
 	if declaration.properties != "" {
-		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
+		if propsEnd := cyphertext.FindMatchingDelimiter(declaration.properties, 0, '{', '}', cyphertext.OpeningDelimiter); propsEnd > 0 {
 			var err error
 			relProps, err = e.materializePropertyMap(ctx, declaration.properties[:propsEnd+1], row, false, false)
 			if err != nil {
@@ -771,13 +773,13 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 // inside or follows whitespace; after a name's character it is part of the
 // name, as in Neo4j.
 func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
-	trimmed := strings.TrimRight(text, " \t\r\n")
+	trimmed := strings.TrimRightFunc(text, cyphertext.IsWhitespace)
 	// The trailing token holds its own $s: $a$b is the parameter a$b.
 	start := len(trimmed)
-	for start > 0 && isIdentByte(trimmed[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(trimmed, start-1) {
 		start--
 	}
-	if start+1 >= len(trimmed) || trimmed[start] != '$' || start > 0 && !isASCIIWhitespace(trimmed[start-1]) {
+	if start+1 >= len(trimmed) || trimmed[start] != '$' || start > 0 && !cyphertext.IsWhitespaceAt(trimmed, start-1) {
 		return text, "", false
 	}
 	return trimmed[:start], trimmed[start:], true
@@ -788,7 +790,7 @@ func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 // mismatch for parameter 'p': expected Map, Node or Relationship but was
 // Integer") when it isn't a map.
 func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
-	value, resolved := resolveDirectParamRef(ctx, parameter)
+	value, resolved := resolveValueReference(ctx, parameter, parameterName)
 	if err := getExpressionFailure(ctx); err != nil {
 		return nil, err
 	}
@@ -806,43 +808,6 @@ func createParameterProperties(ctx context.Context, parameter string) (map[strin
 			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))
 	}
 	return cloneNodePropertiesMap(properties), nil
-}
-
-// findAllKeywordPositions finds all positions of a keyword in the query
-func findAllKeywordPositions(cypher string, keyword string) []int {
-	var positions []int
-	keywordLen := len(keyword)
-
-	for i := 0; i <= len(cypher)-keywordLen; i++ {
-		// Check if keyword matches at this position (case insensitive)
-		if strings.EqualFold(cypher[i:i+keywordLen], keyword) {
-			// Check word boundary before
-			if i > 0 {
-				prevChar := cypher[i-1]
-				if isIdentByte(prevChar) {
-					continue // Part of another word
-				}
-			}
-			// Check word boundary after
-			if i+keywordLen < len(cypher) {
-				nextChar := cypher[i+keywordLen]
-				if isIdentByte(nextChar) {
-					continue // Part of another word
-				}
-			}
-			positions = append(positions, i)
-		}
-	}
-
-	// Handle nested MATCH in strings - check if position is inside quotes
-	var validPositions []int
-	for _, pos := range positions {
-		if !isInsideQuotes(cypher, pos) {
-			validPositions = append(validPositions, pos)
-		}
-	}
-
-	return validPositions
 }
 
 // isInsideQuotes checks if a position is inside quotes
@@ -882,7 +847,7 @@ func isSimpleVariable(content string) bool {
 		return false
 	}
 	for _, r := range content {
-		if !isIdentRune(r) {
+		if !cyphertext.NamePart(r) {
 			return false
 		}
 	}
@@ -896,48 +861,6 @@ func getKeys(m map[string]*storage.Node) []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// resolveSetMergeSourceFromParams resolves identifier or dotted-path map sources from params.
-// Supported forms:
-//   - row
-//   - row.properties
-func resolveSetMergeSourceFromParams(params map[string]interface{}, source string) (interface{}, bool) {
-	if params == nil {
-		return nil, false
-	}
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return nil, false
-	}
-	parts, ok := parseParamPathParts(source)
-	if !ok || len(parts) == 0 {
-		return nil, false
-	}
-
-	current, ok := params[parts[0]]
-	if !ok {
-		return nil, false
-	}
-	for _, part := range parts[1:] {
-		switch m := current.(type) {
-		case map[string]interface{}:
-			next, exists := m[part]
-			if !exists {
-				return nil, false
-			}
-			current = next
-		case map[interface{}]interface{}:
-			next, exists := m[part]
-			if !exists {
-				return nil, false
-			}
-			current = next
-		default:
-			return nil, false
-		}
-	}
-	return current, true
 }
 
 // parseParamPathParts parses dotted and bracketed map access paths.
@@ -955,45 +878,26 @@ func parseParamPathParts(source string) ([]string, bool) {
 
 	parts := make([]string, 0, 4)
 	i := 0
-	readIdent := func(start int) (string, int, bool) {
-		if start >= len(source) {
-			return "", start, false
-		}
-		ch := source[start]
-		if !isIdentStartByte(ch) {
-			return "", start, false
-		}
-		j := start + 1
-		for j < len(source) {
-			c := source[j]
-			if !isIdentByte(c) {
-				break
-			}
-			j++
-		}
-		return source[start:j], j, true
-	}
-
-	root, next, ok := readIdent(i)
-	if !ok {
+	root, ok := cyphertext.ScanIdentifier(source, i)
+	if !ok || root.Quoted {
 		return nil, false
 	}
-	parts = append(parts, root)
-	i = next
+	parts = append(parts, root.Value)
+	i = root.End
 
 	for i < len(source) {
 		switch source[i] {
 		case '.':
 			i++
-			part, j, ok := readIdent(i)
-			if !ok {
+			part, ok := cyphertext.ScanIdentifier(source, i)
+			if !ok || part.Quoted {
 				return nil, false
 			}
-			parts = append(parts, part)
-			i = j
+			parts = append(parts, part.Value)
+			i = part.End
 		case '[':
 			i++
-			for i < len(source) && isWhitespace(source[i]) {
+			for i < len(source) && cyphertext.IsWhitespaceAt(source, i) {
 				i++
 			}
 			if i >= len(source) {
@@ -1006,12 +910,12 @@ func parseParamPathParts(source string) ([]string, bool) {
 			if !closed {
 				return nil, false
 			}
-			key, quoted := decodeCypherQuotedString(source[i:end])
+			key, quoted := cyphertext.DecodeString(source[i:end], cyphertext.AcceptedSource)
 			if !quoted {
 				return nil, false
 			}
 			i = end
-			for i < len(source) && isWhitespace(source[i]) {
+			for i < len(source) && cyphertext.IsWhitespaceAt(source, i) {
 				i++
 			}
 			if i >= len(source) || source[i] != ']' {
@@ -1485,7 +1389,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 	} else {
 		// Literal value — strip surrounding quotes.
 		idValue = strings.TrimSpace(right)
-		if decoded, quoted := decodeCypherQuotedString(idValue); quoted {
+		if decoded, quoted := cyphertext.DecodeString(idValue, cyphertext.AcceptedSource); quoted {
 			idValue = decoded
 		}
 		if idValue == "" {
@@ -1515,7 +1419,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 // pattern with plain keys isn't scanned again.
 func validateCreatePropertyKeys(text string, properties map[string]interface{}) error {
 	for key := range properties {
-		if isValidIdentifier(key) || strings.Contains(text, "`"+strings.ReplaceAll(key, "`", "``")+"`") {
+		if cyphertext.IsIdentifier(key) || strings.Contains(text, cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)) {
 			continue
 		}
 		if err := validateStaticMapKeys(text); err != nil {

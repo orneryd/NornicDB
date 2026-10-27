@@ -5,6 +5,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"fmt"
 	"strings"
@@ -63,7 +65,7 @@ func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase("nornic") // Default database
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}) // Default database
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -113,7 +115,7 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase("nornic")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"})
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -122,8 +124,8 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 	}
 
 	// Create databases for testing
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateDatabase("tenant_b")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
 
 	for _, baseQuery := range baseQueries {
 		t.Run(fmt.Sprintf("base_%s", strings.Fields(baseQuery)[2]), func(t *testing.T) {
@@ -136,7 +138,7 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 
 					// Recreate database if needed (for multiple test runs)
 					if !mockDBM.Exists(expectedDB) && !strings.Contains(baseQuery, "IF EXISTS") {
-						mockDBM.CreateDatabase(expectedDB)
+						mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: expectedDB})
 					}
 
 					result, err := exec.Execute(ctx, query, nil)
@@ -159,54 +161,43 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 	}
 }
 
-func TestDatabaseCommands_ShowDatabases_WhitespacePermutations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+type showDatabaseTestScope uint8
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+const (
+	showDatabaseTestAll showDatabaseTestScope = iota
+	showDatabaseTestCurrent
+)
 
-	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase("nornic")
-	mockDBM.CreateDatabase("tenant_a")
-	mockDBM.CreateDatabase("tenant_b")
-	exec.SetDatabaseManager(mockDBM)
-
-	baseQuery := "SHOW DATABASES"
-	variations := whitespacePermutations(baseQuery)
-
-	for i, query := range variations {
-		t.Run(fmt.Sprintf("permutation_%d", i), func(t *testing.T) {
-			result, err := exec.Execute(ctx, query, nil)
-			require.NoError(t, err, "Query must succeed with whitespace permutation: %q", query)
-			require.NotEmpty(t, result.Columns, "Query must return columns: %q", query)
-
-			expectedColumns := showDatabasesDefaultColumns
-			assert.Equal(t, expectedColumns, result.Columns)
-			assert.GreaterOrEqual(t, len(result.Rows), 3, "Query must return at least 3 databases: %q", query)
-		})
-	}
-}
-
-func TestDatabaseCommands_ShowDatabase_WhitespacePermutations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	baseQuery := "SHOW DATABASE"
-	variations := whitespacePermutations(baseQuery)
-
-	for i, query := range variations {
-		t.Run(fmt.Sprintf("permutation_%d", i), func(t *testing.T) {
-			result, err := exec.Execute(ctx, query, nil)
-			require.NoError(t, err, "Query must succeed with whitespace permutation: %q", query)
-			require.NotEmpty(t, result.Columns, "Query must return columns: %q", query)
-
-			expectedColumns := showDatabasesDefaultColumns
-			assert.Equal(t, expectedColumns, result.Columns)
-			assert.Len(t, result.Rows, 1, "Query must return one row: %q", query)
+func TestDatabaseCommands_ShowDatabaseScopes_WhitespacePermutations(t *testing.T) {
+	for _, tc := range []struct {
+		scope showDatabaseTestScope
+		query string
+	}{{showDatabaseTestAll, "SHOW DATABASES"}, {showDatabaseTestCurrent, "SHOW DATABASE"}} {
+		t.Run(tc.query, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			if tc.scope == showDatabaseTestAll {
+				mockDBM := newMockDatabaseManager(t)
+				for _, name := range []string{"nornic", "tenant_a", "tenant_b"} {
+					mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name})
+				}
+				exec.SetDatabaseManager(mockDBM)
+			}
+			for i, query := range whitespacePermutations(tc.query) {
+				t.Run(fmt.Sprintf("permutation_%d", i), func(t *testing.T) {
+					result, err := exec.Execute(ctx, query, nil)
+					require.NoError(t, err, "Query must succeed with whitespace permutation: %q", query)
+					require.NotEmpty(t, result.Columns, "Query must return columns: %q", query)
+					assert.Equal(t, showDatabasesDefaultColumns, result.Columns)
+					if tc.scope == showDatabaseTestAll {
+						assert.GreaterOrEqual(t, len(result.Rows), 3, "Query must return at least 3 databases: %q", query)
+					} else {
+						assert.Len(t, result.Rows, 1, "Query must return one row: %q", query)
+					}
+				})
+			}
 		})
 	}
 }
@@ -219,7 +210,7 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 	ctx := context.Background()
 
 	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase("nornic")
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"})
 	exec.SetDatabaseManager(mockDBM)
 
 	// Complex whitespace patterns that should all work
@@ -260,7 +251,7 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 
 				// Create database first if it doesn't exist
 				if !mockDBM.Exists(dbName) {
-					mockDBM.CreateDatabase(dbName)
+					mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName})
 				}
 
 				_, err := exec.Execute(ctx, query, nil)
@@ -278,62 +269,111 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 	}
 }
 
-func TestDatabaseCommands_EdgeCases_Whitespace(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+type adminWhitespaceTestFamily uint8
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+const (
+	adminWhitespaceTestDatabase adminWhitespaceTestFamily = iota
+	adminWhitespaceTestAlias
+)
 
-	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase("nornic")
-	exec.SetDatabaseManager(mockDBM)
-
-	// Edge cases with extreme whitespace
-	edgeCases := []struct {
-		name      string
-		query     string
-		expectErr bool
-	}{
-		{
-			name:      "only_tabs",
-			query:     "CREATE\t\tDATABASE\t\ttenant_edge1",
-			expectErr: false,
-		},
-		{
-			name:      "only_newlines",
-			query:     "CREATE\n\nDATABASE\n\ntenant_edge2",
-			expectErr: false,
-		},
-		{
-			name:      "mixed_extreme",
-			query:     "\tCREATE\n\tDATABASE\r\n\ttenant_edge3\t",
-			expectErr: false,
-		},
-		{
-			name:      "windows_newlines",
-			query:     "CREATE\r\nDATABASE\r\ntenant_edge4",
-			expectErr: false,
-		},
-		{
-			name:      "trailing_whitespace_only",
-			query:     "CREATE DATABASE tenant_edge5   ",
-			expectErr: false,
-		},
-		{
-			name:      "leading_whitespace_only",
-			query:     "   CREATE DATABASE tenant_edge6",
-			expectErr: false,
-		},
+func TestAdministrativeCommands_EdgeCases_Whitespace(t *testing.T) {
+	type edgeCase struct {
+		name, query, aliasName string
+		expectErr              bool
 	}
-
-	for _, tc := range edgeCases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := exec.Execute(ctx, tc.query, nil)
-			if tc.expectErr {
-				assert.Error(t, err, "Expected error for query: %q", tc.query)
-			} else {
-				assert.NoError(t, err, "Query must succeed: %q", tc.query)
+	families := []struct {
+		family adminWhitespaceTestFamily
+		cases  []edgeCase
+	}{
+		{adminWhitespaceTestDatabase, []edgeCase{
+			{
+				name:      "only_tabs",
+				query:     "CREATE\t\tDATABASE\t\ttenant_edge1",
+				expectErr: false,
+			},
+			{
+				name:      "only_newlines",
+				query:     "CREATE\n\nDATABASE\n\ntenant_edge2",
+				expectErr: false,
+			},
+			{
+				name:      "mixed_extreme",
+				query:     "\tCREATE\n\tDATABASE\r\n\ttenant_edge3\t",
+				expectErr: false,
+			},
+			{
+				name:      "windows_newlines",
+				query:     "CREATE\r\nDATABASE\r\ntenant_edge4",
+				expectErr: false,
+			},
+			{
+				name:      "trailing_whitespace_only",
+				query:     "CREATE DATABASE tenant_edge5   ",
+				expectErr: false,
+			},
+			{
+				name:      "leading_whitespace_only",
+				query:     "   CREATE DATABASE tenant_edge6",
+				expectErr: false,
+			},
+		}},
+		{adminWhitespaceTestAlias, []edgeCase{
+			{
+				name:      "leading_whitespace",
+				query:     "   CREATE ALIAS alias_leading FOR DATABASE tenant_a",
+				aliasName: "alias_leading",
+				expectErr: false,
+			},
+			{
+				name:      "trailing_whitespace",
+				query:     "CREATE ALIAS alias_trailing FOR DATABASE tenant_a   ",
+				aliasName: "alias_trailing",
+				expectErr: false,
+			},
+			{
+				name:      "mixed_whitespace",
+				query:     "\tCREATE\nALIAS\talias_mixed\r\nFOR DATABASE\ttenant_a\n",
+				aliasName: "alias_mixed",
+				expectErr: false,
+			},
+			{
+				name:      "only_whitespace_between_keywords",
+				query:     "CREATE\t\tALIAS\n\nalias_whitespace\r\n\r\nFOR\t\tDATABASE\n\ntenant_a",
+				aliasName: "alias_whitespace",
+				expectErr: false,
+			},
+		}},
+	}
+	for _, family := range families {
+		t.Run(fmt.Sprintf("family_%d", family.family), func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			var dropAlias func(string)
+			switch family.family {
+			case adminWhitespaceTestDatabase:
+				mockDBM := newMockDatabaseManager(t)
+				mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"})
+				exec.SetDatabaseManager(mockDBM)
+			case adminWhitespaceTestAlias:
+				mockDBM := newAliasTestDatabaseManager(t)
+				mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
+				exec.SetDatabaseManager(mockDBM)
+				dropAlias = func(name string) { mockDBM.DropAlias(t.Context(), name) }
+			}
+			for _, tc := range family.cases {
+				t.Run(tc.name, func(t *testing.T) {
+					if family.family == adminWhitespaceTestAlias {
+						dropAlias(tc.aliasName)
+					}
+					_, err := exec.Execute(ctx, tc.query, nil)
+					if tc.expectErr {
+						assert.Error(t, err, "Expected error for query: %q", tc.query)
+					} else {
+						assert.NoError(t, err, "Query must succeed: %q", tc.query)
+					}
+				})
 			}
 		})
 	}

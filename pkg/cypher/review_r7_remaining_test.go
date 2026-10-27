@@ -32,7 +32,7 @@ func TestReviewR7GuardRejectsPartialReader(t *testing.T) {
   for i:=0; i<len(text); i++ {
    if quote != 0 { if text[i] == quote { quote=0 }; continue }
    if text[i] == '\'' || text[i] == '"' { quote=text[i]; continue }
-   _,_,_ = scanIdentifierToken(text,i)
+   _,_ = cyphertext.ScanIdentifier(text,i)
   }
  }`
 	fs := token.NewFileSet()

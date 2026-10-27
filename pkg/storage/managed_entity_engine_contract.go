@@ -2,9 +2,11 @@ package storage
 
 // ManagedEntityEngine is the atomic publication capability required by managed
 // database writes that enforce storage quotas, track exact bytes, or cross a
-// journal/replication boundary. NewDatabaseManager still accepts Engine; a custom
-// engine can preserve its unlimited native path without this capability, but
-// must provide this atomic owner before a managed write can be admitted.
+// journal/replication boundary. Writable database catalogs require native entity
+// preparation and authoritative EntityCommitSubmitter receipts, even when graph
+// quotas are unlimited. Managed graph writes additionally require this complete
+// accounting/observation contract; a catalog-capable engine must not be treated
+// as implicitly providing those graph capabilities.
 //
 // A transparent EngineUnwrapper may expose these capabilities through its own
 // backing engine. A wrapper with per-operation write policy additionally uses

@@ -1,6 +1,8 @@
 package resolvers
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"fmt"
 	"reflect"
@@ -121,7 +123,7 @@ func rule73Call(ctx context.Context, bound reflect.Value) (err error) {
 func TestRule73SelfAttackEveryGraphQLDataResolver(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	require.NoError(t, manager.CreateDatabase("rule73_named"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "rule73_named"}))
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)
 
