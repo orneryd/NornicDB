@@ -136,12 +136,3 @@ func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingS
 	// Parse, Validate, and ParseResult share this structural diagnostic owner.
 	e.errors = append(e.errors, localization.CypherANTLRUnexpectedInput(line, column))
 }
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}

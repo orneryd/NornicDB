@@ -50,6 +50,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"net/http"
@@ -556,7 +557,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSONRPCResult(w, req.ID, result)
+	s.writeJSONRPCResponse(w, req.ID, "result", result)
 }
 
 // handleInitialize handles the initialize request.
@@ -1997,17 +1998,6 @@ func (s *Server) withLocalization(r *http.Request) *http.Request {
 	return r.WithContext(localization.WithPreferences(r.Context(), match.Tag))
 }
 
-func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
-	if s.localizer == nil {
-		return message.Fallback, language.AmericanEnglish
-	}
-	text, tag, err := s.localizer.Render(ctx, localization.MessageRequest(message))
-	if err != nil {
-		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
-	}
-	return text, tag
-}
-
 func (s *Server) renderError(ctx context.Context, err error) string {
 	var localized *nornicerrors.Localized
 	if !errors.As(err, &localized) {
@@ -2025,36 +2015,29 @@ func localizedError(message localization.Message, cause error) error {
 }
 
 func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message) {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOnly, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
 	s.writeError(w, status, text)
 }
 
 func (s *Server) writeLocalizedJSONRPCError(w http.ResponseWriter, r *http.Request, id interface{}, code int, message localization.Message, data string) {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOnly, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
-	s.writeJSONRPCError(w, id, code, text, data)
-}
-
-func (s *Server) writeJSONRPCResult(w http.ResponseWriter, id interface{}, result interface{}) {
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  result,
+	s.writeJSONRPCResponse(w, id, "error", map[string]interface{}{
+		"code":    code,
+		"message": text,
+		"data":    data,
 	})
 }
 
-func (s *Server) writeJSONRPCError(w http.ResponseWriter, id interface{}, code int, message, data string) {
+// writeJSONRPCResponse owns the common version, ID and selected payload envelope.
+func (s *Server) writeJSONRPCResponse(w http.ResponseWriter, id interface{}, member string, payload interface{}) {
 	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      id,
-		"error": map[string]interface{}{
-			"code":    code,
-			"message": message,
-			"data":    data,
-		},
+		member:    payload,
 	})
 }
 

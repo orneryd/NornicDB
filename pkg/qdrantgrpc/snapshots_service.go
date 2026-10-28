@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,7 +61,7 @@ func (s *SnapshotsService) allowFullAccess(ctx context.Context) error {
 	if checker, ok := s.checker.(interface{ AllowAllDatabaseAccess(context.Context) error }); ok {
 		return checker.AllowAllDatabaseAccess(ctx)
 	}
-	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 }
 
 // Create creates a new snapshot of a collection.
@@ -69,7 +70,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -77,13 +78,13 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Create snapshot directory for this collection
 	collectionSnapshotDir := filepath.Join(s.snapshotDir, "collections", req.CollectionName)
 	if err := os.MkdirAll(collectionSnapshotDir, 0755); err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Generate snapshot name with timestamp
@@ -93,13 +94,13 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	store, _, err := s.collections.Open(ctx, req.CollectionName)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 	// A snapshot holds every stored point, those the visibility layer hides
 	// from reads included.
 	nodes, err := storage.GetStoredNodesByLabel(store, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	var qdrantPoints []*storage.Node
@@ -120,7 +121,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 
 	// Save snapshot
 	if err := storage.SaveSnapshot(snapshot, snapshotPath); err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Get file size
@@ -146,7 +147,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
 	// List snapshots in collection directory
@@ -168,7 +169,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Build snapshot list
@@ -212,28 +213,28 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
 	}
 
 	if req.GetSnapshotName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Verify collection exists
 	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Delete snapshot file
 	snapshotPath := filepath.Join(s.snapshotDir, "collections", req.CollectionName, req.SnapshotName)
 	if err := os.Remove(snapshotPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName), grpcresponse.QdrantSourceFallback)
 		}
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	return &qpb.DeleteSnapshotResponse{
@@ -250,13 +251,13 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	start := time.Now()
 
 	if s.baseStorage == nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantFullSnapshotsRequireBaseStorage())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.FailedPrecondition, localization.QdrantFullSnapshotsRequireBaseStorage(), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Create full snapshots directory
 	fullSnapshotDir := filepath.Join(s.snapshotDir, "full")
 	if err := os.MkdirAll(fullSnapshotDir, 0755); err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Generate snapshot name with timestamp
@@ -267,19 +268,19 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	// Try to use BadgerEngine.Backup if available.
 	if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
 		if err := badger.Backup(snapshotPath); err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 	} else {
 		// Fallback: export all nodes and edges as a snapshot, those the
 		// visibility layer hides from reads included.
 		nodes, err := storage.CollectStoredNodes(ctx, s.baseStorage)
 		if err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 
 		edges, err := storage.CollectStoredEdges(ctx, s.baseStorage)
 		if err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 
 		snapshot := &storage.Snapshot{
@@ -291,7 +292,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 		}
 
 		if err := storage.SaveSnapshot(snapshot, snapshotPath); err != nil {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 	}
 
@@ -331,7 +332,7 @@ func (s *SnapshotsService) ListFull(ctx context.Context, req *qpb.ListFullSnapsh
 				Time:                 time.Since(start).Seconds(),
 			}, nil
 		}
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Build snapshot list
@@ -378,16 +379,16 @@ func (s *SnapshotsService) DeleteFull(ctx context.Context, req *qpb.DeleteFullSn
 	start := time.Now()
 
 	if req.GetSnapshotName() == "" {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("snapshot_name"), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Delete snapshot file
 	snapshotPath := filepath.Join(s.snapshotDir, "full", req.SnapshotName)
 	if err := os.Remove(snapshotPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantSnapshotNotFound(req.SnapshotName), grpcresponse.QdrantSourceFallback)
 		}
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	return &qpb.DeleteSnapshotResponse{

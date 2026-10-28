@@ -103,8 +103,13 @@ func ProjectUnicode(ctx context.Context, original string) *Source {
 // CodepointBoundaries relates accepted lexer positions to accepted byte offsets.
 // OriginalSpan then supplies the exact submitted source extent.
 func (source *Source) CodepointBoundaries(ctx context.Context) ([]int, error) {
-	var boundaries []int
-	nextPoll := 0
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Each codepoint consumes at least one byte. Reserve this upper bound
+	// once instead of reallocating and copying the coordinate table as it grows.
+	boundaries := make([]int, 0, len(source.Text)+1)
+	nextPoll := 1024
 	for i := 0; i < len(source.Text); {
 		if i >= nextPoll {
 			nextPoll = i + 1024

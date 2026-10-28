@@ -57,6 +57,59 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		if bytes.Contains(data, []byte(investigationPass)) {
 			t.Error(label + " disclosed a synthetic password; value withheld")
 		}
+		if !wantError {
+			return
+		}
+		// The same rejected statement through the public GraphQL resolver must
+		// report the resolution error, executed by the cypher resolver rather
+		// than rejected by schema/GraphQL validation, without echoing credentials.
+		graphqlBody, marshalErr := json.Marshal(map[string]any{
+			"query":     `query($statement: String!) { cypher(input: {statement: $statement, database: "system"}) { columns } }`,
+			"variables": map[string]string{"statement": query},
+		})
+		if marshalErr != nil {
+			t.Fatal(label + " GraphQL request could not be encoded; details withheld")
+		}
+		graphqlResponse, graphqlErr := (&http.Client{Timeout: 8 * time.Second}).Post(base+"/graphql", "application/json", bytes.NewReader(graphqlBody))
+		if graphqlErr != nil {
+			t.Error(label + " GraphQL transport failure; details withheld")
+			return
+		}
+		graphqlData, readErr := io.ReadAll(graphqlResponse.Body)
+		graphqlResponse.Body.Close()
+		if readErr != nil {
+			t.Error(label + " GraphQL response read failure; details withheld")
+			return
+		}
+		if graphqlResponse.StatusCode != http.StatusOK {
+			t.Error(label + " GraphQL response was not HTTP 200; status withheld")
+			return
+		}
+		var graphqlResult struct {
+			Errors []struct {
+				Message string `json:"message"`
+				Path    []any  `json:"path"`
+			} `json:"errors"`
+		}
+		if decodeErr := json.Unmarshal(graphqlData, &graphqlResult); decodeErr != nil {
+			t.Error(label + " GraphQL response could not be decoded; body withheld")
+			return
+		}
+		if len(graphqlResult.Errors) == 0 {
+			t.Error(label + " GraphQL returned no rejection errors; body withheld")
+			return
+		}
+		for _, graphqlError := range graphqlResult.Errors {
+			if strings.TrimSpace(graphqlError.Message) == "" {
+				t.Error(label + " GraphQL rejection carried an empty message; body withheld")
+			}
+			if len(graphqlError.Path) != 1 || graphqlError.Path[0] != "cypher" {
+				t.Error(label + " GraphQL rejection was not reported by the cypher resolver; path withheld")
+			}
+		}
+		if bytes.Contains(graphqlData, []byte(investigationPass)) {
+			t.Error(label + " GraphQL response disclosed a synthetic password; value withheld")
+		}
 	}
 	checkDuplicatePassword := func() {
 		t.Helper()

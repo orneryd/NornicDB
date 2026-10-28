@@ -7,161 +7,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func TestExistsOrIsConstituent_StandardDB(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "mydb"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-
-	if !mgr.ExistsOrIsConstituent("mydb") {
-		t.Fatal("expected ExistsOrIsConstituent to return true for standard database")
-	}
-}
-
-func TestExistsOrIsConstituent_CompositeDB(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateCompositeDatabase(t.Context(), "comp", []ConstituentRef{
-		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}); err != nil {
-		t.Fatalf("CreateCompositeDatabase failed: %v", err)
-	}
-
-	if !mgr.ExistsOrIsConstituent("comp") {
-		t.Fatal("expected ExistsOrIsConstituent to return true for composite database")
-	}
-}
-
-func TestExistsOrIsConstituent_ConstituentDotted(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateCompositeDatabase(t.Context(), "translations", []ConstituentRef{
-		{Alias: "tr", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}); err != nil {
-		t.Fatalf("CreateCompositeDatabase failed: %v", err)
-	}
-
-	if !mgr.ExistsOrIsConstituent("translations.tr") {
-		t.Fatal("expected ExistsOrIsConstituent to return true for dotted constituent reference")
-	}
-}
-
-func TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateCompositeDatabase(t.Context(), "translations", []ConstituentRef{
-		{Alias: "TR", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}); err != nil {
-		t.Fatalf("CreateCompositeDatabase failed: %v", err)
-	}
-
-	if !mgr.ExistsOrIsConstituent("translations.tr") {
-		t.Fatal("expected case-insensitive constituent alias match")
-	}
-}
-
-func TestExistsOrIsConstituent_Unknown(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if mgr.ExistsOrIsConstituent("doesnotexist") {
-		t.Fatal("expected ExistsOrIsConstituent to return false for unknown database")
-	}
-}
-
-func TestExistsOrIsConstituent_DottedButNotComposite(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "notcomposite"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-
-	if mgr.ExistsOrIsConstituent("notcomposite.alias") {
-		t.Fatal("expected false for dotted name where base is not a composite")
-	}
-}
-
-func TestExistsOrIsConstituent_DottedWrongAlias(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateCompositeDatabase(t.Context(), "comp", []ConstituentRef{
-		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}); err != nil {
-		t.Fatalf("CreateCompositeDatabase failed: %v", err)
-	}
-
-	if mgr.ExistsOrIsConstituent("comp.nonexistent") {
-		t.Fatal("expected false for dotted name with wrong alias")
-	}
-}
-
-func TestExistsOrIsConstituent_Alias(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(t.Context(), base, nil)
-	if err != nil {
-		t.Fatalf("NewDatabaseManager failed: %v", err)
-	}
-	defer mgr.Close()
-
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "realdb"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateAlias(t.Context(), "myalias", "realdb"); err != nil {
-		t.Fatalf("CreateAlias failed: %v", err)
-	}
-
-	if !mgr.ExistsOrIsConstituent("myalias") {
-		t.Fatal("expected ExistsOrIsConstituent to return true for database alias")
-	}
-}
-
 func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(t.Context(), base, nil)
@@ -170,14 +15,9 @@ func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_local"}); err != nil {
-		t.Fatalf("CreateDatabase failed: %v", err)
-	}
-	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []ConstituentRef{
+	seedCompositeTestCatalog(t, mgr, []string{"shard_local"}, "cmp", []ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_local", Type: "local", AccessMode: "read_write"},
-	}); err != nil {
-		t.Fatalf("CreateCompositeDatabase failed: %v", err)
-	}
+	})
 
 	engine, err := mgr.GetStorageWithAuth("cmp.a", "Bearer token")
 	if err != nil {
@@ -218,5 +58,60 @@ func TestGetStorageWithAuth_ConstituentDotted_RemoteFactory(t *testing.T) {
 	}
 	if gotAuth != "Bearer forwarded" {
 		t.Fatalf("expected forwarded auth token, got %q", gotAuth)
+	}
+}
+
+// TestCatalogNameExistence preserves the original independent catalog fixtures
+// and results for standard, composite, constituent, alias and absent names.
+func TestCatalogNameExistence(t *testing.T) {
+	for _, test := range []struct {
+		name, database, composite, constituent, alias, query string
+		want                                                 bool
+		message                                              string
+	}{
+		{"TestExistsOrIsConstituent_StandardDB", "mydb", "", "", "", "mydb", true, "expected ExistsOrIsConstituent to return true for standard database"},
+		{"TestExistsOrIsConstituent_CompositeDB", "shard_a", "comp", "a", "", "comp", true, "expected ExistsOrIsConstituent to return true for composite database"},
+		{"TestExistsOrIsConstituent_ConstituentDotted", "shard_a", "translations", "tr", "", "translations.tr", true, "expected ExistsOrIsConstituent to return true for dotted constituent reference"},
+		{"TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive", "shard_a", "translations", "TR", "", "translations.tr", true, "expected case-insensitive constituent alias match"},
+		{"TestExistsOrIsConstituent_Unknown", "", "", "", "", "doesnotexist", false, "expected ExistsOrIsConstituent to return false for unknown database"},
+		{"TestExistsOrIsConstituent_DottedButNotComposite", "notcomposite", "", "", "", "notcomposite.alias", false, "expected false for dotted name where base is not a composite"},
+		{"TestExistsOrIsConstituent_DottedWrongAlias", "shard_a", "comp", "a", "", "comp.nonexistent", false, "expected false for dotted name with wrong alias"},
+		{"TestExistsOrIsConstituent_Alias", "realdb", "", "", "myalias", "myalias", true, "expected ExistsOrIsConstituent to return true for database alias"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			manager, err := NewDatabaseManager(t.Context(), base, nil)
+			if err != nil {
+				t.Fatalf("NewDatabaseManager failed: %v", err)
+			}
+			defer manager.Close()
+			if test.database != "" {
+				if err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: test.database}); err != nil {
+					t.Fatalf("CreateDatabase failed: %v", err)
+				}
+			}
+			if test.composite != "" {
+				if err := manager.CreateCompositeDatabase(t.Context(), test.composite, []ConstituentRef{{Alias: test.constituent, DatabaseName: test.database, Type: "local", AccessMode: "read_write"}}); err != nil {
+					t.Fatalf("CreateCompositeDatabase failed: %v", err)
+				}
+			}
+			if test.composite != "" {
+				info, err := manager.GetDatabase(test.composite)
+				if err != nil {
+					t.Fatalf("GetDatabase(%q) failed: %v", test.composite, err)
+				}
+				if len(info.Constituents) != 1 || info.Constituents[0].DatabaseName != test.database || info.Constituents[0].Alias != test.constituent {
+					t.Fatalf("constituent fixture mismatch: got %+v, want DatabaseName %q Alias %q", info.Constituents, test.database, test.constituent)
+				}
+			}
+			if test.alias != "" {
+				if err := manager.CreateAlias(t.Context(), test.alias, test.database); err != nil {
+					t.Fatalf("CreateAlias failed: %v", err)
+				}
+			}
+			if manager.ExistsOrIsConstituent(test.query) != test.want {
+				t.Fatal(test.message)
+			}
+		})
 	}
 }

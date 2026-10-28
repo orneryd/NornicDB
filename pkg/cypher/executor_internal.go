@@ -70,7 +70,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
-		defer func() { result, retErr = normalized.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
 	}
 	cypher = source.Text
 	if config.IsCypherQueryNormalizationEnabled() {
@@ -157,7 +157,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if labelRewrite != nil {
 		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+		defer func() {
+			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
+		}()
 	}
 
 	// Basic syntax validation to preserve existing error behavior.

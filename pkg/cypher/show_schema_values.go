@@ -69,17 +69,25 @@ func schemaProperties(variable string, properties []string) string {
 // showIndexCreateStatement is the statement that recreates a standalone
 // index, in Neo4j's form.
 func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes, properties []string, config map[string]interface{}) string {
-	pattern, variable := schemaPattern(entityType, labelsOrTypes)
-	statement := "CREATE " + indexType + " INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR " + pattern + " ON "
-	if indexType == "FULLTEXT" {
-		statement += "EACH [" + schemaProperties(variable, properties) + "]"
+	var pattern, tail string
+	if indexType == "LOOKUP" {
+		pattern, tail = "(n)", " ON EACH labels(n)"
+		if entityType == string(storage.ConstraintEntityRelationship) {
+			pattern, tail = "()-[r]-()", " ON EACH type(r)"
+		}
 	} else {
-		statement += "(" + schemaProperties(variable, properties) + ")"
+		var variable string
+		pattern, variable = schemaPattern(entityType, labelsOrTypes)
+		if indexType == "FULLTEXT" {
+			tail = " ON EACH [" + schemaProperties(variable, properties) + "]"
+		} else {
+			tail = " ON (" + schemaProperties(variable, properties) + ")"
+		}
+		if len(config) > 0 {
+			tail += " OPTIONS {indexConfig: " + schemaConfigLiteral(config) + "}"
+		}
 	}
-	if len(config) > 0 {
-		statement += " OPTIONS {indexConfig: " + schemaConfigLiteral(config) + "}"
-	}
-	return statement
+	return "CREATE " + indexType + " INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR " + pattern + tail
 }
 
 // schemaConfigLiteral writes an index configuration map as Neo4j prints it

@@ -156,8 +156,11 @@ func TestContextLexerUnwindEscapesSafeMatch(t *testing.T) {
 			if ascii {
 				query = "RETURN '" + strings.Repeat("x", 1<<16) + "'"
 			}
-			source, _ := sourceInputStream(context.Background(), cyphertext.NewSource(t.Context(), query, cyphertext.AcceptedSource))
-			input := &contextSourceCharStream{sourceCharStream: *source, contextCharCancellation: contextCharCancellation{ctx: during}}
+			// Build the coordinate product without the injected context, then
+			// select the concrete view through the same factory parsing uses.
+			projection := cyphertext.NewSource(t.Context(), query, cyphertext.AcceptedSource)
+			core, _ := sourceInputStream(context.Background(), projection)
+			_, input := sourceStreamView(*core, during)
 
 			lex := func() (err error) {
 				defer recoverPredictionCancellation(&err)

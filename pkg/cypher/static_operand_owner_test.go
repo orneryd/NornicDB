@@ -77,7 +77,7 @@ var staticTypeNameDecisionExceptions = map[string]struct{ reason, sha256 string 
 	"gds_projection.go:gdsJavaTypeTarget":                                     {"GDS projection reads the stored property value kind or its Java class name at run time, not a static operand.", "3af32eccf910abee2ea4d92f6a7e6287cdfb2c54a01a0a204cd0d6c7776faa87"},
 	"gds_property_values.go:gdsConvertPropertyValue":                          {"GDS projection reads the stored property value kind or its Java class name at run time, not a static operand.", "9b0539412034ba6485c954a676665abc0fc98ce299ff1d27810ec121273d833b"},
 	"gds_property_values.go:*GraphProjection.nodePropertyValue":               {"GDS projection reads the stored property value kind or its Java class name at run time, not a static operand.", "13de77dfc3699eb4d528ce2e0e94d7500d6b4748500f506aa28d9b8b56923330"},
-	"property_access_semantic_validation.go:parameterMayRejectPropertyAccess": {"Types a bound parameter from its runtime value (parameterPropertyAccessType) before a property access; parameters carry values, never a static union.", "5c530e4ab2322ce7a5a55187f2e0d0f2c921fdae755479f6f2730713ea52cfa6"},
+	"property_access_semantic_validation.go:parameterMayRejectPropertyAccess": {"Types a bound parameter from its runtime value (parameterPropertyAccessType) before a property access; parameters carry values, never a static union.", "939f9951606a7d04476e14c67ef15fdfa6595c84091acce48b50d95ded5dfe15"},
 	"expression_validation.go:staticListOperand":                              {"Names a bound parameter's value in a list position by its runtime kind (cypherTypeName; the parameter boundary); every other operand is typed by operandOf.", "99f2601cef82f95f2401513f4ac8ca762b323978aec2620b3823967dae678ec4"},
 }
 
@@ -91,9 +91,9 @@ var staticTypingOwnerFiles = map[string]bool{
 // staticTypeNameDerivers return a derived static type name: comparing their
 // result with anything but "" decides by type name.
 var staticTypeNameDerivers = map[string]bool{
-	"typeName": true, "typeOf": true, "staticExpressionType": true, "staticLiteralTypeName": true,
-	"staticTextType": true, "scalarLiteralTypeName": true,
-	"elementOfType": true, "listOfType": true, "propertyAccessExpressionType": true,
+	"typeName": true, "typeOf": true, "staticExpressionType": true, "staticLiteralType": true,
+	"staticTextType": true,
+	"elementOfType":  true, "listOfType": true, "propertyAccessExpressionType": true,
 	"staticFunctionResultType": true, "procedureArgumentTypeName": true,
 }
 

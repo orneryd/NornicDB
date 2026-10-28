@@ -1560,31 +1560,7 @@ func AuthenticationDisabled(a *Authenticator) bool {
 //   - Store the secret securely (e.g., HashiCorp Vault, K8s Secrets)
 //   - Rotate secrets periodically by generating new tokens
 func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, error) {
-	// Create a virtual user for the cluster node
-	user := &User{
-		ID:       clusterSubjectPrefix + nodeID,
-		Username: nodeID,
-		Roles:    []Role{role},
-	}
-
-	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
-	if err != nil {
-		if err == ErrMissingSecret {
-			return "", err
-		}
-		return "", fmt.Errorf("failed to generate cluster token: %w", err)
-	}
-
-	a.logAudit(AuditEvent{
-		Timestamp: time.Now(),
-		EventType: "cluster_token_generated",
-		Username:  nodeID,
-		UserID:    user.ID,
-		Success:   true,
-		Details:   fmt.Sprintf("cluster token generated for node %s with role %s", nodeID, role),
-	})
-
-	return token, nil
+	return a.issueClusterToken(nodeID, role, a.config.TokenExpiry, clusterTokenPurposeDefault)
 }
 
 // GenerateClusterTokenWithExpiry creates a JWT token with a custom expiration time.
@@ -1600,22 +1576,7 @@ func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, 
 //	// Generate a token that expires in 7 days
 //	token, _ := auth.GenerateClusterTokenWithExpiry("node-2", auth.RoleAdmin, 7*24*time.Hour)
 func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role, expiry time.Duration) (string, error) {
-	user := &User{ID: clusterSubjectPrefix + nodeID, Username: nodeID, Roles: []Role{role}}
-	token, err := a.issueUserJWT(user, expiry)
-	if err != nil {
-		return "", err
-	}
-
-	a.logAudit(AuditEvent{
-		Timestamp: time.Now(),
-		EventType: "cluster_token_generated",
-		Username:  nodeID,
-		UserID:    clusterSubjectPrefix + nodeID,
-		Success:   true,
-		Details:   fmt.Sprintf("cluster token generated for node %s with role %s, expiry=%v", nodeID, role, expiry),
-	})
-
-	return token, nil
+	return a.issueClusterToken(nodeID, role, expiry, clusterTokenPurposeExplicit)
 }
 
 // GenerateAPIToken creates a stateless API token for the given user.

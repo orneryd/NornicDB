@@ -326,7 +326,7 @@ func typedFollowsIs(expression string, index int) bool {
 	}
 	word := expression[start:end]
 	if equalFoldASCII(word, "NOT") {
-		word = wordBefore(expression, start)
+		word = rawWordBefore(expression, start)
 	}
 	return equalFoldASCII(word, "IS")
 }

@@ -89,22 +89,7 @@ type clauseWalker struct {
 
 // getChildText extracts text from a child context
 func getChildText(ctx antlr.ParserRuleContext) string {
-	if ctx == nil {
-		return ""
-	}
-	start := ctx.GetStart()
-	stop := ctx.GetStop()
-	if start == nil || stop == nil {
-		return strings.TrimSpace(ctx.GetText())
-	}
-	input := start.GetInputStream()
-	if input == nil {
-		return strings.TrimSpace(ctx.GetText())
-	}
-	if source, ok := input.(interface{ OriginalText(int, int) string }); ok {
-		return strings.TrimSpace(source.OriginalText(start.GetStart(), stop.GetStop()))
-	}
-	return strings.TrimSpace(input.GetText(start.GetStart(), stop.GetStop()))
+	return strings.TrimSpace(getFullText(ctx))
 }
 
 // getFullText extracts text including whitespace from token positions

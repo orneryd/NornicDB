@@ -1,0 +1,207 @@
+[
+  {
+    "input": "",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": " ",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "42",
+    "scalar": "Integer",
+    "led": "Integer"
+  },
+  {
+    "input": " 42 ",
+    "scalar": "Integer",
+    "led": "Integer"
+  },
+  {
+    "input": "(42)",
+    "scalar": "",
+    "led": "Integer"
+  },
+  {
+    "input": "((42))",
+    "scalar": "",
+    "led": "Integer"
+  },
+  {
+    "input": "'x'",
+    "scalar": "String",
+    "led": "String"
+  },
+  {
+    "input": " ('x') ",
+    "scalar": "",
+    "led": "String"
+  },
+  {
+    "input": "TRUE",
+    "scalar": "Boolean",
+    "led": "Boolean"
+  },
+  {
+    "input": " false ",
+    "scalar": "Boolean",
+    "led": "Boolean"
+  },
+  {
+    "input": "null",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "NULL",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "$p",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": " $p ",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "n",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": " n ",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "n.name",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "1+2",
+    "scalar": "",
+    "led": "Integer"
+  },
+  {
+    "input": "1 + n",
+    "scalar": "",
+    "led": "Float, Integer, String or List<Float>"
+  },
+  {
+    "input": "[1,2]",
+    "scalar": "",
+    "led": "List<Integer>"
+  },
+  {
+    "input": "{a:1}",
+    "scalar": "",
+    "led": "Map"
+  },
+  {
+    "input": "[]",
+    "scalar": "",
+    "led": "List<T>"
+  },
+  {
+    "input": "{}",
+    "scalar": "",
+    "led": "Map"
+  },
+  {
+    "input": "-3.5",
+    "scalar": "Float",
+    "led": "Float"
+  },
+  {
+    "input": "+42",
+    "scalar": "Integer",
+    "led": "Integer"
+  },
+  {
+    "input": "0x10",
+    "scalar": "Integer",
+    "led": "Integer"
+  },
+  {
+    "input": "0o10",
+    "scalar": "Integer",
+    "led": "Integer"
+  },
+  {
+    "input": "0b10",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "1e3",
+    "scalar": "Float",
+    "led": "Float"
+  },
+  {
+    "input": "1_000",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "1..2",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "1 / 0",
+    "scalar": "",
+    "led": "Integer"
+  },
+  {
+    "input": "true AND false",
+    "scalar": "",
+    "led": "Boolean"
+  },
+  {
+    "input": "(true AND false)",
+    "scalar": "",
+    "led": "Boolean"
+  },
+  {
+    "input": "'x' + 'y'",
+    "scalar": "",
+    "led": "String"
+  },
+  {
+    "input": "((n))",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "coalesce(1,2)",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "NaN",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "Infinity",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "`true`",
+    "scalar": "",
+    "led": ""
+  },
+  {
+    "input": "'a\\u0062'",
+    "scalar": "String",
+    "led": "String"
+  }
+]

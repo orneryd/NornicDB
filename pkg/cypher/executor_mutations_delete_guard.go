@@ -173,10 +173,7 @@ func deleteExpressionRootIdentifier(expression string) string {
 }
 
 func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := strings.TrimSpace(clause)
-	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
-		pattern = strings.TrimSpace(pattern[len(keyword):])
-	}
+	pattern := pipelineClauseBody(clause, keyword)
 	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
 		pattern = strings.TrimSpace(pattern[:where])
 	}

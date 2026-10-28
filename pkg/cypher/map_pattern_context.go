@@ -37,7 +37,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 		}
 		if len(stack) > 0 && stack[len(stack)-1].kind == '(' && stack[len(stack)-1].pattern && matchKeywordAt(query, index, "WHERE") {
 			parent := &stack[len(stack)-1]
-			label := previous >= 0 && (query[previous] == ':' || query[previous] == '|' || query[previous] == '&' || query[previous] == '!' || equalFoldASCII(wordBefore(query, previous+1), "IS"))
+			label := previous >= 0 && (query[previous] == ':' || query[previous] == '|' || query[previous] == '&' || query[previous] == '!' || equalFoldASCII(rawWordBefore(query, previous+1), "IS"))
 			next := queryGapEnd(query, index+len("WHERE"))
 			namedWhere := previous == parent.open && (next >= len(query) || query[next] == ':' || query[next] == '{' || query[next] == ')' || matchKeywordAt(query, next, "WHERE"))
 			if !label && !namedWhere {
@@ -68,7 +68,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
 	word := ""
 	if previous >= 0 {
-		word = wordBefore(query, previous+1)
+		word = rawWordBefore(query, previous+1)
 	}
 	// Qualified names are function calls, even when the final component
 	// spells a clause keyword or built-in path function.
@@ -302,6 +302,6 @@ func (context *mapPatternContext) selected(query string, open int, stack []mapDe
 }
 
 func (context *mapPatternContext) existsCall(query string, end int) bool {
-	word := wordBefore(query, end)
+	word := rawWordBefore(query, end)
 	return equalFoldASCII(word, "EXISTS") && !context.qualified[end-len(word)]
 }

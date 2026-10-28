@@ -103,7 +103,7 @@ func TestSourceFoundationDiagnosticCoordinates(t *testing.T) {
 	}
 	cause := errors.New("data decoder failed at byte offset 9")
 	rewrite := sourceQueryRewrite(cyphertext.NormalizeSource("\ufeffRETURN 1"))
-	_, restored := rewrite.restore(nil, cause)
+	_, restored := (resultRestoration{source: rewrite}).restore(nil, cause, nil)
 	require.Equal(t, cause.Error(), restored.Error())
 	require.ErrorIs(t, restored, cause)
 }
@@ -114,7 +114,7 @@ func TestSourceFoundationLocalizedDiagnosticCoordinates(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	cause := executor.validateSyntax(t.Context(), source.Text, false, syntaxANTLRCore)
 	require.Error(t, cause)
-	_, err := sourceQueryRewrite(source).restore(nil, cause)
+	_, err := (resultRestoration{source: sourceQueryRewrite(source)}).restore(nil, cause, nil)
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 	check := func(err error) {

@@ -435,7 +435,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		return staticOperand{}, nil
 	}
 	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
-		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic); !projection {
+		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, nil); !projection {
 			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 				localization.CypherCoreMapProjectionReceiver(receiver))
 		}
@@ -446,7 +446,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	if expression[0] == '{' && cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
 		return checker.checkAtom(expression)
 	}
-	if _, _, projection := checker.mapProjection(expression); projection {
+	if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); projection {
 		return checker.checkAtom(expression)
 	}
 	// A map projection is an operand: an expression around one (s{.a} IS
@@ -503,7 +503,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	// A type or normalization predicate (x IS :: LIST<INTEGER>, x IS NOT
 	// TYPED STRING, x IS NFC NORMALIZED) is a Boolean; its type text isn't
 	// an expression.
-	if index := topLevelKeywordIndex(scan, "IS"); index > 0 {
+	if index := infixKeywordIndex(scan, "IS"); index > 0 {
 		rest := strings.TrimSpace(expression[index+len("IS"):])
 		if !startsWithKeywordFold(rest, "NULL") && !startsWithKeywordFold(strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(rest), "NOT")), "NULL") {
 			if _, err := checker.check(expression[:index]); err != nil {
@@ -513,7 +513,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 	}
 	for _, keyword := range staticComparisonKeywords {
-		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
+		if index := infixKeywordIndex(scan, keyword); index > 0 {
 			if _, err := checker.check(expression[:index]); err != nil {
 				return staticOperand{}, err
 			}
@@ -1156,23 +1156,6 @@ func endsWithKeywordFold(text, keyword string) bool {
 	return len(text) == len(keyword) || !cyphertext.NamePartAt(text, len(text)-len(keyword)-1)
 }
 
-// mapProjection applies mapProjectionSplit for this scope: a variable with
-// a keyword's name that the scope binds (WITH 5 AS skip … skip{.a}) is
-// projected too.
-func (checker staticOperatorChecker) mapProjection(expression string) (variable, items string, projection bool) {
-	if variable, items, projection = mapProjectionSplit(expression, mapProjectionStatic); projection {
-		return variable, items, true
-	}
-	open := strings.IndexByte(expression, '{')
-	if open <= 0 || cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 || isSubqueryBrace(expression, open) {
-		return "", "", false
-	}
-	if variable = simpleSemanticIdentifier(strings.TrimSpace(expression[:open])); variable == "" || !checker.scope.bound(variable) {
-		return "", "", false
-	}
-	return variable, expression[open+1 : len(expression)-1], true
-}
-
 // maskMapProjections blanks the item list of every map projection in
 // expression (a name, a keyword's only when the scope binds it, then a brace
 // that doesn't open a subquery), so its braces don't hide the operators
@@ -1271,7 +1254,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return mapOperand, nil
 	}
-	if variable, items, projection := checker.mapProjection(expression); projection {
+	if variable, items, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); projection {
 		// In Cypher 5 a temporal value or duration projects its fields;
 		// reading one it doesn't have is a runtime error, as for d.field.
 		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.known() && !staticProjectable(receiver.typeName(), checker.scope.cypher25) {
@@ -1330,7 +1313,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return provenOperand(staticFunctionResultType(function, arguments)), nil
 	}
-	if typeName := scalarLiteralTypeName(expression); typeName != "" {
+	if typeName := staticLiteralType(expression, scalarLiteralOnly); typeName != "" {
 		return provenOperand(typeName), nil
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
@@ -1350,23 +1333,6 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 	}
 	return staticOperand{}, nil
-}
-
-// scalarLiteralTypeName is the type of a string, number or boolean literal,
-// "" for any other expression: the operator check's leaf.
-func scalarLiteralTypeName(expression string) string {
-	if token, ok := cyphertext.ScanIdentifier(expression, 0); ok && !strings.EqualFold(token.Value, "true") && !strings.EqualFold(token.Value, "false") {
-		return ""
-	}
-	value, literal := parseLiteralValueFromComputedRow(expression)
-	if !literal {
-		return ""
-	}
-	switch kind := cypherValueKindOf(value); kind {
-	case valueKindString, valueKindInteger, valueKindFloat, valueKindBoolean:
-		return valueTypeNames[kind].cypher
-	}
-	return ""
 }
 
 func isQuantifierOrReduceFunction(name string) bool {

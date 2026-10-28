@@ -63,7 +63,8 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 
 func parsePipelineIteration(clause string) (expression, alias string, ok bool) {
 	if !startsWithKeywordFold(strings.TrimSpace(clause), "FOR") {
-		return splitUnwindBody(pipelineClauseBody(clause, "UNWIND"))
+		product, found := splitUnwindBody(clause)
+		return product.expression, product.aliasTail, found
 	}
 	body := pipelineClauseBody(clause, "FOR")
 	name, end, found := scanSymbolicName(body, 0)

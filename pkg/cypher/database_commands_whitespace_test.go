@@ -58,14 +58,8 @@ func whitespacePermutations(baseQuery string) []string {
 }
 
 func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	_, exec, mockDBM := newDatabaseCommandFixture(t)
 	ctx := context.Background()
-
-	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}) // Default database
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -108,14 +102,8 @@ func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
 }
 
 func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	_, exec, mockDBM := newDatabaseCommandFixture(t)
 	ctx := context.Background()
-
-	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"})
 	exec.SetDatabaseManager(mockDBM)
 
 	baseQueries := []string{
@@ -377,4 +365,18 @@ func TestAdministrativeCommands_EdgeCases_Whitespace(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newDatabaseCommandFixture creates an independent unbound executor and default catalog.
+func newDatabaseCommandFixture(t *testing.T) (storage.Engine, *StorageExecutor, *mockDatabaseManager) {
+	t.Helper()
+
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+
+	mockDBM := newMockDatabaseManager(t)
+	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}) // Default database
+
+	return store, exec, mockDBM
 }

@@ -9,30 +9,6 @@ import (
 	"testing"
 )
 
-func TestPlan_SimpleQueryNoUse(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
-	p := NewFabricPlanner(catalog)
-
-	frag, err := p.Plan(t.Context(), "MATCH (n) RETURN n", "nornic", cyphertext.RawSource)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	exec, ok := frag.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec, got %T", frag)
-	}
-	if exec.GraphName != "nornic" {
-		t.Errorf("expected nornic, got %s", exec.GraphName)
-	}
-	if exec.Query != "MATCH (n) RETURN n" {
-		t.Errorf("expected original query, got %s", exec.Query)
-	}
-	if exec.IsWrite {
-		t.Error("expected IsWrite=false for read query")
-	}
-}
-
 func TestPlan_PreservesOuterClausesAroundCallUseBlocks(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
@@ -95,38 +71,6 @@ RETURN seedId, translated`
 	}
 }
 
-func TestPlan_UnionPartUse(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("g1", &LocationLocal{DBName: "g1"})
-	catalog.Register("g2", &LocationLocal{DBName: "g2"})
-	p := NewFabricPlanner(catalog)
-
-	frag, err := p.Plan(t.Context(), "USE g1 RETURN 1 AS x UNION ALL USE g2 RETURN 2 AS x", "nornic", cyphertext.RawSource)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	u, ok := frag.(*FragmentUnion)
-	if !ok {
-		t.Fatalf("expected FragmentUnion, got %T", frag)
-	}
-	if u.Distinct {
-		t.Fatalf("expected UNION ALL to set Distinct=false")
-	}
-
-	lhs, ok := u.LHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected lhs FragmentExec, got %T", u.LHS)
-	}
-	rhs, ok := u.RHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected rhs FragmentExec, got %T", u.RHS)
-	}
-	if lhs.GraphName != "g1" || rhs.GraphName != "g2" {
-		t.Fatalf("unexpected union graph routing lhs=%s rhs=%s", lhs.GraphName, rhs.GraphName)
-	}
-}
-
 func TestPlan_MultipleCallUseSubqueries(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
@@ -171,14 +115,14 @@ RETURN translationId, textKey, texts`
 }
 
 func TestPlannerHelpers_ReturnClauseAndWithAliases(t *testing.T) {
-	if !hasTopLevelReturnClause("MATCH (n) RETURN n") {
+	if !hasTopLevelReturnClause("MATCH (n) RETURN n", nil) {
 		t.Fatalf("expected RETURN clause to be detected")
 	}
-	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN literal'})") {
+	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN literal'})", nil) {
 		t.Fatalf("did not expect RETURN inside string literal to count")
 	}
 
-	aliases := trailingWithAliases("MATCH (n) WITH n.id AS id, n.name AS name")
+	aliases := trailingWithAliases("MATCH (n) WITH n.id AS id, n.name AS name", nil)
 	if len(aliases) != 2 || aliases[0] != "id" || aliases[1] != "name" {
 		t.Fatalf("unexpected trailing WITH aliases: %#v", aliases)
 	}
@@ -444,22 +388,6 @@ func TestPlan_WriteDetection(t *testing.T) {
 	}
 }
 
-func TestPlan_EmptyQuery(t *testing.T) {
-	p := NewFabricPlanner(NewCatalog())
-	_, err := p.Plan(t.Context(), "", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for empty query")
-	}
-}
-
-func TestPlan_UseWithoutDbName(t *testing.T) {
-	p := NewFabricPlanner(NewCatalog())
-	_, err := p.Plan(t.Context(), "USE ", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for USE without database name")
-	}
-}
-
 func TestPlan_CallWithoutUse_NotFabric(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
@@ -550,7 +478,7 @@ func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
 }
 
 func TestPlannerHelpers_SplitAtTopLevelUse(t *testing.T) {
-	prefix, suffix, ok := splitAtTopLevelUse("MATCH (n) WITH n USE translations.tr RETURN n")
+	prefix, suffix, ok := splitAtTopLevelUse("MATCH (n) WITH n USE translations.tr RETURN n", nil)
 	if !ok {
 		t.Fatalf("expected top-level USE split")
 	}
@@ -726,17 +654,17 @@ func TestSplitTopLevelUnion_DistinctUnion(t *testing.T) {
 
 func TestSplitAtTopLevelUse_WithQuotedStrings(t *testing.T) {
 	// USE inside single-quoted string should not split.
-	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'USE db'}) RETURN n")
+	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'USE db'}) RETURN n", nil)
 	if ok {
 		t.Fatal("expected USE inside single quotes to be ignored")
 	}
 	// USE inside double-quoted string should not split.
-	_, _, ok = splitAtTopLevelUse(`MATCH (n {x: "USE db"}) RETURN n`)
+	_, _, ok = splitAtTopLevelUse(`MATCH (n {x: "USE db"}) RETURN n`, nil)
 	if ok {
 		t.Fatal("expected USE inside double quotes to be ignored")
 	}
 	// USE inside backtick.
-	_, _, ok = splitAtTopLevelUse("MATCH (n) WITH `USE` AS x USE db RETURN n")
+	_, _, ok = splitAtTopLevelUse("MATCH (n) WITH `USE` AS x USE db RETURN n", nil)
 	if !ok {
 		t.Fatal("expected USE after backtick to split")
 	}
@@ -744,30 +672,30 @@ func TestSplitAtTopLevelUse_WithQuotedStrings(t *testing.T) {
 
 func TestSplitAtTopLevelUse_InsideNesting(t *testing.T) {
 	// USE inside braces.
-	_, _, ok := splitAtTopLevelUse("CALL { USE db RETURN 1 } RETURN x")
+	_, _, ok := splitAtTopLevelUse("CALL { USE db RETURN 1 } RETURN x", nil)
 	if ok {
 		t.Fatal("expected USE inside braces to be ignored")
 	}
 	// USE inside parens.
-	_, _, ok = splitAtTopLevelUse("MATCH (n WHERE USE = 1) RETURN n")
+	_, _, ok = splitAtTopLevelUse("MATCH (n WHERE USE = 1) RETURN n", nil)
 	// This one might match depending on keyword boundary logic.
 	// Just ensure no panic.
 	_ = ok
 	// USE inside brackets.
-	_, _, ok = splitAtTopLevelUse("RETURN [x IN list WHERE USE = 1]")
+	_, _, ok = splitAtTopLevelUse("RETURN [x IN list WHERE USE = 1]", nil)
 	_ = ok
 }
 
 func TestSplitAtTopLevelUse_LeadingUseSkipped(t *testing.T) {
 	// Leading USE should be skipped (handled by parseLeadingUse).
-	_, _, ok := splitAtTopLevelUse("USE db MATCH (n) RETURN n")
+	_, _, ok := splitAtTopLevelUse("USE db MATCH (n) RETURN n", nil)
 	if ok {
 		t.Fatal("expected leading USE to be skipped")
 	}
 }
 
 func TestSplitAtTopLevelUse_NoUse(t *testing.T) {
-	_, _, ok := splitAtTopLevelUse("MATCH (n) RETURN n")
+	_, _, ok := splitAtTopLevelUse("MATCH (n) RETURN n", nil)
 	if !ok {
 		// No USE at all → ok=false.
 	}
@@ -775,35 +703,35 @@ func TestSplitAtTopLevelUse_NoUse(t *testing.T) {
 
 func TestEnsureRowProducingPrefix(t *testing.T) {
 	// Empty query.
-	if ensureRowProducingPrefix("") != "" {
+	if ensureRowProducingPrefix("", nil) != "" {
 		t.Fatal("expected empty for empty input")
 	}
 	// Query with RETURN.
-	got := ensureRowProducingPrefix("MATCH (n) RETURN n")
+	got := ensureRowProducingPrefix("MATCH (n) RETURN n", nil)
 	if got != "MATCH (n) RETURN n" {
 		t.Fatalf("expected unchanged with RETURN, got %q", got)
 	}
 	// WITH clause with aliases.
-	got = ensureRowProducingPrefix("WITH a, b")
+	got = ensureRowProducingPrefix("WITH a, b", nil)
 	if !strings.HasSuffix(got, "RETURN a, b") {
 		t.Fatalf("expected RETURN aliases appended, got %q", got)
 	}
 	// Query without RETURN and without WITH.
-	got = ensureRowProducingPrefix("MATCH (n)")
+	got = ensureRowProducingPrefix("MATCH (n)", nil)
 	if !strings.HasSuffix(got, "RETURN *") {
 		t.Fatalf("expected RETURN * appended, got %q", got)
 	}
 	// A clause after the WITH keeps the WITH's variables and adds its own.
-	got = ensureRowProducingPrefix("WITH 'ab' AS s UNWIND [1, 2] AS x")
+	got = ensureRowProducingPrefix("WITH 'ab' AS s UNWIND [1, 2] AS x", nil)
 	if got != "WITH 'ab' AS s UNWIND [1, 2] AS x RETURN *" {
 		t.Fatalf("expected RETURN * after a later clause, got %q", got)
 	}
 	// The WITH's own WHERE, ORDER BY, SKIP and LIMIT are part of it.
-	got = ensureRowProducingPrefix("UNWIND [3, 1] AS y WITH y AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2")
+	got = ensureRowProducingPrefix("UNWIND [3, 1] AS y WITH y AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
 	if !strings.HasSuffix(got, "LIMIT 2 RETURN *") {
 		t.Fatalf("expected RETURN * for a prefix starting with UNWIND, got %q", got)
 	}
-	got = ensureRowProducingPrefix("WITH [3, 1] AS ys, 1 AS z WITH z AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2")
+	got = ensureRowProducingPrefix("WITH [3, 1] AS ys, 1 AS z WITH z AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
 	if !strings.HasSuffix(got, "LIMIT 2 RETURN x") {
 		t.Fatalf("expected the last WITH's alias, got %q", got)
 	}
@@ -811,48 +739,48 @@ func TestEnsureRowProducingPrefix(t *testing.T) {
 
 func TestHasTopLevelReturnClause_WithQuotes(t *testing.T) {
 	// RETURN inside single quotes.
-	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN n'})") {
+	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN n'})", nil) {
 		t.Fatal("expected RETURN in single quotes to be ignored")
 	}
 	// RETURN inside double quotes.
-	if hasTopLevelReturnClause(`MATCH (n {x: "RETURN n"})`) {
+	if hasTopLevelReturnClause(`MATCH (n {x: "RETURN n"})`, nil) {
 		t.Fatal("expected RETURN in double quotes to be ignored")
 	}
 	// RETURN inside backticks.
-	if hasTopLevelReturnClause("MATCH (n) WITH `RETURN` AS x") {
+	if hasTopLevelReturnClause("MATCH (n) WITH `RETURN` AS x", nil) {
 		t.Fatal("expected RETURN in backticks to be ignored")
 	}
 	// RETURN inside braces.
-	if hasTopLevelReturnClause("CALL { RETURN 1 }") {
+	if hasTopLevelReturnClause("CALL { RETURN 1 }", nil) {
 		t.Fatal("expected RETURN inside braces to be ignored")
 	}
 	// RETURN inside parens.
-	if hasTopLevelReturnClause("MATCH (RETURN)") {
+	if hasTopLevelReturnClause("MATCH (RETURN)", nil) {
 		// "RETURN" after ( is inside paren depth.
 		t.Fatal("expected RETURN inside parens to be ignored")
 	}
 	// RETURN inside brackets.
-	if hasTopLevelReturnClause("[RETURN 1]") {
+	if hasTopLevelReturnClause("[RETURN 1]", nil) {
 		t.Fatal("expected RETURN inside brackets to be ignored")
 	}
 	// Top-level RETURN.
-	if !hasTopLevelReturnClause("MATCH (n) RETURN n") {
+	if !hasTopLevelReturnClause("MATCH (n) RETURN n", nil) {
 		t.Fatal("expected top-level RETURN to be detected")
 	}
 }
 
 func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 	// No WITH.
-	if trailingWithAliases("MATCH (n)") != nil {
+	if trailingWithAliases("MATCH (n)", nil) != nil {
 		t.Fatal("expected nil for no WITH")
 	}
 	// WITH inside quotes should not match.
-	got := trailingWithAliases("MATCH (n {x: 'WITH foo'}) WITH a")
+	got := trailingWithAliases("MATCH (n {x: 'WITH foo'}) WITH a", nil)
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("expected [a], got %v", got)
 	}
 	// WITH inside backticks.
-	got = trailingWithAliases("MATCH (n) WITH `weird name` AS x")
+	got = trailingWithAliases("MATCH (n) WITH `weird name` AS x", nil)
 	// `weird name` is not a valid identifier, so AS alias "x" should be found.
 	// But the item with backtick goes through lastAsIndexFold which finds AS.
 	// alias = "x", cyphertext.IsIdentifier("x") = true.
@@ -860,22 +788,22 @@ func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 		t.Fatalf("expected [x] with backtick alias, got %v", got)
 	}
 	// Empty WITH clause.
-	got = trailingWithAliases("WITH ")
+	got = trailingWithAliases("WITH ", nil)
 	if got != nil {
 		t.Fatalf("expected nil for empty WITH clause, got %v", got)
 	}
 	// WITH inside braces.
-	got = trailingWithAliases("CALL { WITH inner } WITH outer")
+	got = trailingWithAliases("CALL { WITH inner } WITH outer", nil)
 	if len(got) != 1 || got[0] != "outer" {
 		t.Fatalf("expected [outer], got %v", got)
 	}
 	// WITH inside double quotes.
-	got = trailingWithAliases(`MATCH (n) WITH "WITH" AS x`)
+	got = trailingWithAliases(`MATCH (n) WITH "WITH" AS x`, nil)
 	if len(got) != 1 || got[0] != "x" {
 		t.Fatalf("expected [x], got %v", got)
 	}
 	// Non-valid identifier (has dot).
-	got = trailingWithAliases("WITH n.x")
+	got = trailingWithAliases("WITH n.x", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for non-valid identifier, got %v", got)
 	}
@@ -1009,33 +937,6 @@ func TestFindMatchingBrace_QuotedStrings(t *testing.T) {
 	}
 }
 
-func TestKeywordAt_BoundaryChecks(t *testing.T) {
-	// Negative index.
-	if keywordAt("MATCH", -1, "MATCH") {
-		t.Fatal("expected false for negative index")
-	}
-	// Index too close to end.
-	if keywordAt("MAT", 0, "MATCH") {
-		t.Fatal("expected false when keyword overflows")
-	}
-	// Preceded by identifier char.
-	if keywordAt("xMATCH", 1, "MATCH") {
-		t.Fatal("expected false when preceded by ident char")
-	}
-	// Followed by identifier char.
-	if keywordAt("MATCHx", 0, "MATCH") {
-		t.Fatal("expected false when followed by ident char")
-	}
-	// Valid standalone keyword.
-	if !keywordAt("MATCH (n)", 0, "MATCH") {
-		t.Fatal("expected true for standalone keyword")
-	}
-	// Keyword at end of string.
-	if !keywordAt("x MATCH", 2, "MATCH") {
-		t.Fatal("expected true for keyword at end")
-	}
-}
-
 func TestCompositeScopeRoot(t *testing.T) {
 	if compositeScopeRoot("") != "" {
 		t.Fatal("expected empty for empty")
@@ -1108,27 +1009,6 @@ func TestBindLeadingImportColumns_AllBranches(t *testing.T) {
 	}
 }
 
-func TestParseLeadingWithUse_NoWith(t *testing.T) {
-	_, _, ok, err := parseLeadingWithUse(t.Context(), "MATCH (n) RETURN n")
-	if err != nil || ok {
-		t.Fatalf("expected no match for non-WITH, got ok=%v err=%v", ok, err)
-	}
-}
-
-func TestParseLeadingWithUse_WithButNoUse(t *testing.T) {
-	_, _, ok, err := parseLeadingWithUse(t.Context(), "WITH a MATCH (n) RETURN n")
-	if err != nil || ok {
-		t.Fatalf("expected no match for WITH without USE, got ok=%v err=%v", ok, err)
-	}
-}
-
-func TestParseLeadingWithUse_EmptyRemainder(t *testing.T) {
-	_, _, _, err := parseLeadingWithUse(t.Context(), "WITH a USE db")
-	if err == nil {
-		t.Fatal("expected error for USE with no following query")
-	}
-}
-
 func TestParseLeadingUse_UseOnly(t *testing.T) {
 	_, _, _, err := parseLeadingUseName("USE")
 	if err == nil {
@@ -1144,23 +1024,12 @@ func TestParseLeadingUse_InvalidGraphRef(t *testing.T) {
 }
 
 func TestCallBlockContainsFabricUse_NoUse(t *testing.T) {
-	ok, err := callBlockContainsFabricUse(t.Context(), "MATCH (n) RETURN n")
+	ok, err := callBlockContainsFabricUse(t.Context(), "MATCH (n) RETURN n", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ok {
 		t.Fatal("expected false for no USE")
-	}
-}
-
-func TestCallBlockContainsFabricUse_NestedCall(t *testing.T) {
-	body := "CALL { USE db RETURN 1 } RETURN x"
-	ok, err := callBlockContainsFabricUse(t.Context(), body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected nested CALL with USE to be detected")
 	}
 }
 
@@ -1244,50 +1113,6 @@ func TestSplitTopLevelUnion_EscapedQuotes(t *testing.T) {
 	}
 }
 
-func TestPlanSingleQuery_InvalidMidQueryUse(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	// Mid-query USE followed by invalid USE clause.
-	_, err := p.Plan(t.Context(), "WITH a USE ", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for invalid mid-query USE")
-	}
-}
-
-func TestPlanSingleQuery_MidQueryUseTargetError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	// Mid-query USE to nonexistent target.
-	_, err := p.Plan(t.Context(), "WITH a USE nonexistent.db MATCH (n) RETURN n", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for nonexistent mid-query USE target")
-	}
-}
-
-func TestPlanSingleQuery_MidQueryUseEmptyPrefix(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
-
-	// Mid-query USE where prefix is empty after trim → returns inner directly.
-	frag, err := p.Plan(t.Context(), "USE db.shard RETURN 1 AS x", "db", cyphertext.RawSource)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	exec, ok := frag.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected FragmentExec, got %T", frag)
-	}
-	if exec.GraphName != "db.shard" {
-		t.Fatalf("expected db.shard, got %s", exec.GraphName)
-	}
-}
-
 func TestPlanMultiGraph_CallBlockWithInvalidUse(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
@@ -1304,21 +1129,6 @@ RETURN x`
 	_, err := p.Plan(t.Context(), query, "db", cyphertext.RawSource)
 	if err == nil {
 		t.Fatal("expected error for invalid USE target in CALL block")
-	}
-}
-
-func TestParseLeadingWithUse_InvalidUseInWith(t *testing.T) {
-	_, _, _, err := parseLeadingWithUse(t.Context(), "WITH a USE ")
-	if err == nil {
-		t.Fatal("expected error for USE with no target in WITH...USE")
-	}
-}
-
-func TestParseLeadingWithUse_WithEndAtStart(t *testing.T) {
-	// WITH clause that immediately ends (withEnd == 0 or withEnd <= 0).
-	_, _, ok, _ := parseLeadingWithUse(t.Context(), "WITH")
-	if ok {
-		t.Fatal("expected false for bare WITH")
 	}
 }
 
@@ -1361,14 +1171,14 @@ func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_ParseError(t *testing.T) {
 	// Invalid USE should propagate error.
-	_, err := callBlockContainsFabricUse(t.Context(), "USE ")
+	_, err := callBlockContainsFabricUse(t.Context(), "USE ", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid USE in call block")
 	}
 }
 
 func TestCallBlockContainsFabricUse_ParseLeadingWithUseError(t *testing.T) {
-	_, err := callBlockContainsFabricUse(t.Context(), "WITH a USE ")
+	_, err := callBlockContainsFabricUse(t.Context(), "WITH a USE ", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid WITH...USE in call block")
 	}
@@ -1376,7 +1186,7 @@ func TestCallBlockContainsFabricUse_ParseLeadingWithUseError(t *testing.T) {
 
 func TestCallBlockContainsFabricUse_NestedCallError(t *testing.T) {
 	// Nested CALL with unmatched brace.
-	_, err := callBlockContainsFabricUse(t.Context(), "CALL { USE db")
+	_, err := callBlockContainsFabricUse(t.Context(), "CALL { USE db", nil)
 	if err == nil {
 		t.Fatal("expected error for unmatched brace in nested CALL")
 	}
@@ -1384,14 +1194,14 @@ func TestCallBlockContainsFabricUse_NestedCallError(t *testing.T) {
 
 func TestSplitAtTopLevelUse_EscapedSingleQuote(t *testing.T) {
 	// Escaped single quote.
-	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'it''s USE db'}) RETURN n")
+	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'it''s USE db'}) RETURN n", nil)
 	if ok {
 		t.Fatal("expected USE inside escaped single quote to be ignored")
 	}
 }
 
 func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
-	_, _, ok := splitAtTopLevelUse(`MATCH (n {x: "say ""USE db"""}) RETURN n`)
+	_, _, ok := splitAtTopLevelUse(`MATCH (n {x: "say ""USE db"""}) RETURN n`, nil)
 	if ok {
 		t.Fatal("expected USE inside escaped double quote to be ignored")
 	}
@@ -1399,30 +1209,30 @@ func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
 
 func TestHasTopLevelReturnClause_EscapedQuotes(t *testing.T) {
 	// Escaped single quote.
-	if !hasTopLevelReturnClause("MATCH (n {x: 'it''s'}) RETURN n") {
+	if !hasTopLevelReturnClause("MATCH (n {x: 'it''s'}) RETURN n", nil) {
 		t.Fatal("expected RETURN to be found after escaped single quote")
 	}
 	// Escaped double quote.
-	if !hasTopLevelReturnClause(`MATCH (n {x: "say ""hello"""}) RETURN n`) {
+	if !hasTopLevelReturnClause(`MATCH (n {x: "say ""hello"""}) RETURN n`, nil) {
 		t.Fatal("expected RETURN to be found after escaped double quote")
 	}
 }
 
 func TestTrailingWithAliases_EscapedQuotes(t *testing.T) {
 	// Escaped single quote in WITH clause.
-	got := trailingWithAliases("MATCH (n {x: 'it''s'}) WITH a")
+	got := trailingWithAliases("MATCH (n {x: 'it''s'}) WITH a", nil)
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("expected [a], got %v", got)
 	}
 	// Escaped double quote.
-	got = trailingWithAliases(`MATCH (n {x: "say ""hi"""}) WITH b`)
+	got = trailingWithAliases(`MATCH (n {x: "say ""hi"""}) WITH b`, nil)
 	if len(got) != 1 || got[0] != "b" {
 		t.Fatalf("expected [b], got %v", got)
 	}
 }
 
 func TestTrailingWithAliases_BracketsAndParens(t *testing.T) {
-	got := trailingWithAliases("WITH (WITH inside) AS x")
+	got := trailingWithAliases("WITH (WITH inside) AS x", nil)
 	// WITH inside parens depth → not detected as trailing WITH.
 	// Only the outer WITH at position 0 is found.
 	_ = got // Behavior depends on keyword matching — just ensure no panic.
@@ -1430,14 +1240,14 @@ func TestTrailingWithAliases_BracketsAndParens(t *testing.T) {
 
 func TestTrailingWithAliases_NonValidAlias(t *testing.T) {
 	// Expression without AS and non-valid identifier.
-	got := trailingWithAliases("WITH count(*)")
+	got := trailingWithAliases("WITH count(*)", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for non-valid identifier, got %v", got)
 	}
 }
 
 func TestTrailingWithAliases_AsNonValidAlias(t *testing.T) {
-	got := trailingWithAliases("WITH x AS 1invalid")
+	got := trailingWithAliases("WITH x AS 1invalid", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for invalid AS alias, got %v", got)
 	}
@@ -1456,88 +1266,9 @@ func TestFindMatchingBrace_EscapedQuotes(t *testing.T) {
 	}
 }
 
-func TestPlanSingleQuery_TopUseValidationError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("comp1", &LocationLocal{DBName: "comp1"})
-	catalog.Register("comp1.a", &LocationLocal{DBName: "a"})
-	catalog.Register("comp2.b", &LocationLocal{DBName: "b"})
-	p := NewFabricPlanner(catalog)
-
-	// USE target out of scope.
-	_, err := p.Plan(t.Context(), "USE comp2.b RETURN 1", "comp1", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected validation error for out-of-scope USE target")
-	}
-}
-
-func TestPlanSingleQuery_ExtractCallBlocksError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	// Unmatched brace in CALL subquery.
-	_, err := p.Plan(t.Context(), "CALL { RETURN 1", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for unmatched brace in CALL")
-	}
-}
-
-func TestPlanSingleQuery_CallBlockContainsFabricUseError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	// CALL block with invalid USE.
-	_, err := p.Plan(t.Context(), "CALL { USE } RETURN 1", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for invalid USE in CALL block")
-	}
-}
-
-func TestPlanSingleQuery_MidQueryUseInvalidUSE(t *testing.T) {
-	// This needs splitAtTopLevelUse to find USE, but parseLeadingUse to fail.
-	// Hard to trigger because splitAtTopLevelUse checks keywordAt("USE").
-	// If we have "WITH a USE" where USE has no following identifier.
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	_, err := p.Plan(t.Context(), "WITH a USE", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for bare USE")
-	}
-}
-
-func TestPlanSingleQuery_MidQueryUseValidateError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("comp1", &LocationLocal{DBName: "comp1"})
-	catalog.Register("comp1.a", &LocationLocal{DBName: "a"})
-	catalog.Register("comp2.b", &LocationLocal{DBName: "b"})
-	p := NewFabricPlanner(catalog)
-
-	// Mid-query USE to out-of-scope target.
-	_, err := p.Plan(t.Context(), "WITH x USE comp2.b RETURN x", "comp1", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected validation error for out-of-scope mid-query USE")
-	}
-}
-
-func TestPlanSingleQuery_MidQueryUseInnerError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
-
-	// Mid-query USE where inner query has another invalid USE.
-	_, err := p.Plan(t.Context(), "WITH x USE db.shard USE ", "db", cyphertext.RawSource)
-	if err == nil {
-		t.Fatal("expected error for invalid inner USE")
-	}
-}
-
 func TestTrailingWithAliases_BracketsAndBraces(t *testing.T) {
 	// WITH inside brackets.
-	got := trailingWithAliases("WITH [1, WITH, 3] AS arr")
+	got := trailingWithAliases("WITH [1, WITH, 3] AS arr", nil)
 	// keywordAt requires word boundary — "WITH" inside brackets at depth != 0 is skipped.
 	// The outer WITH at position 0 is found. Then "arr" is the alias.
 	// But actually the bracket depth is > 0 so the inner WITH is skipped.
@@ -1546,7 +1277,7 @@ func TestTrailingWithAliases_BracketsAndBraces(t *testing.T) {
 	}
 
 	// WITH inside braces.
-	got = trailingWithAliases("WITH {WITH: 1} AS m")
+	got = trailingWithAliases("WITH {WITH: 1} AS m", nil)
 	if len(got) == 0 {
 		t.Fatal("expected alias from brace-containing WITH")
 	}
@@ -1584,33 +1315,10 @@ func TestParseLeadingUse_InvalidIdentifier(t *testing.T) {
 	}
 }
 
-func TestParseLeadingWithUse_WithFindEndFail(t *testing.T) {
-	// WITH followed by a clause keyword immediately — withEnd would be at position
-	// right after WITH keyword.
-	_, _, ok, _ := parseLeadingWithUse(t.Context(), "WITH MATCH (n)")
-	// findLeadingWithClauseEnd("WITH MATCH (n)") finds MATCH as clause start → withEnd=5.
-	// withClause = "WITH " (trimmed → "WITH"), rest = "MATCH (n)".
-	// rest doesn't start with USE → returns false.
-	if ok {
-		t.Fatal("expected false for WITH immediately followed by MATCH")
-	}
-}
-
 func TestExtractGraphReference_OpenParenPresent(t *testing.T) {
 	// Test the openIdx < 0 branch — but since the prefix includes "(",
 	// HasPrefix only matches when "(" is present. So openIdx will always be >= 0
 	// when the prefix matches. This branch is unreachable by design.
-}
-
-func TestCallBlockContainsFabricUse_NestedCallWithoutUse(t *testing.T) {
-	body := "CALL { MATCH (n) RETURN n } RETURN x"
-	ok, err := callBlockContainsFabricUse(t.Context(), body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ok {
-		t.Fatal("expected false for nested CALL without USE")
-	}
 }
 
 func findExecByGraphName(fragment Fragment, graphName string) *FragmentExec {
@@ -1781,7 +1489,7 @@ RETURN collect(tt) AS texts
 `, "expected WITH/UNWIND/.../USE block to be detected as fabric block"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, err := callBlockContainsFabricUse(t.Context(), tc.body)
+			ok, err := callBlockContainsFabricUse(t.Context(), tc.body, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1846,6 +1554,230 @@ RETURN x`, "db", "expected error for invalid USE target in CALL block"},
 			_, err := p.Plan(t.Context(), tc.query, tc.session, cyphertext.RawSource)
 			if err == nil {
 				t.Fatalf("%s (site=%d)", tc.message, tc.site)
+			}
+		})
+	}
+}
+
+// TestPlanRejectedSources preserves every original catalog identity, source,
+// session and error expectation in one planner rejection flow.
+func TestPlanRejectedSources(t *testing.T) {
+	for _, test := range []struct {
+		name                    string
+		graphs                  [][2]string
+		query, session, message string
+	}{
+		{"TestPlan_EmptyQuery", nil, "", "db", "expected error for empty query"},
+		{"TestPlan_UseWithoutDbName", nil, "USE ", "db", "expected error for USE without database name"},
+		{"TestPlanSingleQuery_InvalidMidQueryUse", [][2]string{{"db", "db"}}, "WITH a USE ", "db", "expected error for invalid mid-query USE"},
+		{"TestPlanSingleQuery_MidQueryUseTargetError", [][2]string{{"db", "db"}}, "WITH a USE nonexistent.db MATCH (n) RETURN n", "db", "expected error for nonexistent mid-query USE target"},
+		{"TestPlanSingleQuery_TopUseValidationError", [][2]string{{"comp1", "comp1"}, {"comp1.a", "a"}, {"comp2.b", "b"}}, "USE comp2.b RETURN 1", "comp1", "expected validation error for out-of-scope USE target"},
+		{"TestPlanSingleQuery_ExtractCallBlocksError", [][2]string{{"db", "db"}}, "CALL { RETURN 1", "db", "expected error for unmatched brace in CALL"},
+		{"TestPlanSingleQuery_CallBlockContainsFabricUseError", [][2]string{{"db", "db"}}, "CALL { USE } RETURN 1", "db", "expected error for invalid USE in CALL block"},
+		{"TestPlanSingleQuery_MidQueryUseInvalidUSE", [][2]string{{"db", "db"}}, "WITH a USE", "db", "expected error for bare USE"},
+		{"TestPlanSingleQuery_MidQueryUseValidateError", [][2]string{{"comp1", "comp1"}, {"comp1.a", "a"}, {"comp2.b", "b"}}, "WITH x USE comp2.b RETURN x", "comp1", "expected validation error for out-of-scope mid-query USE"},
+		{"TestPlanSingleQuery_MidQueryUseInnerError", [][2]string{{"db", "db"}, {"db.shard", "shard"}}, "WITH x USE db.shard USE ", "db", "expected error for invalid inner USE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			for _, graph := range test.graphs {
+				catalog.Register(graph[0], &LocationLocal{DBName: graph[1]})
+			}
+			planner := NewFabricPlanner(catalog)
+			_, err := planner.Plan(t.Context(), test.query, test.session, cyphertext.RawSource)
+			if err == nil {
+				t.Fatal(test.message)
+			}
+		})
+	}
+}
+
+// TestPlannerSuccessfulGraphProducts retains each original fragment assertion
+// while catalog setup, planning and error admission have one execution flow.
+func TestPlannerSuccessfulGraphProducts(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		graphs         [][2]string
+		query, session string
+		check          func(*testing.T, Fragment)
+	}{
+		{
+			name:   "TestPlan_SimpleQueryNoUse",
+			graphs: [][2]string{{"nornic", "nornic"}},
+			query:  "MATCH (n) RETURN n", session: "nornic",
+			check: func(t *testing.T, frag Fragment) {
+				exec, ok := frag.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected FragmentExec, got %T", frag)
+				}
+				if exec.GraphName != "nornic" {
+					t.Errorf("expected nornic, got %s", exec.GraphName)
+				}
+				if exec.Query != "MATCH (n) RETURN n" {
+					t.Errorf("expected original query, got %s", exec.Query)
+				}
+				if exec.IsWrite {
+					t.Error("expected IsWrite=false for read query")
+				}
+			},
+		},
+		{
+			name:   "TestPlan_UnionPartUse",
+			graphs: [][2]string{{"g1", "g1"}, {"g2", "g2"}},
+			query:  "USE g1 RETURN 1 AS x UNION ALL USE g2 RETURN 2 AS x", session: "nornic",
+			check: func(t *testing.T, frag Fragment) {
+				u, ok := frag.(*FragmentUnion)
+				if !ok {
+					t.Fatalf("expected FragmentUnion, got %T", frag)
+				}
+				if u.Distinct {
+					t.Fatalf("expected UNION ALL to set Distinct=false")
+				}
+
+				lhs, ok := u.LHS.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected lhs FragmentExec, got %T", u.LHS)
+				}
+				rhs, ok := u.RHS.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected rhs FragmentExec, got %T", u.RHS)
+				}
+				if lhs.GraphName != "g1" || rhs.GraphName != "g2" {
+					t.Fatalf("unexpected union graph routing lhs=%s rhs=%s", lhs.GraphName, rhs.GraphName)
+				}
+			},
+		},
+		{
+			name:   "TestPlanSingleQuery_MidQueryUseEmptyPrefix",
+			graphs: [][2]string{{"db", "db"}, {"db.shard", "shard"}},
+			query:  "USE db.shard RETURN 1 AS x", session: "db",
+			check: func(t *testing.T, frag Fragment) {
+				exec, ok := frag.(*FragmentExec)
+				if !ok {
+					t.Fatalf("expected FragmentExec, got %T", frag)
+				}
+				if exec.GraphName != "db.shard" {
+					t.Fatalf("expected db.shard, got %s", exec.GraphName)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			for _, graph := range test.graphs {
+				catalog.Register(graph[0], &LocationLocal{DBName: graph[1]})
+			}
+			planner := NewFabricPlanner(catalog)
+			fragment, err := planner.Plan(t.Context(), test.query, test.session, cyphertext.RawSource)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			test.check(t, fragment)
+		})
+	}
+}
+
+// TestParseLeadingWithUseBoundaries retains the original source and admission
+// assertions for each WITH boundary in one parser invocation flow.
+func TestParseLeadingWithUseBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name, source, message string
+		policy                int
+	}{
+		{"TestParseLeadingWithUse_NoWith", "MATCH (n) RETURN n", "expected no match for non-WITH, got ok=%v err=%v", 0},
+		{"TestParseLeadingWithUse_WithButNoUse", "WITH a MATCH (n) RETURN n", "expected no match for WITH without USE, got ok=%v err=%v", 0},
+		{"TestParseLeadingWithUse_EmptyRemainder", "WITH a USE db", "expected error for USE with no following query", 1},
+		{"TestParseLeadingWithUse_InvalidUseInWith", "WITH a USE ", "expected error for USE with no target in WITH...USE", 1},
+		// WITH clause that immediately ends (withEnd == 0 or withEnd <= 0).
+		{"TestParseLeadingWithUse_WithEndAtStart", "WITH", "expected false for bare WITH", 2},
+		// findLeadingWithClauseEnd("WITH MATCH (n)") finds MATCH as clause start -> withEnd=5.
+		// withClause = "WITH " (trimmed -> "WITH"), rest = "MATCH (n)".
+		// rest doesn't start with USE -> returns false.
+		{"TestParseLeadingWithUse_WithFindEndFail", "WITH MATCH (n)", "expected false for WITH immediately followed by MATCH", 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, ok, err := parseLeadingWithUse(t.Context(), test.source, nil)
+			switch test.policy {
+			case 0:
+				if err != nil || ok {
+					t.Fatalf(test.message, ok, err)
+				}
+			case 1:
+				if err == nil {
+					t.Fatal(test.message)
+				}
+			case 2:
+				if ok {
+					t.Fatal(test.message)
+				}
+			}
+		})
+	}
+}
+
+func TestCallBlockContainsFabricUse_NestedCall(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "TestCallBlockContainsFabricUse_NestedCall",
+			body: "CALL { USE db RETURN 1 } RETURN x",
+			want: true,
+		},
+		{
+			name: "TestCallBlockContainsFabricUse_NestedCallWithoutUse",
+			body: "CALL { MATCH (n) RETURN n } RETURN x",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := callBlockContainsFabricUse(t.Context(), tt.body, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ok != tt.want {
+				if tt.want {
+					t.Fatal("expected nested CALL with USE to be detected")
+				}
+				t.Fatal("expected false for nested CALL without USE")
+			}
+		})
+	}
+}
+
+func TestKeywordAt_BoundaryChecks(t *testing.T) {
+	type keywordCase struct {
+		text    string
+		index   int
+		want    bool
+		message string
+	}
+	for _, group := range []struct {
+		name  string
+		cases []keywordCase
+	}{
+		{"TestKeywordAt_BoundaryChecks", []keywordCase{
+			{"MATCH", -1, false, "expected false for negative index"},
+			{"MAT", 0, false, "expected false when keyword overflows"},
+			{"xMATCH", 1, false, "expected false when preceded by ident char"},
+			{"MATCHx", 0, false, "expected false when followed by ident char"},
+			{"MATCH (n)", 0, true, "expected true for standalone keyword"},
+			{"x MATCH", 2, true, "expected true for keyword at end"},
+		}},
+		{"TestHasKeywordAt_PrevIsIdentChar", []keywordCase{
+			{"xMATCH (n)", 1, false, "expected false when preceded by letter"},
+			{"1MATCH (n)", 1, false, "expected false when preceded by digit"},
+			{"_MATCH (n)", 1, false, "expected false when preceded by underscore"},
+		}},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			for _, test := range group.cases {
+				if keywordAt(test.text, test.index, "MATCH") != test.want {
+					t.Fatal(test.message)
+				}
 			}
 		})
 	}

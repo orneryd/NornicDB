@@ -326,6 +326,8 @@ type DatabaseAndStorage struct {
 // This initializes all database components including storage, decay management,
 // relationship inference, and search services based on the configuration. The
 // database is ready for use immediately after opening.
+// The supplied config owns the default database. Nil uses DefaultConfig; callers
+// loading environment or YAML settings pass the resolved config explicitly.
 //
 // # Initialization Steps
 //
@@ -651,6 +653,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				time.Duration(rearmMS)*time.Millisecond))
 	}
 
+	selectedDefaultDBName := config.Database.DefaultDatabase
+	if selectedDefaultDBName == "" {
+		selectedDefaultDBName = "nornic"
+	}
+
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
 	if dataDir != "" {
 		// Configure BadgerDB based on memory mode
@@ -960,20 +967,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 		// Wrap base storage with NamespacedEngine for the default database ("nornic")
 		// This ensures everything uses namespaced storage - no direct base storage access
-		// Get default database name from global config (same as server does)
-		globalConfig := nornicConfig.LoadFromEnv()
-		defaultDBName := globalConfig.Database.DefaultDatabase
-		if defaultDBName == "" {
-			defaultDBName = "nornic" // Fallback to "nornic" if not configured
-		}
-		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		// Use the same resolved config snapshot as the other startup components.
+		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
-			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, defaultDBName); err != nil {
+			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
 				_ = db.baseStorage.Close()
 				return nil, err
 			}
 		}
-		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
+		fmt.Printf("📦 Wrapped storage with namespace '%s' (all operations are namespaced)\n", selectedDefaultDBName)
 	} else {
 		var baseStorage storage.Engine = storage.NewMemoryEngine()
 		fmt.Println("⚠️  Using in-memory storage (data will not persist)")
@@ -990,20 +992,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		baseStorage = replicated
 
 		// Wrap in-memory storage with NamespacedEngine for consistency
-		// Get default database name from global config (same as server does)
-		globalConfig := nornicConfig.LoadFromEnv()
-		defaultDBName := globalConfig.Database.DefaultDatabase
-		if defaultDBName == "" {
-			defaultDBName = "nornic" // Fallback to "nornic" if not configured
-		}
-		db.storage = storage.NewNamespacedEngine(baseStorage, defaultDBName)
+		// Use the same resolved config snapshot as the other startup components.
+		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
-			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, defaultDBName); err != nil {
+			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
 				_ = db.baseStorage.Close()
 				return nil, err
 			}
 		}
-		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
+		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", selectedDefaultDBName)
 	}
 	// How long change data capture events are kept (#937).
 	if capture, ok := storage.ChangeCaptureOf(db.baseStorage); ok {
@@ -1754,112 +1751,6 @@ func (db *DB) SetEmbedQueueShouldYield(fn func() bool) {
 	if q != nil {
 		q.SetShouldYield(fn)
 	}
-}
-
-// SetDefaultEmbedConfig binds the default provider configuration for per-database
-// embedder selection and failure diagnostics. It may be set before or after the
-// provider is published.
-func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
-	if defaultConfig == nil {
-		return
-	}
-	db.mu.Lock()
-	eq := db.embedQueue
-	closed := db.closed
-	db.mu.Unlock()
-	if closed {
-		return
-	}
-	key := embedConfigKey(defaultConfig)
-	configCopy := *defaultConfig
-	db.embedderRegistryMu.Lock()
-	db.defaultEmbedConfig = &configCopy
-	if eq != nil {
-		if defaultEmbedder := eq.currentEmbedder(); defaultEmbedder != nil {
-			if db.embedderRegistry == nil {
-				db.embedderRegistry = make(map[string]embed.Embedder)
-			}
-			db.embedderRegistry[key] = defaultEmbedder
-			db.defaultEmbedKey = key
-		}
-	}
-	db.embedderRegistryMu.Unlock()
-	db.refreshEmbedFailureRedactor()
-}
-
-func (db *DB) registerDefaultEmbedder(embedder embed.Embedder) {
-	if embedder == nil {
-		return
-	}
-	db.embedderRegistryMu.Lock()
-	if db.defaultEmbedConfig != nil {
-		if db.embedderRegistry == nil {
-			db.embedderRegistry = make(map[string]embed.Embedder)
-		}
-		key := embedConfigKey(db.defaultEmbedConfig)
-		db.embedderRegistry[key] = embedder
-		db.defaultEmbedKey = key
-	}
-	db.embedderRegistryMu.Unlock()
-}
-
-// SetEmbedConfigForDB sets the optional resolver that returns resolved embed config for a database.
-// When set, EmbedQueryForDB uses the embedder registry (get or create by config key) instead of the global embedder.
-func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
-	db.mu.Lock()
-	db.embedConfigForDB = fn
-	queue := db.embedQueue
-	db.mu.Unlock()
-	if queue == nil {
-		return
-	}
-	if fn == nil {
-		queue.SetEmbedderResolver(nil)
-		db.refreshEmbedFailureRedactor()
-		return
-	}
-	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
-		dbName, _, ok := splitQualifiedID(string(nodeID))
-		if !ok {
-			return nil, nil
-		}
-		return db.getOrCreateEmbedderForDB(dbName)
-	})
-	db.refreshEmbedFailureRedactor()
-}
-
-// refreshEmbedFailureRedactor binds the durable error owner to the same
-// default or per-database config that selects the provider. This runs when
-// configuration changes and on the worker's failure/read paths, not per query.
-func (db *DB) refreshEmbedFailureRedactor() {
-	db.mu.RLock()
-	queue := db.embedQueue
-	configForDB := db.embedConfigForDB
-	db.mu.RUnlock()
-	if queue == nil {
-		return
-	}
-	db.embedderRegistryMu.RLock()
-	var defaultConfig *embed.Config
-	if db.defaultEmbedConfig != nil {
-		copy := *db.defaultEmbedConfig
-		defaultConfig = &copy
-	}
-	db.embedderRegistryMu.RUnlock()
-	queue.SetFailureErrorRedactor(func(nodeID storage.NodeID, failure error) error {
-		config := defaultConfig
-		if configForDB != nil {
-			if dbName, _, qualified := splitQualifiedID(string(nodeID)); qualified {
-				if resolved, err := configForDB(dbName); err == nil && resolved != nil {
-					config = resolved
-				}
-			}
-		}
-		if config == nil {
-			return observability.RedactError(failure)
-		}
-		return observability.RedactClientError(failure, config.APIURL, config.APIKey)
-	})
 }
 
 // getOrCreateEmbedderForDB returns the embedder for the given database, using the registry when embedConfigForDB is set.
