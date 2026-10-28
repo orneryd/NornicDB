@@ -1030,6 +1030,10 @@
   "pkg/observability/redaction_display.go": [
     "forEachCredentialURL"
   ],
+  "pkg/qdrantgrpc/snapshots_service.go": [
+    "Create",
+    "CreateFull"
+  ],
   "pkg/replication/storage_adapter.go": [
     "NewStorageAdapter",
     "NewStorageAdapterWithWAL"
@@ -1042,6 +1046,9 @@
   ],
   "pkg/storage/badger_nodes.go": [
     "UpdateNode"
+  ],
+  "pkg/storage/badger_serialization.go": [
+    "encode"
   ],
   "pkg/storage/constraint_contracts.go": [
     "ccScanLabels",
@@ -1060,6 +1067,24 @@
   ],
   "pkg/storage/remote_parameters.go": [
     "remoteHTTPRewrite"
+  ],
+  "pkg/storage/snapshot_collection.go": [
+    "writeSnapshotCollection",
+    "writeSnapshotRecords"
+  ],
+  "pkg/storage/snapshot_stream.go": [
+    "SaveStreamingSnapshot",
+    "WriteSnapshot",
+    "write"
+  ],
+  "pkg/storage/wal.go": [
+    "SaveSnapshot",
+    "saveSnapshot"
+  ],
+  "pkg/storage/wal_engine.go": [
+    "EnableAutoCompaction",
+    "autoSnapshotLoop",
+    "createSnapshotAndCompact"
   ],
   "ui/src/store/appStore.ts": [],
   "ui/src/utils/cypherStatements.ts": [],

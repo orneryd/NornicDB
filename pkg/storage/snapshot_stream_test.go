@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -123,6 +124,15 @@ func (e *failingStreamingSnapshotEngine) StreamStoredEdgesByType(ctx context.Con
 	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, fn)
 }
 
+// writeFrame is this file's one frame producer for hand-built streams: the
+// same snapshotFrameWriter (and its reusable encoder) that writes real
+// snapshots, so corruption fixtures carry production frames.
+func writeFrame(t *testing.T, writer io.Writer, frameType byte, value any) {
+	t.Helper()
+	frames := snapshotFrameWriter{writer: writer}
+	require.NoError(t, frames.write(frameType, value, defaultSnapshotRecordSize))
+}
+
 func streamingSnapshotHeader(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var output bytes.Buffer
@@ -184,27 +194,27 @@ func TestReadSnapshotRejectsInvalidStructure(t *testing.T) {
 
 	t.Run("unknown frame", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, 77, map[string]string{"value": "unknown"}, defaultSnapshotRecordSize))
+		writeFrame(t, input, 77, map[string]string{"value": "unknown"})
 		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "unknown streaming snapshot frame type 77")
 	})
 
 	t.Run("footer count mismatch", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, streamSnapshotFooter, struct {
+		writeFrame(t, input, streamSnapshotFooter, struct {
 			Nodes uint64 `json:"nodes"`
 			Edges uint64 `json:"edges"`
-		}{Nodes: 1}, defaultSnapshotRecordSize))
+		}{Nodes: 1})
 		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "footer count mismatch")
 	})
 
 	t.Run("trailing data", func(t *testing.T) {
 		input := streamingSnapshotHeader(t)
-		require.NoError(t, writeSnapshotFrame(input, streamSnapshotFooter, struct {
+		writeFrame(t, input, streamSnapshotFooter, struct {
 			Nodes uint64 `json:"nodes"`
 			Edges uint64 `json:"edges"`
-		}{}, defaultSnapshotRecordSize))
+		}{})
 		input.WriteByte(0)
 		_, err := ReadSnapshot(bytes.NewReader(input.Bytes()), &collectingSnapshotVisitor{})
 		require.ErrorContains(t, err, "trailing data")

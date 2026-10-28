@@ -56,42 +56,23 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", defaultSnapshotRecordSize)
 	}
 
-	buffered := bufio.NewWriter(writer)
-	if err := writeSnapshotHeader(buffered, options.Sequence, time.Now()); err != nil {
-		return err
-	}
-
 	// A snapshot holds what storage holds: the entities the visibility
 	// layer hides from reads are stored data too, and the WAL is truncated
 	// once the snapshot is written.
-	var nodeCount uint64
-	if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
-			return err
-		}
-		nodeCount++
-		return nil
-	}); err != nil {
-		return fmt.Errorf("stream snapshot nodes: %w", err)
-	}
-	var edgeCount uint64
-	if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotEdge, edge, maxRecordBytes); err != nil {
-			return err
-		}
-		edgeCount++
-		return nil
-	}); err != nil {
-		return fmt.Errorf("stream snapshot edges: %w", err)
-	}
-	footer := struct {
-		Nodes uint64 `json:"nodes"`
-		Edges uint64 `json:"edges"`
-	}{Nodes: nodeCount, Edges: edgeCount}
-	if err := writeSnapshotFrame(buffered, streamSnapshotFooter, footer, maxRecordBytes); err != nil {
-		return err
-	}
-	return buffered.Flush()
+	return writeSnapshotRecords(writer, options.Sequence, time.Now(), maxRecordBytes, nil,
+		func(write func(byte, any) error) error {
+			if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
+				return write(streamSnapshotNode, snapshotNodeVectorMetadata(node))
+			}); err != nil {
+				return fmt.Errorf("stream snapshot nodes: %w", err)
+			}
+			if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
+				return write(streamSnapshotEdge, edge)
+			}); err != nil {
+				return fmt.Errorf("stream snapshot edges: %w", err)
+			}
+			return nil
+		})
 }
 
 // SaveStreamingSnapshot writes a framed snapshot using temp-file, sync, and
@@ -222,24 +203,33 @@ func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapsho
 	}
 }
 
-func writeSnapshotFrame(writer io.Writer, frameType byte, value any, maxRecordBytes int64) error {
-	payload, err := encodeRecoveryPayload(value)
+// A snapshot has one writer and one reusable encoder for all of its frames.
+// Neither output bytes nor scratch escape to the next stream or goroutine.
+type snapshotFrameWriter struct {
+	writer  io.Writer
+	encoder valueEncoder
+	scratch [5]byte
+}
+
+func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes int64) error {
+	payload, err := w.encoder.recovery(value)
 	if err != nil {
 		return err
 	}
 	if int64(len(payload)) > maxRecordBytes {
 		return fmt.Errorf("snapshot record is %d bytes, exceeds limit %d", len(payload), maxRecordBytes)
 	}
-	if _, err := writer.Write([]byte{frameType}); err != nil {
+	w.scratch[0] = frameType
+	binary.LittleEndian.PutUint32(w.scratch[1:], uint32(len(payload)))
+	if _, err := w.writer.Write(w.scratch[:]); err != nil {
 		return err
 	}
-	if err := binary.Write(writer, binary.LittleEndian, uint32(len(payload))); err != nil {
+	if _, err := w.writer.Write(payload); err != nil {
 		return err
 	}
-	if _, err := writer.Write(payload); err != nil {
-		return err
-	}
-	return binary.Write(writer, binary.LittleEndian, crc32Checksum(payload))
+	binary.LittleEndian.PutUint32(w.scratch[:4], crc32Checksum(payload))
+	_, err = w.writer.Write(w.scratch[:4])
+	return err
 }
 
 func readSnapshotFrame(reader io.Reader) (byte, []byte, error) {
