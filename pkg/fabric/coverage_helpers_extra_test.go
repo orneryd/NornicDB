@@ -271,25 +271,34 @@ func TestFabricParserHelperExtraBranches(t *testing.T) {
 	require.Equal(t, -1, indexTopLevelKeyword("RETURN `MATCH` AS word", "MATCH"))
 	require.GreaterOrEqual(t, indexTopLevelKeyword("WITH x MATCH (n) RETURN n", "MATCH"), 0)
 
-	items, ok := readPropertyReturnItems("n.name AS name, n.age AS age", "n")
+	projection, ok := readApplyLookupProjection(applyLookupShapeRows, "n.name AS name, n.age AS age", "n")
 	require.True(t, ok)
-	require.Equal(t, []string{"name", "age"}, aliasesFromReturnItems(items))
-	require.False(t, func() bool { _, ok := readPropertyReturnItems("m.name AS name", "n"); return ok }())
+	require.Equal(t, []string{"name", "age"}, projection.aliases)
 	require.False(t, func() bool {
-		_, ok := readPropertyReturnItems("n.name AS bad-alias", "n")
+		_, ok := readApplyLookupProjection(applyLookupShapeRows, "m.name AS name", "n")
+		return ok
+	}())
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeRows, "n.name AS bad-alias", "n")
 		return ok
 	}())
 
-	collectExpr, alias, ok := parseSimpleCollectReturnItem("collect(n) AS nodes")
+	collected, ok := readApplyLookupProjection(applyLookupShapeCollect, "collect(n) AS nodes", "")
 	require.True(t, ok)
-	require.Equal(t, "n", collectExpr)
-	require.Equal(t, "nodes", alias)
-	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("count(n) AS c"); return ok }())
-	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("collect() AS empty"); return ok }())
+	require.Equal(t, "n", collected.collectExpression)
+	require.Equal(t, "nodes", collected.collectAlias)
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeCollect, "count(n) AS c", "")
+		return ok
+	}())
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeCollect, "collect() AS empty", "")
+		return ok
+	}())
 
-	countItems, ok := readCountReturnItems("count(*) AS total")
+	counted, ok := readApplyLookupProjection(applyLookupShapeCount, "count(*) AS total", "")
 	require.True(t, ok)
-	require.Equal(t, []string{"total"}, aliasesFromCountReturnItems(countItems))
+	require.Equal(t, []string{"total"}, counted.aliases)
 	require.Equal(t, []interface{}{int64(0), int64(0)}, zeroCountValues(2))
 
 	bindings := bindingsFromParentAndRow(map[string]interface{}{"parent": 1}, []string{"a", "", "c"}, []interface{}{2, 3})

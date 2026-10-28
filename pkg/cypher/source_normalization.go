@@ -35,7 +35,7 @@ func (r *queryRewrite) restoreSourceError(err error) (error, bool) {
 	if err == nil {
 		return nil, false
 	}
-	restoredText, changed := r.restoreValue(err.Error(), sourceDiagnosticText)
+	restoredText, changed := (resultRestoration{source: r}).value(err.Error(), sourceDiagnosticText)
 	message := restoredText.(string)
 	var semanticCopy *SemanticError
 	var localizedCopy *localization.LocalizedError
@@ -54,7 +54,7 @@ func (r *queryRewrite) restoreSourceError(err error) (error, bool) {
 	}
 	var localized *localization.LocalizedError
 	if errors.As(err, &localized) {
-		if restored, mapped := r.restoreValue(localized.Message, sourceValueText); mapped {
+		if restored, mapped := (resultRestoration{source: r}).value(localized.Message, sourceValueText); mapped {
 			copy := *localized
 			copy.Message = restored.(localization.Message)
 			localizedCopy = &copy
@@ -82,13 +82,26 @@ const (
 	trimSourceTerminator
 )
 
+// sourceWhitespaceExtent returns the half-open byte extent of text with
+// Unicode White_Space trimmed from both ends. It uses the shared lexer's
+// IsWhitespace classification (unicode.IsSpace) so callers and the
+// normalization tables agree on one whitespace population. The end is
+// clamped so it is never smaller than start.
+func sourceWhitespaceExtent(text string) (start, end int) {
+	start = len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
+	end = len(strings.TrimRightFunc(text, cyphertext.IsWhitespace))
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
 func trimSourceText(ctx context.Context, text string, policy sourceTrimPolicy) (context.Context, string) {
 	source := cyphertext.SourceFor(ctx, text)
-	left := strings.TrimLeftFunc(text, cyphertext.IsWhitespace)
-	trimmed := strings.TrimSpace(text)
+	start, end := sourceWhitespaceExtent(text)
+	trimmed := text[start:end]
 	if policy == trimSourceTerminator {
 		trimmed = trimTrailingStatementDelimiters(trimmed)
 	}
-	start := len(text) - len(left)
 	return cyphertext.WithSourceView(ctx, source.Window(start, start+len(trimmed))), trimmed
 }

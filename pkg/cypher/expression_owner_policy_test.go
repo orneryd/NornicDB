@@ -4,35 +4,6 @@ import "testing"
 
 var numericAdmissionResult bool
 
-func BenchmarkNumericExpressionPrefixAdmission(b *testing.B) {
-	expressions := []string{"1", "-1bad", "1e-3", "0xff", ".5", "+1", " 1", "", "variable", "12345678901234567890"}
-	var result bool
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		result = numericExpressionAccepted(expressions[i%len(expressions)], numericValuePrefix)
-	}
-	numericAdmissionResult = result
-}
-
-func TestExpressionTextPolicyPopulations(t *testing.T) {
-	for _, test := range []struct {
-		text              string
-		operator, operand bool
-	}{
-		{"", true, false}, {"[1+2]", false, true}, {"{k:1+2}", false, true}, {"-[1]", true, true}, {"- [1]", true, true},
-		{"(a)-[:R]->(b)", false, false}, {"n {.*, k:1}", false, false}, {"n {k:1}", false, false},
-		{"1 + n.k", true, true}, {"toString(n.k)", true, true}, {"(n.k)", true, true}, {"$p", true, true}, {"-x", true, true},
-		{"x ; y", true, false}, {"--[1]", false, false},
-	} {
-		if got := expressionTextAccepted(test.text, expressionTextOperator); got != test.operator {
-			t.Errorf("operator %q=%v want %v", test.text, got, test.operator)
-		}
-		if got := expressionTextAccepted(test.text, expressionTextOperand); got != test.operand {
-			t.Errorf("operand %q=%v want %v", test.text, got, test.operand)
-		}
-	}
-}
-
 func TestRowOperandPolicyPopulations(t *testing.T) {
 	for _, test := range []struct {
 		text             string
@@ -76,38 +47,72 @@ func TestRowOperandPolicyPopulations(t *testing.T) {
 	}
 }
 
-func TestNumericExpressionPolicyPopulations(t *testing.T) {
-	for _, test := range []struct {
-		text             string
-		prefix, constant bool
+var constantNumericAccepted int
+
+func TestExpressionAdmissionPolicyPopulations(t *testing.T) {
+	type admissionCase struct {
+		text          string
+		first, second bool
+	}
+	for _, population := range []struct {
+		name   string
+		cases  []admissionCase
+		accept func(string) (bool, bool)
+		labels [2]string
 	}{
-		{"", false, false}, {"1", true, true}, {"-1bad", true, false}, {".5", false, true}, {"-.5", false, true}, {"+1", false, true}, {" 1", false, true},
-		{"0xff", true, true}, {"0o17", true, true}, {"1e-3", true, true}, {"1e", true, false}, {"0x", true, false}, {"(1 + 2) * 3", false, true},
-		{"variable", false, false}, {"1 2", true, true}, {"1++2", true, true}, {"-", false, false},
-		// Admission is a token-population check; grammar validation happens later.
-		{"--1", false, true}, {"1..2", true, false}, {"1.2.3", true, false}, {"0x1.2", true, false},
-		{"١", false, false}, {"é1", false, false}, {"1é", true, false}, {"\t1", false, true}, {"1\u00a0+2", true, true},
-		{" ", false, false}, {".", false, false}, {"/", false, false}, {"_1", false, false}, {"\x001", false, false}, {"1\x00", true, false},
+		{name: "TestExpressionTextPolicyPopulations", labels: [2]string{"operator", "operand"}, accept: func(text string) (bool, bool) {
+			return expressionTextAccepted(text, expressionTextOperator), expressionTextAccepted(text, expressionTextOperand)
+		}, cases: []admissionCase{
+			{"", true, false}, {"[1+2]", false, true}, {"{k:1+2}", false, true}, {"-[1]", true, true}, {"- [1]", true, true},
+			{"(a)-[:R]->(b)", false, false}, {"n {.*, k:1}", false, false}, {"n {k:1}", false, false},
+			{"1 + n.k", true, true}, {"toString(n.k)", true, true}, {"(n.k)", true, true}, {"$p", true, true}, {"-x", true, true},
+			{"x ; y", true, false}, {"--[1]", false, false},
+		}},
+		{name: "TestNumericExpressionPolicyPopulations", labels: [2]string{"prefix", "constant"}, accept: func(text string) (bool, bool) {
+			return numericExpressionAccepted(text, numericValuePrefix), numericExpressionAccepted(text, numericConstantPopulation)
+		}, cases: []admissionCase{
+			{"", false, false}, {"1", true, true}, {"-1bad", true, false}, {".5", false, true}, {"-.5", false, true}, {"+1", false, true}, {" 1", false, true},
+			{"0xff", true, true}, {"0o17", true, true}, {"1e-3", true, true}, {"1e", true, false}, {"0x", true, false}, {"(1 + 2) * 3", false, true},
+			{"variable", false, false}, {"1 2", true, true}, {"1++2", true, true}, {"-", false, false},
+			// Admission is a token-population check; grammar validation happens later.
+			{"--1", false, true}, {"1..2", true, false}, {"1.2.3", true, false}, {"0x1.2", true, false},
+			{"١", false, false}, {"é1", false, false}, {"1é", true, false}, {"\t1", false, true}, {"1\u00a0+2", true, true},
+			{" ", false, false}, {".", false, false}, {"/", false, false}, {"_1", false, false}, {"\x001", false, false}, {"1\x00", true, false},
+		}},
 	} {
-		if got := numericExpressionAccepted(test.text, numericValuePrefix); got != test.prefix {
-			t.Errorf("prefix %q=%v want %v", test.text, got, test.prefix)
-		}
-		if got := numericExpressionAccepted(test.text, numericConstantPopulation); got != test.constant {
-			t.Errorf("constant %q=%v want %v", test.text, got, test.constant)
-		}
+		t.Run(population.name, func(t *testing.T) {
+			for _, test := range population.cases {
+				first, second := population.accept(test.text)
+				if first != test.first {
+					t.Errorf("%s %q=%v want %v", population.labels[0], test.text, first, test.first)
+				}
+				if second != test.second {
+					t.Errorf("%s %q=%v want %v", population.labels[1], test.text, second, test.second)
+				}
+			}
+		})
 	}
 }
 
-var constantNumericAccepted int
-
-func BenchmarkConstantNumericExpressionAdmission(b *testing.B) {
-	expressions := []string{"1+2", "(1.5 - .25)*0xff/0o17", "1e-3 + 2.5e4", "-1bad", "1..2", "1 2", "", "١ + 2", "0x1 + 0o7", "((123456789 * 2) - 7) / 5"}
-	accepted := 0
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if numericExpressionAccepted(expressions[i%len(expressions)], numericConstantPopulation) {
-			accepted++
+func BenchmarkNumericExpressionAdmission(b *testing.B) {
+	b.Run("BenchmarkNumericExpressionPrefixAdmission", func(b *testing.B) {
+		expressions := []string{"1", "-1bad", "1e-3", "0xff", ".5", "+1", " 1", "", "variable", "12345678901234567890"}
+		var result bool
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			result = numericExpressionAccepted(expressions[i%len(expressions)], numericValuePrefix)
 		}
-	}
-	constantNumericAccepted = accepted
+		numericAdmissionResult = result
+	})
+	b.Run("BenchmarkConstantNumericExpressionAdmission", func(b *testing.B) {
+		expressions := []string{"1+2", "(1.5 - .25)*0xff/0o17", "1e-3 + 2.5e4", "-1bad", "1..2", "1 2", "", "١ + 2", "0x1 + 0o7", "((123456789 * 2) - 7) / 5"}
+		accepted := 0
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if numericExpressionAccepted(expressions[i%len(expressions)], numericConstantPopulation) {
+				accepted++
+			}
+		}
+		constantNumericAccepted = accepted
+	})
 }

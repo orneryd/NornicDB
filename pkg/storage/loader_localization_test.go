@@ -1,15 +1,12 @@
 package storage
 
 import (
-	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 type loaderUnsupportedEngine struct{ Engine }
@@ -53,20 +50,6 @@ func TestStorageLoaderLocalizedPublicErrors(t *testing.T) {
 		localizedErr := requireStorageLoaderLocalizedError(t, err, localization.MessageStorageLoaderExportEngineUnsupported, "SaveToNeo4jExport: engine type <nil> does not support full export")
 		require.Equal(t, "<nil>", localizedErr.Message.Data["EngineType"])
 	})
-}
-
-func TestStorageLoaderCatalogsRenderNamedArguments(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.StorageLoaderCreatingFile("/tmp/export.json", errors.New("permission denied"))
-
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, "al crear el archivo: permission denied", spanish)
-
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, "[!! creating file: permission denied !!]", pseudo)
 }
 
 func writeLoaderFixture(path, content string) error {

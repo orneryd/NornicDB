@@ -48,15 +48,23 @@ func DigitRun(text string, start, base int, leadingUnderscore bool) (end int, va
 	return end, valid && digits > 0 && !previousUnderscore, grouped
 }
 
-// NumberStartsAt excludes name/parameter continuations and the second range dot.
-func NumberStartsAt(text string, start int) bool {
+// numberStartsAtByte reports the byte-start admission shared by NumberStartsAt
+// and ScanNumber: start in range and a digit, or a dot followed by a digit.
+// Boundary checks (preceding name part, range dot) remain NumberStartsAt's.
+func numberStartsAtByte(text string, start int) bool {
 	if start < 0 || start >= len(text) {
 		return false
 	}
 	character := text[start]
-	if !IsDigit(character) && !(character == '.' && start+1 < len(text) && IsDigit(text[start+1])) {
+	return IsDigit(character) || character == '.' && start+1 < len(text) && IsDigit(text[start+1])
+}
+
+// NumberStartsAt excludes name/parameter continuations and the second range dot.
+func NumberStartsAt(text string, start int) bool {
+	if !numberStartsAtByte(text, start) {
 		return false
 	}
+	character := text[start]
 	return start == 0 || !NamePartAt(text, start-1) && !(character == '.' && text[start-1] == '.')
 }
 
@@ -64,7 +72,7 @@ func NumberStartsAt(text string, start int) bool {
 // exponents are separate operators. In 1..2 the number ends before the dots.
 func ScanNumber(text string, start int) (Number, bool) {
 	number := Number{Start: start, End: start, TailEnd: start, Base: 10, DigitsStart: start, GroupingValid: true}
-	if start < 0 || start >= len(text) || !IsDigit(text[start]) && !(text[start] == '.' && start+1 < len(text) && IsDigit(text[start+1])) {
+	if !numberStartsAtByte(text, start) {
 		return number, false
 	}
 	if text[start] == '0' && start+1 < len(text) {

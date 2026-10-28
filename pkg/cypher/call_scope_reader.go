@@ -1,10 +1,11 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-
 	"context"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type callSubqueryScopeClause struct {
@@ -22,24 +23,30 @@ type callSubqueryScopeClause struct {
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	invalidScope := err != nil
+	if invalidScope && ctx.Err() == nil {
+		// Refine only an existing grammar rejection. Procedure arguments and
+		// a later syntax error do not constitute a malformed import scope.
+		invalidScope = malformedCallScopeError(ctx, source) != nil
+	}
 	if !syntax.Valid() {
-		return callSubqueryScopeClause{invalid: err != nil}
+		return callSubqueryScopeClause{invalid: invalidScope}
 	}
 	first, _ := syntax.LeadingCall()
 	if !first.Valid() {
-		return callSubqueryScopeClause{invalid: err != nil}
+		return callSubqueryScopeClause{invalid: invalidScope}
 	}
 	if first.Rule() == cypherantlr.CypherParserRULE_callSubquery {
 		scope := scopeClauseFromSyntax(first)
-		scope.invalid = err != nil
+		scope.invalid = invalidScope
 		return scope
 	}
 	name := first.ChildRule(cypherantlr.CypherParserRULE_invocationName)
 	if name.Valid() {
 		start, _ := name.Span()
-		return callSubqueryScopeClause{bodyOffset: start, invalid: err != nil}
+		return callSubqueryScopeClause{bodyOffset: start, invalid: invalidScope}
 	}
-	return callSubqueryScopeClause{invalid: err != nil}
+	return callSubqueryScopeClause{invalid: invalidScope}
 }
 
 // malformedCallScopeError refines a grammar rejection using CALL's canonical
@@ -63,6 +70,10 @@ func malformedCallScopeError(ctx context.Context, source string) error {
 		}
 		close := cyphertext.FindMatchingDelimiter(source, open, '(', ')', cyphertext.OpeningDelimiter)
 		if close < 0 {
+			leading, unfinished := cyphertext.GapEnd(source, 0)
+			if unfinished < 0 && call == leading {
+				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
+			}
 			continue
 		}
 		body, unfinished := cyphertext.GapEnd(source, close+1)

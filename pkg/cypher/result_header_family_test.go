@@ -162,6 +162,50 @@ func TestResultHeaderFamilyMatrix(t *testing.T) {
 		})
 	}
 
+	t.Run("USE", func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "header-use"))
+		for _, input := range []string{"[]", "[1]"} {
+			for _, body := range []string{
+				"USE neo4j UNWIND " + input + " AS before RETURN *",
+				"USE neo4j UNWIND " + input + " AS before RETURN before",
+				"USE neo4j CALL { UNWIND " + input + " AS before RETURN * } RETURN *",
+			} {
+				for _, outer := range []string{"", "UNWIND [] AS outerValue ", "UNWIND [1] AS outerValue "} {
+					columns := []string{"before"}
+					if outer != "" {
+						columns = append(columns, "outerValue")
+					}
+					query := outer + "CALL { " + body + " } RETURN *"
+					for _, op := range []string{"", " UNION ", " UNION ALL "} {
+						full := query
+						if op != "" {
+							full += op + query
+						}
+						t.Run(full, func(t *testing.T) {
+							assertResultHeaderViews(t, ctx, exec, reference, resultHeaderCase{name: full, query: full, columns: columns}, []bool{false})
+						})
+					}
+				}
+			}
+		}
+		for _, query := range []string{
+			"LOAD CSV FROM 'file:///unused' AS row RETURN *",
+			"LOAD CSV FROM 'file:///unused' AS row RETURN * UNION RETURN 1 AS value",
+		} {
+			t.Run("unknown/"+query, func(t *testing.T) {
+				require.Nil(t, exec.StatementColumns(query), "unknown must not be a fabricated empty header or wildcard")
+				_, err := exec.Execute(ctx, "EXPLAIN "+query, nil)
+				require.Error(t, err, "unresolved metadata must not be successful EXPLAIN")
+				exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {
+					t.Fatal("incomplete statement became known")
+				}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
+					require.Error(t, reason.Err)
+					require.NotContains(t, reason.Err.Error(), "same return column names", "incomplete facts cannot cause a UNION mismatch")
+				})
+			})
+		}
+	})
+
 }
 
 func BenchmarkResultHeaderUnionYield(b *testing.B) {
@@ -177,58 +221,6 @@ func BenchmarkResultHeaderUnionYield(b *testing.B) {
 		if _, err := exec.Execute(ctx, query, map[string]interface{}{"nonce": i}); err != nil {
 			b.Fatal(err)
 		}
-	}
-}
-
-func TestResultHeaderUseMatrix(t *testing.T) {
-	ctx := context.Background()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "header-use"))
-	var reference neo4j.DriverWithContext
-	if uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI"); uri != "" {
-		var err error
-		reference, err = neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, reference.Close(ctx)) })
-	}
-	for _, input := range []string{"[]", "[1]"} {
-		for _, body := range []string{
-			"USE neo4j UNWIND " + input + " AS before RETURN *",
-			"USE neo4j UNWIND " + input + " AS before RETURN before",
-			"USE neo4j CALL { UNWIND " + input + " AS before RETURN * } RETURN *",
-		} {
-			for _, outer := range []string{"", "UNWIND [] AS outerValue ", "UNWIND [1] AS outerValue "} {
-				columns := []string{"before"}
-				if outer != "" {
-					columns = append(columns, "outerValue")
-				}
-				query := outer + "CALL { " + body + " } RETURN *"
-				for _, op := range []string{"", " UNION ", " UNION ALL "} {
-					full := query
-					if op != "" {
-						full += op + query
-					}
-					t.Run(full, func(t *testing.T) {
-						assertResultHeaderViews(t, ctx, exec, reference, resultHeaderCase{name: full, query: full, columns: columns}, []bool{false})
-					})
-				}
-			}
-		}
-	}
-	for _, query := range []string{
-		"LOAD CSV FROM 'file:///unused' AS row RETURN *",
-		"LOAD CSV FROM 'file:///unused' AS row RETURN * UNION RETURN 1 AS value",
-	} {
-		t.Run("unknown/"+query, func(t *testing.T) {
-			require.Nil(t, exec.StatementColumns(query), "unknown must not be a fabricated empty header or wildcard")
-			_, err := exec.Execute(ctx, "EXPLAIN "+query, nil)
-			require.Error(t, err, "unresolved metadata must not be successful EXPLAIN")
-			exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {
-				t.Fatal("incomplete statement became known")
-			}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
-				require.Error(t, reason.Err)
-				require.NotContains(t, reason.Err.Error(), "same return column names", "incomplete facts cannot cause a UNION mismatch")
-			})
-		})
 	}
 }
 

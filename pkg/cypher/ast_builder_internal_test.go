@@ -72,25 +72,25 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 	})
 
 	t.Run("parseReturn and parseWith handle distinct and aliases", func(t *testing.T) {
-		ret := builder.parseReturn(t.Context(), cyphertext.NormalizeSource("RETURN DISTINCT n.name AS name, count(*) AS total"))
+		ret := builder.parseClause(t.Context(), ASTClauseReturn, cyphertext.NormalizeSource("RETURN DISTINCT n.name AS name, count(*) AS total")).Return
 		require.True(t, ret.Distinct)
 		require.Len(t, ret.Items, 2)
 		assert.Equal(t, "name", ret.Items[0].Alias)
 		assert.Equal(t, "total", ret.Items[1].Alias)
 
-		withClause := builder.parseWith(t.Context(), cyphertext.NormalizeSource("WITH DISTINCT n.name AS name, n.age"))
+		withClause := builder.parseClause(t.Context(), ASTClauseWith, cyphertext.NormalizeSource("WITH DISTINCT n.name AS name, n.age")).With
 		require.True(t, withClause.Distinct)
 		require.Len(t, withClause.Items, 2)
 		assert.Equal(t, "name", withClause.Items[0].Alias)
 		assert.Equal(t, "", withClause.Items[1].Alias)
 
-		ret = builder.parseReturn(t.Context(), cyphertext.NormalizeSource("RETURN {name: 'Alice', age: 1} AS profile, , n"))
+		ret = builder.parseClause(t.Context(), ASTClauseReturn, cyphertext.NormalizeSource("RETURN {name: 'Alice', age: 1} AS profile, , n")).Return
 		require.Len(t, ret.Items, 2)
 		assert.Equal(t, ASTExprMap, ret.Items[0].Expression.Type)
 		assert.Equal(t, "profile", ret.Items[0].Alias)
 		assert.Equal(t, ASTExprVariable, ret.Items[1].Expression.Type)
 
-		withClause = builder.parseWith(t.Context(), cyphertext.NormalizeSource("WITH n, , {active: true} AS meta"))
+		withClause = builder.parseClause(t.Context(), ASTClauseWith, cyphertext.NormalizeSource("WITH n, , {active: true} AS meta")).With
 		require.Len(t, withClause.Items, 2)
 		assert.Equal(t, ASTExprVariable, withClause.Items[0].Expression.Type)
 		assert.Equal(t, ASTExprMap, withClause.Items[1].Expression.Type)
@@ -108,9 +108,9 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 		require.Len(t, orderBy.Items, 1)
 		assert.Equal(t, ASTExprProperty, orderBy.Items[0].Expression.Type)
 
-		limit := builder.parseLimit(cyphertext.NormalizeSource("LIMIT nope"))
+		limit := builder.parseClause(t.Context(), ASTClauseLimit, cyphertext.NormalizeSource("LIMIT nope")).Limit
 		assert.Nil(t, limit)
-		skip := builder.parseSkip(cyphertext.NormalizeSource("SKIP nope"))
+		skip := builder.parseClause(t.Context(), ASTClauseSkip, cyphertext.NormalizeSource("SKIP nope")).Skip
 		assert.Nil(t, skip)
 
 		call := builder.parseCall(cyphertext.NormalizeSource("CALL db.labels"))

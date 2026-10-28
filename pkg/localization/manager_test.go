@@ -85,10 +85,7 @@ func TestManagerContextOverrideAndFallback(t *testing.T) {
 }
 
 func TestManagerWarnsOnceForMissingPack(t *testing.T) {
-	var output bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&output, nil))
-	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, logger)
-	require.NoError(t, err)
+	manager, output := newWarningManager(t, language.AmericanEnglish)
 
 	manager.Resolve("http", language.French)
 	manager.Resolve("http", language.French)
@@ -97,10 +94,7 @@ func TestManagerWarnsOnceForMissingPack(t *testing.T) {
 }
 
 func TestManagerWarnsOnceForMissingCatalogEntry(t *testing.T) {
-	var output bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&output, nil))
-	manager, err := NewManager([]language.Tag{language.EuropeanSpanish}, logger)
-	require.NoError(t, err)
+	manager, output := newWarningManager(t, language.EuropeanSpanish)
 	spanishContext := WithPreferences(context.Background(), language.EuropeanSpanish)
 	message := Message{ID: "test.missing_message"}
 
@@ -145,4 +139,13 @@ func TestManagerLogPreservesEventIdentityAndFieldsAcrossLocales(t *testing.T) {
 		require.Equal(t, logs[0][field], logs[1][field], "field %s changed with locale", field)
 	}
 	require.Equal(t, "server.request.invalid_body", logs[0]["event_id"])
+}
+
+func newWarningManager(t *testing.T, defaultTag language.Tag) (*Manager, *bytes.Buffer) {
+	t.Helper()
+	output := new(bytes.Buffer)
+	logger := slog.New(slog.NewJSONHandler(output, nil))
+	manager, err := NewManager([]language.Tag{defaultTag}, logger)
+	require.NoError(t, err)
+	return manager, output
 }

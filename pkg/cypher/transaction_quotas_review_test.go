@@ -64,39 +64,59 @@ func TestTransactionQuotaExplicitCommitUsesCallerContext(t *testing.T) {
 	require.Zero(t, count)
 }
 
-// Both branches use this exact benchmark. One executor per worker avoids
-// serializing through a shared Cypher session; IDs and unique MERGE keys are disjoint.
-func BenchmarkTransactionQuotaParallel(b *testing.B) {
-	for _, merge := range []bool{false, true} {
-		b.Run(fmt.Sprintf("merge=%v", merge), func(b *testing.B) {
-			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-			manager, err := multidb.NewDatabaseManager(b.Context(), base, nil)
-			require.NoError(b, err)
-			b.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
-			require.NoError(b, manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "parallel"}))
-			engine, err := manager.GetStorage("parallel")
-			require.NoError(b, err)
-			if merge {
-				_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE CONSTRAINT bench_key IF NOT EXISTS FOR (n:ParallelQuota) REQUIRE n.id IS UNIQUE", nil)
-				require.NoError(b, err)
+func BenchmarkTransactionQuotaAdmission(b *testing.B) {
+	b.Run("BenchmarkTransactionQuotaCommit", func(b *testing.B) {
+		for _, limited := range []bool{false, true} {
+			name := "unlimited"
+			var limits *multidb.Limits
+			if limited {
+				name = "node_limit"
+				limits = &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1 << 60}}
 			}
-			query := "CREATE (:ParallelQuota {id: $id})"
-			if merge {
-				query = "MERGE (:ParallelQuota {id: $id})"
-			}
-			var id atomic.Int64
-			b.ReportAllocs()
-			b.ResetTimer()
-			b.RunParallel(func(pb *testing.PB) {
-				exec := NewStorageExecutor(engine)
-				for pb.Next() {
-					_, err := exec.Execute(context.Background(), query, map[string]any{"id": id.Add(1)})
-					if err != nil {
-						b.Error(err)
-						return
-					}
+			b.Run(name, func(b *testing.B) {
+				exec, _, _ := quotaExecutor(b, limits)
+				ctx := context.Background()
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_, err := exec.Execute(ctx, "CREATE (:Quota {value: $value})", map[string]interface{}{"value": i})
+					require.NoError(b, err)
 				}
 			})
-		})
-	}
+		}
+	})
+	b.Run("BenchmarkTransactionQuotaParallel", func(b *testing.B) {
+		for _, merge := range []bool{false, true} {
+			b.Run(fmt.Sprintf("merge=%v", merge), func(b *testing.B) {
+				base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+				manager, err := multidb.NewDatabaseManager(b.Context(), base, nil)
+				require.NoError(b, err)
+				b.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
+				require.NoError(b, manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "parallel"}))
+				engine, err := manager.GetStorage("parallel")
+				require.NoError(b, err)
+				if merge {
+					_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE CONSTRAINT bench_key IF NOT EXISTS FOR (n:ParallelQuota) REQUIRE n.id IS UNIQUE", nil)
+					require.NoError(b, err)
+				}
+				query := "CREATE (:ParallelQuota {id: $id})"
+				if merge {
+					query = "MERGE (:ParallelQuota {id: $id})"
+				}
+				var id atomic.Int64
+				b.ReportAllocs()
+				b.ResetTimer()
+				b.RunParallel(func(pb *testing.PB) {
+					exec := NewStorageExecutor(engine)
+					for pb.Next() {
+						_, err := exec.Execute(context.Background(), query, map[string]any{"id": id.Add(1)})
+						if err != nil {
+							b.Error(err)
+							return
+						}
+					}
+				})
+			})
+		}
+	})
 }

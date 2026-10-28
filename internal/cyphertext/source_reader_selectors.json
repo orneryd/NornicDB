@@ -204,19 +204,19 @@
       "path": "ui/src/utils/cypherText.mjs",
       "function": "framingSource",
       "class": "lexical-adapter",
-      "reason": "Maintained framing normalization and original-coordinate mapping peer; consumes skipCypherToken."
+      "reason": "Composes raw lowercase-u projection with the existing accepted framing view and slices original source; malformed raw escapes retain prior browser handling without a new throw."
     },
     {
       "path": "ui/src/utils/cypherText.mjs",
-      "function": "framingSource.originalOffset",
+      "function": "framingView.originalOffset",
       "class": "non-query-grammar",
-      "reason": "Maps accepted UTF-16 offsets through recorded edits, without scanning query tokens."
+      "reason": "Binary-searches ordered accepted UTF16 edit starts with the existing start/end extent bias; maps coordinates, never source tokens."
     },
     {
       "path": "ui/src/utils/cypherText.mjs",
-      "function": "framingSource.span",
+      "function": "framingView.span",
       "class": "non-query-grammar",
-      "reason": "Maps a pair of source coordinates through originalOffset."
+      "reason": "Maps paired coordinates through the shared originalOffset, retaining empty-span extent bias."
     },
     {
       "path": "ui/src/utils/cypherText.mjs",
@@ -425,6 +425,36 @@
         "Only a closed explicit CALL scope list reaches callScopeClauseVariables; recursive CALL bodies and findSubqueryExpressions products retain the same contextual check.",
         "validateSyntaxANTLR and admitBoundStatement preserve cancellation and command/grammar precedence; TestMalformedCallScopeClauseDiagnosticOnBothParsers observes rejected scopes and the non-scope controls."
       ]
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingAcceptedSource",
+      "class": "lexical-adapter",
+      "reason": "Existing browser confusable/whitespace/deletion framing stage moved intact; consumes skipCypherToken and the shared mapped view."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingView",
+      "class": "non-query-grammar",
+      "reason": "Constructs the single coordinate mapping product for both raw projection and accepted framing; no query-token decisions."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "projectFramingUnicode",
+      "class": "lexical-adapter",
+      "reason": "Maintained browser peer of raw ProjectUnicode: expands lowercase-u four-hex source once, skips paired backslashes, preserves UTF16 units, and uses shared original-coordinate mapping.32independent shared fixtures qualify admitted sources; malformed inputs preserve prior UI framing rather than claiming Go error-view equivalence."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "projectFramingUnicode.hex",
+      "class": "lexical-adapter",
+      "reason": "Bounded raw-stage four-ASCII-hex admission in the maintained language peer; no locale-sensitive conversion or recursive decoding."
+    },
+    {
+      "path": "ui/src/utils/cypherText.mjs",
+      "function": "framingSource.span",
+      "class": "non-query-grammar",
+      "reason": "Composes accepted and raw original-coordinate spans, preserving the original script bytes/UTF16 units submitted by the editor."
     }
   ],
   "mutation_controls": [

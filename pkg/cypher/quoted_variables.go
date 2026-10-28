@@ -175,6 +175,9 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 		default:
 			continue
 		}
+		if replacement == token.written {
+			continue
+		}
 		out.WriteString(query[last:token.start])
 		canonStart := out.Len()
 		out.WriteString(replacement)
@@ -281,8 +284,8 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 	}
 }
 
-// scanQuotedTokens lists the backtick-quoted symbolic names of query outside
-// string literals, with their positions classified.
+// scanQuotedTokens classifies quoted names and non-plain variable identities
+// in a quoted query using the same retained syntax walk.
 func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
@@ -292,10 +295,11 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
 		name, symbol := node.Name()
 		parent, hasParent := node.Parent()
-		scopeName := hasParent && parent.Rule() == cypherantlr.CypherParserRULE_callSubquery
-		if !symbol || (!strings.HasPrefix(node.Text(), "`") && !scopeName) {
+		if !symbol {
 			return nil
 		}
+		scopeName := hasParent && parent.Rule() == cypherantlr.CypherParserRULE_callSubquery
+		quoted := strings.HasPrefix(node.Text(), "`")
 		start, end := node.Span()
 		token := quotedToken{start: start, end: end, written: node.Text(), name: name}
 		parent, ok := node.Parent()
@@ -323,94 +327,80 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 				token.parameter = true
 			}
 		}
+		if !quoted && !scopeName && (!token.variable || isPlainVariableName(name)) {
+			return nil
+		}
 		tokens = append(tokens, token)
 		return nil
 	})
 	return tokens
 }
-func previousWord(query string, index int) string {
-	end := index
-	for end > 0 && cyphertext.IsWhitespaceAt(query, end-1) {
-		end--
-	}
-	start := end
-	for start > 0 && cyphertext.NamePartAt(query, start-1) {
-		start--
-	}
-	return query[start:end]
-}
-
 func isCypherKeyword(name string) bool {
-	switch upperASCII(name) {
-	case "ALL", "AND", "ANY", "AS", "ASC", "ASCENDING", "BY", "CALL", "CASE", "CONTAINS", "CREATE", "DELETE", "DESC", "DESCENDING",
-		"DETACH", "DISTINCT", "ELSE", "END", "ENDS", "EXISTS", "FALSE", "FOREACH", "IN", "IS", "LIMIT", "MATCH", "MERGE", "NONE",
-		"NOT", "NULL", "ON", "OPTIONAL", "OR", "ORDER", "REMOVE", "RETURN", "SET", "SINGLE", "SKIP", "STARTS", "THEN", "TRUE",
-		"UNION", "UNWIND", "USE", "WHEN", "WHERE", "WITH", "XOR", "YIELD", "COUNT", "COLLECT", "REDUCE":
-		return true
+	switch len(name) {
+	case 2:
+		return equalFoldASCII(name, "AS") ||
+			equalFoldASCII(name, "BY") ||
+			equalFoldASCII(name, "IN") ||
+			equalFoldASCII(name, "IS") ||
+			equalFoldASCII(name, "ON") ||
+			equalFoldASCII(name, "OR")
+	case 3:
+		return equalFoldASCII(name, "ALL") ||
+			equalFoldASCII(name, "AND") ||
+			equalFoldASCII(name, "ANY") ||
+			equalFoldASCII(name, "ASC") ||
+			equalFoldASCII(name, "END") ||
+			equalFoldASCII(name, "NOT") ||
+			equalFoldASCII(name, "SET") ||
+			equalFoldASCII(name, "USE") ||
+			equalFoldASCII(name, "XOR")
+	case 4:
+		return equalFoldASCII(name, "CALL") ||
+			equalFoldASCII(name, "CASE") ||
+			equalFoldASCII(name, "DESC") ||
+			equalFoldASCII(name, "ELSE") ||
+			equalFoldASCII(name, "ENDS") ||
+			equalFoldASCII(name, "NONE") ||
+			equalFoldASCII(name, "NULL") ||
+			equalFoldASCII(name, "SKIP") ||
+			equalFoldASCII(name, "THEN") ||
+			equalFoldASCII(name, "TRUE") ||
+			equalFoldASCII(name, "WHEN") ||
+			equalFoldASCII(name, "WITH")
+	case 5:
+		return equalFoldASCII(name, "FALSE") ||
+			equalFoldASCII(name, "LIMIT") ||
+			equalFoldASCII(name, "MATCH") ||
+			equalFoldASCII(name, "MERGE") ||
+			equalFoldASCII(name, "ORDER") ||
+			equalFoldASCII(name, "UNION") ||
+			equalFoldASCII(name, "WHERE") ||
+			equalFoldASCII(name, "YIELD") ||
+			equalFoldASCII(name, "COUNT")
+	case 6:
+		return equalFoldASCII(name, "CREATE") ||
+			equalFoldASCII(name, "DELETE") ||
+			equalFoldASCII(name, "DETACH") ||
+			equalFoldASCII(name, "EXISTS") ||
+			equalFoldASCII(name, "REMOVE") ||
+			equalFoldASCII(name, "RETURN") ||
+			equalFoldASCII(name, "SINGLE") ||
+			equalFoldASCII(name, "STARTS") ||
+			equalFoldASCII(name, "UNWIND") ||
+			equalFoldASCII(name, "REDUCE")
+	case 7:
+		return equalFoldASCII(name, "FOREACH") ||
+			equalFoldASCII(name, "COLLECT")
+	case 8:
+		return equalFoldASCII(name, "CONTAINS") ||
+			equalFoldASCII(name, "DISTINCT") ||
+			equalFoldASCII(name, "OPTIONAL")
+	case 9:
+		return equalFoldASCII(name, "ASCENDING")
+	case 10:
+		return equalFoldASCII(name, "DESCENDING")
 	}
 	return false
-}
-
-// restore maps an Execute result and error of the canonical statement back
-// to the statement the client sent.
-func (names *quotedVariableNames) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
-	if names == nil {
-		return result, err
-	}
-	if result != nil {
-		restored := *result
-		if len(result.Columns) > 0 {
-			restored.Columns = make([]string, len(result.Columns))
-			for i, column := range result.Columns {
-				restored.Columns[i] = names.restoreColumn(column)
-			}
-		}
-		if len(result.Metadata) > 0 {
-			restored.Metadata = names.restoreValue(result.Metadata).(map[string]interface{})
-			// The plan text is rendered again from the restored plan: names
-			// replaced in the rendered text would break its column padding
-			// and its truncation of long descriptions.
-			if plan, ok := restored.Metadata["plan"].(*ExecutionPlan); ok && plan != nil {
-				if _, rendered := restored.Metadata["planString"]; rendered {
-					restored.Metadata["planString"] = formatPlan(plan)
-				}
-			}
-		}
-		if isExplainOrProfile(names.Original) {
-			restored.Rows = names.restoreValue(result.Rows).([][]interface{})
-		} else if len(restored.Columns) > 0 {
-			if start, end, ok := finalReturnBody(names.Text); ok {
-				body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
-				if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
-					sortColumnsByName(&restored)
-				} else {
-					originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
-					items := parseItems(originalText)
-					canonicalItems := parseItems(names.Text[start:end])
-					if len(items) == len(restored.Columns) && len(canonicalItems) == len(items) {
-						for i, item := range items {
-							if item.alias != strings.TrimSpace(item.expr) {
-								// Parsed aliases are already decoded; unquoting twice
-								// would change whitespace or embedded backticks.
-								restored.Columns[i] = item.alias
-							} else if name, isName := isOneSymbolicName(item.expr); isName {
-								restored.Columns[i] = name
-							} else {
-								restored.Columns[i] = strings.TrimSpace(item.expr)
-							}
-						}
-					}
-				}
-			}
-		}
-		result = &restored
-	}
-	if err != nil && len(names.internal) > 0 {
-		if message := err.Error(); names.restoreSourceText(message, quotedNamesOnly) != message {
-			err = &quotedVariableError{cause: err, message: names.restoreSourceText(message, quotedNamesOnly)}
-		}
-	}
-	return result, err
 }
 
 // restoreColumn names a result column as the client's statement does: a
@@ -456,61 +446,6 @@ func (names *quotedVariableNames) restoreSourceText(text string, policy quotedSo
 		}
 	}
 	return text
-}
-
-func (names *quotedVariableNames) restoreValue(value interface{}) interface{} {
-	switch typed := value.(type) {
-	case string:
-		return names.restoreSourceText(typed, quotedNamesOnly)
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(typed))
-		for key, item := range typed {
-			out[names.restoreSourceText(key, quotedNamesOnly)] = names.restoreValue(item)
-		}
-		return out
-	case []interface{}:
-		out := make([]interface{}, len(typed))
-		for i, item := range typed {
-			out[i] = names.restoreValue(item)
-		}
-		return out
-	case *ExecutionPlan:
-		if typed == nil {
-			return value
-		}
-		plan := *typed
-		plan.Query = names.restoreSourceText(typed.Query, quotedStatementFragment)
-		plan.Root, _ = names.restoreValue(typed.Root).(*PlanOperator)
-		return &plan
-	case *PlanOperator:
-		if typed == nil {
-			return value
-		}
-		operator := *typed
-		operator.Description = names.restoreSourceText(typed.Description, quotedNamesOnly)
-		if typed.Arguments != nil {
-			operator.Arguments = names.restoreValue(typed.Arguments).(map[string]interface{})
-		}
-		operator.Identifiers = make([]string, len(typed.Identifiers))
-		for i, identifier := range typed.Identifiers {
-			if internal, ok := names.internal[identifier]; ok {
-				identifier = internal.name
-			}
-			operator.Identifiers[i] = identifier
-		}
-		operator.Children = make([]*PlanOperator, len(typed.Children))
-		for i, child := range typed.Children {
-			operator.Children[i], _ = names.restoreValue(child).(*PlanOperator)
-		}
-		return &operator
-	case [][]interface{}:
-		out := make([][]interface{}, len(typed))
-		for i, row := range typed {
-			out[i] = names.restoreValue(row).([]interface{})
-		}
-		return out
-	}
-	return value
 }
 
 func isExplainOrProfile(query string) bool {

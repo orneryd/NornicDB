@@ -17,6 +17,7 @@ const (
 	MessageQdrantTooManyPoints                   MessageID = "qdrant.too_many_points"
 	MessageQdrantReadPointsFailed                MessageID = "qdrant.read_existing_points_failed"
 	MessageQdrantCreatePointsFailed              MessageID = "qdrant.create_points_failed"
+	MessageQdrantDeletePointFailed               MessageID = "qdrant.delete_point_failed"
 	MessageQdrantUpdatePointFailed               MessageID = "qdrant.update_point_failed"
 	MessageQdrantMissingVector                   MessageID = "qdrant.missing_vector_for_point"
 	MessageQdrantIndexPointFailed                MessageID = "qdrant.index_point_failed"
@@ -195,4 +196,9 @@ func QdrantInvalidQuantizationOversampling() Message {
 // QdrantInvalidQuantizationConfig identifies an unsupported compression request.
 func QdrantInvalidQuantizationConfig(cause error) Message {
 	return qdrantCauseMessage(MessageQdrantInvalidQuantizationConfig, "invalid quantization configuration: ", cause)
+}
+
+// QdrantDeletePointFailed reports a rejected deletion without disclosing its storage cause.
+func QdrantDeletePointFailed(pointID string) Message {
+	return Message{ID: MessageQdrantDeletePointFailed, Fallback: "failed to delete point " + pointID, Data: map[string]any{"PointID": pointID}}
 }

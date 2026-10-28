@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,6 +15,15 @@ import (
 )
 
 func TestSelectedPathCountedCompilation(t *testing.T) {
+	const isolated = "NORNIC_COUNTED_COMPILATION_ISOLATED"
+	if os.Getenv(isolated) != "1" {
+		output, err := runCypherTestProcess(t, "TestSelectedPathCountedCompilation", isolated+"=1")
+		require.NoError(t, err, string(output))
+		require.Contains(t, string(output), "TestSelectedPathCountedCompilation/100000")
+		require.Contains(t, string(output), "TestSelectedPathCountedCompilation/1000000")
+		t.Log(string(output))
+		return
+	}
 	for _, bound := range []int{100000, 1000000} {
 		t.Run(fmt.Sprint(bound), func(t *testing.T) {
 			pattern := fmt.Sprintf("(a)(()-[:T]->()){1,%d}(b)", bound)
@@ -27,11 +37,24 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 			require.Len(t, plan.forward.counters, 1)
 			require.Less(t, len(plan.forward.slots), 10)
 			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "counted"))
+			// Initialize shared parser/runtime state on a DIFFERENT, tiny
+			// statement. The large counted statement and its plan stay cold;
+			// this budget measures counted compilation, not ANTLR's one-time
+			// automaton initialization (which exceeds 8 MiB independently of
+			// the counted upper bound).
+			prime := "MATCH p = ANY SHORTEST (warm_a)(()-[:T]->()){1,2}(warm_b) RETURN count(p)"
+			warmResult, warmErr := e.Execute(context.Background(), prime, nil)
+			require.NoError(t, warmErr)
+			require.Equal(t, [][]interface{}{{int64(0)}}, warmResult.Rows)
+			query := "MATCH p = ANY SHORTEST " + pattern + " RETURN count(p)"
+			require.False(t, e.hasCachedValidSyntax(query, syntaxValidNornic|syntaxValidANTLR))
+			_, cached := selectedPathPlans.get(pattern + "\x00p\x00\x00")
+			require.False(t, cached)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 			defer cancel()
 			runtime.ReadMemStats(&before)
 			started := time.Now()
-			result, err := e.Execute(ctx, "MATCH p = ANY SHORTEST "+pattern+" RETURN count(p)", nil)
+			result, err := e.Execute(ctx, query, nil)
 			runtime.ReadMemStats(&after)
 			require.Less(t, time.Since(started), 100*time.Millisecond)
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))

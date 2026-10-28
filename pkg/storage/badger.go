@@ -1370,12 +1370,36 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
 	var version int
-	err := b.db.View(func(txn *badger.Txn) error { var err error; version, err = readSchemaVersionInTxn(txn); return err })
+	err := b.db.View(func(txn *badger.Txn) error {
+		var err error
+		version, err = accessSchemaVersionInTxn(txn, loadSchemaVersion, 0)
+		return err
+	})
 	return version, err
 }
 
-// readSchemaVersionInTxn is shared by startup and atomic migration arms.
-func readSchemaVersionInTxn(txn *badger.Txn) (int, error) {
+type schemaVersionAccess uint8
+
+const (
+	loadSchemaVersion schemaVersionAccess = iota
+	storeSchemaVersion
+	schemaVersionRecordBytes = 8
+)
+
+// accessSchemaVersionInTxn owns the existing schema-version record. The caller
+// retains transaction ownership. Loads accept the historical one-byte ready
+// marker as version zero; stores always emit the same eight-byte big-endian
+// value at the unchanged key. Store's first return value is unused.
+func accessSchemaVersionInTxn(txn *badger.Txn, operation schemaVersionAccess, value int) (int, error) {
+	switch operation {
+	case storeSchemaVersion:
+		buf := make([]byte, schemaVersionRecordBytes)
+		binary.BigEndian.PutUint64(buf, uint64(value))
+		return 0, txn.Set(mvccSchemaVersionKey(), buf)
+	case loadSchemaVersion:
+	default:
+		panic("invalid schema-version access")
+	}
 	item, err := txn.Get(mvccSchemaVersionKey())
 	if err == badger.ErrKeyNotFound {
 		return 0, nil
@@ -1385,11 +1409,11 @@ func readSchemaVersionInTxn(txn *badger.Txn) (int, error) {
 	}
 	var version int
 	err = item.Value(func(val []byte) error {
-		// Compatibility with the historical one-byte edge-between ready marker.
+		// The historical edge-between ready marker predates this record.
 		if len(val) == 1 && val[0] == 1 {
 			return nil
 		}
-		if len(val) != 8 {
+		if len(val) != schemaVersionRecordBytes {
 			return fmt.Errorf("invalid schema version length: %d", len(val))
 		}
 		version = int(binary.BigEndian.Uint64(val))
@@ -1398,14 +1422,11 @@ func readSchemaVersionInTxn(txn *badger.Txn) (int, error) {
 	return version, err
 }
 
-func writeSchemaVersionInTxn(txn *badger.Txn, version int) error {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(version))
-	return txn.Set(mvccSchemaVersionKey(), buf)
-}
-
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.Update(func(txn *badger.Txn) error { return writeSchemaVersionInTxn(txn, version) })
+	return b.db.Update(func(txn *badger.Txn) error {
+		_, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, version)
+		return err
+	})
 }
 
 // ============================================================================

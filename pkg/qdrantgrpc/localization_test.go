@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -38,7 +39,7 @@ func TestRequiredFieldLocalizesAndPreservesIdentifier(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	err = localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"))
+	err = grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
 
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "se requiere field_name", status.Convert(err).Message())
@@ -50,7 +51,7 @@ func TestRequiredFieldsLocalizesAndPreservesIdentifier(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	err = localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"))
+	err = grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"), grpcresponse.QdrantSourceFallback)
 
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	require.Equal(t, "se requieren search_points", status.Convert(err).Message())
@@ -82,12 +83,12 @@ func TestAuthenticationMessagesPreserveCodesAndDiagnosticData(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	authRequired := localizedStatus(ctx, manager, codes.Unauthenticated, localization.QdrantAuthenticationRequired("missing authorization metadata"))
+	authRequired := grpcresponse.LocalizedStatus(ctx, manager, codes.Unauthenticated, localization.QdrantAuthenticationRequired("missing authorization metadata"), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.Unauthenticated, status.Code(authRequired))
 	require.Equal(t, "se requiere autenticación: missing authorization metadata", status.Convert(authRequired).Message())
 	require.Equal(t, "authentication required: missing authorization metadata", localization.QdrantAuthenticationRequired("missing authorization metadata").Fallback)
 
-	permissionDenied := localizedStatus(ctx, manager, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	permissionDenied := grpcresponse.LocalizedStatus(ctx, manager, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.PermissionDenied, status.Code(permissionDenied))
 	require.Equal(t, "permiso denegado", status.Convert(permissionDenied).Message())
 }
@@ -97,12 +98,12 @@ func TestNotFoundMessagesPreserveCodesAndIdentifiers(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	collectionErr := localizedStatus(ctx, manager, codes.NotFound, localization.QdrantCollectionNotFound("tenant-a"))
+	collectionErr := grpcresponse.LocalizedStatus(ctx, manager, codes.NotFound, localization.QdrantCollectionNotFound("tenant-a"), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.NotFound, status.Code(collectionErr))
 	require.Equal(t, `no se encontró la colección "tenant-a"`, status.Convert(collectionErr).Message())
 	require.Equal(t, `collection "tenant-a" not found`, localization.QdrantCollectionNotFound("tenant-a").Fallback)
 
-	snapshotErr := localizedStatus(ctx, manager, codes.NotFound, localization.QdrantSnapshotNotFound("daily"))
+	snapshotErr := grpcresponse.LocalizedStatus(ctx, manager, codes.NotFound, localization.QdrantSnapshotNotFound("daily"), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.NotFound, status.Code(snapshotErr))
 	require.Equal(t, `no se encontró la instantánea "daily"`, status.Convert(snapshotErr).Message())
 }
@@ -112,12 +113,12 @@ func TestVectorValidationMessagesPreserveCodesAndArguments(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	dimensionErr := localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(3, 4))
+	dimensionErr := grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(3, 4), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.InvalidArgument, status.Code(dimensionErr))
 	require.Equal(t, "la dimensión del vector no coincide: se obtuvo 3, se esperaba 4", status.Convert(dimensionErr).Message())
 	require.Equal(t, "vector dimension mismatch: got 3, expected 4", localization.QdrantVectorDimensionMismatch(3, 4).Fallback)
 
-	mutationErr := localizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled())
+	mutationErr := grpcresponse.LocalizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantVectorMutationsDisabled(), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.FailedPrecondition, status.Code(mutationErr))
 	require.Contains(t, status.Convert(mutationErr).Message(), "NORNICDB_EMBEDDING_ENABLED=false")
 	require.Equal(t, "vector mutations are disabled because NornicDB-managed embeddings are enabled; set NORNICDB_EMBEDDING_ENABLED=false to allow managing vectors via Qdrant gRPC", localization.QdrantVectorMutationsDisabled().Fallback)
@@ -128,21 +129,21 @@ func TestRepeatedQueryMessagesPreserveCodesAndDiagnostics(t *testing.T) {
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
-	limitErr := localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantLimitTooLarge(101, 100))
+	limitErr := grpcresponse.LocalizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantLimitTooLarge(101, 100), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.InvalidArgument, status.Code(limitErr))
 	require.Equal(t, "el límite es demasiado grande: 101 > 100", status.Convert(limitErr).Message())
 	require.Equal(t, "limit too large: 101 > 100", localization.QdrantLimitTooLarge(101, 100).Fallback)
 
-	getErr := localizedStatus(ctx, manager, codes.Internal, localization.QdrantGetPointsFailed(errors.New("disk offline")))
+	getErr := grpcresponse.LocalizedStatus(ctx, manager, codes.Internal, localization.QdrantGetPointsFailed(errors.New("disk offline")), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.Internal, status.Code(getErr))
 	require.Equal(t, "no se pudieron obtener los puntos: disk offline", status.Convert(getErr).Message())
 	require.Equal(t, "failed to get points: disk offline", localization.QdrantGetPointsFailed(errors.New("disk offline")).Fallback)
 
-	embedErr := localizedStatus(ctx, manager, codes.Internal, localization.QdrantEmbedQueryFailed(errors.New("model unavailable")))
+	embedErr := grpcresponse.LocalizedStatus(ctx, manager, codes.Internal, localization.QdrantEmbedQueryFailed(errors.New("model unavailable")), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, "no se pudo generar el embedding de la consulta: model unavailable", status.Convert(embedErr).Message())
 	require.Equal(t, "failed to embed query: model unavailable", localization.QdrantEmbedQueryFailed(errors.New("model unavailable")).Fallback)
 
-	requiredErr := localizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired())
+	requiredErr := grpcresponse.LocalizedStatus(ctx, manager, codes.FailedPrecondition, localization.QdrantTextQueryEmbeddingsRequired(), grpcresponse.QdrantSourceFallback)
 	require.Equal(t, codes.FailedPrecondition, status.Code(requiredErr))
 	require.Contains(t, status.Convert(requiredErr).Message(), "EmbedQuery")
 	require.Equal(t, "text query requires embeddings; enable NornicDB embeddings and configure EmbedQuery", localization.QdrantTextQueryEmbeddingsRequired().Fallback)
@@ -168,7 +169,7 @@ func TestRepeatedSnapshotMessagesPreserveCodesAndDiagnostics(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := localizedStatus(ctx, manager, test.code, test.message)
+			err := grpcresponse.LocalizedStatus(ctx, manager, test.code, test.message, grpcresponse.QdrantSourceFallback)
 			require.Equal(t, test.code, status.Code(err))
 			require.Equal(t, test.want, status.Convert(err).Message())
 			require.Equal(t, test.fallback, test.message.Fallback)

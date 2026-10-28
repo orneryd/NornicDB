@@ -1166,7 +1166,7 @@ func parseCartesianSingleNodeComparisonTerm(term string) (string, bool) {
 	if !comparison || scan.count != 1 {
 		return "", false
 	}
-	span := scan.operator(0)
+	span := inlineOverflowAt(scan.inline[:], scan.overflow, 0)
 	operator := clause[span.offset : span.offset+span.length]
 	switch operator {
 	case "=", "<>", "!=", ">", ">=", "<", "<=", "=~":

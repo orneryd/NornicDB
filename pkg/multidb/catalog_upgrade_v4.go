@@ -110,7 +110,7 @@ func (m *DatabaseManager) transformCatalogV3Credentials(ctx context.Context, dat
 			if !remoteConnectionNeedsDescriptor(ref) {
 				continue
 			}
-			secured, err := m.sealLegacyRemoteConnection(ref)
+			secured, err := m.sealRemoteConnection(ref, legacyRemoteConnection)
 			if err != nil {
 				return "", false, err
 			}

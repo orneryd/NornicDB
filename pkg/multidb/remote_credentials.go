@@ -288,7 +288,7 @@ func (m *DatabaseManager) prepareRemoteConnectionInput(ref ConstituentRef) (Cons
 	if !remoteConnectionNeedsDescriptor(ref) {
 		return ref, nil
 	}
-	return m.sealRemoteConnection(ref)
+	return m.sealRemoteConnection(ref, literalRemoteConnection)
 }
 
 // RemoteUserForDisplay distinguishes an explicit public USER identity from

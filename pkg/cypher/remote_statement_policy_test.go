@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/testfixture/remotequery"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,19 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-type remotePolicyObserver struct {
-	*storage.RemoteEngine
-	mode   storage.RemoteAccessMode
-	source string
-	calls  int
-}
-
-func (e *remotePolicyObserver) QueryCypher(ctx context.Context, source string, params map[string]interface{}, mode storage.RemoteAccessMode) ([]string, [][]interface{}, error) {
-	e.mode, e.source = mode, source
-	e.calls++
-	return e.RemoteEngine.QueryCypher(ctx, source, params, mode)
-}
 
 func TestRemoteCompilerPolicyPublicDispatch(t *testing.T) {
 	for _, tc := range []struct {
@@ -64,7 +52,7 @@ func TestRemoteCompilerPolicyPublicDispatch(t *testing.T) {
 			defer peer.Close()
 			engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "remote"})
 			require.NoError(t, err)
-			observed := &remotePolicyObserver{RemoteEngine: engine}
+			observed := &remotequery.Observer{RemoteEngine: engine}
 			defer observed.Close()
 			catalog := fabric.NewCatalog()
 			catalog.Register("comp.remote", &fabric.LocationRemote{DBName: "remote", URI: peer.URL, ResolveEngine: func(string) (storage.Engine, error) { return observed, nil }})
@@ -80,11 +68,11 @@ func TestRemoteCompilerPolicyPublicDispatch(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, []string{"marker"}, result.Columns)
 			require.Equal(t, [][]interface{}{{int64(17)}}, result.Rows)
-			require.Equal(t, tc.mode, observed.mode)
+			require.Equal(t, tc.mode, observed.Mode)
 			require.Equal(t, tc.source, compiledSource)
-			require.Equal(t, compiledSource, observed.source)
-			require.Equal(t, observed.source, sent)
-			require.Equal(t, 1, observed.calls)
+			require.Equal(t, compiledSource, observed.Source)
+			require.Equal(t, observed.Source, sent)
+			require.Equal(t, 1, observed.Calls)
 		})
 	}
 }
