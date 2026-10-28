@@ -27,7 +27,8 @@ func BenchmarkPublicationKeys(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if len(appendOperationPublicationKeys(nil, schema, ops)) == 0 {
+				constraints := capturePublicationConstraintView(schema)
+				if len(appendOperationPublicationKeys(nil, &constraints, ops)) == 0 {
 					b.Fatal("missing publication dependencies")
 				}
 			}

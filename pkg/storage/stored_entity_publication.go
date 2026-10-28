@@ -158,7 +158,13 @@ func (b *BadgerEngine) captureStoredEntityChanges(keys []any, before, after stor
 // physical writer. Staged maps overlay only the final view; acknowledged writes
 // overlay the original committed view. Commit holds tx.mu and entity ownership.
 func (tx *BadgerTransaction) capturePreparedEntityChangesLocked() ([]StoredEntityChange, error) {
-	keys := appendOperationPublicationKeys(nil, nil, tx.physicalOperationsLocked())
+	if tx.preparedEntityCommit != nil {
+		return tx.preparedEntityCommit.changes, nil
+	}
+	// Stored-entity accounting only needs the entity keys, so the prepare pass
+	// derives them without a schema: its view is the empty one.
+	var constraints publicationConstraintView
+	keys := appendOperationPublicationKeys(nil, &constraints, tx.physicalOperationsLocked())
 	return tx.engine.captureStoredEntityChanges(keys,
 		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: tx.engine.writeBehind, boundaries: tx.engine.storedEntityObservers.Load()},
 		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}})

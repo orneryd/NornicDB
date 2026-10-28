@@ -72,12 +72,14 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 		}
 		defer order.release()
 	}
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
 	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, schema, node.ID, nil, image)
+		return appendNodePublicationKeys(nil, &constraints, node.ID, nil, image)
 	}
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -498,6 +500,8 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 		}
 		defer order.release()
 	}
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
 	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
 	keys := func() []any {
@@ -506,7 +510,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 			publicationOps[0].Type = OpCreateNode
 		}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, schema, node.ID, existingNode, image)
+		return appendNodePublicationKeys(nil, &constraints, node.ID, existingNode, image)
 	}
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -771,13 +775,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	var publicationOps []Operation
 	schema := b.schemaForNodeID(id)
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	publish := func() {
 		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{result.operation(id)}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, schema, publicationOps)
+		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {

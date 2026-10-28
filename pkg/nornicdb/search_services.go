@@ -217,24 +217,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		return nil, localizedError(localization.NornicDBCoreSearchSystemDatabaseUnsupported(), nil)
 	}
 
-	dims := db.embeddingDims
-	minSim := db.searchMinSimilarity
-	bm25Engine := search.DefaultBM25Engine()
-	db.dbConfigResolverMu.RLock()
-	resolver := db.dbConfigResolver
-	optionsResolver := db.dbSearchOptionsResolver
-	db.dbConfigResolverMu.RUnlock()
-	if resolver != nil {
-		rd, rs, re := resolver(dbName)
-		if rd > 0 {
-			dims = rd
-		}
-		minSim = rs
-		if re != "" {
-			bm25Engine = re
-		}
-	}
-
 	var gpuMgr *gpu.Manager
 	db.gpuManagerMu.RLock()
 	if m, ok := db.gpuManager.(*gpu.Manager); ok {
@@ -291,6 +273,25 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 			return nil, localizedError(localization.NornicDBCoreSearchBaseStorageUnavailable(), nil)
 		}
 		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
+	}
+
+	// Construction settings are not consumed by an existing cached service.
+	dims := db.embeddingDims
+	minSim := db.searchMinSimilarity
+	bm25Engine := search.DefaultBM25Engine()
+	db.dbConfigResolverMu.RLock()
+	resolver := db.dbConfigResolver
+	optionsResolver := db.dbSearchOptionsResolver
+	db.dbConfigResolverMu.RUnlock()
+	if resolver != nil {
+		rd, rs, re := resolver(dbName)
+		if rd > 0 {
+			dims = rd
+		}
+		minSim = rs
+		if re != "" {
+			bm25Engine = re
+		}
 	}
 
 	if dims <= 0 {
@@ -977,8 +978,17 @@ func (db *DB) queueSearchRefreshEvent(nodeID storage.NodeID) {
 		return
 	}
 
+	// A disabled service needs neither refresh reservations nor resolver work.
+	// Enabled services keep the existing reranker/clustering refresh path.
+	db.searchServicesMu.RLock()
+	cached := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if cached != nil && cached.svc != nil && !cached.svc.BM25Enabled() && !cached.svc.VectorEnabled() {
+		return
+	}
+
 	svc, err := db.getOrCreateSearchService(dbName, nil)
-	if err != nil || svc == nil {
+	if err != nil || svc == nil || (!svc.BM25Enabled() && !svc.VectorEnabled()) {
 		return
 	}
 

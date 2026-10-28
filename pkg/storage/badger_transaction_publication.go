@@ -293,7 +293,11 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 	engine, namespace := tx.engine, tx.namespace
 	if len(operations) > 0 || tx.knowledgeSchemaDirty {
 		schema := engine.GetSchemaForNamespace(namespace)
-		cw.publishKeys = appendOperationPublicationKeys(nil, schema, operations)
+		// The constraint metadata is captured before the physical commit
+		// below can turn large and take the commit gate exclusively: late
+		// key derivation then reads only this immutable view.
+		constraints := capturePublicationConstraintView(schema)
+		cw.publishKeys = appendOperationPublicationKeys(nil, &constraints, operations)
 		if len(operations) > 0 {
 			notification = engine.queueCommitOperations(nil, nil, notificationAtCommit)
 			capturePublicationOperations(notification, operations)

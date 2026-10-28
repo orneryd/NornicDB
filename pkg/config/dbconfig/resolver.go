@@ -94,7 +94,9 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 	}
 	// Build effective map from global (we'll overlay overrides below).
 	effectiveFromGlobal(global, r.Effective)
-	for _, definition := range Settings() {
+	// Read-only walk of the private registry: no defensive copy of every
+	// definition is needed because nothing here is handed to callers.
+	for _, definition := range settingsRegistry {
 		if definition.Scope != ScopePhysicalEngine && definition.DefaultValue != "" {
 			if _, exists := r.Effective[definition.Name]; !exists {
 				r.Effective[definition.Name] = definition.DefaultValue
@@ -268,16 +270,17 @@ func boolStr(b bool) string {
 func applyOverride(r *ResolvedDbConfig, key, value string) {
 	key = CanonicalSettingName(key)
 	value = strings.TrimSpace(value)
-	meta, ok := AllowedKeysSet()[key]
-	if !ok {
+	// One registry lookup replaces the previous AllowedKeysSet() build (which
+	// materialised every key's metadata) followed by a second LookupSetting.
+	definition, ok := LookupSetting(key)
+	if !ok || definition.Scope == ScopePhysicalEngine || KeysExcludedFromPerDB[key] {
 		return
 	}
-	definition, _ := LookupSetting(key)
 	behaviorKey := definition.EnvironmentVariable
 	if behaviorKey == "" {
 		behaviorKey = key
 	}
-	switch meta.Type {
+	switch definition.Type {
 	case "number":
 		if i, err := strconv.Atoi(value); err == nil {
 			switch behaviorKey {

@@ -179,10 +179,15 @@ func CanonicalizeOverrides(overrides map[string]string) map[string]string {
 	return canonical
 }
 
+// LookupSetting resolves a canonical name or environment alternative against the
+// private registry. It walks settingsRegistry directly instead of materialising a
+// defensive copy of every definition, and hands the caller the single matching
+// definition with its own ValidValues copy so public ownership stays defensive.
 func LookupSetting(name string) (SettingDefinition, bool) {
 	name = CanonicalSettingName(name)
-	for _, definition := range Settings() {
+	for _, definition := range settingsRegistry {
 		if definition.Name == name {
+			definition.ValidValues = append([]string(nil), definition.ValidValues...)
 			return definition, true
 		}
 	}

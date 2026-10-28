@@ -238,6 +238,9 @@ type BadgerTransaction struct {
 	// closeLocked then drops them instead of allocating fresh maps the
 	// dead transaction will never use.
 	bufferedStagingTransferred bool
+	// Prepared images are immutable while the detached native continuation
+	// retains entity authority. Reuse them for buffered publication accounting.
+	preparedEntityCommit *PreparedEntityCommit
 
 	// Transaction metadata (for logging/debugging)
 	Metadata           map[string]interface{}
@@ -405,6 +408,7 @@ func (tx *BadgerTransaction) IsActive() bool {
 }
 
 func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool, closedErr error) {
+	tx.preparedEntityCommit = nil
 	if tx.badgerTx != nil && tx.engine != nil && tx.engine.idDict != nil {
 		// Drop any staged counter state. Safe whether the txn
 		// committed (flushTxnCounters already cleared it) or is being

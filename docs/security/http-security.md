@@ -204,7 +204,7 @@ This is useful when:
 `ValidateURL(url, isDevelopment, allowHTTP)` now takes `ValidateURL(url, policy)`.
 Use `security.URLPolicy{}` for production defaults; use `AllowHTTP: true` with
 `HostPolicy: security.URLDevelopmentHost` for the former development mode.
-See the [URL policy reference](../../pkg/security/README.md#go-helper-migration)
+See the [URL policy reference](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/pkg/security/README.md#go-helper-migration)
 for all mode mappings and explicit policy limits.
 
 ## Tested Attack Coverage

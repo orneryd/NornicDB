@@ -426,6 +426,24 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		return err
 	}
 
+	// Capture constraint metadata before any write can promote the physical
+	// writer to the exclusive commit gate. Recovered operation images are
+	// hydrated below; their late key derivation reads only these snapshots.
+	schemas := make(map[string]*SchemaManager, 1)
+	constraints := make(map[string]*publicationConstraintView, 1)
+	for _, c := range commits {
+		if c.namespace == "" {
+			continue
+		}
+		if _, exists := schemas[c.namespace]; exists {
+			continue
+		}
+		schema := b.GetSchemaForNamespace(c.namespace)
+		schemas[c.namespace] = schema
+		view := capturePublicationConstraintView(schema)
+		constraints[c.namespace] = &view
+	}
+
 	for commitIndex := range commits {
 		c := &commits[commitIndex]
 		// The commit's MVCC version was allocated at ACK time; the flusher
@@ -494,15 +512,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	acquireCounts()
 
-	schemas := make(map[string]*SchemaManager, 1)
 	var notificationOps []Operation
 	for _, c := range commits {
-		schema := schemas[c.namespace]
-		if schema == nil && c.namespace != "" {
-			schema = b.GetSchemaForNamespace(c.namespace)
-			schemas[c.namespace] = schema
-		}
-		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, schema, c.ops)
+		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, constraints[c.namespace], c.ops)
 		notificationOps = append(notificationOps, c.ops...)
 	}
 	capturePublicationOperations(notification, notificationOps)

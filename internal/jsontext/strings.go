@@ -40,10 +40,12 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 	}
 	var out []byte
 	var edits []cyphertext.SourceEdit
+	var scratch [6]byte
 	inside := false
 	replace := func(start, end int, replacement []byte) {
 		if out == nil {
-			out = append([]byte(nil), raw[:start]...)
+			out = make([]byte, 0, len(raw))
+			out = append(out, raw[:start]...)
 		}
 		at := len(out)
 		out = append(out, replacement...)
@@ -72,7 +74,7 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 							continue
 						}
 					}
-					replace(i, i+6, cyphertext.AppendCodepoint(nil, rune(unit)))
+					replace(i, i+6, cyphertext.AppendCodepoint(scratch[:0], rune(unit)))
 					i += 6
 					continue
 				}
@@ -84,10 +86,11 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 			continue
 		}
 		if inside && raw[i] >= utf8.RuneSelf {
-			value, width := cyphertext.ReadCodepoint(string(raw), i)
+			// A codepoint needs at most four bytes, not a copy of the batch.
+			value, width := cyphertext.ReadCodepoint(string(raw[i:min(i+utf8.UTFMax, len(raw))]), 0)
 			surrogate := value >= 0xd800 && value <= 0xdfff
 			if policy >= wireJSON && (surrogate || policy == wireJSON && (value == 0x2028 || value == 0x2029)) {
-				replace(i, i+width, appendJSONUnit(nil, value))
+				replace(i, i+width, appendJSONUnit(scratch[:0], value))
 				i += width
 				continue
 			}
