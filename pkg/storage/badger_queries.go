@@ -1233,7 +1233,8 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 // value is empty, can't be decoded, or names an endpoint the ID dictionary
 // doesn't know.
 func (b *BadgerEngine) decodeAdjacencyHeader(edgeID EdgeID, value []byte) *Edge {
-	edge, startNum, endNum, _, err := decodeEdgeCompactHeader(value, edgeFormatCompactV2)
+	edge := new(Edge)
+	startNum, endNum, _, err := decodeEdgeCompactHeaderInto(value, edgeFormatCompactV2, edge)
 	if err != nil {
 		return nil
 	}
