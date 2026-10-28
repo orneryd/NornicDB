@@ -25,8 +25,8 @@ func (set *CredentialSet) Record(source string, start, end int, value string, pa
 	}
 	raw := source[start:end]
 	if set.Source != nil && source == set.Source.Text {
-		span, _ := set.Source.OriginalSpan(Span{start, end}, SourceExtent)
-		start, end, raw = span.Start, span.End, set.Source.Original[span.Start:span.End]
+		set.RecordSource(set.Source, start, end, value, password)
+		return
 	}
 	set.Spans = append(set.Spans, CredentialSpan{Start: start, End: end, Raw: raw, Value: value, Password: password})
 }

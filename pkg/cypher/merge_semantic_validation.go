@@ -230,10 +230,10 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 }
 
 func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	parts := splitMergeClauseActions(mergeClauseBody(clause), nil)
+	parts := splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil)
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, clauses.set(index)); err != nil {
+			if err := e.validateSetClauseScope(scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
 				return err
 			}
 		}
@@ -242,16 +242,7 @@ func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope,
 }
 
 func mergeClausePattern(clause string) string {
-	return splitMergeClauseActions(mergeClauseBody(clause), nil).pattern
-}
-
-// mergeClauseBody is a MERGE clause's text after the MERGE keyword.
-func mergeClauseBody(clause string) string {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "MERGE") {
-		body = strings.TrimSpace(body[len("MERGE"):])
-	}
-	return body
+	return splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil).pattern
 }
 
 func mergePatternUsesParameterPredicate(pattern string) bool {

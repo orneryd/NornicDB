@@ -265,7 +265,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 	}
 	fabricBlocks := make([]callSubqueryBlock, 0, len(callBlocks))
 	for _, block := range callBlocks {
-		isFabricBlock, err := callBlockContainsFabricUse(ctx, block.body)
+		isFabricBlock, err := callBlockContainsFabricUse(ctx, block.body, p.keywordIsName)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +277,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 	if len(fabricBlocks) == 0 {
 		// Support top-level mid-query USE routing (e.g. "WITH ... USE db MATCH ...").
 		// This keeps prefixes in the current graph and routes the remainder to the USE target.
-		if prefix, rest, ok := splitAtTopLevelUse(remaining); ok {
+		if prefix, rest, ok := splitAtTopLevelUse(remaining, p.keywordIsName); ok {
 			subUse, subRest, hasUse, err := parseLeadingUse(ctx, rest, true)
 			if err != nil {
 				return nil, err
@@ -297,7 +297,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 			if prefix == "" {
 				return inner, nil
 			}
-			prefixExec := newExec(ensureRowProducingPrefix(prefix), top, scope)
+			prefixExec := newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope)
 			return &FragmentApply{
 				Input: &FragmentApply{
 					Input:   &FragmentInit{Columns: nil},
@@ -361,7 +361,7 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 	}
 	_, rest, hasUse, err := parseLeadingUse(ctx, query, inSubquery)
 	if err == nil && !hasUse && inSubquery {
-		_, rest, hasUse, err = parseLeadingWithUse(ctx, query)
+		_, rest, hasUse, err = parseLeadingWithUse(ctx, query, p.keywordIsName)
 	}
 	if err != nil {
 		return "", err
@@ -369,7 +369,7 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 	if hasUse {
 		query = strings.TrimSpace(rest)
 	}
-	if prefix, after, ok := splitAtTopLevelUse(query); ok {
+	if prefix, after, ok := splitAtTopLevelUse(query, p.keywordIsName); ok {
 		_, rest, hasUse, err := parseLeadingUse(ctx, after, true)
 		if err != nil {
 			return "", err
@@ -412,77 +412,23 @@ func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) erro
 	return p.validateUseTarget(scope, target.name)
 }
 
-func splitAtTopLevelUse(query string) (string, string, bool) {
-	parenDepth := 0
-	braceDepth := 0
-	bracketDepth := 0
-
-	for i := 0; i < len(query); i++ {
-		if next, quoted := cyphertext.SkipToken(query, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := query[i]
-		switch ch {
-		case '(':
-			parenDepth++
-			continue
-		case ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-			continue
-		case '{':
-			braceDepth++
-			continue
-		case '}':
-			if braceDepth > 0 {
-				braceDepth--
-			}
-			continue
-		case '[':
-			bracketDepth++
-			continue
-		case ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-			continue
-		}
-
-		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
-			continue
-		}
-		if !useKeywordAt(query, i) {
-			continue
-		}
-		// Leading USE is already handled by parseLeadingUse.
-		if strings.TrimSpace(query[:i]) == "" {
-			continue
-		}
-		return query[:i], query[i:], true
-	}
-
-	return "", "", false
-}
-
-func ensureRowProducingPrefix(query string) string {
+func ensureRowProducingPrefix(query string, isName ClauseKeywordNameReader) string {
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return trimmed
 	}
-	if hasTopLevelReturnClause(trimmed) {
+	if hasTopLevelReturnClause(trimmed, isName) {
 		return trimmed
 	}
 	if startsWithFold(trimmed, "WITH ") {
-		if aliases := trailingWithAliases(trimmed); len(aliases) > 0 {
+		if aliases := trailingWithAliases(trimmed, isName); len(aliases) > 0 {
 			return trimmed + " RETURN " + strings.Join(aliases, ", ")
 		}
 	}
 	return trimmed + " RETURN *"
 }
 
-func hasTopLevelReturnClause(query string) bool {
+func hasTopLevelReturnClause(query string, isName ClauseKeywordNameReader) bool {
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
@@ -522,14 +468,14 @@ func hasTopLevelReturnClause(query string) bool {
 		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
 			continue
 		}
-		if keywordAt(query, i, "RETURN") {
+		if clauseKeywordAt(query, i, "RETURN", isName) {
 			return true
 		}
 	}
 	return false
 }
 
-func trailingWithAliases(query string) []string {
+func trailingWithAliases(query string, isName ClauseKeywordNameReader) []string {
 	lastWith := -1
 	parenDepth := 0
 	braceDepth := 0
@@ -570,7 +516,7 @@ func trailingWithAliases(query string) []string {
 		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
 			continue
 		}
-		if keywordAt(query, i, "WITH") {
+		if clauseKeywordAt(query, i, "WITH", isName) {
 			lastWith = i
 		}
 	}
@@ -580,8 +526,8 @@ func trailingWithAliases(query string) []string {
 	// The WITH's aliases are the prefix's columns only when it is the
 	// prefix's last clause, its WHERE, ORDER BY, SKIP and LIMIT aside; a
 	// later clause (UNWIND, MATCH, ...) keeps them and adds its own.
-	withEnd := nextTopLevelClause(query, lastWith+len("WITH"))
-	for end := withEnd; end < len(query); end = nextTopLevelClause(query, end+1) {
+	withEnd := nextTopLevelClause(query, lastWith+len("WITH"), isName)
+	for end := withEnd; end < len(query); end = nextTopLevelClause(query, end+1, isName) {
 		if !projectionModifierAt(query, end) {
 			return nil
 		}
@@ -600,12 +546,12 @@ func trailingWithAliases(query string) []string {
 		}
 		if idx := lastAsIndexFold(item); idx >= 0 {
 			alias := strings.TrimSpace(item[idx+4:])
-			if cyphertext.IsIdentifier(alias) {
+			if token, ok := cyphertext.ScanIdentifier(alias, 0); ok && token.End == len(alias) {
 				aliases = append(aliases, alias)
 			}
 			continue
 		}
-		if cyphertext.IsIdentifier(item) {
+		if token, ok := cyphertext.ScanIdentifier(item, 0); ok && token.End == len(item) {
 			aliases = append(aliases, item)
 		}
 	}
@@ -623,7 +569,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 		// Preserve outer query segments before each CALL block.
 		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
 		}
 
 		subqueryFragment, err := p.planQuery(ctx, block.body, top, scope, true)
@@ -673,7 +619,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top planTarget, scope string) (Fragment, error) {
 	subUse, subBody, hasUse, err := parseLeadingUse(ctx, body, true)
 	if err == nil && !hasUse {
-		subUse, subBody, hasUse, err = parseLeadingWithUse(ctx, body)
+		subUse, subBody, hasUse, err = parseLeadingWithUse(ctx, body, p.keywordIsName)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
@@ -707,13 +653,13 @@ func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top pla
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
 // It returns the USE target graph and a rewritten body where USE is removed but the WITH
 // import clause is preserved (e.g. "WITH x USE db MATCH ..." -> "WITH x MATCH ...").
-func parseLeadingWithUse(ctx context.Context, body string) (use UseClause, rewritten string, ok bool, err error) {
+func parseLeadingWithUse(ctx context.Context, body string, isName ClauseKeywordNameReader) (use UseClause, rewritten string, ok bool, err error) {
 	trimmed := strings.TrimSpace(body)
 	if !startsWithFold(trimmed, "WITH") {
 		return UseClause{}, body, false, nil
 	}
 
-	withEnd, found := findLeadingWithClauseEnd(trimmed)
+	withEnd, found := findLeadingWithClauseEnd(trimmed, isName)
 	if !found || withEnd <= 0 || withEnd >= len(trimmed) {
 		return UseClause{}, body, false, nil
 	}
@@ -991,7 +937,7 @@ func callBodyReturns(body string, isName ClauseKeywordNameReader) bool {
 	return false
 }
 
-func callBlockContainsFabricUse(ctx context.Context, body string) (bool, error) {
+func callBlockContainsFabricUse(ctx context.Context, body string, isName ClauseKeywordNameReader) (bool, error) {
 	_, _, hasUse, err := parseLeadingUse(ctx, body, true)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
@@ -999,23 +945,23 @@ func callBlockContainsFabricUse(ctx context.Context, body string) (bool, error) 
 	if hasUse {
 		return true, nil
 	}
-	_, _, hasWithUse, err := parseLeadingWithUse(ctx, body)
+	_, _, hasWithUse, err := parseLeadingWithUse(ctx, body, isName)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}
 	if hasWithUse {
 		return true, nil
 	}
-	if _, _, ok := splitAtTopLevelUse(body); ok {
+	if _, _, ok := splitAtTopLevelUse(body, isName); ok {
 		return true, nil
 	}
 
-	nested, err := extractTopLevelCallBlocks(body, nil)
+	nested, err := extractTopLevelCallBlocks(body, isName)
 	if err != nil {
 		return false, err
 	}
 	for _, block := range nested {
-		found, err := callBlockContainsFabricUse(ctx, block.body)
+		found, err := callBlockContainsFabricUse(ctx, block.body, isName)
 		if err != nil {
 			return false, err
 		}
@@ -1063,12 +1009,12 @@ func queryIsWrite(query string) bool {
 			i = next - 1
 			continue
 		}
-		if hasKeywordAt(query, i, "CREATE") ||
-			hasKeywordAt(query, i, "MERGE") ||
-			hasKeywordAt(query, i, "DETACH DELETE") ||
-			hasKeywordAt(query, i, "DELETE") ||
-			hasKeywordAt(query, i, "SET") ||
-			hasKeywordAt(query, i, "REMOVE") {
+		if keywordAt(query, i, "CREATE") ||
+			keywordAt(query, i, "MERGE") ||
+			keywordAt(query, i, "DETACH DELETE") ||
+			keywordAt(query, i, "DELETE") ||
+			keywordAt(query, i, "SET") ||
+			keywordAt(query, i, "REMOVE") {
 			return true
 		}
 	}

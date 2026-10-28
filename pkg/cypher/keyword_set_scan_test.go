@@ -83,10 +83,10 @@ func TestCachedPipelineClausesVariants(t *testing.T) {
 func TestFindKeywordIndexInContextNonASCII(t *testing.T) {
 	text := "['ıı', 'ß'] AS x"
 	require.Equal(t, len("['ıı', 'ß'] "), findKeywordIndexInContext(text, "AS"))
-	list, alias, ok := splitUnwindBody(text)
+	product, ok := splitUnwindBody("UNWIND " + text)
 	require.True(t, ok)
-	require.Equal(t, "['ıı', 'ß']", list)
-	require.Equal(t, "x", alias)
+	require.Equal(t, "['ıı', 'ß']", product.expression)
+	require.Equal(t, "x", product.aliasTail)
 	require.Equal(t, 2, findKeywordIndexInContext("n as m", "AS"))
 }
 

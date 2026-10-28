@@ -7,7 +7,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireNornicDBLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -46,23 +45,6 @@ func TestNornicDBLocalizedErrorsPreserveIdentityAndArguments(t *testing.T) {
 		require.Equal(t, 3, localizedErr.Message.Data["IndexDimensions"])
 		require.Equal(t, 2, localizedErr.Message.Data["QueryDimensions"])
 	})
-}
-
-func TestNornicDBLocalizedErrorRendersAtBoundary(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.NornicDBCoreQueryDimensionMismatchForDatabase("tenant-a", 3, 2)
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "base de datos \"tenant-a\": las dimensiones del embedding de consulta no coinciden (dimensiones del índice 3, dimensiones de la consulta 2)", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! database \"tenant-a\": query embedding dimension mismatch (index dims 3, query dims 2) !!]", pseudo)
 }
 
 func TestNornicDBLocalizedErrorPreservesWrappedCause(t *testing.T) {

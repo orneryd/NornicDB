@@ -623,7 +623,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// 80719f25 hit exactly this with the Search* flags). Pass cfg
 	// directly: any field that lives on Config now flows through.
 	dbConfig := cfg
-	dbConfig.Database.DataDir = dataDir
 	dbConfig.Server.BoltPort = boltPort
 	dbConfig.Server.HTTPPort = httpPort
 	dbConfig.Database.AllowStorageUpgrade = upgradeStorage

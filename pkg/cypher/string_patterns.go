@@ -26,34 +26,7 @@ import (
 //	SplitByKeyword("MATCH (a) MATCH (b)", "MATCH")
 //	// Returns: ["", "(a) ", "(b)"]
 func SplitByKeyword(s, keyword string) []string {
-	if s == "" || keyword == "" {
-		return []string{s}
-	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	var parts []string
-	last := 0
-	for from := 0; from < len(s); {
-		index := keywordIndexFrom(s, keyword, from, opts)
-		if index < 0 {
-			break
-		}
-		end, ok := keywordMatchAt(s, index, keyword, 0, len(keyword))
-		if !ok {
-			break
-		}
-		from = end
-		if end == len(s) || !cyphertext.IsWhitespaceAt(s, end) {
-			continue
-		}
-		parts = append(parts, s[last:index])
-		last = end
-		for last < len(s) && cyphertext.IsWhitespaceAt(s, last) {
-			last++
-		}
-		from = last
-	}
-	return append(parts, s[last:])
+	return splitKeywordParts(s, keyword, keywordSplitGeneric)
 }
 
 // SplitByMatch splits by "MATCH " keyword. Convenience wrapper for hot path.
@@ -63,28 +36,7 @@ func SplitByMatch(s string) []string {
 
 // SplitByCreate splits by "CREATE " keyword. Convenience wrapper for hot path.
 func SplitByCreate(s string) []string {
-	if s == "" {
-		return []string{s}
-	}
-
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	var result []string
-	lastEnd := 0
-	for searchFrom := 0; searchFrom < len(s); {
-		index := keywordIndexFrom(s, "CREATE", searchFrom, opts)
-		if index < 0 || index+len("CREATE") >= len(s) || !cyphertext.IsWhitespaceAt(s, index+len("CREATE")) {
-			break
-		}
-		result = append(result, s[lastEnd:index])
-		lastEnd = index + len("CREATE")
-		for lastEnd < len(s) && cyphertext.IsWhitespaceAt(s, lastEnd) {
-			lastEnd++
-		}
-		searchFrom = lastEnd
-	}
-	return append(result, s[lastEnd:])
+	return splitKeywordParts(s, "CREATE", keywordSplitCreate)
 }
 
 // =============================================================================
@@ -243,7 +195,9 @@ func ParseAggregation(expr string) *AggregationResult {
 		return result
 	}
 
-	content, result.Distinct = cutDistinctArgument(content)
+	argumentSource := cyphertext.ReadFunctionArgumentSource(content, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+	content = content[argumentSource.Arguments.Start:argumentSource.Arguments.End]
+	result.Distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
 
 	// Parse variable.property or just variable
 	dotIdx := strings.Index(content, ".")
@@ -313,4 +267,53 @@ func ReplaceParameters(query string, replacer func(paramName string) string) str
 	return replaceParameterReferences(query, func(name string, _ byte) (string, bool) {
 		return replacer(name), true
 	})
+}
+
+type keywordSplitPolicy uint8
+
+const (
+	keywordSplitGeneric keywordSplitPolicy = iota
+	keywordSplitCreate
+)
+
+// splitKeywordParts owns slicing and whitespace trimming for both public policies.
+func splitKeywordParts(s, keyword string, policy keywordSplitPolicy) []string {
+	if s == "" || keyword == "" {
+		return []string{s}
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets = false, false
+	if policy == keywordSplitGeneric {
+		opts.SkipBraces = false
+	}
+	var parts []string
+	last := 0
+	for from := 0; from < len(s); {
+		index := keywordIndexFrom(s, keyword, from, opts)
+		if index < 0 {
+			break
+		}
+		end := index + len(keyword)
+		if policy == keywordSplitGeneric {
+			var ok bool
+			end, ok = keywordMatchAt(s, index, keyword, 0, len(keyword))
+			if !ok {
+				break
+			}
+		}
+		from = end
+		if end == len(s) || !cyphertext.IsWhitespaceAt(s, end) {
+			if policy == keywordSplitCreate {
+				break
+			}
+			continue
+		}
+		parts = append(parts, s[last:index])
+		last = end
+		for last < len(s) && cyphertext.IsWhitespaceAt(s, last) {
+			last++
+		}
+		from = last
+	}
+	return append(parts, s[last:])
 }

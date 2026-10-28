@@ -30,13 +30,6 @@ func (spans *mergeClauseSpans) add(index int, span cyphertext.Span) {
 	}
 }
 
-func (spans mergeClauseSpans) at(index int) cyphertext.Span {
-	if index < len(spans.inline) {
-		return spans.inline[index]
-	}
-	return spans.overflow[index-len(spans.inline)]
-}
-
 func mergeSourceSpan(text string, base int) cyphertext.Span {
 	start := len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
 	return cyphertext.Span{Start: base + start, End: base + max(start, len(strings.TrimRightFunc(text, cyphertext.IsWhitespace)))}
@@ -70,17 +63,9 @@ func (clauses *mergeActionClauses) add(set string) {
 
 func (clauses mergeActionClauses) len() int { return clauses.count }
 
-// set is the index-th clause's "SET ..." text.
-func (clauses mergeActionClauses) set(index int) string {
-	if index < len(clauses.inline) {
-		return clauses.inline[index]
-	}
-	return clauses.overflow[index-len(clauses.inline)]
-}
-
 // assignments is the index-th clause's assignment list (after SET).
 func (clauses mergeActionClauses) assignments(index int) string {
-	return strings.TrimSpace(clauses.set(index)[len("SET"):])
+	return strings.TrimSpace(inlineOverflowAt(clauses.inline[:], clauses.overflow, index)[len("SET"):])
 }
 
 // setText is every clause as one SET text for pipelineApplySet, each a SET
@@ -94,7 +79,7 @@ func (clauses mergeActionClauses) setText() string {
 	}
 	text := clauses.inline[0]
 	for index := 1; index < clauses.count; index++ {
-		text += " " + clauses.set(index)
+		text += " " + inlineOverflowAt(clauses.inline[:], clauses.overflow, index)
 	}
 	return text
 }

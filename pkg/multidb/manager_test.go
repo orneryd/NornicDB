@@ -13,31 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDatabaseManager_DefaultConfig(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Default database should be "nornic"
-	assert.Equal(t, "nornic", manager.DefaultDatabaseName())
-
-	// System database should exist
-	assert.True(t, manager.Exists("system"))
-
-	// Default database should exist
-	assert.True(t, manager.Exists("nornic"))
-
-	// Default database should be marked as default
-	info, err := manager.GetDatabase("nornic")
-	require.NoError(t, err)
-	assert.True(t, info.IsDefault)
-	assert.Equal(t, "standard", info.Type)
-	assert.Equal(t, "online", info.Status)
-}
-
 func TestDatabaseManagerPersistentIdentity(t *testing.T) {
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
@@ -140,24 +115,55 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestDatabaseManager_CustomConfig(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
+// TestDatabaseManager_ConfigCatalogFixture preserves the original independent
+// default and custom constructor fixtures and every assertion each made: the
+// nil default config yields the built-in nornic/system catalog, while the exact
+// custom config yields customdb/system with its own default-database metadata.
+func TestDatabaseManager_ConfigCatalogFixture(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		config    *Config
+		wantName  string
+		wantDBs   []string
+		assertion func(t *testing.T, manager *DatabaseManager)
+	}{
+		{
+			name:     "TestDatabaseManager_DefaultConfig",
+			config:   nil,
+			wantName: "nornic",
+			wantDBs:  []string{"system", "nornic"},
+			assertion: func(t *testing.T, manager *DatabaseManager) {
+				info, err := manager.GetDatabase("nornic")
+				require.NoError(t, err)
+				assert.True(t, info.IsDefault)
+				assert.Equal(t, "standard", info.Type)
+				assert.Equal(t, "online", info.Status)
+			},
+		},
+		{
+			name:     "TestDatabaseManager_CustomConfig",
+			config:   &Config{DefaultDatabase: "customdb", SystemDatabase: "system", MaxDatabases: 10, AllowDropDefault: false},
+			wantName: "customdb",
+			wantDBs:  []string{"customdb", "system"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
 
-	config := &Config{
-		DefaultDatabase:  "customdb",
-		SystemDatabase:   "system",
-		MaxDatabases:     10,
-		AllowDropDefault: false,
+			manager, err := NewDatabaseManager(t.Context(), inner, test.config)
+			require.NoError(t, err)
+			defer manager.Close()
+
+			assert.Equal(t, test.wantName, manager.DefaultDatabaseName())
+			for _, database := range test.wantDBs {
+				assert.True(t, manager.Exists(database), "expected database %q to exist", database)
+			}
+			if test.assertion != nil {
+				test.assertion(t, manager)
+			}
+		})
 	}
-
-	manager, err := NewDatabaseManager(t.Context(), inner, config)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	assert.Equal(t, "customdb", manager.DefaultDatabaseName())
-	assert.True(t, manager.Exists("customdb"))
-	assert.True(t, manager.Exists("system"))
 }
 
 func TestDatabaseManager_CreateDatabase(t *testing.T) {
@@ -281,20 +287,6 @@ func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
 	require.Equal(t, "small", stored.Properties["value"])
 }
 
-func TestDatabaseManager_CreateDatabase_InvalidName(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Empty name should fail
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: ""})
-	assert.Error(t, err)
-	assert.Equal(t, ErrInvalidDatabaseName, err)
-}
-
 func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
@@ -317,33 +309,6 @@ func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
 	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"})
 	assert.Error(t, err)
 	assert.Equal(t, ErrMaxDatabasesReached, err)
-}
-
-func TestDatabaseManager_DropDatabase_NotFound(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	err = manager.DropDatabase(t.Context(), "nonexistent")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
-}
-
-func TestDatabaseManager_DropDatabase_System(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Cannot drop system database
-	err = manager.DropDatabase(t.Context(), "system")
-	assert.Error(t, err)
-	assert.Equal(t, ErrCannotDropSystemDB, err)
 }
 
 func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
@@ -659,19 +624,6 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 	}
 }
 
-func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	_, err = manager.GetStorage("nonexistent")
-	assert.Error(t, err)
-	assert.Equal(t, ErrDatabaseNotFound, err)
-}
-
 func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
@@ -795,6 +747,12 @@ func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestDatabaseManager_GetDefaultStorage retains the original default-storage
+// fixture and asserts that GetDefaultStorage resolves exactly the storage of the
+// configured default database. The missing-database error identity for this
+// route is owned by TestDatabaseManagerRejectedCatalogRequests, whose
+// storage/nonexistent row exercises the same GetStorage call that
+// GetDefaultStorage delegates to, so no duplicate rejection fixture is kept.
 func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
@@ -806,6 +764,9 @@ func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
 	storage, err := manager.GetDefaultStorage()
 	require.NoError(t, err)
 	assert.NotNil(t, storage)
+
+	// GetDefaultStorage must resolve the configured default database name.
+	assert.Equal(t, "nornic", manager.DefaultDatabaseName())
 
 	// Should be the same as getting "nornic"
 	storage2, err := manager.GetStorage("nornic")
@@ -1073,5 +1034,37 @@ func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.
 	case msg := <-errCh:
 		t.Fatalf("concurrent metadata read failed: %s", msg)
 	default:
+	}
+}
+
+// TestDatabaseManagerRejectedCatalogRequests preserves the original native
+// error identities and isolated manager fixture for each rejected operation.
+func TestDatabaseManagerRejectedCatalogRequests(t *testing.T) {
+	for _, test := range []struct {
+		name, operation, database string
+		want                      error
+	}{
+		{"TestDatabaseManager_CreateDatabase_InvalidName", "create", "", ErrInvalidDatabaseName},
+		{"TestDatabaseManager_DropDatabase_NotFound", "drop", "nonexistent", ErrDatabaseNotFound},
+		{"TestDatabaseManager_DropDatabase_System", "drop", "system", ErrCannotDropSystemDB},
+		{"TestDatabaseManager_GetStorage_NotFound", "storage", "nonexistent", ErrDatabaseNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, nil)
+			require.NoError(t, err)
+			defer manager.Close()
+			switch test.operation {
+			case "create":
+				err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: test.database})
+			case "drop":
+				err = manager.DropDatabase(t.Context(), test.database)
+			case "storage":
+				_, err = manager.GetStorage(test.database)
+			}
+			assert.Error(t, err)
+			assert.Equal(t, test.want, err)
+		})
 	}
 }

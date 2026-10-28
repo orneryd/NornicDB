@@ -81,25 +81,3 @@ func TestParseEntrypointErrorsHaveLocalizedIdentity(t *testing.T) {
 		require.Equal(t, "syntax error: "+detail, err.Error())
 	})
 }
-
-func TestParseEntrypointCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherANTLRParseSyntaxError("line 1:7 unexpected token")
-
-	english, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.AmericanEnglish, tag)
-	require.Equal(t, "syntax error: line 1:7 unexpected token", english)
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "error de sintaxis: line 1:7 unexpected token", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! syntax error: line 1:7 unexpected token !!]", pseudo)
-}

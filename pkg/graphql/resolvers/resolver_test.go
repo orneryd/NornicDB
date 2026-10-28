@@ -1687,7 +1687,7 @@ func TestCoerceResultNodeID(t *testing.T) {
 func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	adapter := &graphqlDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: manager}}
+	adapter := &graphqlDatabaseManagerAdapter{ExecutionCatalog: catalogadapter.ForExecution(manager)}
 
 	t.Run("Exists", func(t *testing.T) {
 		assert.True(t, adapter.Exists("nornic"))

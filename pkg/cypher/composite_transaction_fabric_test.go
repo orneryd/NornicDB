@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,8 +23,8 @@ func TestResidualCompositePreambles(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(mode)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
-			require.NoError(t, err)
+			manager := newCompositeNativeManager(t, nil)
+			var err error
 			t.Cleanup(func() { require.NoError(t, manager.Close()) })
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "preamble_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "preamble_cmp", []multidb.ConstituentRef{
@@ -66,9 +65,8 @@ func TestResidualCompositePreambles(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-	require.NoError(t, err)
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
@@ -105,9 +103,8 @@ func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-	require.NoError(t, err)
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_c"}))
@@ -135,8 +132,8 @@ func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
 func TestGh683_CompositeTerminalContext(t *testing.T) {
 	for _, canceledCommit := range []bool{false, true} {
 		t.Run(fmt.Sprint(canceledCommit), func(t *testing.T) {
-			manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
-			require.NoError(t, err)
+			manager := newCompositeNativeManager(t, nil)
+			var err error
 			defer manager.Close()
 			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))
 			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp_sh", []multidb.ConstituentRef{{Alias: "sh", DatabaseName: "share_shard", Type: "local", AccessMode: "read_write"}}))
@@ -178,9 +175,8 @@ func TestGh683_CompositeTerminalContext(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_DocumentationExamples(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-	require.NoError(t, err)
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
@@ -254,8 +250,8 @@ func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
 					previous := config.GetParserType()
 					config.SetParserType(mode)
 					t.Cleanup(func() { config.SetParserType(previous) })
-					mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
-					require.NoError(t, err)
+					mgr := newCompositeNativeManager(t, nil)
+					var err error
 					t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_a"}))
 					require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "mk_b"}))
@@ -362,9 +358,8 @@ RETURN c
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.operation), func(t *testing.T) {
-			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-			require.NoError(t, err)
+			mgr := newCompositeNativeManager(t, nil)
+			var err error
 			defer mgr.Close()
 
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: tc.shard}))
@@ -449,8 +444,7 @@ func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
 			}))
 			defer remote.Close()
 
-			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			mgr, err := multidb.NewDatabaseManager(t.Context(), base, &multidb.Config{
+			mgr := newCompositeNativeManager(t, &multidb.Config{
 				DefaultDatabase: "nornic",
 				SystemDatabase:  "system",
 				RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -463,7 +457,7 @@ func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
 					})
 				},
 			})
-			require.NoError(t, err)
+			var err error
 			defer mgr.Close()
 
 			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, []multidb.ConstituentRef{
@@ -498,9 +492,8 @@ func TestCompositeExplicitTx_RemoteParticipantTerminalLifecycle(t *testing.T) {
 // every statement's writes, as in Neo4j; the relationship counters (count by
 // type and by label and type) stay equal to a scan.
 func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-	require.NoError(t, err)
+	mgr := newCompositeNativeManager(t, nil)
+	var err error
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "share_shard"}))

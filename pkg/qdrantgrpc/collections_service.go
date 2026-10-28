@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -38,7 +39,7 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -49,7 +50,7 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 	var distance qpb.Distance
 
 	if req.VectorsConfig == nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors_config"))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors_config"), grpcresponse.QdrantSourceFallback)
 	}
 
 	switch cfg := req.VectorsConfig.Config.(type) {
@@ -64,29 +65,29 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 			break
 		}
 	default:
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidVectorsConfig())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidVectorsConfig(), grpcresponse.QdrantSourceFallback)
 	}
 
 	if dims <= 0 {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantVectorSizeMustBePositive())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantVectorSizeMustBePositive(), grpcresponse.QdrantSourceFallback)
 	}
 
 	quantization, err := collectionQuantizationConfig(req)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationConfig(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationConfig(err), grpcresponse.QdrantSourceFallback)
 	}
 	var createErr error
 	if quantization != nil {
 		configured, ok := s.collections.(quantizedCollectionStore)
 		if !ok {
-			return nil, localizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("collection store cannot persist quantization")))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("collection store cannot persist quantization")), grpcresponse.QdrantSourceFallback)
 		}
 		createErr = configured.CreateWithQuantization(ctx, req.CollectionName, dims, distance, quantization)
 	} else {
 		createErr = s.collections.Create(ctx, req.CollectionName, dims, distance)
 	}
 	if err := createErr; err != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.AlreadyExists, localization.QdrantCreateCollectionFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.AlreadyExists, localization.QdrantCreateCollectionFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	return &qpb.CollectionOperationResponse{
@@ -99,7 +100,7 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 
 	meta, err := s.collections.GetMeta(ctx, req.CollectionName)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFoundWithCause(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Get point count
@@ -173,7 +174,7 @@ func (s *CollectionsService) List(ctx context.Context, req *qpb.ListCollectionsR
 
 	names, err := s.collections.List(ctx)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.Internal, localization.QdrantListCollectionsFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Internal, localization.QdrantListCollectionsFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 	if s.checker != nil {
 		names, err = s.checker.VisibleDatabases(ctx, names)
@@ -197,14 +198,14 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
 	}
 
 	if err := s.collections.Drop(ctx, req.CollectionName); err != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err), grpcresponse.QdrantSourceFallback)
 	}
 
 	return &qpb.CollectionOperationResponse{
@@ -220,7 +221,7 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
 		return nil, err
@@ -228,11 +229,11 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 
 	// Verify collection exists
 	if !s.collections.Exists(req.CollectionName) {
-		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
 	if req.QuantizationConfig != nil {
-		return nil, localizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("changing quantization requires creating a collection with the desired configuration")))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("changing quantization requires creating a collection with the desired configuration")), grpcresponse.QdrantSourceFallback)
 	}
 
 	// NornicDB manages HNSW/optimizer parameters automatically
@@ -248,7 +249,7 @@ func (s *CollectionsService) CollectionExists(ctx context.Context, req *qpb.Coll
 	start := time.Now()
 
 	if req.GetCollectionName() == "" {
-		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired(), grpcresponse.QdrantSourceFallback)
 	}
 	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
 		return nil, err

@@ -66,6 +66,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"log"
 	"log/slog"
 	"net"
@@ -274,7 +275,7 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	}
 	mode := s.databaseAccessModeResolver(roles)
 	if mode == nil {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
 	}
 	var accessible bool
 	var access auth.ResolvedAccess
@@ -288,14 +289,14 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 		}
 	}
 	if !accessible {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
 	}
 	if !write && !access.Read {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
 	}
 	if write {
 		if !access.Write {
-			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
+			return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database), grpcresponse.QdrantSourceFallback)
 		}
 	}
 	return nil
@@ -336,7 +337,7 @@ func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
 	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
 		names = lister.ListNamespaces()
 	} else {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 	}
 	var denied error
 	auth.DatabasePopulationAccess(names, func(database string) bool {
@@ -626,7 +627,7 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 	required, ok := requiredPermissionForMethod(fullMethod)
 	if !ok {
 		// Default-deny: unknown method should not be allowed implicitly.
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 	}
 	if s.config != nil && s.config.MethodPermissions != nil {
 		if key, ok := methodKey(fullMethod); ok {
@@ -638,7 +639,7 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 	if hasPermissionFromClaims(claims, required) {
 		return nil
 	}
-	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 }
 
 // unaryAuthInterceptor authenticates unary gRPC requests.
@@ -677,13 +678,13 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Add claims to context for use in handlers
@@ -731,13 +732,13 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()))
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Validate token
 	claims, err = s.authenticator.ValidateToken(token)
 	if err != nil {
-		return localizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken())
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
 
 	// Add claims to context for use in handlers

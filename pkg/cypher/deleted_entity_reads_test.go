@@ -266,10 +266,14 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	require.False(t, ok)
 	require.False(t, detach)
 	require.Nil(t, targets)
-	targets, detach, ok = deleteClauseTargets("DETACH DELETE a, b")
-	require.True(t, ok)
-	require.True(t, detach)
-	require.Equal(t, []string{"a", "b"}, targets)
+	for _, separator := range []string{" ", "  ", "\n", "\t", " /* UNION CALL RETURN WITH USE */ ", " // UNION CALL USE\n"} {
+		t.Run(separator, func(t *testing.T) {
+			targets, detach, ok := deleteClauseTargets("DETACH" + separator + "DELETE a, b")
+			require.True(t, ok)
+			require.True(t, detach)
+			require.Equal(t, []string{"a", "b"}, targets)
+		})
+	}
 
 	// The DELETE step outside a statement's run (no deleted record in ctx)
 	// still empties the rows' views.

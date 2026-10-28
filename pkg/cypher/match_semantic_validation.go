@@ -369,12 +369,12 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			}
 			// The body is a query of its own, walked from the variables it
 			// imports; its subqueries see its scope.
-			returned, err := e.callSubqueryReturnTypes(ctx, clause.text, branches, types, cypher25)
+			returned, returnClause, err := e.callSubqueryReturnTypes(ctx, clause.text, branches, types, cypher25)
 			if err != nil {
 				return types, false, err
 			}
-			if returnIndex := topLevelKeywordIndex(branches[0], "RETURN"); returnIndex >= 0 {
-				columns := pipelineReturnSourceColumns(ctx, branches[0][returnIndex:])
+			if returnClause != "" {
+				columns := pipelineReturnSourceColumns(ctx, returnClause)
 				if columns == nil || slices.Contains(columns, "*") {
 					// RETURN * (which names no column of its own) returns
 					// every variable of the body. When the
@@ -1584,8 +1584,9 @@ func simpleSemanticIdentifier(expression string) string {
 func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 	pattern := strings.TrimSpace(clause)
 	for _, keyword := range []string{"CREATE", "MERGE"} {
-		if startsWithKeywordFold(pattern, keyword) {
-			pattern = strings.TrimSpace(pattern[len(keyword):])
+		if end := keywordEndAt(pattern, 0, keyword); end > 0 &&
+			keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(pattern, 0, end, keyword) {
+			pattern = strings.TrimSpace(pattern[queryGapEnd(pattern, end):])
 			break
 		}
 	}

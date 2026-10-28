@@ -12,6 +12,42 @@ import (
 	"golang.org/x/text/language"
 )
 
+func TestStorageCatalogNamedArguments(t *testing.T) {
+	cases := []struct {
+		name            string
+		message         localization.Message
+		expectedSpanish string
+		expectedPseudo  string
+	}{
+		{
+			name:            "TestStorageLoaderCatalogsRenderNamedArguments",
+			message:         localization.StorageLoaderCreatingFile("/tmp/export.json", errors.New("permission denied")),
+			expectedSpanish: "al crear el archivo: permission denied",
+			expectedPseudo:  "[!! creating file: permission denied !!]",
+		},
+		{
+			name:            "TestStorageValidationCatalogsRenderNamedArguments",
+			message:         localization.StorageTransactionCrossNamespace("tenant-a", "tenant-b"),
+			expectedSpanish: "la transacción abarca varios espacios de nombres: fijada en \"tenant-a\", se intentó \"tenant-b\"",
+			expectedPseudo:  "[!! transaction spans multiple namespaces: pinned to \"tenant-a\", attempted \"tenant-b\" !!]",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+			require.NoError(t, err)
+
+			spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(tc.message))
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedSpanish, spanish)
+
+			pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(tc.message))
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedPseudo, pseudo)
+		})
+	}
+}
+
 func requireStorageValidationLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
 	t.Helper()
 
@@ -95,18 +131,4 @@ func TestStorageValidationLocalizedTransactionErrorsPreserveSentinels(t *testing
 		err := tx.SetMetadata(map[string]interface{}{"key": strings.Repeat("x", 2046)})
 		requireStorageValidationLocalizedError(t, err, localization.MessageStorageTransactionMetadataTooLarge, "transaction metadata too large: 2049 chars (max 2048)")
 	})
-}
-
-func TestStorageValidationCatalogsRenderNamedArguments(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.StorageTransactionCrossNamespace("tenant-a", "tenant-b")
-
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, "la transacción abarca varios espacios de nombres: fijada en \"tenant-a\", se intentó \"tenant-b\"", spanish)
-
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, "[!! transaction spans multiple namespaces: pinned to \"tenant-a\", attempted \"tenant-b\" !!]", pseudo)
 }

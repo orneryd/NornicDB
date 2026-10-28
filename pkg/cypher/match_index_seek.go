@@ -982,30 +982,68 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 	return nodes, true, nil
 }
 
+// indexOrderMode selects the lookup policy of tryCollectNodesFromPropertyIndexOrderLimit.
+// It is a private mode of the one ordered-index owner; callers name the mode
+// instead of reaching for a second, nearly identical entry point.
+type indexOrderMode int
+
+const (
+	// indexOrderGeneral keeps the general MATCH ORDER BY + LIMIT policy: the
+	// WHERE may be any filter, the first sort property is bounded only by an
+	// implied keyset range, and a partial window falls back to normal
+	// selection when the index cannot prove it is complete.
+	indexOrderGeneral indexOrderMode = iota
+	// indexOrderExplicitNotNull keeps the "WHERE n.prop IS NOT NULL ORDER BY
+	// n.prop LIMIT K" policy: the WHERE itself names the indexed property and
+	// the returned window is exhaustive over the index.
+	indexOrderExplicitNotNull
+)
+
 // tryCollectNodesFromPropertyIndexOrderLimit attempts to satisfy ORDER BY + LIMIT
-// queries using a property index for sorted iteration, even when the WHERE clause
-// is not a simple IS NOT NULL predicate. It filters complete index-key groups
-// into a bounded ordered window. This avoids a full label scan and sort when
-// the non-null index can fill common pagination requests like:
+// queries using a property index for sorted iteration. It filters complete
+// index-key groups into a bounded ordered window. This avoids a full label scan
+// and sort when the non-null index can fill common pagination requests like:
 //
 //	MATCH (n:Label) WHERE <filter> ORDER BY n.createdAt DESC LIMIT 30
+//	MATCH (n:Label) WHERE n.createdAt IS NOT NULL ORDER BY n.createdAt DESC LIMIT 30
 //
 // It only applies when:
 //   - The first ORDER BY property with a matching index exists
 //   - The node pattern has at least one label
 //   - limit > 0
+//   - for indexOrderExplicitNotNull, the WHERE is one <variable>.<prop> IS NOT NULL
+//     whose property equals the first sort property
 //
 // If the ORDER BY has multiple keys, the indexed property is used to fetch
 // complete primary-key groups and all keys select the retained top-K window.
+//
+// Both modes read the same owners in the same order: the shared limit/label
+// gate, the mode's own admission check (explicit-not-null mode also parses the
+// ORDER BY there because it compares the two properties), the ORDER BY parse,
+// the general-mode bounds and null-direction rejection, the schema read, the
+// single label carrying an index on the mode's property, and the ordered
+// window collection.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
 	limit int,
+	mode indexOrderMode,
 ) ([]*storage.Node, bool, error) {
 	if limit <= 0 || len(nodePattern.labels) == 0 {
 		return nil, false, nil
+	}
+
+	// The explicit IS NOT NULL form reads the WHERE property before the ORDER
+	// BY because it accepts the seek only when the two name the same property.
+	var whereProp string
+	if mode == indexOrderExplicitNotNull {
+		parsed, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
+		if !ok {
+			return nil, false, nil
+		}
+		whereProp = parsed
 	}
 
 	orderSpecs, ok := e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)
@@ -1013,13 +1051,27 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 	spec := orderSpecs[0]
-	// A WHERE that bounds the first sort property (n.t > $last, the keyset
-	// form n.t > $t OR (n.t = $t AND n.id > $id)) starts the index scan at
-	// the bound, and rules out rows where it is null (#939).
-	bounds := impliedPropertyBounds(nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
-	primaryNonNull := bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
-	if spec.descending && !primaryNonNull {
-		return nil, false, nil
+
+	var bounds storage.PropertyIndexBounds
+	primaryNonNull := false
+	indexProperty := spec.propName
+	switch mode {
+	case indexOrderExplicitNotNull:
+		if !strings.EqualFold(strings.TrimSpace(spec.propName), strings.TrimSpace(whereProp)) {
+			return nil, false, nil
+		}
+		// The admission match is case-insensitive, but the index lookup keeps
+		// the property spelling the WHERE used.
+		indexProperty = whereProp
+	default:
+		// A WHERE that bounds the first sort property (n.t > $last, the keyset
+		// form n.t > $t OR (n.t = $t AND n.id > $id)) starts the index scan at
+		// the bound, and rules out rows where it is null (#939).
+		bounds = impliedPropertyBounds(nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
+		primaryNonNull = bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
+		if spec.descending && !primaryNonNull {
+			return nil, false, nil
+		}
 	}
 
 	schema := orderedPropertyIndexSchema(e.storage)
@@ -1027,13 +1079,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, spec.propName)
+	// More than one candidate label would merge several indexes in order; that
+	// ordering is not implemented for either mode yet.
+	labels := e.indexCandidateLabels(schema, nodePattern.labels, indexProperty)
 	if len(labels) != 1 {
 		return nil, false, nil
 	}
 	label := labels[0]
 
 	nodes, used, err := e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit, bounds)
+	if mode == indexOrderExplicitNotNull {
+		// The index holds every row the explicit IS NOT NULL WHERE admits, so
+		// a shorter window is already the complete answer.
+		return nodes, used, err
+	}
 	if err == nil && used && len(nodes) < limit {
 		if primaryNonNull {
 			return nodes, true, nil
@@ -1044,50 +1103,6 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 	return nodes, used, err
-}
-
-// tryCollectNodesFromPropertyIndexNotNullOrderLimit attempts to satisfy:
-//
-//	MATCH (n:Label) WHERE n.prop IS NOT NULL RETURN ... ORDER BY n.prop [ASC|DESC] LIMIT K
-//
-// using the property index directly (top-K by indexed key) without label scan.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	orderExpr string,
-	limit int,
-) ([]*storage.Node, bool, error) {
-	if limit <= 0 || len(nodePattern.labels) == 0 {
-		return nil, false, nil
-	}
-
-	whereProp, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
-	if !ok {
-		return nil, false, nil
-	}
-
-	orderSpecs, ok := e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)
-	if !ok {
-		return nil, false, nil
-	}
-	spec := orderSpecs[0]
-	if !strings.EqualFold(strings.TrimSpace(spec.propName), strings.TrimSpace(whereProp)) {
-		return nil, false, nil
-	}
-
-	schema := orderedPropertyIndexSchema(e.storage)
-	if schema == nil {
-		return nil, false, nil
-	}
-
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, whereProp)
-	if len(labels) != 1 {
-		// Keep semantics simple/deterministic for now; multi-label merge ordering can be added later.
-		return nil, false, nil
-	}
-	label := labels[0]
-	return e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit, storage.PropertyIndexBounds{})
 }
 
 // tryCollectNodesFromPropertyIndexNotNull attempts to satisfy:
@@ -1283,7 +1298,7 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 	if !comparison || scan.count != 1 {
 		return "", nil, false
 	}
-	operator := scan.operator(0)
+	operator := inlineOverflowAt(scan.inline[:], scan.overflow, 0)
 	if clause[operator.offset:operator.offset+operator.length] != "=" {
 		return "", nil, false
 	}
@@ -1937,10 +1952,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	if hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
+				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderExplicitNotNull)
 			},
 			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
+				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderGeneral)
 			},
 		}
 		for _, plan := range orderedPlans {

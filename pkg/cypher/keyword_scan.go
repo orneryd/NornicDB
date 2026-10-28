@@ -7,13 +7,11 @@ package cypher
 
 import (
 	"hash/maphash"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -26,11 +24,20 @@ import (
 // Without the keyword, text is returned trimmed.
 func cutDistinct(text string) (string, bool) {
 	text = strings.TrimSpace(text)
+	start, unfinished := cyphertext.GapEnd(text, 0)
+	if unfinished >= 0 {
+		return text, false
+	}
+	text = text[start:]
 	const keyword = "DISTINCT"
 	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || cyphertext.NamePartAt(text, len(keyword)) {
 		return text, false
 	}
-	rest := strings.TrimSpace(text[len(keyword):])
+	end, unfinished := cyphertext.GapEnd(text, len(keyword))
+	if unfinished >= 0 {
+		return text, false
+	}
+	rest := strings.TrimSpace(text[end:])
 	if rest == "" || distinctFollowsAsName(rest) {
 		return text, false
 	}
@@ -103,7 +110,7 @@ func startsWithClauseAfterName(text string) bool {
 	if end == 0 || !isNameableClauseKeyword(text[:end]) {
 		return false
 	}
-	rest := strings.TrimSpace(text[end:])
+	rest := text[queryGapEnd(text, end):]
 	switch {
 	case strings.EqualFold(text[:end], "ORDER"):
 		return matchKeywordAt(rest, 0, "BY")
@@ -143,16 +150,6 @@ func nameContinuesExpression(rest string) bool {
 func startsWithDistinct(text string) bool {
 	_, distinct := cutDistinct(text)
 	return distinct
-}
-
-// cutDistinctArgument is cutDistinct for a function's argument list, where
-// a lone distinct is the keyword with no argument: count(distinct) has no
-// argument, as Neo4j reads it, while RETURN distinct returns the variable.
-func cutDistinctArgument(text string) (string, bool) {
-	if strings.EqualFold(strings.TrimSpace(text), "DISTINCT") {
-		return "", true
-	}
-	return cutDistinct(text)
 }
 
 // keywordScan provides high-performance, allocation-free keyword searching with:
@@ -371,6 +368,8 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 		// A sign after it is a unary operator (RETURN +3, RETURN -3), as
 		// a statement can only start with a clause.
 		switch s[j] {
+		case '+':
+			return j+1 < len(s) && s[j+1] == '='
 		case ',', '/', '%', '^', '=', '<', '>', ')':
 			return true
 		case '.':
@@ -445,8 +444,8 @@ func wordIsName(s string, wordStart int) bool {
 // follows: a projection (WITH, RETURN, ORDER BY), a predicate (WHERE) or an
 // operand of a boolean or membership operator (AND, OR, XOR, NOT, IN).
 func expressionFollowsKeyword(word string) bool {
-	for _, keyword := range [...]string{"WITH", "RETURN", "BY", "WHERE", "AND", "OR", "XOR", "NOT", "IN"} {
-		if strings.EqualFold(word, keyword) {
+	for _, keyword := range [...]string{"WITH", "RETURN", "BY", "WHERE", "AND", "OR", "XOR", "NOT", "IN", "DISTINCT", "UNWIND"} {
+		if equalFoldASCII(word, keyword) {
 			return true
 		}
 	}
@@ -506,7 +505,7 @@ func isNameableClauseKeyword(keyword string) bool {
 // The clause keywords a name can be spelled as (isNameableClauseKeyword),
 // by length.
 var (
-	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR"}
+	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR", "USE"}
 	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
 	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
 	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH", "FILTER"}
@@ -576,7 +575,7 @@ func isExpressionBoundaryWord(word string) bool {
 	default:
 		return false
 	}
-	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE", "LET", "FOR", "FILTER"} {
+	for _, keyword := range [...]string{"AS", "MATCH", "CREATE", "MERGE", "REMOVE", "CALL", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE", "LET", "FOR", "FILTER"} {
 		if len(keyword) != len(word) {
 			continue
 		}
@@ -824,12 +823,11 @@ func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, 
 			for k < ke && cyphertext.IsWhitespaceAt(keyword, k) {
 				k++
 			}
-			if j >= len(s) || !cyphertext.IsWhitespaceAt(s, j) {
+			next, unfinished := cyphertext.GapEnd(s, j)
+			if next <= j || unfinished >= 0 {
 				return 0, false
 			}
-			for j < len(s) && cyphertext.IsWhitespaceAt(s, j) {
-				j++
-			}
+			j = next
 			continue
 		}
 		if j >= len(s) {
@@ -1482,51 +1480,6 @@ func parseLineColumn(message string, start int) (line, column, end int, ok bool)
 	return line, column, end, ok
 }
 
-// restore returns result and err as the client sees them: unaliased column
-// names, error messages, and the text of an EXPLAIN / PROFILE plan use the
-// text it sent. result is copied only when something differs, never
-// changed, so a cached result stays canonical. Row values are data and are
-// kept, except in a plan.
-func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult, error) {
-	if r == nil {
-		return result, err
-	}
-	if result != nil {
-		var columns []string
-		for i, column := range result.Columns {
-			if original := r.originalText(column); original != column {
-				if columns == nil {
-					columns = append([]string(nil), result.Columns...)
-				}
-				columns[i] = original
-			}
-		}
-		metadata, metadataRestored := r.restoreValue(result.Metadata, sourceValueText)
-		var rows interface{}
-		rowsRestored := false
-		if len(result.Rows) > 0 && isExplainOrProfileText(r.Text) {
-			rows, rowsRestored = r.restoreValue(result.Rows, sourceValueText)
-		}
-		if columns != nil || metadataRestored || rowsRestored {
-			restored := *result
-			if columns != nil {
-				restored.Columns = columns
-			}
-			if metadataRestored {
-				restored.Metadata = metadata.(map[string]interface{})
-			}
-			if rowsRestored {
-				restored.Rows = rows.([][]interface{})
-			}
-			result = &restored
-		}
-	}
-	if err != nil {
-		err, _ = r.restoreSourceError(err)
-	}
-	return result, err
-}
-
 // isExplainOrProfileText reports whether a canonical statement starts with
 // EXPLAIN or PROFILE.
 func isExplainOrProfileText(query string) bool {
@@ -1540,143 +1493,6 @@ const (
 	sourceValueText sourceRestorationPurpose = iota
 	sourceDiagnosticText
 )
-
-// restoreValue owns source presentation for metadata and diagnostics, copying
-// only changed containers. Diagnostic strings do not acquire value-fragment
-// lookup semantics; structured diagnostic Data retains the value policy.
-func (r *queryRewrite) restoreValue(value interface{}, purpose sourceRestorationPurpose) (interface{}, bool) {
-	switch typed := value.(type) {
-	case localization.Message:
-		if typed.ID == localization.MessageCypherANTLRUnexpectedInput {
-			line, lineOK := typed.Data["Line"].(int)
-			column, columnOK := typed.Data["Column"].(int)
-			if originalLine, originalColumn, found := r.OriginalPosition(line, column); lineOK && columnOK && found {
-				if originalLine != line || originalColumn != column {
-					return localization.CypherANTLRUnexpectedInput(originalLine, originalColumn), true
-				}
-			}
-		}
-		fallback, _ := r.restoreValue(typed.Fallback, sourceDiagnosticText)
-		data, mapped := r.restoreValue(typed.Data, sourceValueText)
-		if !mapped && fallback == typed.Fallback {
-			return value, false
-		}
-		typed.Fallback = fallback.(string)
-		if mapped {
-			typed.Data = data.(map[string]any)
-		}
-		return typed, true
-	case localization.MessageSequence:
-		var messages []localization.Message
-		for index, message := range typed.Messages {
-			if restored, changed := r.restoreValue(message, sourceValueText); changed {
-				if messages == nil {
-					messages = append([]localization.Message(nil), typed.Messages...)
-				}
-				messages[index] = restored.(localization.Message)
-			}
-		}
-		if messages == nil {
-			return value, false
-		}
-		typed.Messages = messages
-		return typed, true
-	case error:
-		return r.restoreSourceError(typed)
-	case string:
-		if purpose == sourceValueText {
-			if restored := r.originalText(typed); restored != typed {
-				return restored, true
-			}
-		}
-		message := typed
-		if strings.Contains(message, r.Text) {
-			message = strings.ReplaceAll(message, r.Text, r.Original)
-		}
-		var out strings.Builder
-		last := 0
-		for index := 0; index < len(message); index++ {
-			switch quote := message[index]; {
-			case quote == '\'' || quote == '"' || quote == '`':
-				close := strings.IndexByte(message[index+1:], quote)
-				if close <= 0 {
-					continue
-				}
-				inner := message[index+1 : index+1+close]
-				if restored := r.originalText(inner); restored != inner {
-					out.WriteString(message[last : index+1])
-					out.WriteString(restored)
-					last = index + 1 + close
-				}
-				index += close + 1
-			case strings.HasPrefix(message[index:], "line "):
-				line, column, end, ok := parseLineColumn(message, index+len("line "))
-				if !ok {
-					continue
-				}
-				originalLine, originalColumn, found := r.OriginalPosition(line, column)
-				if !found {
-					continue
-				}
-				out.WriteString(message[last : index+len("line ")])
-				out.WriteString(strconv.Itoa(originalLine) + ":" + strconv.Itoa(originalColumn))
-				last = end
-				index = end - 1
-			}
-		}
-		if last != 0 {
-			out.WriteString(message[last:])
-			message = out.String()
-		}
-		return message, message != typed
-	case map[string]interface{}:
-		var copied map[string]interface{}
-		for key, item := range typed {
-			if restored, changed := r.restoreValue(item, sourceValueText); changed {
-				if copied == nil {
-					copied = make(map[string]interface{}, len(typed))
-					for k, v := range typed {
-						copied[k] = v
-					}
-				}
-				copied[key] = restored
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	case []interface{}:
-		var copied []interface{}
-		for i, item := range typed {
-			if restored, changed := r.restoreValue(item, sourceValueText); changed {
-				if copied == nil {
-					copied = append([]interface{}(nil), typed...)
-				}
-				copied[i] = restored
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	case [][]interface{}:
-		var copied [][]interface{}
-		for i, row := range typed {
-			if restored, changed := r.restoreValue(row, sourceValueText); changed {
-				if copied == nil {
-					copied = append([][]interface{}(nil), typed...)
-				}
-				copied[i] = restored.([]interface{})
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	}
-	return value, false
-}
 
 // skipCypherQuotedText returns the end of the string literal or quoted name
 // that starts at query[start] (quote): a doubled quote, or a backslash escape

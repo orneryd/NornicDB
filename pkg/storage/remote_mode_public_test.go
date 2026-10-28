@@ -27,11 +27,13 @@ type f18Session struct {
 }
 
 func (s *f18Session) ExecuteRead(ctx context.Context, w neo4j.ManagedTransactionWork, _ ...func(*neo4j.TransactionConfig)) (any, error) {
-	s.write = false
-	return w(&f18Tx{s: s})
+	return s.executeManaged(w, false)
 }
 func (s *f18Session) ExecuteWrite(ctx context.Context, w neo4j.ManagedTransactionWork, _ ...func(*neo4j.TransactionConfig)) (any, error) {
-	s.write = true
+	return s.executeManaged(w, true)
+}
+func (s *f18Session) executeManaged(w neo4j.ManagedTransactionWork, write bool) (any, error) {
+	s.write = write
 	return w(&f18Tx{s: s})
 }
 func (s *f18Session) Close(context.Context) error { s.closed = true; return nil }

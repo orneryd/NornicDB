@@ -22,14 +22,6 @@ func kpSkipSpaces(s string, i int) int {
 	return i
 }
 
-func kpScanIdent(s string, i int) (string, int) {
-	name, ok := cyphertext.ScanIdentifier(s, i)
-	if !ok {
-		return "", i
-	}
-	return name.Value, name.End
-}
-
 func kpExpectByte(s string, i int, b byte) int {
 	if i >= len(s) || s[i] != b {
 		return -1
@@ -361,26 +353,12 @@ func parseCreateDecayProfile(s string, i int) (interface{}, bool, error) {
 	return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfterProfileName("OPTIONS or FOR", name), nil)
 }
 
-func kpScanQuotedName(s string, i int) (string, int) {
-	if i >= len(s) {
-		return "", i
-	}
-	if isCypherStringQuoteByte(s[i]) {
-		val, j := kpScanQuotedString(s, i)
-		if j < 0 {
-			return "", i
-		}
-		return val, j
-	}
-	return "", i
-}
-
 // kpScanName tries a quoted string first, then falls back to a bare identifier.
 func kpScanName(s string, i int) (string, int) {
-	if name, j := kpScanQuotedName(s, i); name != "" {
+	if name, j := kpScanQuotedString(s, i); j >= 0 && name != "" {
 		return name, j
 	}
-	return kpScanIdent(s, i)
+	return cyphertext.IdentifierValue(s, i)
 }
 
 func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, error) {
@@ -528,14 +506,14 @@ func parseForTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding
 		return binding, i, nil
 	}
 
-	_, i = kpScanIdent(s, i)
+	_, i = cyphertext.IdentifierValue(s, i)
 	i = kpSkipSpaces(s, i)
 
 	if i < len(s) && s[i] == ':' {
 		labels := []string{}
 		for i < len(s) && s[i] == ':' {
 			i++
-			label, j := kpScanIdent(s, i)
+			label, j := cyphertext.IdentifierValue(s, i)
 			if label == "" {
 				return binding, i, localizedError(localization.CypherKnowledgePolicyLabelExpectedAfterColon(), nil)
 			}
@@ -574,12 +552,12 @@ func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBindin
 	i++
 	i = kpSkipSpaces(s, i)
 
-	_, i = kpScanIdent(s, i)
+	_, i = cyphertext.IdentifierValue(s, i)
 	i = kpSkipSpaces(s, i)
 
 	if i < len(s) && s[i] == ':' {
 		i++
-		edgeType, j := kpScanIdent(s, i)
+		edgeType, j := cyphertext.IdentifierValue(s, i)
 		if edgeType == "" {
 			return binding, i, localizedError(localization.CypherKnowledgePolicyEdgeTypeExpectedAfterColon(), nil)
 		}
@@ -679,9 +657,9 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 
 		// Plan syntax: <var>.<prop> directives (e.g., n.tenantId NO DECAY)
 		if cyphertext.NameStartAt(body, i) {
-			ident, j := kpScanIdent(body, i)
+			ident, j := cyphertext.IdentifierValue(body, i)
 			if ident != "" && j < len(body) && body[j] == '.' {
-				propName, k := kpScanIdent(body, j+1)
+				propName, k := cyphertext.IdentifierValue(body, j+1)
 				if propName != "" {
 					rule, l, err := parsePropertyRuleDirectives(body, k)
 					if err != nil {
@@ -1304,7 +1282,7 @@ func parsePolicyWhenClause(source policyDDLSource, i int) (knowledgepolicy.Promo
 			k = kpSkipSpaces(s, k)
 			ref, l := kpScanQuotedString(s, k)
 			if ref == "" {
-				ref, l = kpScanIdent(s, k)
+				ref, l = cyphertext.IdentifierValue(s, k)
 			}
 			if ref == "" {
 				return clause, i, localizedError(localization.CypherKnowledgePolicyProfileNameExpectedAfter("APPLY PROFILE"), nil)
@@ -1378,7 +1356,7 @@ func parseOptionsMap(body string, handler func(key, rawVal string) error) error 
 			break
 		}
 
-		key, j := kpScanIdent(body, i)
+		key, j := cyphertext.IdentifierValue(body, i)
 		if key == "" {
 			if body[i] == ',' || body[i] == ';' {
 				i++

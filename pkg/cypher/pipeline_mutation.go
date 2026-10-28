@@ -533,7 +533,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
 	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
-		if actions := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):]), nil); hasDynamicToken(actions.pattern) {
+		if actions := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil); hasDynamicToken(actions.pattern) {
 			pattern := actions.pattern
 			stats := &QueryStats{}
 			out := make([]pipelineRow, 0, len(rows))
@@ -571,7 +571,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	var clausePattern, onCreateSet, onMatchSet string
 	multiRelationship := false
 	if isMerge {
-		parts := splitMergeClauseActions(strings.TrimSpace(clauseBody[len("MERGE"):]), nil)
+		parts := splitMergeClauseActions(pipelineClauseBody(clauseBody, "MERGE"), nil)
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
 	}
@@ -970,7 +970,7 @@ func setClauseSourceTypeError(clause string, types map[string]string, params map
 	}
 	for _, assignment := range splitSetAssignments(body) {
 		_, property, operator, source := splitSetAssignment(assignment)
-		if staticLiteralTypeName(source) != "" {
+		if staticLiteralType(source, literalLedExpression) != "" {
 			continue
 		}
 		// Parameter values are the run's facts (the per-execution check).

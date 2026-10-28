@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture/remotequery"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,15 +56,9 @@ func TestCatalogRemoteMixedCaseLookup(t *testing.T) {
 }
 
 type observedRemoteEngine struct {
-	*storage.RemoteEngine
-	queries int
-	begins  int
-	closes  int
-}
-
-func (e *observedRemoteEngine) QueryCypher(ctx context.Context, query string, params map[string]interface{}, mode storage.RemoteAccessMode) ([]string, [][]interface{}, error) {
-	e.queries++
-	return e.RemoteEngine.QueryCypher(ctx, query, params, mode)
+	remotequery.Observer
+	begins int
+	closes int
 }
 
 func (e *observedRemoteEngine) BeginCypherTx(ctx context.Context) (storage.RemoteCypherTx, error) {
@@ -126,7 +121,7 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 				// The test asserts the decorator's close below; the concrete
 				// factory return is also released explicitly when the executor
 				// no longer names it.
-				wrapped = &observedRemoteEngine{RemoteEngine: engine}
+				wrapped = &observedRemoteEngine{Observer: remotequery.Observer{RemoteEngine: engine}}
 				factoryEngines = append(factoryEngines, wrapped)
 				return wrapped, nil
 			}
@@ -171,7 +166,7 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 				require.NoError(t, transaction.Rollback(nil))
 			}
 			require.Equal(t, 1, factoryCalls)
-			require.Equal(t, 1, wrapped.queries)
+			require.Equal(t, 1, wrapped.Calls)
 			require.Equal(t, 1, wrapped.begins)
 			require.EqualValues(t, 1, opens.Load())
 			require.EqualValues(t, 3, queries.Load())

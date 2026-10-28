@@ -769,7 +769,7 @@ func TestRenderConstraintStatement_HandlesEveryConstraintType(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := renderConstraintStatement(tc.input)
+			got, ok := renderConstraintStatement(constraintStatementRequest{general: tc.input})
 			require.Equal(t, tc.ok, ok)
 			if tc.ok {
 				require.Equal(t, tc.expect, got)

@@ -74,12 +74,12 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	if cached {
 		return plan
 	}
-	if isFlatReturnProjection(clause) {
-		plan = parseFlatReturnProjection(ctx, clause)
-	} else if node, ok := canonicalQueryClause(ctx, clause); ok {
-		plan = projectionPlanFromSyntax(node)
-	} else {
-		plan = &returnProjectionPlan{}
+	if plan = tryFlatReturnProjection(ctx, clause); plan == nil {
+		if node, ok := canonicalQueryClause(ctx, clause); ok {
+			plan = projectionPlanFromSyntax(node)
+		} else {
+			plan = &returnProjectionPlan{}
+		}
 	}
 	if ctx.Err() != nil {
 		return &returnProjectionPlan{}
@@ -97,30 +97,21 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	return plan
 }
 
-// isFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
+// tryFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
 // scanner path. Nested expressions, quoted identifiers, strings, wildcards,
 // modifiers, and UNION clauses use the canonical syntax owner above.
-func isFlatReturnProjection(clause string) bool {
+func tryFlatReturnProjection(ctx context.Context, clause string) *returnProjectionPlan {
 	clause = strings.TrimSpace(clause)
 	const keyword = "RETURN"
 	if len(clause) <= len(keyword) || !strings.EqualFold(clause[:len(keyword)], keyword) || cyphertext.NamePartAt(clause, len(keyword)) {
-		return false
+		return nil
 	}
 	body := clause[len(keyword):]
 	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
-		return false
+		return nil
 	}
-	return true
-}
-
-func parseFlatReturnProjection(ctx context.Context, clause string) *returnProjectionPlan {
-	body := strings.TrimSpace(clause)
-	modifierStart := len(body)
-	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
-		modifierStart = cut
-	}
-	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
-	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
+	plan := &returnProjectionPlan{}
+	body, plan.distinct = cutDistinct(pipelineClauseBody(clause, "RETURN"))
 	for _, rawItem := range splitTopLevelComma(body) {
 		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(rawItem), projectionAdmitted)
 		expr, alias := itemSource.expression, itemSource.alias
@@ -268,4 +259,70 @@ func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, 
 		next[name] = struct{}{}
 	}
 	return next
+}
+
+// returnShapeItems returns the trimmed projection items of query's RETURN clause
+// with the trailing ORDER BY / SKIP / LIMIT clauses removed. It is the single
+// owner of that RETURN-location, trailing-clause trimming and comma-splitting
+// step for the narrow optimized return shapes below; each shape keeps its own
+// arity and expression grammar on top of the returned items.
+//
+// query is the canonical statement text supplied to pattern detection. The RETURN
+// offset is kept on its own so only the clause body below it is trimmed.
+func returnShapeItems(query string) []string {
+	returnAt := findKeywordIndex(query, "RETURN")
+	if returnAt < 0 {
+		return nil
+	}
+	returnPart := strings.TrimSpace(query[returnAt+len("RETURN"):])
+
+	// Strip ORDER BY / SKIP / LIMIT.
+	end := len(returnPart)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	returnPart = strings.TrimSpace(returnPart[:end])
+	if returnPart == "" {
+		return nil
+	}
+
+	return splitTopLevelComma(returnPart)
+}
+
+// trimReturnItemAlias strips the established space-delimited "AS" alias from one RETURN item. The
+// surrounding spaces are part of the match, as before canonicalization.
+func trimReturnItemAlias(item string) string {
+	item = strings.TrimSpace(item)
+	if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
+		item = strings.TrimSpace(item[:asIdx])
+	}
+	return item
+}
+
+// restoreResultColumns preserves final RETURN spelling after quoted variables
+// have executed with internal identities. Parsed aliases are already decoded.
+func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(string) []returnItem) {
+	if start, end, ok := finalReturnBody(names.Text); ok {
+		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
+		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
+			sortColumnsByName(result)
+		} else {
+			originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
+			items := parseItems(originalText)
+			canonicalItems := parseItems(names.Text[start:end])
+			if len(items) == len(result.Columns) && len(canonicalItems) == len(items) {
+				for index, item := range items {
+					if item.alias != strings.TrimSpace(item.expr) {
+						result.Columns[index] = item.alias
+					} else if name, isName := isOneSymbolicName(item.expr); isName {
+						result.Columns[index] = name
+					} else {
+						result.Columns[index] = strings.TrimSpace(item.expr)
+					}
+				}
+			}
+		}
+	}
 }

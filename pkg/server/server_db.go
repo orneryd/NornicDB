@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/internal/jsontext"
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
 	"io"
 	"net/http"
 	"reflect"
@@ -201,9 +202,17 @@ func (s *Server) invalidateAllExecutors() {
 }
 
 // databaseManagerAdapter wraps multidb.DatabaseManager to implement
-// cypher.DatabaseManagerInterface, avoiding import cycles.
+// cypher.DatabaseManagerInterface, avoiding import cycles. The required
+// operations come from the shared contract in catalogadapter.Catalog (see
+// catalogadapter/catalog_operations.go) and the optional database-option,
+// statement-cache-scope and administrative-identity capabilities come from the
+// shared catalogadapter.IdentifiedExecutionCatalog view. HTTP keeps only its own
+// server lifecycle fields and the two drop lifecycle overrides below.
+//
+// The required methods use pointer receivers, so only *databaseManagerAdapter,
+// not the value type, implements that interface.
 type databaseManagerAdapter struct {
-	catalogadapter.Catalog
+	catalogadapter.IdentifiedExecutionCatalog
 	db     *nornicdb.DB
 	server *Server // Reference to server for cache invalidation
 }
@@ -213,103 +222,14 @@ type databaseManagerAdapter struct {
 // the state the server derives from a database (search services, cached
 // executors) in step with it.
 func (s *Server) databaseManager() *databaseManagerAdapter {
-	return &databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: s.dbManager}, db: s.db, server: s}
-}
-
-func (a *databaseManagerAdapter) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
-	return a.Manager.CreateDatabase(ctx, request)
-}
-
-func (a *databaseManagerAdapter) ServerIdentity() (string, time.Time) {
-	return a.Manager.ServerIdentity()
-}
-
-func (a *databaseManagerAdapter) SystemDatabaseName() string {
-	return a.Manager.SystemDatabaseName()
-}
-
-func (a *databaseManagerAdapter) DatabaseIdentity(name string) (string, time.Time) {
-	return a.Manager.DatabaseIdentity(name)
+	return &databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(s.dbManager), db: s.db, server: s}
 }
 
 func (a *databaseManagerAdapter) DropDatabase(ctx context.Context, name string) error {
-	if err := a.Manager.DropDatabase(ctx, name); err != nil {
-		return err
-	}
-	// Search drops the database's state on storage's namespace reset, for
-	// every DROP DATABASE path.
-	if a.db != nil {
-		a.db.ResetInferenceService(name)
-	}
-	// Invalidate cached executor for dropped database
-	if a.server != nil {
-		a.server.invalidateExecutor(name)
-		// Also invalidate all executors to ensure fresh database manager references
-		// This ensures queries from other databases see the updated database list
-		a.server.invalidateAllExecutors()
-	}
-	return nil
+	return a.dropCatalogDatabase(ctx, name, catalogDropRegular)
 }
-
-func (a *databaseManagerAdapter) Exists(name string) bool {
-	return a.Manager.Exists(name)
-}
-
-func (a *databaseManagerAdapter) CreateAlias(ctx context.Context, alias, databaseName string) error {
-	return a.Manager.CreateAlias(ctx, alias, databaseName)
-}
-
-func (a *databaseManagerAdapter) DropAlias(ctx context.Context, alias string) error {
-	return a.Manager.DropAlias(ctx, alias)
-}
-
-func (a *databaseManagerAdapter) ListAliases(databaseName string) map[string]string {
-	return a.Manager.ListAliases(databaseName)
-}
-
-func (a *databaseManagerAdapter) ResolveDatabase(nameOrAlias string) (string, error) {
-	return a.Manager.ResolveDatabase(nameOrAlias)
-}
-
-func (a *databaseManagerAdapter) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
-	// Convert interface{} to *multidb.Limits
-	limitsPtr, ok := limits.(*multidb.Limits)
-	if !ok {
-		return fmt.Errorf("invalid limits type")
-	}
-	return a.Manager.SetDatabaseLimits(ctx, databaseName, limitsPtr)
-}
-
-func (a *databaseManagerAdapter) GetDatabaseLimits(databaseName string) (interface{}, error) {
-	return a.Manager.GetDatabaseLimits(databaseName)
-}
-
 func (a *databaseManagerAdapter) DropCompositeDatabase(ctx context.Context, name string) error {
-	if err := a.Manager.DropCompositeDatabase(ctx, name); err != nil {
-		return err
-	}
-	// Invalidate any cached executors that might reference this composite database
-	// Note: Composite databases don't have their own executors cached, but we should
-	// invalidate the executor for the database we're querying from (usually "nornic")
-	// to ensure subsequent queries see the updated state
-	if a.server != nil {
-		// Invalidate executor cache to force fresh database manager reference
-		// This ensures all executors see the updated database list
-		a.server.invalidateAllExecutors()
-	}
-	return nil
-}
-
-func (a *databaseManagerAdapter) RemoveConstituent(ctx context.Context, compositeName string, alias string) error {
-	return a.Manager.RemoveConstituent(ctx, compositeName, alias)
-}
-
-func (a *databaseManagerAdapter) IsCompositeDatabase(name string) bool {
-	return a.Manager.IsCompositeDatabase(name)
-}
-
-func (a *databaseManagerAdapter) GetStorageForUse(name string, authToken string) (interface{}, error) {
-	return a.Manager.GetStorageWithAuth(name, authToken)
+	return a.dropCatalogDatabase(ctx, name, catalogDropComposite)
 }
 
 // handleDatabaseInfo returns database information for the specified database.
@@ -1381,7 +1301,7 @@ func (s *Server) executeTxStatements(
 	response *TransactionResponse,
 ) (failed bool) {
 	localize := func(message localization.Message) string {
-		text, _ := s.renderMessage(ctx, message)
+		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
 		return text
 	}
 	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(session), localize, response)
@@ -1846,10 +1766,6 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 	}
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
-}
-
-func (a *databaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
-	return a.Manager.StatementCacheScope(name)
 }
 
 func (s *Server) bindStatementCacheIndex() {

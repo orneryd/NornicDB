@@ -28,8 +28,9 @@ func isReduceFormFunction(name string) bool {
 // false when they don't have the function's form (allReduce takes a
 // predicate, reduce doesn't).
 func parseReduceForm(function, arguments string) (reduceForm, bool) {
-	form := reduceForm{all: lowerASCII(function) == "allreduce"}
-	parts := splitTopLevelComma(arguments)
+	form := reduceForm{all: equalFoldASCII(function, "allreduce")}
+	var buffer [3]string
+	parts := appendTopLevelComma(buffer[:0], arguments)
 	if want := map[bool]int{false: 2, true: 3}[form.all]; len(parts) != want {
 		return form, false
 	}

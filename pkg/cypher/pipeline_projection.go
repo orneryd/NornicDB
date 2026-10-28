@@ -597,7 +597,9 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 	}
 	name = lowerASCII(strings.TrimSpace(expr[:open]))
 	inner = strings.TrimSpace(extractFuncInner(expr))
-	inner, distinct = cutDistinctArgument(inner)
+	argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+	inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
+	distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
 	if inner == "" {
 		return "", "", false, false
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,7 @@ func (e *f25CatalogReceiptProbe) SubmitEntityCommit(ctx context.Context, prepare
 		close(e.submitted)
 	}
 	if e.mode == "applied-ack-error" {
-		if err := e.finish(storage.CommitApplied); err != nil {
+		if err := storagefault.FinishPreparedReceipt(e.prepared, e.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict}); err != nil {
 			return nil, err
 		}
 	} else if e.mode != "accepted-wait" {
@@ -71,18 +72,6 @@ func (e *f25CatalogReceiptProbe) SubmitEntityCommit(ctx context.Context, prepare
 		}
 	}
 	return e.receipt, nil
-}
-func (e *f25CatalogReceiptProbe) finish(state storage.CommitOutcomeState) error {
-	if state == storage.CommitApplied {
-		if err := e.prepared.Commit(nil); err != nil {
-			return err
-		}
-	} else {
-		e.prepared.Abort()
-	}
-	outcome := storage.CommitOutcome{State: state, Err: storage.ErrConflict}
-	e.receiptOwner.PublishPhysical(outcome)
-	return e.receiptOwner.Resolve(outcome)
 }
 
 func TestF25CompositeCatalogPublicationPrototype(t *testing.T) {
@@ -182,7 +171,7 @@ func TestF25CompositeCatalogPublicationPrototype(t *testing.T) {
 					if phase == "pending-applied" {
 						state = storage.CommitApplied
 					}
-					require.NoError(t, backing.finish(state))
+					require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: state, Err: storage.ErrConflict}))
 					applied = state == storage.CommitApplied
 					inspect("live after terminal receipt", manager, applied)
 					if oldScope != nil {
@@ -313,7 +302,7 @@ func TestF25OtherCatalogPublicationPrototype(t *testing.T) {
 					if phase == "pending-applied" {
 						state = storage.CommitApplied
 					}
-					require.NoError(t, backing.finish(state))
+					require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: state, Err: storage.ErrConflict}))
 					applied = state == storage.CommitApplied
 					inspect("live terminal", applied, manager)
 				}
@@ -387,7 +376,7 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 				if phase == "pending-applied" {
 					state = storage.CommitApplied
 				}
-				require.NoError(t, backing.finish(state))
+				require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: state, Err: storage.ErrConflict}))
 				applied = state == storage.CommitApplied
 				inspect("terminal")
 			}
@@ -410,10 +399,7 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T) {
 	for _, terminal := range []storage.CommitOutcomeState{storage.CommitApplied, storage.CommitDiscarded} {
 		t.Run(fmt.Sprint(terminal), func(t *testing.T) {
-			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-			backing := &f25CatalogReceiptProbe{Engine: base, native: base.BadgerEngine, ownerContext: context.Background()}
-			manager, err := NewDatabaseManager(t.Context(), backing, nil)
-			require.NoError(t, err)
+			manager, backing := newCatalogPublicationProbe(t)
 			t.Cleanup(func() { _ = manager.Close() })
 			backing.mode = "accepted-wait"
 			backing.submitted = make(chan struct{})
@@ -425,7 +411,7 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 			assert.False(t, manager.Exists("accepted"))
 			assert.Zero(t, len(manager.catalogGate), "accepted receipt retains catalog serialization")
 			cancel()
-			err = <-result
+			err := <-result
 			var accepted *storage.AcceptedCommitError
 			require.ErrorAs(t, err, &accepted)
 			require.ErrorIs(t, err, context.Canceled)
@@ -436,7 +422,7 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 			denied, stop := context.WithCancel(t.Context())
 			stop()
 			require.ErrorIs(t, manager.CreateDatabase(denied, DatabaseCreateRequest{Name: "must-not-appear"}), context.Canceled)
-			require.NoError(t, backing.finish(terminal))
+			require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: terminal, Err: storage.ErrConflict}))
 			assert.Equal(t, terminal == storage.CommitApplied, manager.Exists("accepted"))
 			assert.Equal(t, 1, len(manager.catalogGate), "only terminal settlement releases serialization")
 			backing.mode = ""
@@ -449,10 +435,7 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 }
 
 func TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	backing := &f25CatalogReceiptProbe{Engine: base, native: base.BadgerEngine, ownerContext: context.Background()}
-	manager, err := NewDatabaseManager(t.Context(), backing, nil)
-	require.NoError(t, err)
+	manager, backing := newCatalogPublicationProbe(t)
 	scope, err := manager.StatementCacheScope("nornic")
 	require.NoError(t, err)
 	backing.mode = "pending-applied"
@@ -467,7 +450,7 @@ func TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache(t *test
 	if unlocked {
 		manager.mu.RUnlock()
 	}
-	require.NoError(t, backing.finish(storage.CommitApplied))
+	require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict}))
 	require.NoError(t, <-closed)
 	require.False(t, scope.Valid())
 	assert.True(t, manager.Exists("accepted"), "physical accepted outcome still owns catalog publication")
@@ -475,4 +458,13 @@ func TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache(t *test
 	assert.ErrorIs(t, err, ErrDatabaseNotFound, "settlement cannot reopen closed cache resources")
 	assert.True(t, manager.statementCachesClosed)
 	assert.Empty(t, manager.limitCheckers, "terminal publication cannot recreate closed checker resources")
+}
+
+func newCatalogPublicationProbe(t *testing.T) (*DatabaseManager, *f25CatalogReceiptProbe) {
+	t.Helper()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	probe := &f25CatalogReceiptProbe{Engine: base, native: base.BadgerEngine, ownerContext: context.Background()}
+	manager, err := NewDatabaseManager(t.Context(), probe, nil)
+	require.NoError(t, err)
+	return manager, probe
 }

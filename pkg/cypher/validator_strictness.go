@@ -57,22 +57,19 @@ func containsNotInOperator(cypher string) bool {
 			i = queryCommentEnd(cypher, i) - 1
 			continue
 		}
-		// NOT is a valid local iterator name, read by the same declaration
-		// owner as the list/quantifier evaluators, rather than an infix NOT.
-		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
-			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
-				end, _ := cyphertext.ScanIdentifier(cypher, at)
-				i = end.End - 1
-				continue
-			}
-		}
 		if !matchKeywordAt(cypher, i, "NOT") {
 			continue
 		}
 		next := queryGapEnd(cypher, i+len("NOT"))
-		if matchKeywordAt(cypher, next, "IN") {
-			return true
+		if !matchKeywordAt(cypher, next, "IN") {
+			continue
 		}
+		identifier, _ := cyphertext.ScanIdentifier(cypher, i)
+		if binding, declaration, bound := localBindingOf(cypher, i, identifier.Value); bound && binding.declared[declaration] == i {
+			i = identifier.End - 1
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -196,6 +193,7 @@ func foldByte(b byte) int {
 func lastTopLevelClauseWord(s string) string {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	last := ""
+	mergeOwner := false
 	for i := 0; i < len(s); i++ {
 		if end, quoted := skipCypherLexicalToken(s, i); quoted {
 			i = end - 1
@@ -228,6 +226,17 @@ func lastTopLevelClauseWord(s string) string {
 		if i > 0 && cyphertext.NamePartAt(s, i-1) {
 			continue
 		}
+		if mergeOwner && matchKeywordAt(s, i, "ON") && !caseOperandExpectedBefore(s, i) {
+			actionEnd, action := keywordSpanAt(s, i, "ON CREATE SET")
+			if !action {
+				actionEnd, action = keywordSpanAt(s, i, "ON MATCH SET")
+			}
+			if action && keywordBoundaryOK(s, actionEnd, keywordBoundaryWord, keywordAfter) {
+				last = "SET"
+				i = actionEnd - 1
+				continue
+			}
+		}
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
@@ -247,6 +256,7 @@ func lastTopLevelClauseWord(s string) string {
 					continue
 				}
 				last = keyword
+				mergeOwner = keyword == "MERGE"
 				break
 			}
 		}

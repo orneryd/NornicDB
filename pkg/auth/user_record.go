@@ -2,9 +2,10 @@ package auth
 
 import (
 	stdjson "encoding/json"
+	"time"
+
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"time"
 )
 
 // userRecordBinding applies the same stored field contract in both directions.
@@ -26,18 +27,9 @@ func bindUserScalar[T string | bool | int | int64](b userRecordBinding, key stri
 	return ok
 }
 
-// Failed-logins historically writes int but reads only a persisted int64.
-func bindUserCounter(b userRecordBinding, key string, field *int) {
-	if b.writing {
-		bindUserScalar(b, key, field)
-		return
-	}
-	var value int64
-	bindUserScalar(b, key, &value)
-	*field = int(value)
-}
-
-// Roles commit only a complete decode; metadata retains partial-map decoding.
+// bindUserJSON commits a complete typed decode for normal stored JSON. Roles
+// reject type errors atomically; metadata applies only the ordered valid prefix
+// of a well-formed object when a value has the wrong type.
 func bindUserJSON[T []Role | map[string]string](b userRecordBinding, key string, field *T, atomic bool) {
 	if b.writing {
 		if *field == nil {
@@ -48,46 +40,49 @@ func bindUserJSON[T []Role | map[string]string](b userRecordBinding, key string,
 		b.properties[key] = string(encoded)
 		return
 	}
-	encoded, ok := b.properties[key].(string)
-	if !ok {
-		return
-	}
-	if encoded == "null" {
-		var empty T
-		*field = empty
-		return
+	encoded, present := b.properties[key].(string)
+	var raw []byte
+	if present {
+		if encoded == "null" {
+			var empty T
+			*field = empty
+			return
+		}
+		raw = []byte(encoded)
+		// Read bindings belong to a fresh User. Metadata can decode directly
+		// into that initially nil field; atomic roles need a separate target.
+		target := field
+		if atomic {
+			target = new(T)
+		}
+		if err := jsontext.Unmarshal(raw, target); err == nil {
+			*field = *target
+			return
+		}
 	}
 	if atomic {
-		var decoded T
-		if err := jsontext.Unmarshal([]byte(encoded), &decoded); err == nil {
-			*field = decoded
-		}
 		return
 	}
-	// Stored metadata applies valid string entries in source order and stops
-	// before the first invalid entry. Use the canonical token/value reader so
-	// a decoder upgrade cannot insert zero values for rejected stored entries.
-	raw := []byte(encoded)
-	if !stdjson.Valid(raw) {
-		return
-	}
-	reader := jsontext.NewTokenReader(raw)
-	token, err := reader.Token()
-	if err != nil {
-		return
-	}
-	if token == nil {
-		var empty T
-		*field = empty
-		return
-	}
-	if token != stdjson.Delim('{') {
-		return
-	}
+	// A failed direct decode must never publish its partially filled map.
+	var empty T
+	*field = empty
+	// The default empty metadata map is needed only when a value is absent or
+	// rejected. Successful object decoding allocates its map directly; JSON null
+	// has already committed nil without allocating or changing the stored format.
 	metadata := any(field).(*map[string]string)
 	if *metadata == nil {
 		*metadata = make(map[string]string)
 	}
+	if !present || !stdjson.Valid(raw) {
+		return
+	}
+	reader := jsontext.NewTokenReader(raw)
+	token, err := reader.Token()
+	if err != nil || token != stdjson.Delim('{') {
+		return
+	}
+	// Typed decoding may have filled entries after a type error. Its result
+	// was discarded above; replay admits only this validated object's prefix.
 	for reader.More() {
 		name, err := reader.Token()
 		if err != nil {
@@ -101,7 +96,28 @@ func bindUserJSON[T []Role | map[string]string](b userRecordBinding, key string,
 	}
 }
 
-func bindUserRecord(b userRecordBinding, user *User, node *storage.Node) {
+type userRecordDirection uint8
+
+const (
+	storeUserRecord userRecordDirection = iota
+	loadUserRecord
+)
+
+type mappedUserRecord struct {
+	User *User
+	Node *storage.Node
+}
+
+func mapUserRecord(direction userRecordDirection, user *User, node *storage.Node) mappedUserRecord {
+	switch direction {
+	case storeUserRecord:
+		node = &storage.Node{ID: storage.NodeID("user:" + user.Username), Labels: []string{"_User", "_System"}, Properties: make(map[string]any, 12), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
+	case loadUserRecord:
+		user = &User{}
+	default:
+		panic("invalid user-record direction")
+	}
+	b := userRecordBinding{node.Properties, direction == storeUserRecord}
 	// Convert only at the wire boundary. Keeping the four wire slots here lets
 	// their common scalar binding inline instead of calling a mode-aware time
 	// codec four times; no stored key or time-admission rule changes.
@@ -123,7 +139,14 @@ func bindUserRecord(b userRecordBinding, user *User, node *storage.Node) {
 	hasCreated := bindUserScalar(b, "created_at", &created)
 	hasUpdated := bindUserScalar(b, "updated_at", &updated)
 	bindUserScalar(b, "last_login", &lastLogin)
-	bindUserCounter(b, "failed_logins", &user.FailedLogins)
+	// The historical wire contract writes int and admits only int64 on read.
+	if b.writing {
+		bindUserScalar(b, "failed_logins", &user.FailedLogins)
+	} else {
+		var failed int64
+		bindUserScalar(b, "failed_logins", &failed)
+		user.FailedLogins = int(failed)
+	}
 	bindUserScalar(b, "locked_until", &lockedUntil)
 	bindUserScalar(b, "disabled", &user.Disabled)
 	bindUserJSON(b, "metadata", &user.Metadata, false)
@@ -145,29 +168,5 @@ func bindUserRecord(b userRecordBinding, user *User, node *storage.Node) {
 			user.LockedUntil = time.Unix(lockedUntil, 0)
 		}
 	}
-}
-
-type userRecordDirection uint8
-
-const (
-	storeUserRecord userRecordDirection = iota
-	loadUserRecord
-)
-
-type mappedUserRecord struct {
-	User *User
-	Node *storage.Node
-}
-
-func mapUserRecord(direction userRecordDirection, user *User, node *storage.Node) mappedUserRecord {
-	switch direction {
-	case storeUserRecord:
-		node = &storage.Node{ID: storage.NodeID("user:" + user.Username), Labels: []string{"_User", "_System"}, Properties: make(map[string]any, 12), CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt}
-	case loadUserRecord:
-		user = &User{Metadata: make(map[string]string)}
-	default:
-		panic("invalid user-record direction")
-	}
-	bindUserRecord(userRecordBinding{node.Properties, direction == storeUserRecord}, user, node)
 	return mappedUserRecord{User: user, Node: node}
 }

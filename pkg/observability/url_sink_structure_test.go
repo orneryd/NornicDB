@@ -217,7 +217,7 @@ func endpointLocals(fn *ast.FuncDecl, returns map[string]bool) map[string]bool {
 func TestCredentialURLSinkStructure(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var functions []endpointFunction
-	for _, dir := range []string{"pkg", "cmd"} {
+	for _, dir := range []string{"internal", "pkg", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
 				return err

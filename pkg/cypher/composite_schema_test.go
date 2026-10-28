@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -15,20 +14,13 @@ import (
 // (scoped to the default DB) wired with a DatabaseManager.
 func compositeTestFixture(t *testing.T) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { mgr.Close() })
-
-	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
-	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{
+	mgr, adapter := createCompositeTestManager(t, "comp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}))
-
+	})
 	defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)
 	exec := NewStorageExecutor(defaultStore)
-	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	exec.SetDatabaseManager(adapter)
 	return exec, mgr
 }
 

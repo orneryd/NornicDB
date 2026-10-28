@@ -291,11 +291,7 @@ func astTrim(source *cyphertext.Source) *cyphertext.Source {
 	if source == nil {
 		return nil
 	}
-	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
-	end := len(strings.TrimRightFunc(source.Text, cyphertext.IsWhitespace))
-	if end < start {
-		end = start
-	}
+	start, end := sourceWhitespaceExtent(source.Text)
 	return source.Window(start, end)
 }
 
@@ -501,20 +497,34 @@ func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, 
 	switch clauseType {
 	case ASTClauseMatch, ASTClauseOptionalMatch:
 		clause.Match = b.parseMatch(source, clauseType == ASTClauseOptionalMatch)
-	case ASTClauseCreate:
-		clause.Create = b.parseCreate(source)
+	case ASTClauseCreate, ASTClauseSet:
+		keywordBytes := len("SET")
+		if clauseType == ASTClauseCreate {
+			keywordBytes = len("CREATE")
+		}
+		body := astTrim(source.Window(keywordBytes, len(text)))
+		if clauseType == ASTClauseCreate {
+			clause.Create = &ASTCreate{Patterns: b.parsePatterns(body)}
+		} else {
+			clause.Set = &ASTSet{Items: b.parseSetItems(body)}
+		}
 	case ASTClauseMerge:
 		clause.Merge = b.parseMerge(source)
 	case ASTClauseDelete, ASTClauseDetachDelete:
 		clause.Delete = b.parseDelete(source, clauseType == ASTClauseDetachDelete)
-	case ASTClauseSet:
-		clause.Set = b.parseSet(source)
 	case ASTClauseRemove:
 		clause.Remove = b.parseRemove(source)
-	case ASTClauseReturn:
-		clause.Return = b.parseReturn(ctx, source)
-	case ASTClauseWith:
-		clause.With = b.parseWith(ctx, source)
+	case ASTClauseReturn, ASTClauseWith:
+		keywordBytes := len("WITH")
+		if clauseType == ASTClauseReturn {
+			keywordBytes = len("RETURN")
+		}
+		items, distinct := b.parseProjection(ctx, source, keywordBytes)
+		if clauseType == ASTClauseReturn {
+			clause.Return = &ASTReturn{Items: items, Distinct: distinct}
+		} else {
+			clause.With = &ASTWith{Items: items, Distinct: distinct}
+		}
 	case ASTClauseWhere:
 		clause.Where = b.parseWhere(source)
 	case ASTClauseUnwind:
@@ -522,9 +532,9 @@ func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, 
 	case ASTClauseOrderBy:
 		clause.OrderBy = b.parseOrderBy(source)
 	case ASTClauseLimit:
-		clause.Limit = b.parseLimit(source)
+		clause.Limit = b.parseRowCount(source, len("LIMIT"))
 	case ASTClauseSkip:
-		clause.Skip = b.parseSkip(source)
+		clause.Skip = b.parseRowCount(source, len("SKIP"))
 	case ASTClauseCall:
 		clause.Call = b.parseCall(source)
 	}
@@ -547,34 +557,24 @@ func (b *ASTBuilder) parseMatch(source *cyphertext.Source, optional bool) *ASTMa
 	return match
 }
 
-// parseCreate parses a CREATE clause.
-func (b *ASTBuilder) parseCreate(source *cyphertext.Source) *ASTCreate {
-	text := source.Text
-	create := &ASTCreate{}
-	patternText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "CREATE"))
-	patternText = strings.TrimSpace(text[len("CREATE"):])
-	create.Patterns = b.parsePatterns(source.Window(len(text)-len(patternText), len(text)))
-	return create
-}
-
 // parseMerge parses a MERGE clause through the MERGE action parser
 // (splitMergeClauseActions): OnCreate and OnMatch hold the items of every
 // ON CREATE SET / ON MATCH SET clause, in order.
 func (b *ASTBuilder) parseMerge(source *cyphertext.Source) *ASTMerge {
 	text := source.Text
 	merge := &ASTMerge{}
-	body := astTrim(source.Window(len("MERGE"), len(text)))
+	body := astTrim(source.Window(queryGapEnd(text, keywordEndAt(text, 0, "MERGE")), len(text)))
 	var spans mergeActionSpans
 	parts := splitMergeClauseActions(body.Text, &spans)
 	if patterns := b.parsePatterns(body.Window(spans.pattern.Start, spans.pattern.End)); len(patterns) > 0 {
 		merge.Pattern = patterns[0]
 	}
 	for index := 0; index < parts.onCreate.len(); index++ {
-		span := spans.onCreate.at(index)
+		span := inlineOverflowAt(spans.onCreate.inline[:], spans.onCreate.overflow, index)
 		merge.OnCreate = append(merge.OnCreate, b.parseSetItems(astTrim(body.Window(span.Start+len("SET"), span.End)))...)
 	}
 	for index := 0; index < parts.onMatch.len(); index++ {
-		span := spans.onMatch.at(index)
+		span := inlineOverflowAt(spans.onMatch.inline[:], spans.onMatch.overflow, index)
 		merge.OnMatch = append(merge.OnMatch, b.parseSetItems(astTrim(body.Window(span.Start+len("SET"), span.End)))...)
 	}
 	return merge
@@ -602,16 +602,6 @@ func (b *ASTBuilder) parseDelete(source *cyphertext.Source, detach bool) *ASTDel
 	}
 
 	return del
-}
-
-// parseSet parses a SET clause.
-func (b *ASTBuilder) parseSet(source *cyphertext.Source) *ASTSet {
-	text := source.Text
-	set := &ASTSet{}
-	itemsText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "SET"))
-	itemsText = strings.TrimSpace(text[len("SET"):])
-	set.Items = b.parseSetItems(source.Window(len(text)-len(itemsText), len(text)))
-	return set
 }
 
 // parseSetItems parses SET assignments.
@@ -693,15 +683,14 @@ func (b *ASTBuilder) parseRemove(source *cyphertext.Source) *ASTRemove {
 	return rem
 }
 
-// parseReturn parses a RETURN clause.
-func (b *ASTBuilder) parseReturn(ctx context.Context, source *cyphertext.Source) *ASTReturn {
+// parseProjection owns RETURN/WITH item framing, DISTINCT and alias admission.
+func (b *ASTBuilder) parseProjection(ctx context.Context, source *cyphertext.Source, keywordBytes int) (items []ASTReturnItem, distinct bool) {
 	text := source.Text
-	ret := &ASTReturn{}
 
-	itemsText := strings.TrimSpace(text[len("RETURN"):])
+	itemsText := strings.TrimSpace(text[keywordBytes:])
 
 	// Check for DISTINCT
-	itemsText, ret.Distinct = cutDistinct(itemsText)
+	itemsText, distinct = cutDistinct(itemsText)
 
 	// Parse items
 	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
@@ -724,47 +713,10 @@ func (b *ASTBuilder) parseReturn(ctx context.Context, source *cyphertext.Source)
 		}
 
 		item.Expression = b.parseExpression(partSource)
-		ret.Items = append(ret.Items, item)
+		items = append(items, item)
 	}
 
-	return ret
-}
-
-// parseWith parses a WITH clause.
-func (b *ASTBuilder) parseWith(ctx context.Context, source *cyphertext.Source) *ASTWith {
-	text := source.Text
-	with := &ASTWith{}
-
-	itemsText := strings.TrimSpace(text[len("WITH"):])
-
-	// Check for DISTINCT
-	itemsText, with.Distinct = cutDistinct(itemsText)
-
-	// Parse items (same as RETURN)
-	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
-	for _, partSource := range parts {
-		partSource = astTrim(partSource)
-		part := partSource.Text
-		if part == "" {
-			continue
-		}
-
-		item := ASTReturnItem{RawText: astRaw(partSource)}
-
-		// Check for AS alias
-		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
-		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
-		if itemSource.as > 0 {
-			item.Alias = itemSource.alias
-			partSource = astTrim(partSource.Window(0, itemSource.as))
-			part = partSource.Text
-		}
-
-		item.Expression = b.parseExpression(partSource)
-		with.Items = append(with.Items, item)
-	}
-
-	return with
+	return items, distinct
 }
 
 // parseWhere parses a WHERE clause.
@@ -829,20 +781,10 @@ func (b *ASTBuilder) parseOrderBy(source *cyphertext.Source) *ASTOrderBy {
 	return orderBy
 }
 
-// parseLimit parses a LIMIT clause.
-func (b *ASTBuilder) parseLimit(source *cyphertext.Source) *int64 {
+// parseRowCount admits the signed decimal count shared by LIMIT and SKIP.
+func (b *ASTBuilder) parseRowCount(source *cyphertext.Source, keywordBytes int) *int64 {
 	text := source.Text
-	content := strings.TrimSpace(text[len("LIMIT"):])
-	if val, err := strconv.ParseInt(content, 10, 64); err == nil {
-		return &val
-	}
-	return nil
-}
-
-// parseSkip parses a SKIP clause.
-func (b *ASTBuilder) parseSkip(source *cyphertext.Source) *int64 {
-	text := source.Text
-	content := strings.TrimSpace(text[len("SKIP"):])
+	content := strings.TrimSpace(text[keywordBytes:])
 	if val, err := strconv.ParseInt(content, 10, 64); err == nil {
 		return &val
 	}
@@ -1131,10 +1073,11 @@ func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
 
 			fc := &ASTFunctionCall{Name: funcName}
 
-			// Check for DISTINCT
-			argsText, fc.Distinct = cutDistinctArgument(argsText)
+			// Keep the original function-argument source extent and modifier.
+			argumentSource := cyphertext.ReadFunctionArgumentSource(argsText, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+			fc.Distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
 
-			args := astCommaViews(source.Window(closeParen-len(argsText), closeParen))
+			args := astCommaViews(source.Window(parenIdx+1+argumentSource.Arguments.Start, parenIdx+1+argumentSource.Arguments.End))
 			for _, arg := range args {
 				arg = astTrim(arg)
 				if arg.Text != "" && arg.Text != "*" {

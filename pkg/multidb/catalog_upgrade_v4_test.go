@@ -83,7 +83,7 @@ func TestRemoteConnectionDescriptorPreservesExactInputAndRejectsConflicts(t *tes
 	require.NoError(t, err)
 	manager := &DatabaseManager{remoteCredentialCipher: cipher}
 	ref := ConstituentRef{Type: "remote", URI: "http://example.invalid/path?token=enc:v1:literal", User: " user\xed\xa0\x80 ", Password: " enc:v1:password\xed\xb0\x80 ", AuthMode: "user_password"}
-	secured, err := manager.sealRemoteConnection(ref)
+	secured, err := manager.sealRemoteConnection(ref, literalRemoteConnection)
 	require.NoError(t, err)
 	require.Empty(t, secured.URI)
 	require.Empty(t, secured.User)
@@ -127,7 +127,7 @@ func TestDescriptorDisplayIsDerivedAndHasNoExecutionAuthority(t *testing.T) {
 			ref.User = "enc:v1:literal-public-user"
 			ref.Password = "synthetic-explicit-password"
 		}
-		stored, err := manager.sealRemoteConnection(ref)
+		stored, err := manager.sealRemoteConnection(ref, literalRemoteConnection)
 		require.NoError(t, err)
 		view, err := manager.RemoteConstituentForDisplay(stored)
 		require.NoError(t, err)
@@ -148,11 +148,7 @@ func TestDescriptorDisplayIsDerivedAndHasNoExecutionAuthority(t *testing.T) {
 
 func TestCatalogV4TransformRetainsEveryAdmittedRegistration(t *testing.T) {
 	const data = `{"c":{"name":"c","type":"composite","options":{"limit":9007199254740993},"constituents":[{"alias":"r","database_name":"nornic","type":"remote","access_mode":"read","uri":"http://u:first@example.invalid","extra":{"keep":"literal\\u0061"}},{"alias":"R","database_name":"nornic","type":"remote","access_mode":"read","uri":"http://u:second@example.invalid"},{"alias":" r ","database_name":"nornic","type":"remote","access_mode":"read","uri":"http://u:third@example.invalid"}]}}`
-	plan, err := NewCatalogUpgradeV4("system", "synthetic-registration-transform-key")
-	require.NoError(t, err)
-	encoded, changed, err := plan.Transform(t.Context(), data)
-	require.NoError(t, err)
-	require.True(t, changed)
+	encoded := transformChangedCatalogV4(t, "synthetic-registration-transform-key", data)
 	var parsed map[string]struct {
 		Options      json.RawMessage `json:"options"`
 		Constituents []struct {
@@ -176,7 +172,7 @@ func TestDescriptorRuntimeDoesNotReinterpretLegacyOpaqueQueryBytes(t *testing.T)
 	require.NoError(t, err)
 	manager := &DatabaseManager{remoteCredentialCipher: cipher}
 	ref := ConstituentRef{Type: "remote", URI: "http://u:p@example.invalid/path?token=%zz&bad%key=keep"}
-	secured, err := manager.sealLegacyRemoteConnection(ref)
+	secured, err := manager.sealRemoteConnection(ref, legacyRemoteConnection)
 	require.NoError(t, err)
 	resolved, err := manager.resolveRemoteCredentials(secured, "")
 	require.NoError(t, err)
@@ -188,11 +184,7 @@ func TestDescriptorRuntimeDoesNotReinterpretLegacyOpaqueQueryBytes(t *testing.T)
 func TestCatalogV4TransformerPreservesJSONCodeUnits(t *testing.T) {
 	const key = "synthetic-v4-code-unit-key"
 	const original = `{"c":{"name":"c","type":"composite","future":{"text":"\ud800","literal":"\\ud800","n":9007199254740993},"constituents":[{"alias":"r","database_name":"nornic","type":"remote","uri":"http://example.invalid","auth_mode":"user_password","user":"plain","password":"\ud800"}]}}`
-	plan, err := NewCatalogUpgradeV4("system", key)
-	require.NoError(t, err)
-	encoded, changed, err := plan.Transform(t.Context(), original)
-	require.NoError(t, err)
-	require.True(t, changed)
+	encoded := transformChangedCatalogV4(t, key, original)
 	var catalog map[string]struct {
 		Future       jsontext.RawMessage `json:"future"`
 		Constituents []ConstituentRef    `json:"constituents"`
@@ -213,4 +205,14 @@ func TestCatalogV4TransformerPreservesJSONCodeUnits(t *testing.T) {
 	require.Equal(t, []byte{0xed, 0xa0, 0x80}, []byte(text))
 	require.Equal(t, `\ud800`, literal)
 	require.Equal(t, `9007199254740993`, string(future["n"]))
+}
+
+func transformChangedCatalogV4(t *testing.T, key, data string) string {
+	t.Helper()
+	plan, err := NewCatalogUpgradeV4("system", key)
+	require.NoError(t, err)
+	encoded, changed, err := plan.Transform(t.Context(), data)
+	require.NoError(t, err)
+	require.True(t, changed)
+	return encoded
 }

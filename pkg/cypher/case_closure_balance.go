@@ -48,7 +48,7 @@ func casePrefixEndRequired(text string, candidate int) bool {
 			continue
 		}
 		word := caseWordAt(text, i)
-		if word == "end" && i == candidate {
+		if equalFoldASCII(word, "end") && i == candidate {
 			// At a complete top-level branch, an operator after END can
 			// continue NOT's operand (NOT end + ...). Do not reinterpret it
 			// solely to repair a missing closing END in a sibling expression.
@@ -69,33 +69,44 @@ func casePrefixEndRequired(text string, candidate int) bool {
 }
 
 func advanceCaseClosureStates(text string, at int, word string, states []string) []string {
-	ambiguousEnd := word == "end" && caseEndFollowsBarePrefix(text, at)
-	switch word {
-	case "case", "when", "then", "else", "end":
-		if !ambiguousEnd && !caseKeywordAtMode(text, at, upperASCII(word), false) {
-			return states
-		}
+	var keyword string
+	switch {
+	case equalFoldASCII(word, "case"):
+		keyword = "CASE"
+	case equalFoldASCII(word, "when"):
+		keyword = "WHEN"
+	case equalFoldASCII(word, "then"):
+		keyword = "THEN"
+	case equalFoldASCII(word, "else"):
+		keyword = "ELSE"
+	case equalFoldASCII(word, "end"):
+		keyword = "END"
 	default:
 		return states
 	}
+	ambiguousEnd := keyword == "END" && caseEndFollowsBarePrefix(text, at)
+	if !ambiguousEnd && !caseKeywordAtMode(text, at, keyword, false) {
+		return states
+	}
+
 	next := make([]string, 0, len(states)+1)
 	for _, state := range states {
-		switch word {
-		case "case":
+		switch keyword {
+		case "CASE":
 			next = appendCaseClosureState(next, state+"c")
-		case "when":
+		case "WHEN":
 			if len(state) > 0 {
 				next = appendCaseClosureState(next, state[:len(state)-1]+"c")
 			}
-		case "then":
+		case "THEN":
 			if len(state) > 0 && state[len(state)-1] == 'c' {
 				next = appendCaseClosureState(next, state[:len(state)-1]+"v")
 			}
-		case "else":
+		case "ELSE":
 			if len(state) > 0 && state[len(state)-1] == 'v' {
 				next = appendCaseClosureState(next, state)
 			}
-		case "end":
+		case "END":
 			if ambiguousEnd {
 				next = appendCaseClosureState(next, state) // END is the operand.
 			}

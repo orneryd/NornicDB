@@ -28,7 +28,9 @@ type StatementCall struct {
 func (call StatementCall) Name() string { return call.call.name }
 
 // Text is the original invocation source used by procedure policy consumers.
-func (call StatementCall) Text() string { return (SyntaxNode{call.data, call.call.node}).Text() }
+func (call StatementCall) Text() string {
+	return (SyntaxNode{syntaxView[syntaxNode]{call.data, call.call.node}}).Text()
+}
 
 // Effects returns the retained structural effects, without another syntax walk.
 func (syntax StatementSyntax) Effects() StatementEffects { return StatementEffects{syntax.data} }
@@ -74,7 +76,7 @@ func (effects StatementEffects) AllowsExecutableQueries(allow func(string) bool)
 		return false
 	}
 	for _, id := range effects.data.effects.executableQueries {
-		if !allow((SyntaxNode{effects.data, id}).Text()) {
+		if !allow((SyntaxNode{syntaxView[syntaxNode]{effects.data, id}}).Text()) {
 			return false
 		}
 	}

@@ -81,10 +81,12 @@ func TestRowPipelineComparisonChainsUseEveryAdjacentPair(t *testing.T) {
 	}
 
 	for expression, want := range map[string]interface{}{
-		"1 < number <= 2 < 3": true,
-		"1 < number < 2 < 3":  false,
-		"'a' <= text <= 'c'":  true,
-		"'a' < text < 'b'":    false,
+		"1 < number <= 2 < 3":         true,
+		"1 < number <= 2 < 3 < 4 < 5": true,
+		"1 < number <= 2 < 3 < 4 < 3": false,
+		"1 < number < 2 < 3":          false,
+		"'a' <= text <= 'c'":          true,
+		"'a' < text < 'b'":            false,
 	} {
 		got, ok := rowValue(t, exec, expression, values)
 		if !ok || got != want {
@@ -111,8 +113,10 @@ func TestConvergedMatchFiltersArbitraryLengthComparisonChains(t *testing.T) {
 	}
 
 	for query, wantRows := range map[string]int{
-		"MATCH (n) WHERE 1 < n.number <= 3 RETURN n.number":  2,
-		"MATCH (n) WHERE 'a' <= n.text <= 'c' RETURN n.text": 3,
+		"MATCH (n) WHERE 1 < n.number <= 3 RETURN n.number":             2,
+		"MATCH (n) WHERE 1 < n.number <= 3 < 4 < 5 < 6 RETURN n.number": 2,
+		"MATCH (n) WHERE 1 < n.number <= 3 < 4 < 5 < 4 RETURN n.number": 0,
+		"MATCH (n) WHERE 'a' <= n.text <= 'c' RETURN n.text":            3,
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		if err != nil {
@@ -211,6 +215,34 @@ func BenchmarkComparisonChainSplit(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				benchmarkComparisonScan, _ = scanComparisonChain(benchmark.expression)
+			}
+		})
+	}
+}
+
+// BenchmarkComparisonChainOperands measures the real prepared-chain evaluator,
+// including indexed operator/operand reads across the inline/overflow boundary.
+func BenchmarkComparisonChainOperands(b *testing.B) {
+	for _, tc := range []struct{ name, expression string }{
+		{"inline", "1 < 2 = 2 <> 3 <= 3"},
+		{"overflow", "1 < 2 = 2 <> 3 <= 3 < 4 <= 4"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			scan, ok := scanComparisonChain(tc.expression)
+			if !ok {
+				b.Fatal("missing comparison chain")
+			}
+			resolve := func(_ int, text string) (any, bool, error) {
+				value, ok := parseLiteralScalarForPipeline(text)
+				return value, ok, nil
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				result, resolved, err := evaluateScannedComparisonChain(tc.expression, &scan, false, resolve, compareCypherPredicateValue, false)
+				if err != nil || !resolved || result != true {
+					b.Fatalf("chain result %v, resolved=%v, error=%v", result, resolved, err)
+				}
 			}
 		})
 	}

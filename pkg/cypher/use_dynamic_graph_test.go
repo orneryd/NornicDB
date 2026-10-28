@@ -2,11 +2,9 @@ package cypher
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,16 +13,10 @@ import (
 // executor on pcomp.
 func newCompositeFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
-	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pother"}))
-	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pthird"}))
-	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{
+	mgr, adapter := createCompositeTestManager(t, "pcomp", []multidb.ConstituentRef{
 		{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"},
 		{Alias: "third", DatabaseName: "pthird", Type: "local", AccessMode: "read_write"},
-	}))
-	adapter := &testDatabaseManagerAdapter{manager: mgr}
+	})
 	for db, v := range map[string]string{"pother": "o", "pthird": "t"} {
 		store, err := mgr.GetStorage(db)
 		require.NoError(t, err)
@@ -104,4 +96,17 @@ func TestGraphFunctionsOutsideComposite(t *testing.T) {
 		require.EqualError(t, err, message, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
+}
+
+func createCompositeTestManager(t *testing.T, name string, refs []multidb.ConstituentRef) (*multidb.DatabaseManager, *testDatabaseManagerAdapter) {
+	t.Helper()
+	mgr := newCompositeNativeManager(t, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	for _, ref := range refs {
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: ref.DatabaseName}))
+	}
+
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), name, refs))
+	return mgr, &testDatabaseManagerAdapter{manager: mgr}
 }

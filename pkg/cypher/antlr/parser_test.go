@@ -812,14 +812,14 @@ func TestANTLRQueryAnalyzer_WriteAndRoutingVariants(t *testing.T) {
 }
 
 func TestANTLRASCIICharStream(t *testing.T) {
-	if !isASCII("MATCH (n) RETURN n") {
+	if !cyphertext.PlainASCII("MATCH (n) RETURN n") {
 		t.Fatal("expected ASCII query to be detected as ASCII")
 	}
-	if isASCII("MATCH (n {name: 'Ångstrom'}) RETURN n") {
+	if cyphertext.PlainASCII("MATCH (n {name: 'Ångstrom'}) RETURN n") {
 		t.Fatal("expected non-ASCII query to be detected")
 	}
 
-	s := &sourceCharStream{source: cyphertext.NewSource(t.Context(), "MATCH", cyphertext.AcceptedSource)}
+	_, s := sourceInputStream(t.Context(), cyphertext.NewSource(t.Context(), "MATCH", cyphertext.AcceptedSource))
 	if s.LA(1) != int('M') || s.LA(2) != int('A') {
 		t.Fatalf("unexpected lookahead values: %d %d", s.LA(1), s.LA(2))
 	}
@@ -866,7 +866,7 @@ func TestANTLRASCIICharStream(t *testing.T) {
 			t.Fatal("expected Consume at EOF to panic")
 		}
 	}()
-	eof := &sourceCharStream{source: cyphertext.NewSource(t.Context(), "", cyphertext.AcceptedSource)}
+	_, eof := sourceInputStream(t.Context(), cyphertext.NewSource(t.Context(), "", cyphertext.AcceptedSource))
 	eof.Consume()
 }
 
@@ -1140,21 +1140,21 @@ func TestANTLRParse_ErrorIncludesDetails(t *testing.T) {
 
 func TestANTLRASCIICharStream_Edges(t *testing.T) {
 	t.Run("GetText stop before start", func(t *testing.T) {
-		s := &sourceCharStream{source: cyphertext.NewSource(t.Context(), "MATCH", cyphertext.AcceptedSource)}
+		_, s := sourceInputStream(t.Context(), cyphertext.NewSource(t.Context(), "MATCH", cyphertext.AcceptedSource))
 		if got := s.GetText(3, 1); got != "" {
 			t.Fatalf("GetText(3,1) = %q, want empty", got)
 		}
 	})
 
 	t.Run("LA past end is EOF", func(t *testing.T) {
-		s := &sourceCharStream{source: cyphertext.NewSource(t.Context(), "M", cyphertext.AcceptedSource)}
+		_, s := sourceInputStream(t.Context(), cyphertext.NewSource(t.Context(), "M", cyphertext.AcceptedSource))
 		if s.LA(2) != -1 {
 			t.Fatalf("LA(2) on 1-char stream = %d, want TokenEOF(-1)", s.LA(2))
 		}
 	})
 
 	t.Run("LA negative offsets", func(t *testing.T) {
-		s := &sourceCharStream{source: cyphertext.NewSource(t.Context(), "ABC", cyphertext.AcceptedSource)}
+		_, s := sourceInputStream(t.Context(), cyphertext.NewSource(t.Context(), "ABC", cyphertext.AcceptedSource))
 		s.Consume()
 		s.Consume()
 		if s.LA(-1) != int('B') {

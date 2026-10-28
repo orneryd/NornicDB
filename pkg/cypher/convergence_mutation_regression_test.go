@@ -29,7 +29,8 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		row[name] = edge
 	}
 	bindParameterRow(ctx, row)
-	clauses, ok, _ := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return e.Execute(withValueBindings(ctx, row), query, getParamsFromContext(ctx))
 	}
@@ -67,7 +68,8 @@ func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, o
 }
 
 func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, fmt.Errorf("invalid pipeline clauses: %s", query)
 	}
@@ -218,7 +220,7 @@ func (e *StorageExecutor) sharedScopedTransactionalCallForTest(ctx context.Conte
 }
 
 func (e *StorageExecutor) sharedCallTailForTest(ctx context.Context, input *ExecuteResult, tail string) (*ExecuteResult, error) {
-	if _, parsed, _ := parsePipelineClauses(ctx, tail); !parsed {
+	if split := parsePipelineClauses(ctx, tail); !split.ok {
 		tail = "RETURN * " + tail
 	}
 	return e.sharedTrailingRowsForTest(ctx, tail, input, input)
@@ -322,7 +324,8 @@ func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query s
 }
 
 func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	clauses, ok, _ := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
 		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
 			if err := validateRelationshipMutation(pattern, createRelationshipMutation); err != nil {

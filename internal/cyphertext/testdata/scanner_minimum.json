@@ -1,9 +1,16 @@
 {
+  "internal/catalogadapter/catalog_execution.go": [
+    "DatabaseIdentity"
+  ],
+  "internal/catalogadapter/catalog_operations.go": [
+    "ResolveDatabase"
+  ],
   "internal/cyphertext/credentials.go": [
     "PasswordBoundary",
     "Record"
   ],
   "internal/cyphertext/identifier.go": [
+    "IdentifierValue",
     "IsIdentifier",
     "ScanIdentifier"
   ],
@@ -93,6 +100,8 @@
     "sourceInputStream"
   ],
   "pkg/cypher/antlr/statement_syntax.go": [
+    "Span",
+    "Text",
     "parseStatementSyntax",
     "recordCredentials"
   ],
@@ -181,7 +190,6 @@
   ],
   "pkg/cypher/composite_commands.go": [
     "executeCompositeCommand",
-    "executeDropCompositeDatabase",
     "executeShowConstituents"
   ],
   "pkg/cypher/create.go": [
@@ -219,6 +227,9 @@
   ],
   "pkg/cypher/cypher25_value_text.go": [
     "isSimpleCypherName"
+  ],
+  "pkg/cypher/database_drop.go": [
+    "executeDatabaseDrop"
   ],
   "pkg/cypher/database_options.go": [
     "alterDatabaseOption"
@@ -278,10 +289,8 @@
     "applyShowTail",
     "executeAlterDatabase",
     "executeCreateAlias",
-    "executeCreateDatabase",
-    "executeCreateOrReplaceDatabase",
+    "executeDatabaseCreate",
     "executeDropAlias",
-    "executeDropDatabase",
     "executeShowAliases",
     "executeShowLimits",
     "functionSignatureDescriptions"
@@ -290,7 +299,6 @@
     "redactSpanErrorText"
   ],
   "pkg/cypher/executor_subqueries.go": [
-    "callSeedIsFirstNode",
     "firstVariableOccurrence",
     "indexTopLevelKeywordCallSubquery",
     "isSimpleIdentifier",
@@ -298,8 +306,7 @@
     "nextNonSpace",
     "precededByAS",
     "previousNonSpace",
-    "splitTopLevelEqualityCallSubquery",
-    "wordBefore"
+    "splitTopLevelEqualityCallSubquery"
   ],
   "pkg/cypher/executor_use.go": [
     "systemShowTailError",
@@ -400,7 +407,6 @@
     "queryWhitespaceAt",
     "rawWordBefore",
     "readCanonicalQueryText",
-    "restoreValue",
     "scanCypherQuotedText",
     "skipCypherLexicalToken",
     "startsWithClauseAfterDistinct",
@@ -415,8 +421,6 @@
   "pkg/cypher/knowledgepolicy_ddl.go": [
     "kpScanBraceBlock",
     "kpScanDecimal",
-    "kpScanIdent",
-    "kpScanQuotedName",
     "kpScanQuotedString",
     "kpSkipSpaces",
     "parseBindingApplyBlock",
@@ -505,7 +509,6 @@
     "parseCartesianVarPropOffset"
   ],
   "pkg/cypher/match_rows.go": [
-    "isWithWhereIdentifier",
     "substituteWithWhereLabelTests"
   ],
   "pkg/cypher/match_semantic_validation.go": [
@@ -692,10 +695,12 @@
   ],
   "pkg/cypher/query_patterns.go": [
     "countRelationshipPatterns",
+    "edgeAggregationProperty",
     "extractNodeVariables",
     "extractRelationshipType",
     "extractRelationshipVariable",
-    "functionCallParenAt"
+    "functionCallParenAt",
+    "splitEdgeAggregationCall"
   ],
   "pkg/cypher/query_structure_rewrite.go": [
     "mayUseQueryStructure",
@@ -708,8 +713,6 @@
     "isBacktickQuotedName",
     "isOneSymbolicName",
     "isPlainVariableName",
-    "previousWord",
-    "restore",
     "symbolicNameValue"
   ],
   "pkg/cypher/range_semantics.go": [
@@ -744,7 +747,11 @@
     "stripRepeatableElements"
   ],
   "pkg/cypher/result_columns_projection.go": [
-    "isFlatReturnProjection"
+    "tryFlatReturnProjection"
+  ],
+  "pkg/cypher/result_restoration.go": [
+    "restore",
+    "value"
   ],
   "pkg/cypher/return_order_semantic_validation.go": [
     "canonicalSemanticExpression",
@@ -833,6 +840,9 @@
   "pkg/cypher/show_admin.go": [
     "undefinedVariableError"
   ],
+  "pkg/cypher/source_normalization.go": [
+    "sourceWhitespaceExtent"
+  ],
   "pkg/cypher/standalone_order_rewrite.go": [
     "scanStandaloneOrderClauses",
     "scanStandaloneOrderContainers",
@@ -874,7 +884,7 @@
     "visitStaticMapLiteralKeys"
   ],
   "pkg/cypher/static_operand.go": [
-    "staticLiteralTypeName"
+    "staticLiteralType"
   ],
   "pkg/cypher/static_operator_types.go": [
     "checkAtom",
@@ -883,11 +893,9 @@
     "endsWithOperand",
     "forEachClauseOperatorExpression",
     "infixKeywordIndex",
-    "mapProjection",
     "maskCaseBlocks",
     "maskMapProjections",
     "parameterMayMismatchOperator",
-    "scalarLiteralTypeName",
     "staticMapProjectionReceiver",
     "staticPostfixSplit",
     "staticSubqueryExpressionOperand",
@@ -970,7 +978,6 @@
   ],
   "pkg/fabric/executor.go": [
     "firstToken",
-    "hasKeywordAt",
     "indexTopLevelKeyword",
     "lastAsIndexFold",
     "lastKeywordIndexFold",
@@ -991,7 +998,6 @@
     "hasTopLevelReturnClause",
     "keywordAt",
     "queryIsWrite",
-    "splitAtTopLevelUse",
     "splitTopLevelUnion",
     "trailingWithAliases"
   ],
@@ -1003,6 +1009,7 @@
     "matchingParen",
     "scanWord",
     "skipSpacesAndComments",
+    "splitAtTopLevelUse",
     "startsWithWordFold",
     "statementsAfter"
   ],
@@ -1037,7 +1044,6 @@
     "UpdateNode"
   ],
   "pkg/storage/constraint_contracts.go": [
-    "ccScanIdent",
     "ccScanLabels",
     "ccScanNodeContents",
     "ccSkipSpaces",

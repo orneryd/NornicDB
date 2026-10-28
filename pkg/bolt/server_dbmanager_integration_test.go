@@ -24,7 +24,7 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 	defer mgr.Close()
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
-	provider, ok := interface{}(&boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}}).(cypher.DatabaseIdentityProvider)
+	provider, ok := interface{}(&boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}).(cypher.DatabaseIdentityProvider)
 	require.True(t, ok, "Bolt must forward persisted administrative identity")
 	id, createdAt := provider.DatabaseIdentity("tenant_a")
 	actualID, actualCreatedAt := mgr.DatabaseIdentity("tenant_a")
@@ -270,14 +270,8 @@ func TestDatabaseScopedRollbackBoundaries(t *testing.T) {
 	}
 }
 
-func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-	mgr := &mockDBManager{
-		stores: map[string]storage.Engine{
-			"nornic": store,
-		},
-		defaultDB: "nornic",
-	}
+func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterface) (context.Context, neo4jdriver.SessionWithContext) {
+	t.Helper()
 	server := NewWithDatabaseManager(&Config{
 		Port:            0,
 		ReadBufferSize:  8192,
@@ -303,6 +297,19 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testi
 		AccessMode:   neo4jdriver.AccessModeWrite,
 		DatabaseName: "nornic",
 	})
+	return ctx, session
+}
+
+func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testing.T) {
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
+	mgr := &mockDBManager{
+		stores: map[string]storage.Engine{
+			"nornic": store,
+		},
+		defaultDB: "nornic",
+	}
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	var err error
 	defer func() {
 		_ = session.Close(ctx)
 	}()
@@ -336,31 +343,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *t
 		_ = mgr.Close()
 	})
 
-	server := NewWithDatabaseManager(&Config{
-		Port:            0,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	t.Cleanup(func() {
-		_ = server.Close()
-	})
-	port := startBoltTestServer(t, server)
-
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port),
-		neo4jdriver.NoAuth(),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
-	})
-	require.NoError(t, driver.VerifyConnectivity(ctx))
-
-	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
-		DatabaseName: "nornic",
-	})
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
 	defer func() {
 		_ = session.Close(ctx)
 	}()
@@ -398,31 +381,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesCanonicalUnwindIDs(t 
 		_ = mgr.Close()
 	})
 
-	server := NewWithDatabaseManager(&Config{
-		Port:            0,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	t.Cleanup(func() {
-		_ = server.Close()
-	})
-	port := startBoltTestServer(t, server)
-
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port),
-		neo4jdriver.NoAuth(),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
-	})
-	require.NoError(t, driver.VerifyConnectivity(ctx))
-
-	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
-		DatabaseName: "nornic",
-	})
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
 	defer func() {
 		_ = session.Close(ctx)
 	}()
