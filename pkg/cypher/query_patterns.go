@@ -267,40 +267,13 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 }
 
 func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
-		return false
-	}
-
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	parts := splitTopLevelComma(returnPart)
+	parts := returnShapeItems(query)
 	if len(parts) != 2 {
 		return false
 	}
 
-	left := strings.TrimSpace(parts[0])
-	right := strings.TrimSpace(parts[1])
-
-	// Handle "AS" aliases.
-	if asIdx := strings.Index(upperASCII(left), " AS "); asIdx > 0 {
-		left = strings.TrimSpace(left[:asIdx])
-	}
-	if asIdx := strings.Index(upperASCII(right), " AS "); asIdx > 0 {
-		right = strings.TrimSpace(right[:asIdx])
-	}
+	left := trimReturnItemAlias(parts[0])
+	right := trimReturnItemAlias(parts[1])
 
 	// Require "startVar.name" (the optimized executor currently uses the "name" property).
 	if !strings.EqualFold(left, startVar+".name") {
@@ -347,6 +320,35 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	return match.StartNode.variable, match.Relationship.Variable, relType, match.EndNode.variable, true
 }
 
+// splitEdgeAggregationCall retains the existing first-open/last-close rule.
+func splitEdgeAggregationCall(u string) (function string, inner string, ok bool) {
+	open := strings.IndexByte(u, '(')
+	close := strings.LastIndexByte(u, ')')
+	if open <= 0 || close <= open {
+		return "", "", false
+	}
+	return u[:open], u[open+1 : close], true
+}
+
+// edgeAggregationProperty owns aggregate argument validation; empty-property policy stays at callers.
+func edgeAggregationProperty(function string, inner string, relVar string) (property string, valid bool) {
+	switch function {
+	case "COUNT":
+		if inner == "*" || strings.EqualFold(inner, relVar) {
+			return "", true
+		}
+		return "", false
+	case "SUM", "AVG", "MIN", "MAX":
+		wantPrefix := upperASCII(relVar) + "."
+		if !strings.HasPrefix(inner, wantPrefix) {
+			return "", false
+		}
+		return inner[len(wantPrefix):], true
+	default:
+		return "", false
+	}
+}
+
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
 func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo) bool {
 	// First, find relationship variable in MATCH
@@ -369,28 +371,18 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	for _, item := range returnItems[1:] {
 		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
-		open := strings.IndexByte(u, '(')
-		close := strings.LastIndexByte(u, ')')
-		if open <= 0 || close <= open {
+		aggFunc, inner, ok := splitEdgeAggregationCall(u)
+		if !ok {
 			continue
 		}
-		aggFunc := lowerASCII(u[:open])
-		inner := u[open+1 : close]
 
-		if aggFunc == "count" {
-			if inner == "*" || strings.EqualFold(inner, upperASCII(relVar)) {
-				continue
-			}
+		propName, valid := edgeAggregationProperty(aggFunc, inner, relVar)
+		if !valid {
 			return false
 		}
-		if aggFunc != "sum" && aggFunc != "avg" && aggFunc != "min" && aggFunc != "max" {
-			return false
+		if aggFunc == "COUNT" {
+			continue
 		}
-		wantPrefix := upperASCII(relVar) + "."
-		if !strings.HasPrefix(inner, wantPrefix) {
-			return false
-		}
-		propName := inner[len(wantPrefix):]
 		if propName == "" {
 			return false
 		}
@@ -399,7 +391,7 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 		} else if !strings.EqualFold(info.AggProperty, propName) {
 			return false
 		}
-		info.AggFunctions = append(info.AggFunctions, aggFunc)
+		info.AggFunctions = append(info.AggFunctions, lowerASCII(aggFunc))
 	}
 
 	if info.AggProperty == "" {
@@ -415,70 +407,47 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 }
 
 func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
-		return false
-	}
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	items := splitTopLevelComma(returnPart)
+	items := returnShapeItems(query)
 	if len(items) < 2 {
 		return false
 	}
 
-	first := strings.TrimSpace(items[0])
-	if asIdx := strings.Index(upperASCII(first), " AS "); asIdx > 0 {
-		first = strings.TrimSpace(first[:asIdx])
-	}
+	first := trimReturnItemAlias(items[0])
 	// Require "<var>.name" in first return position.
 	dot := strings.LastIndex(first, ".")
 	if dot < 0 || !strings.EqualFold(first[dot+1:], "name") {
 		return false
 	}
 
-	wantAggPrefix := upperASCII(relVar) + "."
 	wantAggProp := upperASCII(propName)
 
 	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
 	for i := 1; i < len(items); i++ {
-		item := strings.TrimSpace(items[i])
-		if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
-			item = strings.TrimSpace(item[:asIdx])
-		}
+		item := trimReturnItemAlias(items[i])
 
 		u := upperASCII(strings.ReplaceAll(item, " ", ""))
 		switch {
 		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
-			// Allow COUNT(r) and COUNT(*).
-			inner := strings.TrimSuffix(strings.TrimPrefix(u, "COUNT("), ")")
-			if inner == "*" || strings.EqualFold(inner, relVar) {
-				continue
+			aggFunc, inner, ok := splitEdgeAggregationCall(u)
+			if !ok {
+				return false
 			}
-			return false
+			// Allow COUNT(r) and COUNT(*).
+			if _, valid := edgeAggregationProperty(aggFunc, inner, relVar); !valid {
+				return false
+			}
+			continue
 
 		case strings.HasPrefix(u, "SUM(") || strings.HasPrefix(u, "AVG(") || strings.HasPrefix(u, "MIN(") || strings.HasPrefix(u, "MAX("):
-			open := strings.IndexByte(u, '(')
-			close := strings.LastIndexByte(u, ')')
-			if open < 0 || close < 0 || close <= open+1 {
+			aggFunc, inner, ok := splitEdgeAggregationCall(u)
+			if !ok || inner == "" {
 				return false
 			}
-			inner := u[open+1 : close]
-			if !strings.HasPrefix(inner, wantAggPrefix) {
+			prop, valid := edgeAggregationProperty(aggFunc, inner, relVar)
+			if !valid {
 				return false
 			}
-			if !strings.EqualFold(inner[len(wantAggPrefix):], wantAggProp) {
+			if !strings.EqualFold(prop, wantAggProp) {
 				return false
 			}
 			continue

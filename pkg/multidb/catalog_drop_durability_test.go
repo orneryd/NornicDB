@@ -9,6 +9,7 @@ import (
 	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,9 +95,7 @@ func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptPr
 
 func TestCatalogDropReceiptOwnsCompletionSync(t *testing.T) {
 	manager, _, native, _ := newCatalogDropBarrier(t)
-	native.blockSync = 2
-	native.syncEntered = make(chan struct{})
-	native.syncPermit = make(chan struct{})
+	native.blockCompletionSync()
 	result := make(chan error, 1)
 	go func() { result <- manager.DropDatabase(t.Context(), "target") }()
 	<-native.syncEntered
@@ -139,11 +138,11 @@ func TestCatalogDropDurabilityFollowsPhysicalOutcome(t *testing.T) {
 				var accepted *storage.AcceptedCommitError
 				require.ErrorAs(t, <-result, &accepted)
 				require.ErrorIs(t, accepted, context.Canceled)
-				require.NoError(t, probe.finish(test.state))
+				require.NoError(t, storagefault.FinishPreparedReceipt(probe.prepared, probe.receiptOwner, storage.CommitOutcome{State: test.state, Err: storage.ErrConflict}))
 			} else {
 				require.Error(t, manager.DropDatabase(t.Context(), "target"))
 				if test.phase == "pending-discarded" {
-					require.NoError(t, probe.finish(test.state))
+					require.NoError(t, storagefault.FinishPreparedReceipt(probe.prepared, probe.receiptOwner, storage.CommitOutcome{State: test.state, Err: storage.ErrConflict}))
 				}
 			}
 			assert.Equal(t, test.wantSync, native.syncCalls.Load(), "only physical Applied DROP receipts Sync, including acknowledgement error and canceled waiter")
@@ -272,9 +271,7 @@ func TestCatalogDropInvocationSerializesOldGenerationPurges(t *testing.T) {
 
 func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T) {
 	manager, probe, native, _ := newCatalogDropBarrier(t)
-	native.blockSync = 2
-	native.syncEntered = make(chan struct{})
-	native.syncPermit = make(chan struct{})
+	native.blockCompletionSync()
 	probe.mode = "accepted-wait"
 	probe.faultAfter = 2
 	probe.submitted = make(chan struct{})
@@ -284,7 +281,9 @@ func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T
 	go func() { dropped <- manager.DropDatabase(ctx, "target") }()
 	<-probe.submitted
 	finished := make(chan error, 1)
-	go func() { finished <- probe.finish(storage.CommitApplied) }()
+	go func() {
+		finished <- storagefault.FinishPreparedReceipt(probe.prepared, probe.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict})
+	}()
 	<-native.syncEntered
 	cancel()
 	var err error
@@ -342,7 +341,9 @@ func TestCatalogDurableDropPublicationDuringClose(t *testing.T) {
 	// Close has reached the real native owner; it waits for the outstanding frame.
 	<-closeEntered
 	finished := make(chan error, 1)
-	go func() { finished <- probe.finish(storage.CommitApplied) }()
+	go func() {
+		finished <- storagefault.FinishPreparedReceipt(probe.prepared, probe.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict})
+	}()
 	select {
 	case err = <-finished:
 		require.NoError(t, err)
@@ -368,4 +369,10 @@ func TestCatalogDurableDropPublicationDuringClose(t *testing.T) {
 	assert.Zero(t, native.postCloseCapture.Load(), "Applied publication must not restart a closed FULL peer")
 	assert.Equal(t, 1, len(manager.catalogGate))
 	assert.EqualValues(t, 2, native.syncCalls.Load())
+}
+
+func (e *catalogDropBarrierNative) blockCompletionSync() {
+	e.blockSync = 2
+	e.syncEntered = make(chan struct{})
+	e.syncPermit = make(chan struct{})
 }

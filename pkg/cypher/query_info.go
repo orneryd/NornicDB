@@ -461,7 +461,7 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]), nil)
+			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
 			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
 			introduced := patternNodeLabels(parts.pattern)
 			for _, assignment := range mergeActionAssignments(parts.onCreate) {
@@ -505,7 +505,7 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 		case pipelineClauseSet:
 			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]), nil)
+			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
 			note(mergeActionAssignments(parts.onCreate))
 			note(mergeActionAssignments(parts.onMatch))
 		}

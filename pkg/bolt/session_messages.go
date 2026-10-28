@@ -1777,7 +1777,7 @@ func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataD
 	var manager cypher.DatabaseManagerInterface
 	if s.server != nil {
 		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-			manager = &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}}
+			manager = &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}
 		}
 	}
 	var canAccess func(string) bool

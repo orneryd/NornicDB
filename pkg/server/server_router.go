@@ -41,10 +41,7 @@ func (s *Server) buildRouter() http.Handler {
 	s.registerNeo4jRoutes(mux, uiHandler)
 	s.registerHealthRoutes(mux)
 	s.registerAuthRoutes(mux)
-	s.registerNornicDBRoutes(mux)
-	s.registerAdminRoutes(mux)
-	s.registerRetentionRoutes(mux)
-	s.registerGDPRRoutes(mux)
+	s.registerProductRoutes(mux)
 	s.registerMCPRoutes(mux)
 	s.registerHeimdallRoutes(mux)
 	s.registerGraphQLRoutes(mux)
@@ -165,65 +162,6 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 		{"/auth/access/privileges", auth.PermAdmin, s.handleAccessPrivileges},
 		{"/auth/entitlements", auth.PermRead, s.handleEntitlements},
 		{"/auth/role-entitlements", auth.PermAdmin, s.handleRoleEntitlements},
-	})
-}
-
-func (s *Server) registerNornicDBRoutes(mux *http.ServeMux) {
-	// ==========================================================================
-	// NornicDB Extension Endpoints (additional features)
-	// ==========================================================================
-	s.registerRouteTable(mux, []routeSpec{
-		// Vector search (NornicDB-specific)
-		{"/nornicdb/search", auth.PermRead, s.handleSearch},
-		{"/nornicdb/similar", auth.PermRead, s.handleSimilar},
-		{"/nornicdb/graph/{database}/neighborhood", auth.PermRead, s.handleGraphNeighborhood},
-		{"/nornicdb/graph/{database}/expand", auth.PermRead, s.handleGraphExpand},
-		{"/nornicdb/graph/{database}/path", auth.PermRead, s.handleGraphPath},
-		{"/nornicdb/graph/{database}/temporal", auth.PermRead, s.handleGraphTemporal},
-		{"/nornicdb/graph/{database}/diff", auth.PermRead, s.handleGraphDiff},
-
-		// Memory decay (NornicDB-specific)
-		{"/nornicdb/decay", auth.PermRead, s.handleDecay},
-
-		// Embedding control (NornicDB-specific)
-		{"/nornicdb/embed/trigger", auth.PermWrite, s.handleEmbedTrigger},
-		{"/nornicdb/embed/stats", auth.PermRead, s.handleEmbedStats},
-		{"/nornicdb/embed/failures", auth.PermRead, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureList) }},
-		{"/nornicdb/embed/retry-failures", auth.PermWrite, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureRetry) }},
-		{"/nornicdb/embed/clear", auth.PermAdmin, s.handleEmbedClear},
-		{"/nornicdb/search/rebuild", auth.PermWrite, s.handleSearchRebuild},
-	})
-}
-
-func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
-	// ==========================================================================
-	// Admin endpoints (NornicDB-specific)
-	// ==========================================================================
-	s.registerRouteTable(mux, []routeSpec{
-		{"/admin/stats", auth.PermAdmin, s.handleAdminStats},
-		{"/admin/config", auth.PermAdmin, s.handleAdminConfig},
-		{"/admin/backup", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupCreate) }},
-		{"/admin/restore", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupRestore) }},
-
-		// GPU control endpoints (NornicDB-specific)
-		{"/admin/gpu/status", auth.PermAdmin, s.handleGPUStatus},
-		{"/admin/gpu/enable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlEnable) }},
-		{"/admin/gpu/disable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlDisable) }},
-		{"/admin/gpu/test", auth.PermAdmin, s.handleGPUTest},
-
-		// Per-database config overrides (admin only)
-		{"/admin/databases/config/keys", auth.PermAdmin, s.handleDbConfigKeys},
-		{"/admin/databases/", auth.PermAdmin, s.handleDbConfigPrefix},
-	})
-}
-
-func (s *Server) registerGDPRRoutes(mux *http.ServeMux) {
-	// ==========================================================================
-	// GDPR compliance endpoints (NornicDB-specific)
-	// ==========================================================================
-	s.registerRouteTable(mux, []routeSpec{
-		{"/gdpr/export", auth.PermRead, s.handleGDPRExport},
-		{"/gdpr/delete", auth.PermDelete, s.handleGDPRDelete},
 	})
 }
 
@@ -363,4 +301,55 @@ func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 	// Include tracing propagation at this same ingress boundary. Start mounts
 	// this assembled handler without adding any application wrapper outside it.
 	return s.metadataAdmissionMiddleware(instrumentedMux(handler, s.httpMetrics))
+}
+
+// registerProductRoutes owns the authenticated product endpoint table. Entry
+// order and each original path, permission and handler are retained verbatim.
+func (s *Server) registerProductRoutes(mux *http.ServeMux) {
+	s.registerRouteTable(mux, []routeSpec{
+		// Vector search (NornicDB-specific)
+		{"/nornicdb/search", auth.PermRead, s.handleSearch},
+		{"/nornicdb/similar", auth.PermRead, s.handleSimilar},
+		{"/nornicdb/graph/{database}/neighborhood", auth.PermRead, s.handleGraphNeighborhood},
+		{"/nornicdb/graph/{database}/expand", auth.PermRead, s.handleGraphExpand},
+		{"/nornicdb/graph/{database}/path", auth.PermRead, s.handleGraphPath},
+		{"/nornicdb/graph/{database}/temporal", auth.PermRead, s.handleGraphTemporal},
+		{"/nornicdb/graph/{database}/diff", auth.PermRead, s.handleGraphDiff},
+
+		// Memory decay (NornicDB-specific)
+		{"/nornicdb/decay", auth.PermRead, s.handleDecay},
+
+		// Embedding control (NornicDB-specific)
+		{"/nornicdb/embed/trigger", auth.PermWrite, s.handleEmbedTrigger},
+		{"/nornicdb/embed/stats", auth.PermRead, s.handleEmbedStats},
+		{"/nornicdb/embed/failures", auth.PermRead, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureList) }},
+		{"/nornicdb/embed/retry-failures", auth.PermWrite, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureRetry) }},
+		{"/nornicdb/embed/clear", auth.PermAdmin, s.handleEmbedClear},
+		{"/nornicdb/search/rebuild", auth.PermWrite, s.handleSearchRebuild},
+		{"/admin/stats", auth.PermAdmin, s.handleAdminStats},
+		{"/admin/config", auth.PermAdmin, s.handleAdminConfig},
+		{"/admin/backup", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupCreate) }},
+		{"/admin/restore", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupRestore) }},
+
+		// GPU control endpoints (NornicDB-specific)
+		{"/admin/gpu/status", auth.PermAdmin, s.handleGPUStatus},
+		{"/admin/gpu/enable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlEnable) }},
+		{"/admin/gpu/disable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlDisable) }},
+		{"/admin/gpu/test", auth.PermAdmin, s.handleGPUTest},
+
+		// Per-database config overrides (admin only)
+		{"/admin/databases/config/keys", auth.PermAdmin, s.handleDbConfigKeys},
+		{"/admin/databases/", auth.PermAdmin, s.handleDbConfigPrefix},
+		{"/admin/retention/policies", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPoliciesRoute) }},
+		{"/admin/retention/policies/{id}", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPolicyRoute) }},
+		{"/admin/retention/policies/defaults", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionDefaultsRoute) }},
+		{"/admin/retention/holds", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionHoldsRoute) }},
+		{"/admin/retention/holds/{id}", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionHoldRoute) }},
+		{"/admin/retention/erasures", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionErasuresRoute) }},
+		{"/admin/retention/erasures/{id}/process", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionProcessRoute) }},
+		{"/admin/retention/sweep", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionSweepRoute) }},
+		{"/admin/retention/status", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionStatusRoute) }},
+		{"/gdpr/export", auth.PermRead, s.handleGDPRExport},
+		{"/gdpr/delete", auth.PermDelete, s.handleGDPRDelete},
+	})
 }

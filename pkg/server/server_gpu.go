@@ -10,6 +10,26 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// gpuManagerLookup distinguishes an absent interface from a typed nil manager.
+type gpuManagerLookup struct {
+	manager *gpu.Manager
+	missing bool
+}
+
+// resolveGPUManager writes the existing invalid-type response on failure.
+func (s *Server) resolveGPUManager(w http.ResponseWriter, r *http.Request) (gpuManagerLookup, bool) {
+	gpuManagerIface := s.db.GetGPUManager()
+	if gpuManagerIface == nil {
+		return gpuManagerLookup{missing: true}, true
+	}
+	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
+	if !ok {
+		s.writeInvalidGPUManagerType(w, r)
+		return gpuManagerLookup{}, false
+	}
+	return gpuManagerLookup{manager: gpuManager}, true
+}
+
 // =============================================================================
 // GPU Control Handlers
 // =============================================================================
@@ -20,8 +40,11 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gpuManagerIface := s.db.GetGPUManager()
-	if gpuManagerIface == nil {
+	lookup, valid := s.resolveGPUManager(w, r)
+	if !valid {
+		return
+	}
+	if lookup.missing {
 		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
 			"enabled":   false,
@@ -30,12 +53,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
-	if !ok {
-		s.writeInvalidGPUManagerType(w, r)
-		return
-	}
-
+	gpuManager := lookup.manager
 	enabled := gpuManager.IsEnabled()
 	device := gpuManager.Device()
 	stats := gpuManager.Stats()
@@ -77,16 +95,15 @@ func (s *Server) handleGPUControl(w http.ResponseWriter, r *http.Request, action
 		s.writePostRequired(w, r)
 		return
 	}
-	gpuManagerIface := s.db.GetGPUManager()
-	if gpuManagerIface == nil {
+	lookup, valid := s.resolveGPUManager(w, r)
+	if !valid {
+		return
+	}
+	if lookup.missing {
 		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
-	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
-	if !ok {
-		s.writeInvalidGPUManagerType(w, r)
-		return
-	}
+	gpuManager := lookup.manager
 	var status string
 	var message localization.Message
 	switch action {
@@ -133,17 +150,16 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 		req.Mode = "auto"
 	}
 
-	gpuManagerIface := s.db.GetGPUManager()
-	if gpuManagerIface == nil {
+	lookup, valid := s.resolveGPUManager(w, r)
+	if !valid {
+		return
+	}
+	if lookup.missing {
 		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
 
-	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
-	if !ok {
-		s.writeInvalidGPUManagerType(w, r)
-		return
-	}
+	gpuManager := lookup.manager
 
 	// Store original state
 	originallyEnabled := gpuManager.IsEnabled()

@@ -292,82 +292,34 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 	return snapshotConstituents(info.Constituents), nil
 }
 
-// canonicalConstituents is the shared catalog/manager reader of graph aliases.
-// Preserve the catalog's last-registration-wins rule for case-folded duplicates.
-// Walk backward so a single lookup can stop at its winner without copying the
-// catalog. Empty wanted enumerates all winners; a lookup yields only its last
-// matching alias and needs no duplicate-tracking map. Keys use the catalog's
-// exact case normalization.
-func canonicalConstituents(refs []ConstituentRef, wanted string) iter.Seq2[string, ConstituentRef] {
-	return func(yield func(string, ConstituentRef) bool) {
-		var seen map[string]struct{}
-		if wanted == "" {
-			seen = make(map[string]struct{}, len(refs))
-		}
-		for i := len(refs) - 1; i >= 0; i-- {
-			ref := refs[i]
-			key := cyphertext.NameLower(ref.Alias)
-			if wanted != "" {
-				if !constituentAliasMatches(key, wanted) {
-					continue
-				}
-			} else {
-				if _, exists := seen[key]; exists {
-					continue
-				}
-				seen[key] = struct{}{}
-			}
-			if !yield(key, ref) || wanted != "" {
-				return
-			}
-		}
-	}
-}
+type constituentWalkPurpose uint8
 
-// constituentAliasMatches compares against the catalog's lowercase key. ASCII
-// lookups avoid allocating another lowercase string; non-ASCII input retains
-// strings.ToLower semantics, including distinctions broader EqualFold erases.
-func constituentAliasMatches(key, alias string) bool {
-	if len(key) != len(alias) {
-		return key == cyphertext.NameLower(alias)
-	}
-	for i := 0; i < len(alias); i++ {
-		c := alias[i]
-		if c >= 128 {
-			return key == cyphertext.NameLower(alias)
-		}
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		if key[i] != c {
-			return false
-		}
-	}
-	return true
-}
+const (
+	constituentIndexLookup constituentWalkPurpose = iota
+	constituentKeyLookup
+	constituentEnumeration
+)
 
-// constituentAliasValuesMatch compares raw alias values without allocating on
-// the common ASCII path. The Unicode fallback matches the catalog's ToLower
-// normalization exactly.
-func constituentAliasValuesMatch(stored, wanted string) bool {
+// matchConstituentAlias owns the catalog's raw lowercase-key equivalence.
+// Lookup callers can omit the normalized key on the allocation-free ASCII path.
+func matchConstituentAlias(stored, wanted string, retainKey bool) (string, bool) {
 	if len(stored) != len(wanted) {
 		for i := 0; i < len(stored); i++ {
-			if stored[i] >= 0x80 {
-				return cyphertext.NameLower(stored) == cyphertext.NameLower(wanted)
+			if stored[i] >= 128 {
+				goto normalized
 			}
 		}
 		for i := 0; i < len(wanted); i++ {
-			if wanted[i] >= 0x80 {
-				return cyphertext.NameLower(stored) == cyphertext.NameLower(wanted)
+			if wanted[i] >= 128 {
+				goto normalized
 			}
 		}
-		// ASCII case folding never changes a string's byte length.
-		return false
+		return "", false
 	}
 	for i := 0; i < len(stored); i++ {
 		a, b := stored[i], wanted[i]
 		if a >= 128 || b >= 128 {
-			return cyphertext.NameLower(stored) == cyphertext.NameLower(wanted)
+			goto normalized
 		}
 		if a >= 'A' && a <= 'Z' {
 			a += 'a' - 'A'
@@ -376,22 +328,77 @@ func constituentAliasValuesMatch(stored, wanted string) bool {
 			b += 'a' - 'A'
 		}
 		if a != b {
-			return false
+			return "", false
 		}
 	}
-	return true
+	if retainKey {
+		return cyphertext.NameLower(stored), true
+	}
+	return "", true
+normalized:
+	key := cyphertext.NameLower(stored)
+	if key != cyphertext.NameLower(wanted) {
+		return "", false
+	}
+	if retainKey {
+		return key, true
+	}
+	return "", true
 }
 
-// findCanonicalConstituent returns the last registered case-folded alias and
-// its index without building an iterator or normalized key strings.
-func findCanonicalConstituent(refs []ConstituentRef, wanted string) (int, ConstituentRef, bool) {
+// walkCanonicalConstituents synchronously visits last-registered alias winners.
+// Enumeration alone tracks uniqueness; both lookup purposes stop at one match.
+func walkCanonicalConstituents(refs []ConstituentRef, wanted string, purpose constituentWalkPurpose, yield func(int, string, ConstituentRef) bool) {
+	var seen map[string]struct{}
+	if purpose == constituentEnumeration {
+		seen = make(map[string]struct{}, len(refs))
+	}
 	for i := len(refs) - 1; i >= 0; i-- {
 		ref := refs[i]
-		if constituentAliasValuesMatch(ref.Alias, wanted) {
-			return i, ref, true
+		var key string
+		if purpose == constituentEnumeration {
+			key = cyphertext.NameLower(ref.Alias)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		} else {
+			var matched bool
+			key, matched = matchConstituentAlias(ref.Alias, wanted, purpose == constituentKeyLookup)
+			if !matched {
+				continue
+			}
+		}
+		if !yield(i, key, ref) || purpose != constituentEnumeration {
+			return
 		}
 	}
-	return -1, ConstituentRef{}, false
+}
+
+// canonicalConstituents enumerates winners when wanted is empty; otherwise it
+// yields the last matching alias and its normalized catalog key.
+func canonicalConstituents(refs []ConstituentRef, wanted string) iter.Seq2[string, ConstituentRef] {
+	return func(yield func(string, ConstituentRef) bool) {
+		purpose := constituentKeyLookup
+		if wanted == "" {
+			purpose = constituentEnumeration
+		}
+		walkCanonicalConstituents(refs, wanted, purpose, func(_ int, key string, ref ConstituentRef) bool {
+			return yield(key, ref)
+		})
+	}
+}
+
+// findCanonicalConstituent looks up even an empty alias without allocating a
+// uniqueness map or normalized ASCII keys.
+func findCanonicalConstituent(refs []ConstituentRef, wanted string) (int, ConstituentRef, bool) {
+	index, found := -1, false
+	var winner ConstituentRef
+	walkCanonicalConstituents(refs, wanted, constituentIndexLookup, func(i int, _ string, ref ConstituentRef) bool {
+		index, winner, found = i, ref, true
+		return false
+	})
+	return index, winner, found
 }
 
 // snapshotConstituents returns visible winners in their stored order for

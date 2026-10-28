@@ -28,9 +28,15 @@ func TestAdminCredentialErrorOutput(t *testing.T) {
 		run    func(context.Context, string) (*ExecuteResult, error)
 	}{
 		{"create_alias", "CREATE ALIAS rejected FOR DATABASE nornic", "", localization.MessageCypherAdminInvalidDatabaseName, executor.executeCreateAlias},
-		{"create_database", "CREATE DATABASE rejected", "", localization.MessageCypherAdminInvalidDatabaseName, executor.executeCreateDatabase},
-		{"replace_database", "CREATE OR REPLACE DATABASE `broken`name", "`", localization.MessageCypherAdminInvalidIdentifier, executor.executeCreateOrReplaceDatabase},
-		{"drop_database", "DROP DATABASE rejected", "", localization.MessageCypherAdminInvalidDatabaseName, executor.executeDropDatabase},
+		{"create_database", "CREATE DATABASE rejected", "", localization.MessageCypherAdminInvalidDatabaseName, func(ctx context.Context, query string) (*ExecuteResult, error) {
+			return executor.executeDatabaseCreate(ctx, query, createNewDatabase)
+		}},
+		{"replace_database", "CREATE OR REPLACE DATABASE `broken`name", "`", localization.MessageCypherAdminInvalidIdentifier, func(ctx context.Context, query string) (*ExecuteResult, error) {
+			return executor.executeDatabaseCreate(ctx, query, replaceExistingDatabase)
+		}},
+		{"drop_database", "DROP DATABASE rejected", "", localization.MessageCypherAdminInvalidDatabaseName, func(ctx context.Context, query string) (*ExecuteResult, error) {
+			return executor.executeDatabaseDrop(ctx, query, dropStandardDatabase)
+		}},
 		{"drop_alias", "DROP ALIAS rejected", "", localization.MessageCypherAdminInvalidAliasName, executor.executeDropAlias},
 		{"alter_database", "ALTER DATABASE rejected", " SET LIMIT max_nodes = 1", localization.MessageCypherAdminDatabaseNotFound, executor.executeAlterDatabase},
 		{"show_limits", "SHOW LIMITS FOR DATABASE rejected", "", localization.MessageCypherAdminDatabaseNotFound, executor.executeShowLimits},
@@ -58,7 +64,7 @@ func TestAdminCredentialErrorOutput(t *testing.T) {
 	// A valid quoted name with URI credentials reaches the manager cause boundary.
 	// The display wrapper must retain the original cause and localized identity.
 	cause := errors.New("manager rejected synthetic-cause-748321")
-	executor.SetDatabaseManager(&cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), createAliasErr: cause})
+	executor.SetDatabaseManager(newCypherAdminErrorManager(t, testCatalogCreateAlias, cause))
 	_, err = executor.executeCreateAlias(context.Background(), "CREATE ALIAS rejected FOR DATABASE `http://admin:synthetic-cause-748321@example.invalid`")
 	var localizedCause *localization.LocalizedError
 	if !errors.As(err, &localizedCause) || localizedCause.Message.ID != localization.MessageCypherAdminCreateAliasFailed {

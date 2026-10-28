@@ -416,9 +416,9 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 					t.Run(mode+"/remote_"+target.label+"/explicit_"+ingress+"_"+ending, func(t *testing.T) {
 						target.wire.reset()
 						if ingress == "HTTP" {
-							investigationHTTPTransaction(t, local, mode+"_"+target.label, graph, ending)
+							investigationHTTPTransaction(t, local, mode+"_"+target.label, "USE "+graph+" "+investigationRead, ending)
 						} else {
-							investigationBoltTransaction(t, "bolt://127.0.0.1:"+lb, mode+"_"+target.label, graph, ending)
+							investigationBoltTransaction(t, "bolt://127.0.0.1:"+lb, mode+"_"+target.label, "USE "+graph+" "+investigationRead, ending)
 						}
 						requests, correct, encrypted := target.wire.info()
 						t.Logf("explicit workflow: outgoing_requests=%d plaintext_password=%t encrypted_password=%t", requests, correct, encrypted)
@@ -429,6 +429,44 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 					})
 				}
 			}
+			for _, ingress := range []string{"HTTP", "GraphQL", "Bolt"} {
+				t.Run(mode+"/remote_"+target.label+"/write_"+ingress, func(t *testing.T) {
+					id := mode + "_" + target.label + "_implicit_" + ingress
+					target.wire.reset()
+					statement := "USE " + graph + " CREATE (n:CredentialWriteProof {caseID: '" + id + "', marker: '" + investigationMarker + "'}) RETURN n.marker"
+					ok, failed, status, err := investigationIngress(local, "bolt://127.0.0.1:"+lb, ingress, statement)
+					if err != nil || failed || !ok {
+						t.Fatalf("authenticated implicit write failed: status=%d marker=%t failed=%t error=%t", status, ok, failed, err != nil)
+					}
+					_, correct, encrypted := target.wire.info()
+					if !correct || encrypted {
+						t.Error("implicit write used incorrect credentials")
+					}
+					investigationAssertHTTPWorkflow(t, target.wire, target.label, "commit")
+					investigationAssertRemoteWrite(t, remote, id, true)
+				})
+			}
+			for _, ingress := range []string{"HTTP", "Bolt"} {
+				for _, ending := range []string{"commit", "rollback"} {
+					t.Run(mode+"/remote_"+target.label+"/write_explicit_"+ingress+"_"+ending, func(t *testing.T) {
+						id := mode + "_" + target.label + "_explicit_" + ingress + "_" + ending
+						statement := "USE " + graph + " CREATE (n:CredentialWriteProof {caseID: '" + id + "', marker: '" + investigationMarker + "'}) RETURN n.marker"
+						target.wire.reset()
+						if ingress == "HTTP" {
+							investigationHTTPTransaction(t, local, mode+"_"+target.label, statement, ending)
+						} else {
+							investigationBoltTransaction(t, "bolt://127.0.0.1:"+lb, mode+"_"+target.label, statement, ending)
+						}
+						_, correct, encrypted := target.wire.info()
+						if !correct || encrypted {
+							t.Error("explicit write used incorrect credentials")
+						}
+						investigationAssertHTTPWorkflow(t, target.wire, target.label, ending)
+						investigationAssertRemoteWrite(t, remote, id, ending == "commit")
+					})
+				}
+			}
+
 		}
 		// Database-addressed constituent queries use the manager's runtime
 		// resolver rather than the USE/Fabric catalog. Check the real marker.
@@ -502,7 +540,7 @@ func investigationAssertHTTPWorkflow(t *testing.T, wire *investigationWire, tran
 	}
 }
 
-func investigationHTTPTransaction(t *testing.T, base, db, graph, ending string) {
+func investigationHTTPTransaction(t *testing.T, base, db, statement, ending string) {
 	t.Helper()
 	request := func(method, target, statement string) []byte {
 		t.Helper()
@@ -548,7 +586,7 @@ func investigationHTTPTransaction(t *testing.T, base, db, graph, ending string) 
 			response.Body.Close()
 		}
 	})
-	data = request(http.MethodPost, executeURL, "USE "+graph+" "+investigationRead)
+	data = request(http.MethodPost, executeURL, statement)
 	if !bytes.Contains(data, []byte(investigationMarker)) {
 		t.Fatal("explicit HTTP query did not return real remote marker")
 	}
@@ -559,7 +597,7 @@ func investigationHTTPTransaction(t *testing.T, base, db, graph, ending string) 
 	}
 }
 
-func investigationBoltTransaction(t *testing.T, uri, db, graph, ending string) {
+func investigationBoltTransaction(t *testing.T, uri, db, statement, ending string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -575,7 +613,7 @@ func investigationBoltTransaction(t *testing.T, uri, db, graph, ending string) {
 		t.Fatal("Bolt BEGIN failed")
 	}
 	defer tx.Close(context.Background())
-	result, err := tx.Run(ctx, "USE "+graph+" "+investigationRead, nil)
+	result, err := tx.Run(ctx, statement, nil)
 	if err != nil {
 		t.Fatal("explicit Bolt query failed")
 	}
@@ -590,5 +628,27 @@ func investigationBoltTransaction(t *testing.T, uri, db, graph, ending string) {
 	}
 	if err != nil {
 		t.Fatal("Bolt " + ending + " failed: " + investigationDiagnostic(err.Error()))
+	}
+}
+
+// Read the authenticated remote independently after the coordinator's terminal
+// operation: a returned write result alone does not establish commit/rollback.
+func investigationAssertRemoteWrite(t *testing.T, remote, id string, committed bool) {
+	t.Helper()
+	status, data, err := investigationHTTP(remote, "nornic", "MATCH (n:CredentialWriteProof {caseID: '"+id+"'}) RETURN n.marker", investigationPass)
+	var body investigationResponse
+	parseErr := json.Unmarshal(data, &body)
+	if err != nil || parseErr != nil || status != http.StatusOK || len(body.Errors) != 0 || len(body.Results) != 1 {
+		t.Fatalf("remote durable-outcome read failed: status=%d transportError=%t parseError=%t results=%d errors=%d", status, err != nil, parseErr != nil, len(body.Results), len(body.Errors))
+	}
+	rows := body.Results[0].Data
+	if !committed {
+		if len(rows) != 0 {
+			t.Fatalf("rolled-back remote write persisted %d rows", len(rows))
+		}
+		return
+	}
+	if len(rows) != 1 || len(rows[0].Row) != 1 || rows[0].Row[0] != investigationMarker {
+		t.Fatalf("committed remote write missing or duplicated: rows=%d", len(rows))
 	}
 }

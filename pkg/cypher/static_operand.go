@@ -400,17 +400,26 @@ func staticTextType(expression string) string {
 	return (staticTypeScope{}).operandOf(expression).typeName()
 }
 
-// staticLiteralTypeName is staticTextType for an expression led by a
-// literal, "" for one led by a variable, a parameter or a call (typed with
-// its scope).
-func staticLiteralTypeName(expression string) string {
-	expression = strings.TrimSpace(expression)
-	for {
-		inner, ok := stripEnclosingExpressionParentheses(expression)
-		if !ok {
-			break
+type staticLiteralPolicy uint8
+
+const (
+	scalarLiteralOnly staticLiteralPolicy = iota
+	literalLedExpression
+)
+
+// staticLiteralType owns literal-head admission for both operator leaves and
+// literal-led SET sources. Only the latter unwraps parentheses and delegates
+// compound expression typing back to the canonical static operand checker.
+func staticLiteralType(expression string, policy staticLiteralPolicy) string {
+	if policy == literalLedExpression {
+		expression = strings.TrimSpace(expression)
+		for {
+			inner, ok := stripEnclosingExpressionParentheses(expression)
+			if !ok {
+				break
+			}
+			expression = strings.TrimSpace(inner)
 		}
-		expression = strings.TrimSpace(inner)
 	}
 	if expression == "" || expression[0] == '$' {
 		return ""
@@ -418,7 +427,18 @@ func staticLiteralTypeName(expression string) string {
 	if token, ok := cyphertext.ScanIdentifier(expression, 0); ok && !strings.EqualFold(token.Value, "true") && !strings.EqualFold(token.Value, "false") {
 		return ""
 	}
-	return staticTextType(expression)
+	if policy == literalLedExpression {
+		return staticTextType(expression)
+	}
+	value, literal := parseLiteralScalarForPipeline(expression)
+	if !literal {
+		return ""
+	}
+	switch kind := cypherValueKindOf(value); kind {
+	case valueKindString, valueKindInteger, valueKindFloat, valueKindBoolean:
+		return valueTypeNames[kind].cypher
+	}
+	return ""
 }
 
 // unwoundOperand is the static type of a value UNWIND binds from operand:

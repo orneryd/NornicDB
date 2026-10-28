@@ -614,12 +614,12 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 	}
 
 	seedLimit := topKSeedLimit(limit)
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit, indexOrderGeneral)
 	if err != nil {
 		return nil, true, err
 	}
 	if !used {
-		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
+		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit, indexOrderExplicitNotNull); err != nil {
 			return nil, true, err
 		}
 		if !used {
@@ -800,7 +800,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 		return nil, false, nil
 	}
 
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit), indexOrderGeneral)
 	if err != nil || !used {
 		return nil, used, err
 	}

@@ -146,7 +146,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 					int64(i + 1), name, "ONLINE", 100.0, idxType, entityType,
 					nil, nil, provider, nil, nil, nil, nil,
 					showIndexOptions(provider, nil), "",
-					showLookupIndexCreateStatement(name, entityType),
+					showIndexCreateStatement("LOOKUP", name, entityType, nil, nil, nil),
 				})
 				continue
 			}
@@ -1119,314 +1119,97 @@ func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.T
 	return time.Time{}
 }
 
-// executeCreateDatabase handles CREATE DATABASE command.
-//
-// Creates a new database with the specified name. Supports optional IF NOT EXISTS
-// clause to avoid errors when the database already exists. This command requires
-// DatabaseManager to be set via SetDatabaseManager().
-//
-// Syntax:
-//   - CREATE DATABASE name
-//   - CREATE DATABASE name IF NOT EXISTS
-//
-// Example:
-//
-//	executor := cypher.NewStorageExecutor(storage)
-//	executor.SetDatabaseManager(dbManager)
-//
-//	// Create database
-//	result, err := executor.Execute(ctx, "CREATE DATABASE tenant_a", nil)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Create with IF NOT EXISTS (idempotent)
-//	result, err = executor.Execute(ctx, "CREATE DATABASE tenant_a IF NOT EXISTS", nil)
-//
-// Returns:
-//   - Success: Result with database name in single row
-//   - Error: If database already exists (unless IF NOT EXISTS is used)
-//   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+// databaseCreateMode selects regular creation or replacement in one catalog
+// command owner. Replacement deliberately keeps its existing DROP-then-CREATE
+// semantics and does not admit the regular command's OPTIONS clause.
+type databaseCreateMode uint8
+
+const (
+	createNewDatabase databaseCreateMode = iota
+	replaceExistingDatabase
+)
+
+// executeDatabaseCreate admits the complete target before changing the catalog.
+// Both modes preserve their error identities, credential redaction and outcomes.
+func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher string, mode databaseCreateMode) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
 	cypher = cyphertext.SourceFor(ctx, cypher).Text
-	e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
+	if mode == createNewDatabase {
+		e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
+	}
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
 	}
-
-	// Find "CREATE DATABASE" keyword position (with flexible whitespace)
-	createDbIdx := findMultiWordKeywordIndex(cypher, "CREATE", "DATABASE")
-	if createDbIdx == -1 {
+	header, first, second := "CREATE DATABASE", "CREATE", "DATABASE"
+	if mode == replaceExistingDatabase {
+		header = "OR REPLACE DATABASE"
+		first, second = "OR", "REPLACE"
+	}
+	at := findMultiWordKeywordIndex(cypher, first, second)
+	if at < 0 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
-
-	// Skip "CREATE" and whitespace to find "DATABASE"
-	startPos := createDbIdx + len("CREATE")
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
+	startPos := keywordEndAt(cypher, at, header)
+	if startPos == at {
+		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
-	// Skip "DATABASE" and whitespace
-	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-		startPos += len("DATABASE")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
-	}
-
-	if startPos >= len(cypher) {
+	// Trim only the name's leading whitespace; its accepted-source byte extent
+	// remains intact for OPTIONS and quoted-identifier decoding.
+	startPos = len(cypher) - len(strings.TrimLeftFunc(cypher[startPos:], cyphertext.IsWhitespace))
+	if startPos >= len(cypher) && mode == createNewDatabase {
 		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE DATABASE"), nil)
 	}
-	// OPTIONS { … } ends the statement (#937); the options are validated
-	// before anything is created.
-	cypher, options, err := e.splitDatabaseOptions(ctx, cypher, startPos)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find end of database name (whitespace, end of string, or "IF NOT EXISTS")
-	// Check for "IF NOT EXISTS" first (with flexible whitespace)
-	// This is a 3-word keyword: IF NOT EXISTS
-	ifNotIdx := findMultiWordKeywordIndex(cypher[startPos:], "IF", "NOT")
-	var ifNotExistsIdx int = -1
-	if ifNotIdx >= 0 {
-		// Found "IF NOT" - check if "EXISTS" follows
-		afterIfNot := startPos + ifNotIdx + len("IF")
-		// Skip whitespace after "IF"
-		for afterIfNot < len(cypher) && cyphertext.IsWhitespaceAt(cypher, afterIfNot) {
-			afterIfNot++
-		}
-		// Check for "NOT"
-		if afterIfNot+len("NOT") <= len(cypher) && strings.EqualFold(cypher[afterIfNot:afterIfNot+len("NOT")], "NOT") {
-			afterNot := afterIfNot + len("NOT")
-			// Skip whitespace after "NOT"
-			for afterNot < len(cypher) && cyphertext.IsWhitespaceAt(cypher, afterNot) {
-				afterNot++
-			}
-			// Check for "EXISTS"
-			if afterNot+len("EXISTS") <= len(cypher) && strings.EqualFold(cypher[afterNot:afterNot+len("EXISTS")], "EXISTS") {
-				// Found "IF NOT EXISTS" - database name ends before "IF"
-				ifNotExistsIdx = ifNotIdx
-			}
-		}
-	}
-	var dbNameEnd int
-	if ifNotExistsIdx >= 0 {
-		// Database name ends before "IF NOT EXISTS"
-		dbNameEnd = startPos + ifNotExistsIdx
-	} else {
-		// No IF NOT EXISTS - database name goes to end of query
-		dbNameEnd = len(cypher)
-	}
-
-	// Extract database name (trim whitespace)
-	rawDBName := strings.TrimSpace(cypher[startPos:dbNameEnd])
-	dbName, err := unquoteBacktickIdentifier(rawDBName)
-	if err != nil {
-		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
-	}
-	if dbName == "" {
-		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
-	}
-
-	// Validate database name (basic validation)
-	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
-		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
-	}
-
-	// Check if already exists
-	if e.dbManager.Exists(dbName) {
-		if ifNotExistsIdx >= 0 {
-			// IF NOT EXISTS - return success with no error
-			return &ExecuteResult{
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{{dbName}},
-			}, nil
-		}
-		return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)
-	}
-
-	// Create database
-	err = e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName, Options: options})
-	if err != nil {
-		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
-		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
-	}
-	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
-
-	return &ExecuteResult{
-		Administration: &AdministrationOutcome{CreatedDatabase: dbName},
-		Columns:        []string{"name"}, Rows: [][]interface{}{{dbName}},
-	}, nil
-}
-
-// executeCreateOrReplaceDatabase handles CREATE OR REPLACE DATABASE name: the
-// existing database of that name (if any) is dropped and a fresh one created.
-// It is an admin command, classified by isAdminPermissionQuery, so a caller
-// without the admin permission never reaches it.
-func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
-	ctx = withStatementCredentials(ctx, cypher)
-	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
-	if e.dbManager == nil {
-		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
-	}
-	orReplace := findMultiWordKeywordIndex(cypher, "OR", "REPLACE")
-	if orReplace < 0 {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
-	}
-	startPos := orReplace + len("OR REPLACE")
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
-	}
-	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-		startPos += len("DATABASE")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
-	} else {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
-	}
+	var options map[string]string
+	var err error
+	ifNotExists := false
 	rawDBName := strings.TrimSpace(cypher[startPos:])
+	if mode == createNewDatabase {
+		// Initial options must be validated before catalog publication, including
+		// the IF NOT EXISTS no-op path, just as the original owner required.
+		cypher, options, err = e.splitDatabaseOptions(ctx, cypher, startPos)
+		if err != nil {
+			return nil, err
+		}
+		rawDBName = strings.TrimSpace(cypher[startPos:])
+		if clause := findMultiWordKeywordIndex(rawDBName, "IF", "NOT"); clause >= 0 {
+			clauseEnd := keywordEndAt(rawDBName, clause, "IF NOT EXISTS")
+			if clauseEnd > clause {
+				if strings.TrimSpace(rawDBName[clauseEnd:]) != "" {
+					return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
+				}
+				ifNotExists = true
+				rawDBName = strings.TrimSpace(rawDBName[:clause])
+			}
+		}
+	}
 	dbName, err := unquoteBacktickIdentifier(rawDBName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
 	}
-	if dbName == "" || strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
+	if dbName == "" || mode == replaceExistingDatabase && strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
 	}
-
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
+		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
+	}
 	if e.dbManager.Exists(dbName) {
-		if err := e.dbManager.DropDatabase(ctx, dbName); err != nil {
-			return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
+		if mode == replaceExistingDatabase {
+			if err := e.dbManager.DropDatabase(ctx, dbName); err != nil {
+				return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
+			}
+		} else if ifNotExists {
+			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
+		} else {
+			return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)
 		}
 	}
-	if err := e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName}); err != nil {
+	if err := e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName, Options: options}); err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
-	return &ExecuteResult{
-		Administration: &AdministrationOutcome{CreatedDatabase: dbName},
-		Columns:        []string{"name"}, Rows: [][]interface{}{{dbName}},
-	}, nil
-}
-
-// executeDropDatabase handles DROP DATABASE command.
-//
-// Deletes a database and all its data. Supports optional IF EXISTS clause to
-// avoid errors when the database doesn't exist. This command requires
-// DatabaseManager to be set via SetDatabaseManager().
-//
-// Syntax:
-//   - DROP DATABASE name
-//   - DROP DATABASE name IF EXISTS
-//
-// Example:
-//
-//	executor := cypher.NewStorageExecutor(storage)
-//	executor.SetDatabaseManager(dbManager)
-//
-//	// Drop database
-//	result, err := executor.Execute(ctx, "DROP DATABASE tenant_a", nil)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Drop with IF EXISTS (idempotent)
-//	result, err = executor.Execute(ctx, "DROP DATABASE tenant_a IF EXISTS", nil)
-//
-// Warning: This operation permanently deletes all data in the database.
-// The default and system databases cannot be dropped.
-//
-// Returns:
-//   - Success: Result with database name in single row (empty if IF EXISTS and not found)
-//   - Error: If database doesn't exist (unless IF EXISTS is used)
-//   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
-	ctx = withStatementCredentials(ctx, cypher)
-	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
-	if e.dbManager == nil {
-		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP DATABASE"), nil)
-	}
-
-	// Find "DROP DATABASE" keyword position (with flexible whitespace)
-	dropDbIdx := findMultiWordKeywordIndex(cypher, "DROP", "DATABASE")
-	if dropDbIdx == -1 {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("DROP DATABASE"), nil)
-	}
-
-	// Skip "DROP" and whitespace to find "DATABASE"
-	startPos := dropDbIdx + len("DROP")
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
-	}
-	// Skip "DATABASE" and whitespace
-	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-		startPos += len("DATABASE")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
-	}
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
-	}
-
-	if startPos >= len(cypher) {
-		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("DROP DATABASE"), nil)
-	}
-
-	// Find end of database name (whitespace, end of string, or "IF EXISTS")
-	// Check for "IF EXISTS" first (with flexible whitespace)
-	ifExistsIdx := findMultiWordKeywordIndex(cypher[startPos:], "IF", "EXISTS")
-	var dbNameEnd int
-	if ifExistsIdx >= 0 {
-		dbNameEnd = startPos + ifExistsIdx
-		ifExistsIdx = startPos + ifExistsIdx // Absolute position
-	} else {
-		// No IF EXISTS - database name goes to end of query
-		dbNameEnd = len(cypher)
-	}
-
-	// Extract database name (trim whitespace)
-	rawDBName := strings.TrimSpace(cypher[startPos:dbNameEnd])
-	dbName, err := unquoteBacktickIdentifier(rawDBName)
-	if err != nil {
-		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
-	}
-	if dbName == "" {
-		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("DROP DATABASE"), nil)
-	}
-
-	// Validate database name (basic validation)
-	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
-		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
-	}
-
-	// Check if exists
-	if !e.dbManager.Exists(dbName) {
-		if ifExistsIdx >= 0 {
-			// IF EXISTS - return success with no error
-			return &ExecuteResult{
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{},
-			}, nil
-		}
-		return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(dbName), nil)
-	}
-
-	// Drop database
-	err = e.dbManager.DropDatabase(ctx, dbName)
-	if err != nil {
-		return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"name"},
-		Rows:    [][]interface{}{{dbName}},
-	}, nil
+	return &ExecuteResult{Administration: &AdministrationOutcome{CreatedDatabase: dbName}, Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
 }
 
 // executeCreateAlias handles CREATE ALIAS command (Neo4j-compatible).

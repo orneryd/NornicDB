@@ -47,6 +47,20 @@ func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 		return reference
 	}
 	reference.Function = name
+	start, finish := args.Span()
+	body := args.Text()
+	if len(body) >= 2 {
+		body = body[1 : len(body)-1]
+	}
+	if source != nil {
+		if span, ok := source.OriginalSpan(cyphertext.Span{Start: start + 1, End: finish - 1}, cyphertext.SourceExtent); ok {
+			body = source.Original[span.Start:span.End]
+		}
+	}
+	argumentSource := cyphertext.ReadFunctionArgumentSource(body, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, nil)
+	if argumentSource.Modifier != cyphertext.NoArgumentModifier && argumentSource.Arguments.Start == argumentSource.Arguments.End {
+		return reference
+	}
 	chain := args.ChildRule(CypherParserRULE_expressionChain)
 	if chain.Valid() {
 		for i := 0; i < chain.ChildCount(); i++ {

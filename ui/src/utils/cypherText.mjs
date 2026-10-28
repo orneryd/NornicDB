@@ -32,7 +32,7 @@ export function skipCypherToken(text, start) {
 // Only deletion, whitespace and the fullwidth semicolon can affect framing.
 // Other accepted punctuation/arrow replacements cannot introduce a quote,
 // comment or delimiter. Execution retains the full normalization authority.
-function framingSource(original) {
+function framingAcceptedSource(original) {
   let text = '';
   const edits = [];
   const deleted = new Set(['\u200b', '\u200c', '\u200d', '\u2060', '\ufeff']);
@@ -51,19 +51,24 @@ function framingSource(original) {
     text += replacement;
     index++;
   }
+  return framingView(text, edits);
+}
+
+// Extent biases match the source owner's start/end mapping. Binary search
+// avoids rescanning every prior edit for each statement boundary.
+function framingView(text, edits) {
   const originalOffset = (offset, start) => {
-    let shift = 0;
-    for (const [originalStart, originalEnd, acceptedStart, acceptedEnd] of edits) {
-      if (start) {
-        if (offset < acceptedStart) break;
-        if (offset < acceptedEnd) return originalStart;
-      } else {
-        if (offset <= acceptedStart) break;
-        if (offset <= acceptedEnd) return originalEnd;
-      }
-      shift = originalEnd - acceptedEnd;
+    let low = 0, high = edits.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      const acceptedStart = edits[middle][2];
+      if (acceptedStart < offset || (start && acceptedStart === offset)) low = middle + 1;
+      else high = middle;
     }
-    return offset + shift;
+    if (low === 0) return offset;
+    const [originalStart, originalEnd, , acceptedEnd] = edits[low - 1];
+    if (start ? offset < acceptedEnd : offset <= acceptedEnd) return start ? originalStart : originalEnd;
+    return offset + originalEnd - acceptedEnd;
   };
   const span = (start, end) => {
     const mappedStart = originalOffset(start, true);
@@ -72,8 +77,63 @@ function framingSource(original) {
   return { text, span };
 }
 
+// Expand admitted raw lowercase-u escapes once, before quotes/comments can
+// change framing. null means no admitted expansion; false means malformed
+// source, which stays opaque for the executor's native diagnostic. Splitting
+// must not throw outside the editor's request error handling.
+function projectFramingUnicode(original) {
+  if (!original.includes('\\u')) return null;
+  let text = '', last = 0;
+  let edits = null;
+  const hex = (at) => {
+    if (at + 4 > original.length) return NaN;
+    let value = 0;
+    for (let j=at;j<at+4;j++) {
+      const c=original.charCodeAt(j);
+      let digit=c>=48&&c<=57 ? c-48 : c>=65&&c<=70 ? c-55 : c>=97&&c<=102 ? c-87 : -1;
+      if (digit<0) return NaN;
+      value=(value<<4)|digit;
+    }
+    return value;
+  };
+  for (let index=0;index<original.length;) {
+    if (original[index] !== '\\' || index+1===original.length) {index++;continue;}
+    if (original[index+1] === '\\') {index+=2;continue;}
+    if (original[index+1] !== 'u') {index+=2;continue;}
+    let value=hex(index+2);
+    if (Number.isNaN(value)) return false;
+    let end=index+6;
+    if (value>=0xd800&&value<=0xdbff&&original.slice(end,end+2)==='\\u') {
+      const low=hex(end+2);
+      if (low>=0xdc00&&low<=0xdfff) {value=0x10000+(value-0xd800)*0x400+low-0xdc00;end+=6;}
+    }
+    text+=original.slice(last,index);
+    const acceptedStart=text.length;
+    text+=String.fromCodePoint(value);
+    if (edits === null) edits = [];
+    edits.push([index,end,acceptedStart,text.length]);
+    last=end;index=end;
+  }
+  if (edits === null) return null;
+  text+=original.slice(last);
+  return framingView(text,edits);
+}
+
+function framingSource(original) {
+  const projected=projectFramingUnicode(original);
+  if (projected===false) return null;
+  if (projected===null) return framingAcceptedSource(original);
+  const accepted=framingAcceptedSource(projected.text);
+  return {text:accepted.text,span(start,end) {
+    const [a,b]=accepted.span(start,end);
+    return projected.span(a,b);
+  }};
+}
+
 export function cypherStatementSpans(original) {
-  const { text, span } = framingSource(original);
+  const framing = framingSource(original);
+  if (framing === null) return [[0, original.length]];
+  const { text, span } = framing;
   const spans = [];
   let start = 0;
   for (let index = 0; index < text.length; index++) {

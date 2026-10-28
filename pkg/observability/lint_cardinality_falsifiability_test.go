@@ -16,20 +16,20 @@ import (
 // Phase 3 shipped `make lint-cardinality` (Makefile:871) — a grep gate that
 // rejects raw `prometheus.New(Counter|Gauge|Histogram|Summary)Vec(` calls
 // outside pkg/observability. This test PROVES the gate is falsifiable: it
-// injects a sentinel offender into a tracked subsystem path and asserts
+// injects a sentinel offender into an isolated subsystem fixture and asserts
 // `make lint-cardinality` exits non-zero. It then removes the offender
-// and confirms the gate passes again.
+// and confirms the gate passes again, using the actual repository Makefile.
 //
 // Phase 3's evidence file lives at
 // `.planning/phases/03-metrics-infrastructure-discipline/lint-cardinality-falsifiability.txt`
 // and used a //go:build never_compile_this_falsifiability_proof tag for the
-// injection so even compilation was harmless. We mirror that posture: the
-// injected sentinel uses an unreachable build tag so go test/go build never
-// see it.
+// injection. A build tag prevents compilation but not Go file enumeration
+// and constraint reads. This test therefore writes the sentinel only into
+// t.TempDir(), preserving concurrent builds of the actual checkout.
 
 // TestLintCardinality_Falsifiable proves the lint-cardinality grep gate
-// catches raw prometheus.NewXxxVec outside pkg/observability. Skipped if
-// `make` or `go` is unavailable (CI minimal images, Windows hosts).
+// catches raw prometheus.NewXxxVec outside pkg/observability. It retains
+// the existing skips when make or the repository Makefile is unavailable.
 func TestLintCardinality_Falsifiable(t *testing.T) {
 	if _, err := exec.LookPath("make"); err != nil {
 		t.Skip("make not on PATH; lint-cardinality falsifiability requires Makefile target")
@@ -44,7 +44,7 @@ func TestLintCardinality_Falsifiable(t *testing.T) {
 		t.Skipf("Makefile not at %s; skipping", root)
 	}
 
-	// Step 1: baseline must pass.
+	// The original real-repository baseline is read-only.
 	baseline := exec.Command("make", "lint-cardinality")
 	baseline.Dir = root
 	out, err := baseline.CombinedOutput()
@@ -52,9 +52,29 @@ func TestLintCardinality_Falsifiable(t *testing.T) {
 	assert.Contains(t, string(out), "PASS",
 		"baseline must report PASS (MET-04 helper-only registration enforced)")
 
+	// Isolate test writes from the real checkout: run make against a fixture
+	// workdir that mirrors every grep-scanned path so missing dirs cannot
+	// mask sentinel findings via grep exit 2.
+	fixture := t.TempDir()
+	for _, sub := range []string{
+		"pkg/cypher", "pkg/storage", "pkg/bolt", "pkg/server",
+		"pkg/replication", "pkg/auth", "pkg/embed", "pkg/search",
+		"pkg/cache", "cmd",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(fixture, sub), 0o755))
+	}
+
+	// The isolated fixture must also start clean.
+	clean := exec.Command("make", "-f", filepath.Join(root, "Makefile"), "lint-cardinality")
+	clean.Dir = fixture
+	out, err = clean.CombinedOutput()
+	require.NoError(t, err, "isolated baseline lint-cardinality must pass: %s", out)
+	assert.Contains(t, string(out), "PASS", "isolated baseline must report PASS")
+
 	// Step 2: inject a sentinel offender into pkg/cypher (a path the grep
-	// scans). Use an unreachable build tag so go build/test never see it.
-	sentinelPath := filepath.Join(root, "pkg", "cypher", "lint_falsifiability_sentinel.go")
+	// scans). The tag prevents compilation, but Go still opens files to read
+	// build constraints; only the private fixture avoids checkout mutation.
+	sentinelPath := filepath.Join(fixture, "pkg", "cypher", "lint_falsifiability_sentinel.go")
 	sentinel := `//go:build never_compile_falsifiability_proof_04_01
 // +build never_compile_falsifiability_proof_04_01
 
@@ -68,8 +88,8 @@ var _ = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "x_total"}, []stri
 	defer os.Remove(sentinelPath)
 
 	// Step 3: with offender present, lint must fail.
-	inj := exec.Command("make", "lint-cardinality")
-	inj.Dir = root
+	inj := exec.Command("make", "-f", filepath.Join(root, "Makefile"), "lint-cardinality")
+	inj.Dir = fixture
 	out, err = inj.CombinedOutput()
 	require.Error(t, err,
 		"falsifiability: lint-cardinality MUST exit non-zero with sentinel injected; got pass: %s", out)
@@ -78,8 +98,8 @@ var _ = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "x_total"}, []stri
 
 	// Step 4: remove offender and verify gate restores.
 	require.NoError(t, os.Remove(sentinelPath))
-	post := exec.Command("make", "lint-cardinality")
-	post.Dir = root
+	post := exec.Command("make", "-f", filepath.Join(root, "Makefile"), "lint-cardinality")
+	post.Dir = fixture
 	out, err = post.CombinedOutput()
 	require.NoError(t, err, "post-revert lint-cardinality must pass: %s", out)
 	assert.Contains(t, string(out), "PASS",

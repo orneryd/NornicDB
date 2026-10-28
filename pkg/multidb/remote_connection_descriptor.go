@@ -21,7 +21,29 @@ const (
 	remoteConnectionFallback byte = 2
 )
 
-func (m *DatabaseManager) sealRemoteConnection(ref ConstituentRef) (ConstituentRef, error) {
+type remoteConnectionInput uint8
+
+const (
+	literalRemoteConnection remoteConnectionInput = iota
+	legacyRemoteConnection
+)
+
+// sealRemoteConnection owns the unchanged descriptor wire format. Legacy input
+// applies only its existing Password-field decoder; URI and USER stay literal.
+func (m *DatabaseManager) sealRemoteConnection(ref ConstituentRef, input remoteConnectionInput) (ConstituentRef, error) {
+	if input == legacyRemoteConnection {
+		if ref.ConnectionV1 != "" {
+			_, err := m.openRemoteConnection(ref)
+			return ref, err
+		}
+		if ref.Password != "" || strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
+			password, err := m.decryptStoredRemotePassword(ref.Password)
+			if err != nil {
+				return ConstituentRef{}, err
+			}
+			ref.Password = password
+		}
+	}
 	origin := remoteConnectionFallback
 	if strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
 		origin = remoteConnectionExplicit
@@ -75,21 +97,4 @@ func (m *DatabaseManager) openRemoteConnection(ref ConstituentRef) (remoteConnec
 		return remoteConnection{}, errors.New("invalid remote connection descriptor origin")
 	}
 	return connection, nil
-}
-
-// sealLegacyRemoteConnection retains the established Password-field decoder
-// only. Raw URI and USER values, including enc:v1-looking text, stay literal.
-func (m *DatabaseManager) sealLegacyRemoteConnection(ref ConstituentRef) (ConstituentRef, error) {
-	if ref.ConnectionV1 != "" {
-		_, err := m.openRemoteConnection(ref)
-		return ref, err
-	}
-	if ref.Password != "" || strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
-		password, err := m.decryptStoredRemotePassword(ref.Password)
-		if err != nil {
-			return ConstituentRef{}, err
-		}
-		ref.Password = password
-	}
-	return m.sealRemoteConnection(ref)
 }

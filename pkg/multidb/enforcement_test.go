@@ -720,14 +720,7 @@ func TestDatabaseLimitChecker_GetRateLimits(t *testing.T) {
 			if configured {
 				limits = &Limits{Rate: RateLimits{MaxQueriesPerSecond: 100, MaxWritesPerSecond: 50}}
 			}
-			manager, dbName := setupTestManager(t)
-			if configured {
-				require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
-			}
-			manager.mu.Lock()
-			_, checker, err := manager.databaseViewLocked(dbName, false)
-			manager.mu.Unlock()
-			require.NoError(t, err)
+			checker := rateCheckerFixture(t, limits)
 			rateLimits := checker.GetRateLimits()
 			if !configured {
 				assert.Nil(t, rateLimits)
@@ -740,24 +733,25 @@ func TestDatabaseLimitChecker_GetRateLimits(t *testing.T) {
 	}
 }
 
+func rateCheckerFixture(t *testing.T, limits *Limits) *databaseLimitChecker {
+	t.Helper()
+	manager, dbName := setupTestManager(t)
+	if limits != nil {
+		require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
+	}
+	manager.mu.Lock()
+	_, checker, err := manager.databaseViewLocked(dbName, false)
+	manager.mu.Unlock()
+	require.NoError(t, err)
+	require.NotNil(t, checker)
+	return checker
+}
+
 // TestDatabaseLimitChecker_RateChecks is the canonical query/write rate table.
 // Both kinds share one fixture and one assertion set: no configured limit,
 // exactly `limit` allowed operations at the limit boundary, and one overflow
 // declaration per kind that keeps its original token, limit and localized ID.
 func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
-	checkerFor := func(t *testing.T, limits *Limits) *databaseLimitChecker {
-		t.Helper()
-		manager, dbName := setupTestManager(t)
-		if limits != nil {
-			require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
-		}
-		manager.mu.Lock()
-		_, checker, err := manager.databaseViewLocked(dbName, false)
-		manager.mu.Unlock()
-		require.NoError(t, err)
-		require.NotNil(t, checker)
-		return checker
-	}
 
 	for _, kind := range []struct {
 		name          string
@@ -786,7 +780,7 @@ func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
 	} {
 		t.Run(kind.name+"/no-configured-limit", func(t *testing.T) {
 			// Without a configured rate neither kind ever consumes quota.
-			check := kind.check(checkerFor(t, nil))
+			check := kind.check(rateCheckerFixture(t, nil))
 			for i := 0; i < 100; i++ {
 				assert.NoError(t, check(), "%s %d should be allowed without a limit", kind.name, i)
 			}
@@ -798,7 +792,7 @@ func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
 			const limit = 10
 			limits := &Limits{}
 			kind.applyLimit(&limits.Rate, limit)
-			check := kind.check(checkerFor(t, limits))
+			check := kind.check(rateCheckerFixture(t, limits))
 			for i := 0; i < limit; i++ {
 				assert.NoError(t, check(), "%s %d should be allowed", kind.name, i)
 			}
@@ -808,7 +802,7 @@ func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
 			// Original overflow limits: five queries and three writes.
 			limits := &Limits{}
 			kind.applyLimit(&limits.Rate, kind.exceededLimit)
-			check := kind.check(checkerFor(t, limits))
+			check := kind.check(rateCheckerFixture(t, limits))
 			for i := 0; i < kind.exceededLimit; i++ {
 				require.NoError(t, check())
 			}

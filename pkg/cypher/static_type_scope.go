@@ -247,18 +247,24 @@ func callSubqueryImports(ctx context.Context, callText string, outer typeScope) 
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, string, error) {
 	initial, scoped, ok, err := callSubqueryImports(ctx, callText, outer)
 	if err != nil || !ok {
-		return nil, err
+		return nil, "", err
 	}
 	var returned typeScope
+	firstReturn := ""
 	typedBranches := 0
-	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
+	for branchIndex, branch := range branches {
+		split := cachedPipelineClauses(ctx, branch, true)
+		if branchIndex == 0 {
+			firstReturn = split.firstReturn
+		}
+		clauses, ok := split.clauses, split.ok
 		if !ok || len(clauses) == 0 {
 			continue
 		}
+		last := clauses[len(clauses)-1]
 		retained := initial
 		importing := false
 		if !scoped {
@@ -283,18 +289,17 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 		if err != nil {
 			if !scoped {
 				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
-					return nil, err
+					return nil, firstReturn, err
 				}
 				// An old-style CALL { … } keeps NornicDB's implicit imports
 				// (gh648: an outer name it doesn't import is visible, or
 				// declared anew), so its walk only types its columns.
-				return nil, nil
+				return nil, firstReturn, nil
 			}
-			return nil, err
+			return nil, firstReturn, err
 		}
-		last := clauses[len(clauses)-1]
 		if !complete || last.kind != pipelineClauseReturn {
-			return nil, nil
+			return nil, firstReturn, nil
 		}
 		returnClause := strings.TrimSpace(last.text)
 		branchTypes := projectTypeScope(ctx, final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
@@ -308,5 +313,5 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 		}
 		typedBranches++
 	}
-	return returned, nil
+	return returned, firstReturn, nil
 }

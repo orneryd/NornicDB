@@ -20,33 +20,9 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		for _, quota := range []string{"count", "bytes"} {
 			t.Run(fmt.Sprintf("buffered=%t/%s", buffered, quota), func(t *testing.T) {
-				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = base.Close() })
-				manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
-				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
-				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
-				tenant, err := manager.GetStorage("victim")
-				require.NoError(t, err)
-				peer, err := manager.GetStorage("peer")
-				require.NoError(t, err)
-				stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).In(time.Local)
-				body := func(id storage.NodeID) *storage.Node {
-					return &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"payload": strings.Repeat("x", 1024)}, CreatedAt: stamp, UpdatedAt: stamp}
-				}
-				err = tenant.BulkCreateNodes([]*storage.Node{body("old000")})
-				require.NoError(t, err)
-				_, err = peer.CreateNode(&storage.Node{ID: "keep"})
-				require.NoError(t, err)
-				originalBytes, _, _ := manager.GetStorageSize("victim")
-				require.Positive(t, originalBytes)
-				limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
-				if quota == "bytes" {
-					limits.Storage = multidb.StorageLimits{MaxBytes: originalBytes}
-				}
-				require.NoError(t, manager.SetDatabaseLimits(t.Context(), "victim", limits))
+				p := newReview1406Probe(t, buffered, quota)
+				base, manager, tenant, peer := p.base, p.manager, p.tenant, p.peer
+				stamp, body, originalBytes := p.stamp, p.body, p.originalBytes
 				sentinel := errors.New("DROP final metadata sync unavailable")
 				calls := 0
 				storage.ReviewSetDropTailFailure(base, func(prefix string) error {
@@ -114,32 +90,9 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		for _, quota := range []string{"count", "bytes"} {
 			t.Run(fmt.Sprintf("buffered=%t/%s", buffered, quota), func(t *testing.T) {
-				base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = base.Close() })
-				manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = manager.Close() })
-				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
-				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
-				tenant, err := manager.GetStorage("victim")
-				require.NoError(t, err)
-				peer, err := manager.GetStorage("peer")
-				require.NoError(t, err)
-				stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).In(time.Local)
-				body := func(id storage.NodeID) *storage.Node {
-					return &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"payload": strings.Repeat("x", 1024)}, CreatedAt: stamp, UpdatedAt: stamp}
-				}
-				require.NoError(t, tenant.BulkCreateNodes([]*storage.Node{body("old000")}))
-				_, err = peer.CreateNode(&storage.Node{ID: "keep"})
-				require.NoError(t, err)
-				originalBytes, _, _ := manager.GetStorageSize("victim")
-				require.Positive(t, originalBytes)
-				limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
-				if quota == "bytes" {
-					limits.Storage = multidb.StorageLimits{MaxBytes: originalBytes}
-				}
-				require.NoError(t, manager.SetDatabaseLimits(t.Context(), "victim", limits))
+				p := newReview1406Probe(t, buffered, quota)
+				base, manager, tenant, peer := p.base, p.manager, p.tenant, p.peer
+				body, originalBytes := p.body, p.originalBytes
 				backup := filepath.Join(t.TempDir(), "nonempty.bak")
 				require.NoError(t, base.Backup(backup))
 				require.NoError(t, tenant.DeleteNode("old000"))
@@ -165,5 +118,60 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 				require.NoError(t, err)
 			})
 		}
+	}
+}
+
+// review1406Probe is the shared pre-Restore fixture for the two Review 1406
+// managed Restore tests: live base engine + manager, victim/peer databases,
+// a seeded victim node and peer sentinel, and a retained count-or-bytes quota.
+// It owns all cleanup (engine after manager) and performs the same positive
+// byte assertion both tests already made. Restore-triggering behavior stays
+// with each caller.
+type review1406Probe struct {
+	base          *storage.BadgerEngine
+	manager       *multidb.DatabaseManager
+	tenant        storage.Engine
+	peer          storage.Engine
+	stamp         time.Time
+	body          func(id storage.NodeID) *storage.Node
+	originalBytes int64
+}
+
+func newReview1406Probe(t *testing.T, buffered bool, quota string) *review1406Probe {
+	t.Helper()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = base.Close() })
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
+	tenant, err := manager.GetStorage("victim")
+	require.NoError(t, err)
+	peer, err := manager.GetStorage("peer")
+	require.NoError(t, err)
+	stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).In(time.Local)
+	body := func(id storage.NodeID) *storage.Node {
+		return &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"payload": strings.Repeat("x", 1024)}, CreatedAt: stamp, UpdatedAt: stamp}
+	}
+	require.NoError(t, tenant.BulkCreateNodes([]*storage.Node{body("old000")}))
+	_, err = peer.CreateNode(&storage.Node{ID: "keep"})
+	require.NoError(t, err)
+	originalBytes, _, _ := manager.GetStorageSize("victim")
+	require.Positive(t, originalBytes)
+	limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
+	if quota == "bytes" {
+		limits.Storage = multidb.StorageLimits{MaxBytes: originalBytes}
+	}
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "victim", limits))
+	return &review1406Probe{
+		base:          base,
+		manager:       manager,
+		tenant:        tenant,
+		peer:          peer,
+		stamp:         stamp,
+		body:          body,
+		originalBytes: originalBytes,
 	}
 }

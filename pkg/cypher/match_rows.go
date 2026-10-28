@@ -148,7 +148,7 @@ func entityHasAllLabelsOrTypesPredicate(value interface{}, expr *labelExpression
 func withWhereIsLabelTest(whereClause string) bool {
 	trimmed := strings.TrimSpace(whereClause)
 	variable, chain, hasLabels := splitNodeHead(trimmed)
-	if !hasLabels || !isWithWhereIdentifier(variable) {
+	if !hasLabels || !isSimpleVariable(variable) {
 		return false
 	}
 	if hasLabelExpressionOperator(chain) {
@@ -157,24 +157,11 @@ func withWhereIsLabelTest(whereClause string) bool {
 	}
 	valid := true
 	wellFormed := eachChainLabel(chain, func(name string, quoted bool) {
-		if name == "" || (!quoted && !isWithWhereIdentifier(name)) {
+		if name == "" || (!quoted && !isSimpleVariable(name)) {
 			valid = false
 		}
 	})
 	return wellFormed && valid
-}
-
-// isWithWhereIdentifier reports whether s is a plain identifier.
-func isWithWhereIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if !cyphertext.NamePart(r) {
-			return false
-		}
-	}
-	return true
 }
 
 // substituteWithWhereLabelTests replaces every `var:Label` test in a predicate
