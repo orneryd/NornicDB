@@ -767,12 +767,12 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		return w.AppendWithDatabaseReturningSeq(op, data, database)
 	}
 
-	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
-	defer walJSONBufPool.Put(dataBuf)
 	defer walJSONBufPool.Put(entryBuf)
 
-	dataBytes, err := marshalJSONCompact(dataBuf, data)
+	// Marshal already owns its result bytes. Compress them directly rather
+	// than copying a large buffered-commit payload through an Encoder buffer.
+	dataBytes, err := jsontext.Marshal(data)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
 	}

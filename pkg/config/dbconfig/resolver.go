@@ -193,7 +193,8 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	if c == nil {
 		return
 	}
-	for _, definition := range Settings() {
+	// Registry definitions are read-only here; the exported Settings copy is unnecessary.
+	for _, definition := range settingsRegistry {
 		if definition.EnvironmentVariable == "" {
 			continue
 		}

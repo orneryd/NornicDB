@@ -62,21 +62,48 @@ func (p QueryResultProjection) qualified(id string) string {
 // NodeProperties returns visible node properties without mutating their source.
 // With decay disabled it returns the original map without allocating.
 func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{} {
+	return p.nodeProperties(node, nil)
+}
+
+// SelectedNodeProperties returns visible properties among selection. A nil
+// selection returns all properties; an empty selection returns none. For
+// example, a pattern can check just the fields it names without scoring the
+// rest of the node.
+func (p QueryResultProjection) SelectedNodeProperties(node *Node, selection []string) map[string]interface{} {
+	return p.nodeProperties(node, selection)
+}
+
+func (p QueryResultProjection) nodeProperties(node *Node, selection []string) map[string]interface{} {
 	if node == nil {
 		return nil
 	}
-	if p.engine == nil {
+	if p.engine == nil && selection == nil {
 		return node.Properties
 	}
 	created, updated := node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano()
 	if node.UpdatedAt.IsZero() {
 		updated = created
 	}
-	out := make(map[string]interface{}, len(node.Properties))
+	size := len(node.Properties)
+	if selection != nil {
+		size = len(selection)
+	}
+	out := make(map[string]interface{}, size)
 	id := NodeID(p.qualified(string(node.ID)))
-	for key, value := range node.Properties {
-		if !p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), labels: node.Labels, property: key, created: created, updated: updated}, p.now) {
+	include := func(key string, value interface{}) {
+		if p.engine == nil || !p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), labels: node.Labels, property: key, created: created, updated: updated}, p.now) {
 			out[key] = value
+		}
+	}
+	if selection != nil {
+		for _, key := range selection {
+			if value, ok := node.Properties[key]; ok {
+				include(key, value)
+			}
+		}
+	} else {
+		for key, value := range node.Properties {
+			include(key, value)
 		}
 	}
 	return out

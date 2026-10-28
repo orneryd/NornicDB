@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -175,4 +176,27 @@ func TestDisabledSearchEventsDoNotQueueAndRebuildAfterEnable(t *testing.T) {
 	require.NotSame(t, entry.svc, rebuilt)
 	require.True(t, rebuilt.BM25Enabled())
 	require.Equal(t, 1, rebuilt.FulltextDocCount(), "re-enabling rebuilds records written while search was disabled")
+}
+
+func TestSearchEventUsesCachedServiceAndQueryRefreshesReranker(t *testing.T) {
+	db := newCachedConfigSearchDB(t)
+	const name = "nornic"
+	t.Cleanup(func() { db.ResetSearchService(name) })
+	db.config.Memory.SearchBM25Enabled = true
+	db.config.Memory.SearchVectorEnabled = false
+	var resolutions atomic.Int64
+	db.SetRerankerResolver(func(string) search.Reranker { resolutions.Add(1); return nil })
+	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), name, nil)
+	require.NoError(t, err)
+	before := resolutions.Load()
+	_, err = db.storage.CreateNode(&storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "indexed quartz"}})
+	require.NoError(t, err)
+	for range 5 {
+		db.queueSearchRefreshEvent("nornic:stored")
+	}
+	require.Equal(t, before, resolutions.Load(), "indexing events must not resolve query-only reranker configuration")
+	require.Eventually(t, func() bool { return svc.FulltextDocCount() == 1 }, 3*time.Second, 10*time.Millisecond, "cached service still indexes the latest stored document")
+	_, err = db.GetOrCreateSearchService(name, nil)
+	require.NoError(t, err)
+	require.Equal(t, before+1, resolutions.Load(), "query-facing lookup resolves the current reranker")
 }

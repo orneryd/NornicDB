@@ -92,3 +92,12 @@ func BenchmarkResolveWithCLIAndDatabaseOverrides(b *testing.B) {
 		resolveSink = Resolve(global, overrides)
 	}
 }
+
+func BenchmarkResolveGlobalForSearchEvents(b *testing.B) {
+	global := config.LoadDefaults()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		resolveSink = Resolve(global, nil)
+	}
+}

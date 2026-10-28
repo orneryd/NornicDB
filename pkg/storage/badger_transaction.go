@@ -2097,7 +2097,7 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 	// A node deleted while relationships still connect it is still their
 	// endpoint (DeleteGraphNode with RejectConnected).
 	if node, connected := tx.connectedDeletes[nodeID]; connected {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 	// Check deleted
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
@@ -2105,7 +2105,7 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 	}
 	// Check pending
 	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 
 	return tx.getCommittedNodeProjectedLocked(nodeID, properties)
@@ -2119,7 +2119,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 		return tx.engine.GetNodeProjected(nodeID, properties)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		sidecar := false
@@ -2128,7 +2128,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 			return nil
 		})
 		if !sidecar {
-			return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+			return projectCachedNodeForRead(node, properties, true), nil
 		}
 	}
 	if tx.readTS.IsZero() {

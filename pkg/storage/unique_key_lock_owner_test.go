@@ -143,7 +143,7 @@ func TestUniqueKeyLockEdgeBranches(t *testing.T) {
 	heldByB := &uniqueConstraintCommitLock{owner: "b", holds: 1}
 	sm.uniqueConstraintLockWaits = map[string]*uniqueConstraintCommitLock{"a": heldByB, "b": heldByA}
 	sm.uniqueConstraintCommitLocksMu.Lock()
-	require.False(t, sm.uniqueConstraintLockWaitClosesCycleLocked("c", heldByA))
+	require.False(t, sm.uniqueConstraintLockWaitClosesCycleLocked("c", heldByA, false))
 	sm.uniqueConstraintCommitLocksMu.Unlock()
 
 	other := NewSchemaManager()

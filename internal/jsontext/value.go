@@ -80,7 +80,7 @@ func readJSONToken(decoder *std.Decoder, raw []byte, projected bool) (any, error
 	if projected {
 		policy = projectedJSON
 	}
-	lexeme := projectJSONStrings(segment[start:], policy).bytes
+	lexeme := projectJSONStrings(segment[start:], policy, false).bytes
 	var text string
 	if err := Unmarshal(lexeme, &text, ProjectedInput); err != nil {
 		return nil, err

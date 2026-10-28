@@ -163,28 +163,40 @@ type uniqueConstraintLockKey struct {
 	// entityKind zero retains the existing constraint value identity. Entity
 	// authority shares this registry and the existing reentrant transaction owner.
 	entityKind uint8
-	entityID   string
-	label      string
-	property   string
-	value      interface{}
+	// shared requests endpoint stability without changing key identity.
+	shared   bool
+	entityID string
+	label    string
+	property string
+	value    interface{}
 }
 
-// uniqueConstraintCommitLock is one constraint key's lock. It belongs to one
-// owner at a time (a transaction ID, or a direct engine write's own ID); the
-// owner may take it again (holds counts its acquisitions), and released is
-// closed whenever it becomes free, waking its waiters (#961).
+// uniqueConstraintCommitLock is one canonical constraint or entity key's
+// authority. Exclusive owners serialize entity mutation and constrained values;
+// relationship endpoint readers share the same identity and exclude writers.
+// Owners may reacquire their holds. A channel exists only while there are
+// waiters, and is closed when the key's eligibility changes.
 type uniqueConstraintCommitLock struct {
 	recoveryPending bool
 	owner           string
 	holds           int
+	readerOwner     string
+	readerHolds     int
+	readers         map[string]int
+	waitingWriters  int
 	refs            int
 	order           uint64
 	released        chan struct{}
 }
 
+// Registry entries are private to active acquisitions. They return to the pool
+// only after the last holder or waiter drops its reference.
+var uniqueConstraintLockPool = sync.Pool{New: func() any { return new(uniqueConstraintCommitLock) }}
+
 type uniqueConstraintLockRequest struct {
-	key  uniqueConstraintLockKey
-	lock *uniqueConstraintCommitLock
+	key    uniqueConstraintLockKey
+	lock   *uniqueConstraintCommitLock
+	shared bool
 }
 
 // appendConstraintValueKeys projects node and relationship VALUE keys for the
@@ -292,7 +304,7 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // no-op release function so callers can safely defer the result regardless
 // of whether locks were acquired.
 //
-// Each lock guards the entire commit window for its specific value —
+// Exclusive value locks guard the entire commit window for their value —
 // validateAllConstraints, badgerTx.Commit, and the RegisterUniqueValue call
 // that publishes the committed value to the constraint cache — so a
 // subsequent transaction touching the same value always observes a coherent
@@ -312,16 +324,20 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 		return func() {}, nil
 	}
 	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
-	seen := make(map[uniqueConstraintLockKey]struct{}, len(keys))
+	seen := make(map[uniqueConstraintLockKey]int, len(keys))
 	for _, k := range keys {
+		shared := k.shared
+		k.shared = false // mode is not part of the identity: writes conflict with reads.
 		if !lockableUniqueConstraintKey(k) {
 			continue
 		}
-		if _, dup := seen[k]; dup {
+		if index, dup := seen[k]; dup {
+			// One owner requesting both modes takes exclusive ownership.
+			requests[index].shared = requests[index].shared && shared
 			continue
 		}
-		seen[k] = struct{}{}
-		requests = append(requests, uniqueConstraintLockRequest{key: k})
+		seen[k] = len(requests)
+		requests = append(requests, uniqueConstraintLockRequest{key: k, shared: shared})
 	}
 	if len(requests) == 0 {
 		return func() {}, nil
@@ -341,7 +357,8 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 			if sm.uniqueConstraintCommitOrder == 0 {
 				panic("UNIQUE commit lock order overflow")
 			}
-			lock = &uniqueConstraintCommitLock{order: sm.uniqueConstraintCommitOrder, released: make(chan struct{})}
+			lock = uniqueConstraintLockPool.Get().(*uniqueConstraintCommitLock)
+			lock.order = sm.uniqueConstraintCommitOrder
 			sm.uniqueConstraintCommitLocks[requests[i].key] = lock
 		}
 		lock.refs++
@@ -375,33 +392,136 @@ func lockableUniqueConstraintKey(k uniqueConstraintLockKey) bool {
 	return k.value == nil || k.value == k.value
 }
 
-// waitForUniqueConstraintLock takes request's lock for owner, waiting while
-// another owner holds it.
+// Endpoint keys usually have a single reader. Keep that owner inline and
+// allocate the extra-reader map only when commits actually overlap on a key.
+func (lock *uniqueConstraintCommitLock) readerCount() int {
+	n := len(lock.readers)
+	if lock.readerOwner != "" {
+		n++
+	}
+	return n
+}
+
+func (lock *uniqueConstraintCommitLock) readerHoldsFor(owner string) int {
+	if lock.readerOwner == owner {
+		return lock.readerHolds
+	}
+	return lock.readers[owner]
+}
+
+func (lock *uniqueConstraintCommitLock) addReader(owner string) {
+	if lock.readerOwner == owner {
+		lock.readerHolds++
+		return
+	}
+	if n := lock.readers[owner]; n > 0 {
+		lock.readers[owner] = n + 1
+		return
+	}
+	if lock.readerOwner == "" {
+		lock.readerOwner, lock.readerHolds = owner, 1
+		return
+	}
+	if lock.readers == nil {
+		lock.readers = make(map[string]int)
+	}
+	lock.readers[owner]++
+}
+
+func (lock *uniqueConstraintCommitLock) removeReader(owner string) bool {
+	if lock.readerOwner == owner {
+		lock.readerHolds--
+		if lock.readerHolds == 0 {
+			lock.readerOwner = ""
+			return true
+		}
+		return false
+	}
+	if n := lock.readers[owner]; n > 1 {
+		lock.readers[owner] = n - 1
+	} else if n == 1 {
+		delete(lock.readers, owner)
+		return true
+	}
+	return false
+}
+
+// signalUniqueConstraintLock wakes existing waiters while the registry is held.
+func signalUniqueConstraintLock(lock *uniqueConstraintCommitLock) {
+	if lock.released != nil {
+		close(lock.released)
+		lock.released = nil
+	}
+}
+
+// waitForUniqueConstraintLock owns one key in exclusive or shared mode. The
+// latter is only used for relationship endpoints, which must be stable against
+// node mutation but can be read concurrently by independent relationships.
 func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner string, request uniqueConstraintLockRequest) error {
 	lock := request.lock
 	sm.uniqueConstraintCommitLocksMu.Lock()
-	for {
-		if lock.owner == "" || lock.owner == owner {
-			lock.owner = owner
-			lock.holds++
-			delete(sm.uniqueConstraintLockWaits, owner)
-			sm.uniqueConstraintCommitLocksMu.Unlock()
-			return nil
+	waiting := false
+	clearWait := func() {
+		if !waiting {
+			return
 		}
-		if lock.recoveryPending {
-			delete(sm.uniqueConstraintLockWaits, owner)
+		delete(sm.uniqueConstraintLockWaits, owner)
+		delete(sm.uniqueConstraintLockWaitShared, owner)
+		if !request.shared {
+			lock.waitingWriters--
+			if lock.waitingWriters == 0 {
+				signalUniqueConstraintLock(lock)
+			}
+		}
+		waiting = false
+	}
+	for {
+		ownReader := lock.readerHoldsFor(owner) > 0
+		ownWriter := lock.owner == owner
+		canAcquire := false
+		if request.shared {
+			canAcquire = (lock.owner == "" || ownWriter) && (lock.waitingWriters == 0 || ownReader || ownWriter)
+		} else {
+			canAcquire = ownWriter || (lock.owner == "" && (lock.readerCount() == 0 || lock.readerCount() == 1 && ownReader))
+		}
+		if lock.recoveryPending && !ownWriter && !(request.shared && ownReader) {
+			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
 			return ErrConflict
 		}
-		if sm.uniqueConstraintLockWaitClosesCycleLocked(owner, lock) {
-			delete(sm.uniqueConstraintLockWaits, owner)
+		if canAcquire {
+			clearWait()
+			if request.shared {
+				lock.addReader(owner)
+			} else {
+				lock.owner = owner
+				lock.holds++
+			}
+			sm.uniqueConstraintCommitLocksMu.Unlock()
+			return nil
+		}
+		if !waiting {
+			if sm.uniqueConstraintLockWaits == nil {
+				sm.uniqueConstraintLockWaits = make(map[string]*uniqueConstraintCommitLock)
+			}
+			if sm.uniqueConstraintLockWaitShared == nil {
+				sm.uniqueConstraintLockWaitShared = make(map[string]bool)
+			}
+			sm.uniqueConstraintLockWaits[owner] = lock
+			sm.uniqueConstraintLockWaitShared[owner] = request.shared
+			if !request.shared {
+				lock.waitingWriters++
+			}
+			waiting = true
+		}
+		if sm.uniqueConstraintLockWaitClosesCycleLocked(owner, lock, request.shared) {
+			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
 			return localizedError(localization.StorageTransactionDeadlockDetected(request.key.label, request.key.property), ErrDeadlock)
 		}
-		if sm.uniqueConstraintLockWaits == nil {
-			sm.uniqueConstraintLockWaits = make(map[string]*uniqueConstraintCommitLock)
+		if lock.released == nil {
+			lock.released = make(chan struct{})
 		}
-		sm.uniqueConstraintLockWaits[owner] = lock
 		released := lock.released
 		sm.uniqueConstraintCommitLocksMu.Unlock()
 		if hook := uniqueKeyLockWaitHook.Load(); hook != nil {
@@ -411,7 +531,7 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 		case <-released:
 		case <-ctx.Done():
 			sm.uniqueConstraintCommitLocksMu.Lock()
-			delete(sm.uniqueConstraintLockWaits, owner)
+			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
 			return ctx.Err()
 		}
@@ -419,22 +539,48 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 	}
 }
 
-// uniqueConstraintLockWaitClosesCycleLocked reports whether owner waiting for
-// lock would close a cycle: lock's owner waits, directly or through other
-// owners, for a lock owner holds.
-func (sm *SchemaManager) uniqueConstraintLockWaitClosesCycleLocked(owner string, lock *uniqueConstraintCommitLock) bool {
-	holder := lock.owner
-	for steps := 0; holder != "" && steps <= len(sm.uniqueConstraintLockWaits); steps++ {
+// uniqueConstraintLockWaitClosesCycleLocked follows every conflicting owner,
+// including queued writers that prevent new readers from starving a writer.
+func (sm *SchemaManager) uniqueConstraintLockWaitClosesCycleLocked(owner string, lock *uniqueConstraintCommitLock, shared bool) bool {
+	seen := make(map[string]bool)
+	var visitOwner func(string) bool
+	var visitLock func(string, *uniqueConstraintCommitLock, bool) bool
+	visitOwner = func(holder string) bool {
 		if holder == owner {
 			return true
 		}
-		next, waiting := sm.uniqueConstraintLockWaits[holder]
-		if !waiting {
+		if seen[holder] {
 			return false
 		}
-		holder = next.owner
+		seen[holder] = true
+		if next := sm.uniqueConstraintLockWaits[holder]; next != nil {
+			return visitLock(holder, next, sm.uniqueConstraintLockWaitShared[holder])
+		}
+		return false
 	}
-	return false
+	visitLock = func(waiter string, target *uniqueConstraintCommitLock, read bool) bool {
+		if target.owner != "" && target.owner != waiter && visitOwner(target.owner) {
+			return true
+		}
+		if !read {
+			if reader := target.readerOwner; reader != "" && reader != waiter && visitOwner(reader) {
+				return true
+			}
+			for reader := range target.readers {
+				if reader != waiter && visitOwner(reader) {
+					return true
+				}
+			}
+		} else if target.owner == "" && target.readerHoldsFor(waiter) == 0 && target.waitingWriters > 0 {
+			for writer, pending := range sm.uniqueConstraintLockWaits {
+				if writer != waiter && pending == target && !sm.uniqueConstraintLockWaitShared[writer] && visitOwner(writer) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return visitLock(owner, lock, shared)
 }
 
 // releaseUniqueConstraintLocks releases owner's hold on each of held and drops
@@ -443,16 +589,23 @@ func (sm *SchemaManager) releaseUniqueConstraintLocks(owner string, held, unacqu
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	defer sm.uniqueConstraintCommitLocksMu.Unlock()
 	for i := len(held) - 1; i >= 0; i-- {
-		lock := held[i].lock
-		if lock.owner != owner || lock.holds == 0 {
-			continue
+		request := held[i]
+		lock := request.lock
+		changed := false
+		if request.shared {
+			changed = lock.removeReader(owner)
+		} else if lock.owner == owner && lock.holds > 0 {
+			lock.holds--
+			if lock.holds == 0 {
+				lock.owner = ""
+				changed = true
+			}
 		}
-		lock.holds--
-		if lock.holds == 0 {
-			lock.owner = ""
+		if lock.owner == "" && lock.readerCount() == 0 {
 			lock.recoveryPending = false
-			close(lock.released)
-			lock.released = make(chan struct{})
+		}
+		if changed {
+			signalUniqueConstraintLock(lock)
 		}
 	}
 	for _, requests := range [2][]uniqueConstraintLockRequest{held, unacquired} {
@@ -460,6 +613,8 @@ func (sm *SchemaManager) releaseUniqueConstraintLocks(owner string, held, unacqu
 			request.lock.refs--
 			if request.lock.refs == 0 && sm.uniqueConstraintCommitLocks[request.key] == request.lock {
 				delete(sm.uniqueConstraintCommitLocks, request.key)
+				*request.lock = uniqueConstraintCommitLock{}
+				uniqueConstraintLockPool.Put(request.lock)
 			}
 		}
 	}
@@ -557,10 +712,9 @@ func (sm *SchemaManager) markCommitOwnerRecoveryPending(owner string) {
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	defer sm.uniqueConstraintCommitLocksMu.Unlock()
 	for _, lock := range sm.uniqueConstraintCommitLocks {
-		if lock.owner == owner && !lock.recoveryPending {
+		if (lock.owner == owner || lock.readerHoldsFor(owner) > 0) && !lock.recoveryPending {
 			lock.recoveryPending = true
-			close(lock.released)
-			lock.released = make(chan struct{})
+			signalUniqueConstraintLock(lock)
 		}
 	}
 }

@@ -73,11 +73,11 @@ func TestJSONProjectedNoEditAllocationBudget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := tc.raw
 			require.False(t, utf8.Valid(raw), "payload must reach the lossless projection path")
-			projection := projectJSONStrings(raw, projectedJSON)
+			projection := projectJSONStrings(raw, projectedJSON, true)
 			require.Empty(t, projection.edits, "payload must not produce source edits")
 			require.Equal(t, raw, projection.bytes, "no-edit projection returns the exact input bytes")
 			allocs := testing.AllocsPerRun(20, func() {
-				_ = projectJSONStrings(raw, projectedJSON)
+				_ = projectJSONStrings(raw, projectedJSON, true)
 			})
 			require.LessOrEqual(t, allocs, projectedUnicodeAllocationBudget, "no-edit projection allocates per non-ASCII codepoint")
 
@@ -120,7 +120,7 @@ func benchmarkProjectionPolicies(b *testing.B, normal, wtf8Payload []byte) {
 			b.SetBytes(int64(len(raw)))
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sink = projectJSONStrings(raw, tc.policy)
+				sink = projectJSONStrings(raw, tc.policy, tc.policy < wireJSON)
 			}
 			b.StopTimer()
 			requireProjectionShape(b, raw, tc.policy)
@@ -132,7 +132,7 @@ func benchmarkProjectionPolicies(b *testing.B, normal, wtf8Payload []byte) {
 // requireProjectionShape keeps the benchmark sink observable after timing.
 func requireProjectionShape(tb testing.TB, raw []byte, policy stringPolicy) {
 	tb.Helper()
-	projection := projectJSONStrings(raw, policy)
+	projection := projectJSONStrings(raw, policy, true)
 	if len(projection.bytes) == 0 {
 		tb.Fatal("projection produced no bytes")
 	}
@@ -184,6 +184,8 @@ func TestJSONProjectionExactOutputAndEditMapping(t *testing.T) {
 	unitsWire := joinPayload(`{"s":"\ud800\udc00"}`)
 	broken := joinPayload(`{"s":"ok`, []byte{0xed, 0xa0}, `"}`)
 	brokenWant := joinPayload(`{"s":"ok\ufffd\ufffd"}`)
+	separated := joinPayload(`{"s":"`, []byte{0xff}, `middle`, []byte{0xff}, `"}`)
+	separatedWant := joinPayload(`{"s":"\ufffdmiddle\ufffd"}`)
 	plain := joinPayload(`{"s":"café naïve 😀","e":"a\"b\\c"}`)
 	escaped := joinPayload(`{"s":"A\ud83d\ude00B"}`)
 	vectors := []projectionVector{
@@ -205,13 +207,17 @@ func TestJSONProjectionExactOutputAndEditMapping(t *testing.T) {
 		{"malformedutf8/projected", broken, projectedJSON, brokenWant, 2},
 		{"malformedutf8/wire", broken, wireJSON, brokenWant, 2},
 		{"malformedutf8/opaque", broken, opaqueJSON, brokenWant, 2},
+		{"separated-invalid/wire", separated, wireJSON, separatedWant, 2},
 	}
 	for _, vector := range vectors {
 		t.Run(vector.name, func(t *testing.T) {
-			got := projectJSONStrings(vector.payload, vector.policy)
+			got := projectJSONStrings(vector.payload, vector.policy, true)
 			require.Equal(t, vector.expected, got.bytes, "%s bytes", vector.name)
 			require.Len(t, got.edits, vector.edits, "%s edit count", vector.name)
 			requireEditMapping(t, vector.payload, got)
+			outputOnly := projectJSONStrings(vector.payload, vector.policy, false)
+			require.Equal(t, got.bytes, outputOnly.bytes, "output-only projection preserves the exact bytes")
+			require.Empty(t, outputOnly.edits)
 		})
 	}
 }

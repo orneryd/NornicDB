@@ -37,7 +37,7 @@ func TestConstraintValueLocksDoNotReacquireEntityAuthority(t *testing.T) {
 				} else {
 					nodes = []NodeID{"test:n"}
 				}
-				releaseEntity, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", entityCommitKeys(nodes, edges))
+				releaseEntity, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", entityCommitKeys(nodes, edges, nil))
 				require.NoError(t, err)
 				defer releaseEntity()
 				var releaseValues func()

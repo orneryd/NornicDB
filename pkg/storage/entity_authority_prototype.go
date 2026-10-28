@@ -8,20 +8,24 @@ import (
 
 // entityCommitKeys projects the typed identity domain for the canonical
 // commit-lock registry. Endpoint and relationship identities never become labels.
-func entityCommitKeys(nodes []NodeID, edges []EdgeID) []uniqueConstraintLockKey {
-	keys := make([]uniqueConstraintLockKey, 0, len(nodes)+len(edges))
+func entityCommitKeys(nodes []NodeID, edges []EdgeID, endpoints []NodeID) []uniqueConstraintLockKey {
+	keys := make([]uniqueConstraintLockKey, 0, len(nodes)+len(edges)+len(endpoints))
 	for _, id := range nodes {
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id)})
 	}
 	for _, id := range edges {
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 2, entityID: string(id)})
 	}
+	for _, id := range endpoints {
+		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id), shared: true})
+	}
 	return keys
 }
 
-func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []EdgeID) {
+func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []EdgeID, []NodeID) {
 	nodes := make([]NodeID, 0, len(tx.pendingNodes)+len(tx.deletedNodes)+len(tx.pendingAdjacency))
 	edges := make([]EdgeID, 0, len(tx.pendingEdges)+len(tx.deletedEdges))
+	endpoints := make([]NodeID, 0, len(tx.pendingAdjacency)+2*len(tx.pendingEdges))
 	for id := range tx.pendingNodes {
 		nodes = append(nodes, id)
 	}
@@ -29,28 +33,28 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 		nodes = append(nodes, id)
 	}
 	for id := range tx.pendingAdjacency {
-		nodes = append(nodes, id)
+		endpoints = append(endpoints, id)
 	}
 	for id, edge := range tx.pendingEdges {
 		edges = append(edges, id)
-		nodes = append(nodes, edge.StartNode, edge.EndNode)
+		endpoints = append(endpoints, edge.StartNode, edge.EndNode)
 	}
 	for id := range tx.deletedEdges {
 		edges = append(edges, id)
 	}
 	for _, op := range tx.operations {
 		if op.OldEdge != nil {
-			nodes = append(nodes, op.OldEdge.StartNode, op.OldEdge.EndNode)
+			endpoints = append(endpoints, op.OldEdge.StartNode, op.OldEdge.EndNode)
 		}
 		if op.Edge != nil {
-			nodes = append(nodes, op.Edge.StartNode, op.Edge.EndNode)
+			endpoints = append(endpoints, op.Edge.StartNode, op.Edge.EndNode)
 		}
 	}
-	return nodes, edges
+	return nodes, edges, endpoints
 }
 func (tx *BadgerTransaction) lockPendingEntityAuthorityLocked() (func(), error) {
-	nodes, edges := tx.pendingEntityAuthorityKeysLocked()
-	return tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges))
+	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
+	return tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
 }
 
 // entityWriteContext transfers one outer entity write's authority and lifecycle
@@ -93,7 +97,7 @@ func (b *BadgerEngine) acquireEntityWriteKeys(id string, isEdge bool, owner stri
 		}
 		for _, ns := range namespaces {
 			entities := batches[ns]
-			release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges))
+			release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
 			if err != nil {
 				releaseAll()
 				return nil, err
@@ -133,7 +137,7 @@ func (b *BadgerEngine) acquireEntityWriteKeys(id string, isEdge bool, owner stri
 	} else {
 		nodes = append(nodes, NodeID(id))
 	}
-	return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges))
+	return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, nil))
 }
 
 func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {

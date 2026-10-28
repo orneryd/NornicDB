@@ -279,7 +279,7 @@ func TestTemporalPropertyAccessorsUseTypedValues(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := evaluateRowPropertyChain(test.value, test.property)
+			got, ok := evaluateRowPropertyChain(test.value, test.property, nil, false)
 			if !ok {
 				t.Fatalf("property %q was not evaluated", test.property)
 			}

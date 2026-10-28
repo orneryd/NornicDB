@@ -24,7 +24,7 @@ type stringProjection struct {
 
 // projectJSONStrings owns lexical string projection in both directions. JSON
 // grammar, escape validity, object structure and numbers remain parser-owned.
-func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
+func projectJSONStrings(raw []byte, policy stringPolicy, trackEdits bool) stringProjection {
 	// Most JSON contains neither escaped UTF16 units nor invalid UTF8. The
 	// library validators already own its structure; avoid rescanning quotes.
 	if utf8.Valid(raw) {
@@ -42,21 +42,23 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 	var edits []cyphertext.SourceEdit
 	var scratch [6]byte
 	inside := false
+	copyFrom := 0
 	replace := func(start, end int, replacement []byte) {
 		if out == nil {
 			out = make([]byte, 0, len(raw))
-			out = append(out, raw[:start]...)
 		}
+		// Copy each unchanged run once, instead of appending one byte at a time.
+		out = append(out, raw[copyFrom:start]...)
 		at := len(out)
 		out = append(out, replacement...)
-		edits = append(edits, cyphertext.SourceEdit{Accepted: cyphertext.Span{Start: at, End: len(out)}, Original: cyphertext.Span{Start: start, End: end}})
+		if trackEdits {
+			edits = append(edits, cyphertext.SourceEdit{Accepted: cyphertext.Span{Start: at, End: len(out)}, Original: cyphertext.Span{Start: start, End: end}})
+		}
+		copyFrom = end
 	}
 	for i := 0; i < len(raw); {
 		if raw[i] == '"' {
 			inside = !inside
-			if out != nil {
-				out = append(out, raw[i])
-			}
 			i++
 			continue
 		}
@@ -67,9 +69,6 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 					if unit <= 0xdbff && i+12 <= len(raw) && bytes.Equal(raw[i+6:i+8], []byte(`\u`)) {
 						low, e := strconv.ParseUint(string(raw[i+8:i+12]), 16, 16)
 						if e == nil && low >= 0xdc00 && low <= 0xdfff {
-							if out != nil {
-								out = append(out, raw[i:i+12]...)
-							}
 							i += 12
 							continue
 						}
@@ -78,9 +77,6 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 					i += 6
 					continue
 				}
-			}
-			if out != nil {
-				out = append(out, raw[i:i+2]...)
 			}
 			i += 2
 			continue
@@ -99,19 +95,15 @@ func projectJSONStrings(raw []byte, policy stringPolicy) stringProjection {
 				i++
 				continue
 			}
-			if out != nil {
-				out = append(out, raw[i:i+width]...)
-			}
 			i += width
 			continue
-		}
-		if out != nil {
-			out = append(out, raw[i])
 		}
 		i++
 	}
 	if out == nil {
 		out = raw
+	} else {
+		out = append(out, raw[copyFrom:]...)
 	}
 	return stringProjection{bytes: out, edits: edits}
 }

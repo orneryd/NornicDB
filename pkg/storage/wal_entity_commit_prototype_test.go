@@ -43,14 +43,28 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 	prepared, err := tx.PrepareEntityCommit(context.Background(), "wal-logical")
 	require.NoError(t, err)
 	defer prepared.Abort()
+	// A caller may edit the exported snapshot without changing the accepted
+	// private image that is journaled and ultimately applied.
+	for _, op := range prepared.Operations() {
+		if op.Node != nil && op.Node.ID == "test:a" {
+			op.Node.Properties["count"] = int64(999)
+			op.Node.Labels[0] = "changed"
+		}
+		if op.Edge != nil && op.Edge.ID == "test:e" {
+			op.Edge.Properties["weight"] = float64(999)
+		}
+	}
 	receipt, err := route.Submitter.SubmitEntityCommit(context.Background(), prepared, nil)
 	require.NoError(t, err)
 	require.NoError(t, receipt.Wait(context.Background()))
 	require.Equal(t, CommitApplied, receipt.Outcome().State)
 	sourceNode, err := base.GetStoredNode("test:a")
 	require.NoError(t, err)
+	require.EqualValues(t, 123, sourceNode.Properties["count"])
+	require.Equal(t, []string{"Doc"}, sourceNode.Labels)
 	sourceEdge, err := base.GetStoredEdge("test:e")
 	require.NoError(t, err)
+	require.Equal(t, float64(1.5), sourceEdge.Properties["weight"])
 	require.NoError(t, wal.Close())
 	recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	require.NoError(t, err)

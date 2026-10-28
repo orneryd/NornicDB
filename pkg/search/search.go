@@ -906,8 +906,10 @@ type Service struct {
 	buildWrites buildWriteQueue
 	population  populationPersistence
 
-	// nodeMutationMu orders reservations with their application. It is acquired
-	// after buildMu and before indexMu when applying a live node mutation.
+	// Mutation lanes hold same-entity order across index application. The
+	// registry mutex is held only while reading or changing reservations.
+	// Live application acquires buildMu, then its lane, then indexMu.
+	mutationLanes        [64]sync.Mutex
 	nodeMutationMu       sync.Mutex
 	mutationReservations mutationReservations
 	pendingNodeMutations map[storage.NodeID]uint64

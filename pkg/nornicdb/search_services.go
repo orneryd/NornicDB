@@ -209,6 +209,21 @@ func (db *DB) kmeansNumClusters() int {
 	return 0
 }
 
+// ensureSearchClustering upgrades an existing service when clustering is
+// enabled after creation. Both lookup and indexing events share this owner.
+func (db *DB) ensureSearchClustering(svc *search.Service) {
+	if svc == nil || !featureflags.IsGPUClusteringEnabled() || svc.IsClusteringEnabled() {
+		return
+	}
+	db.gpuManagerMu.RLock()
+	mgr, _ := db.gpuManager.(*gpu.Manager)
+	db.gpuManagerMu.RUnlock()
+	if mgr != nil && !mgr.IsEnabled() {
+		mgr = nil
+	}
+	svc.EnableClustering(mgr, db.kmeansNumClusters())
+}
+
 func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
@@ -234,16 +249,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 			reranker = rr(dbName)
 		}
 
-		// If clustering is enabled globally, ensure cached services have clustering enabled too.
-		// Services may be created before the feature flag is turned on (e.g., early HTTP calls),
-		// in which case they need to be upgraded in place. Use configured cluster count.
-		if svc != nil && featureflags.IsGPUClusteringEnabled() && !svc.IsClusteringEnabled() {
-			var mgr *gpu.Manager
-			if gpuMgr != nil && gpuMgr.IsEnabled() {
-				mgr = gpuMgr
-			}
-			svc.EnableClustering(mgr, db.kmeansNumClusters())
-		}
+		db.ensureSearchClustering(svc)
 		// If a Stage-2 reranker is configured (e.g. Heimdall LLM), ensure it is applied.
 		// This keeps behavior consistent even if the reranker is configured after the
 		// service was created (e.g. Heimdall initializes later in server startup).
@@ -978,27 +984,24 @@ func (db *DB) queueSearchRefreshEvent(nodeID storage.NodeID) {
 		return
 	}
 
-	// A disabled service needs neither refresh reservations nor resolver work.
-	// Enabled services keep the existing reranker/clustering refresh path.
-	db.searchServicesMu.RLock()
-	cached := db.searchServices[dbName]
-	db.searchServicesMu.RUnlock()
-	if cached != nil && cached.svc != nil && !cached.svc.BM25Enabled() && !cached.svc.VectorEnabled() {
-		return
-	}
-
-	svc, err := db.getOrCreateSearchService(dbName, nil)
-	if err != nil || svc == nil || (!svc.BM25Enabled() && !svc.VectorEnabled()) {
-		return
-	}
-
+	// An indexing event needs the existing service, not query-time reranker
+	// resolution. Query-facing lookups continue to resolve the current reranker.
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry == nil {
+	if entry == nil || entry.svc == nil {
+		svc, err := db.getOrCreateSearchService(dbName, nil)
+		if err != nil || svc == nil {
+			return
+		}
+		db.searchServicesMu.RLock()
+		entry = db.searchServices[dbName]
+		db.searchServicesMu.RUnlock()
+	}
+	if entry == nil || entry.svc == nil || (!entry.svc.BM25Enabled() && !entry.svc.VectorEnabled()) {
 		return
 	}
-
+	db.ensureSearchClustering(entry.svc)
 	entry.queueRefresh(local)
 	db.scheduleQueuedRefreshes(entry)
 }

@@ -29,7 +29,10 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	ops := prepared.Operations()
+	// Preparation owns an immutable private operation snapshot. Encoding only
+	// reads it; the exported Operations method still gives callers detached
+	// images, but making that public copy here would duplicate every image.
+	ops := prepared.operations
 	// A durable duplicate receipt has no new mutation to journal.
 	if len(ops) == 0 {
 		return prepared.engine.SubmitEntityCommit(ctx, prepared, settle)

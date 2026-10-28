@@ -363,6 +363,9 @@ func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes
 		}
 		envelope.Mode = modes[0]
 	}
+	if len(ops) != 0 {
+		envelope.Changes = make([]EntityTransactionChange, 0, len(ops))
+	}
 	for _, op := range ops {
 		change, err := EncodeEntityTransactionChange(op)
 		if err != nil {

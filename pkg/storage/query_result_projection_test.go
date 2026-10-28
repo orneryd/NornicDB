@@ -26,6 +26,8 @@ func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
 	require.Same(t, e, event.Edge(e))
 	require.Same(t, n, view.Node(n))
 	require.Same(t, e, view.Edge(e))
+	require.Equal(t, map[string]interface{}{"x": "raw"}, view.SelectedNodeProperties(n, []string{"x", "missing"}))
+	require.Empty(t, view.SelectedNodeProperties(n, []string{}))
 	require.Zero(t, testing.AllocsPerRun(100, func() { view.Node(n); view.Edge(e) }))
 }
 func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) {
@@ -51,6 +53,9 @@ func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) 
 	view, release := BeginQueryResultProjection(engine)
 	require.NotContains(t, view.Node(n).Properties, "secret")
 	require.NotContains(t, view.Edge(e).Properties, "secret")
+	require.Equal(t, map[string]interface{}{"public": "yes"}, view.SelectedNodeProperties(n, []string{"public", "secret", "missing"}))
+	require.Empty(t, view.SelectedNodeProperties(n, []string{}))
+	require.Equal(t, view.NodeProperties(n), view.SelectedNodeProperties(n, nil))
 	require.Contains(t, n.Properties, "secret")
 	require.Contains(t, e.Properties, "secret")
 	require.NotContains(t, view.Node(&Node{ID: "tenant:a:b", Labels: n.Labels, Properties: n.Properties, CreatedAt: old, UpdatedAt: old}).Properties, "secret")
@@ -67,6 +72,7 @@ func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) 
 	<-done
 	end := be.BeginQueryRevealScope(true)
 	require.Contains(t, NewQueryResultProjection(engine).Node(n).Properties, "secret")
+	require.Equal(t, map[string]interface{}{"secret": "hidden"}, NewQueryResultProjection(engine).SelectedNodeProperties(n, []string{"secret"}))
 	// A normal event must ignore the producer's REVEAL without acquiring another
 	// lock; qualified source IDs still select the original namespace's policy.
 	event := NewNormalEventResultProjection(be)

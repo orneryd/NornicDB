@@ -742,7 +742,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 	if !bound {
 		return e.evaluateRowValueText(n.text, values)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(base, n.chain, e, false)
 	if !ok {
 		return nil, false, rowPropertyChainTypeError(base, n.chain)
 	}
@@ -904,7 +904,7 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 	if !ok {
 		return e.evaluateRowFallback(n.text, values, rowFallbackValue)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(base, n.chain, e, false)
 	if !ok {
 		if err := rowPropertyChainTypeError(base, n.chain); err != nil {
 			return nil, false, err

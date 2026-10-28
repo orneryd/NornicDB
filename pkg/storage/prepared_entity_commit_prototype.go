@@ -139,12 +139,12 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 			for i := range operations {
 				operations[i].snapshotForNotification()
 			}
-			nodes, edges := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges))
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
 				if err != nil {
 					return nil, err
 				}
