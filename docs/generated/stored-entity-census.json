@@ -4187,6 +4187,12 @@
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.point",
       "pos": "pkg/storage/remote_parameters.go:777"
+    },
+    {
+      "field": "pkg/storage.snapshotFrameWriter.scratch",
+      "class": "snapshot frame serialization scratch",
+      "func": "pkg/storage.snapshotFrameWriter.write",
+      "pos": "pkg/storage/snapshot_stream.go:222"
     }
   ],
   "decisions": [
