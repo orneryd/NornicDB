@@ -2,7 +2,9 @@ package storage_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -69,4 +71,46 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 		}
 	}
 	require.IsType(t, cypher.CypherDateTime{}, properties["datetime"], "caller retains original values")
+
+	// Exercise each registered property kind on the snapshot-only transcoder's
+	// public path. Extensions use its general fallback; complete edge frames
+	// must remain identical to an interface-only stored stream.
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	for _, id := range []storage.NodeID{"nornic:a", "nornic:b"} {
+		_, err := engine.CreateNode(&storage.Node{ID: id})
+		require.NoError(t, err)
+	}
+	// UUID/vector are supported by the materialized format above but are
+	// not accepted by the stored-property validator. Exercise every registered
+	// kind the database accepts through the stored-body path here.
+	storedKinds := []string{"date", "local-time", "time", "local-datetime", "datetime", "duration", "point", "nested"}
+	for _, key := range storedKinds {
+		value := properties[key]
+		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("nornic:" + key), StartNode: "nornic:a", EndNode: "nornic:b", Type: "TYPED",
+			Properties: map[string]any{"value": value}, VisibilitySuppressed: true}))
+	}
+	var fast, general bytes.Buffer
+	require.NoError(t, storage.WriteSnapshot(context.Background(), engine, &fast, storage.SnapshotOptions{}))
+	reference := registeredPropertySnapshotStream{StreamingEngine: engine}
+	require.NoError(t, storage.WriteSnapshot(context.Background(), reference, &general, storage.SnapshotOptions{}))
+	const snapshotHeaderBytes = 4 + 1 + 8 + 8
+	require.Equal(t, general.Bytes()[snapshotHeaderBytes:], fast.Bytes()[snapshotHeaderBytes:])
+	require.NoError(t, os.WriteFile(newPath, fast.Bytes(), 0644))
+	edgeSnapshot, err := storage.LoadSnapshot(newPath)
+	require.NoError(t, err)
+	require.Len(t, edgeSnapshot.Edges, len(storedKinds), "hidden typed relationships remain recoverable")
+}
+
+type registeredPropertySnapshotStream struct {
+	storage.StreamingEngine
+}
+
+func (s registeredPropertySnapshotStream) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
+	if stored, ok := s.StreamingEngine.(interface {
+		StreamStoredEdgesByType(context.Context, string, func(*storage.Edge) error) error
+	}); ok {
+		return stored.StreamStoredEdgesByType(ctx, "", visit)
+	}
+	return s.StreamingEngine.StreamEdges(ctx, visit)
 }

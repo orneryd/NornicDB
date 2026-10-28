@@ -299,7 +299,8 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 			}
 			end = start + int(size)
 		} else {
-			_, _, _, offset, err := decodeEdgeCompactHeader(body, edgeFormatCompactV2)
+			var edge Edge
+			_, _, offset, err := decodeEdgeCompactHeaderInto(body, edgeFormatCompactV2, &edge)
 			if err != nil {
 				return nil, err
 			}
