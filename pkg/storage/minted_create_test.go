@@ -3,6 +3,7 @@ package storage
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"bytes"
 	"errors"
 	"testing"
 	"time"
@@ -129,8 +130,11 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		require.NoError(t, engine.FlushWriteBehind())
 		require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(hidden), true))
 
-		data, err := encodeRecoveryPayload(WALNodeData{Node: &Node{ID: NodeID(raw), Labels: []string{"Replayed"}}})
+		entryEncoder := getValueEncoder()
+		retained, err := entryEncoder.recovery(WALNodeData{Node: &Node{ID: NodeID(raw), Labels: []string{"Replayed"}}})
 		require.NoError(t, err)
+		data := bytes.Clone(retained)
+		putValueEncoder(entryEncoder)
 		err = ReplayWALEntry(engine, WALEntry{Operation: OpCreateNode, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrAlreadyExists, "write-behind=%v", buffered)
 		stored, err := engine.GetStoredNode(hidden)

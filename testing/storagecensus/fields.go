@@ -101,6 +101,9 @@ var fieldClasses = map[string]fieldRow{
 	// These are explicit per-field classifications, not type exemptions.
 	// MarshalJSON owns the request buffer; it never publishes stored entities.
 	"pkg/storage.remoteHTTPWriter.buf": {class: "request serialization scratch"},
+	// write owns this per-stream header/CRC scratch; it holds framing bytes,
+	// not stored entities, entity counts, quota or publication state.
+	"pkg/storage.snapshotFrameWriter.scratch": {class: "snapshot frame serialization scratch"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
 

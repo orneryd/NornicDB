@@ -82,7 +82,15 @@ func TestRecoveryPayloadPreservesRedoUndoEntityFields(t *testing.T) {
 	cases = append(cases, payloadCase{"bulk-delete-edges", WALBulkDeleteEdgesData{IDs: []string{"e"}, OldEdges: []*Edge{e}}, de, func(t *testing.T) { require.Len(t, de.OldEdges, 1); assertRecoveryEdgeFields(t, e, de.OldEdges[0]) }})
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			for name, encode := range map[string]func(any) ([]byte, error){"binary": encodeRecoveryPayload, "wal-sidecar": func(value any) ([]byte, error) { return marshalWALRecoveryPayload(nil, value) }} {
+			// The binary route is valueEncoder.recovery, the WAL route its JSON
+			// sidecar projection; the encoder owns its bytes only until reuse.
+			encoder := getValueEncoder()
+			defer putValueEncoder(encoder)
+			encoders := map[string]func(any) ([]byte, error){
+				"wal-sidecar": func(value any) ([]byte, error) { return marshalWALRecoveryPayload(nil, value) },
+				"binary":      encoder.recovery,
+			}
+			for name, encode := range encoders {
 				t.Run(name, func(t *testing.T) {
 					raw, err := encode(tt.source)
 					require.NoError(t, err)

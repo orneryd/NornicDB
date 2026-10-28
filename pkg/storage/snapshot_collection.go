@@ -34,6 +34,40 @@ func writeSnapshotHeader(writer *bufio.Writer, sequence uint64, timestamp time.T
 	return binary.Write(writer, binary.LittleEndian, timestamp.UnixNano())
 }
 
+// writeSnapshotRecords is the one snapshot lifecycle: it buffers writer, writes
+// the stream header, and reuses one frame writer for the frames emit produces,
+// counting the successful node and edge frames. The completion footer carries
+// that count and, when fields supplies them, the materialized collection
+// metadata. Collection is omitted otherwise, so a streaming footer is byte for
+// byte the footer it always was. The flush writes buffered frames to the destination.
+func writeSnapshotRecords(writer io.Writer, sequence uint64, timestamp time.Time, maxRecordBytes int64, fields *snapshotCollectionFields, emit func(write func(byte, any) error) error) error {
+	buffered := bufio.NewWriter(writer)
+	frames := snapshotFrameWriter{writer: buffered}
+	if err := writeSnapshotHeader(buffered, sequence, timestamp); err != nil {
+		return err
+	}
+	var nodeCount, edgeCount uint64
+	if err := emit(func(frameType byte, value any) error {
+		if err := frames.write(frameType, value, maxRecordBytes); err != nil {
+			return err
+		}
+		switch frameType {
+		case streamSnapshotNode:
+			nodeCount++
+		case streamSnapshotEdge:
+			edgeCount++
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	footer := snapshotCompletion{Nodes: nodeCount, Edges: edgeCount, Collection: fields}
+	if err := frames.write(streamSnapshotFooter, footer, maxRecordBytes); err != nil {
+		return err
+	}
+	return buffered.Flush()
+}
+
 // writeSnapshotCollection uses the framed transport for materialized backups
 // too, so old binaries reject the new format rather than silently dropping
 // fields. The exact collection metadata survives in the completion frame.
@@ -41,35 +75,31 @@ func writeSnapshotCollection(writer io.Writer, snapshot *Snapshot) error {
 	if snapshot == nil {
 		return fmt.Errorf("nil snapshot")
 	}
-	buffered := bufio.NewWriter(writer)
 	timestamp := snapshot.Timestamp
 	if timestamp.IsZero() {
 		timestamp = time.Now()
 	}
-	if err := writeSnapshotHeader(buffered, snapshot.Sequence, timestamp); err != nil {
-		return err
-	}
-	for _, node := range snapshot.Nodes {
-		if node == nil {
-			return fmt.Errorf("snapshot contains nil node")
-		}
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, node, materializedSnapshotRecordSize); err != nil {
-			return err
-		}
-	}
-	for _, edge := range snapshot.Edges {
-		if edge == nil {
-			return fmt.Errorf("snapshot contains nil edge")
-		}
-		if err := writeSnapshotFrame(buffered, streamSnapshotEdge, edge, materializedSnapshotRecordSize); err != nil {
-			return err
-		}
-	}
-	footer := snapshotCompletion{Nodes: uint64(len(snapshot.Nodes)), Edges: uint64(len(snapshot.Edges)), Collection: &snapshotCollectionFields{Timestamp: snapshot.Timestamp, Version: snapshot.Version}}
-	if err := writeSnapshotFrame(buffered, streamSnapshotFooter, footer, materializedSnapshotRecordSize); err != nil {
-		return err
-	}
-	return buffered.Flush()
+	fields := &snapshotCollectionFields{Timestamp: snapshot.Timestamp, Version: snapshot.Version}
+	return writeSnapshotRecords(writer, snapshot.Sequence, timestamp, materializedSnapshotRecordSize, fields,
+		func(write func(byte, any) error) error {
+			for _, node := range snapshot.Nodes {
+				if node == nil {
+					return fmt.Errorf("snapshot contains nil node")
+				}
+				if err := write(streamSnapshotNode, node); err != nil {
+					return err
+				}
+			}
+			for _, edge := range snapshot.Edges {
+				if edge == nil {
+					return fmt.Errorf("snapshot contains nil edge")
+				}
+				if err := write(streamSnapshotEdge, edge); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 }
 
 type snapshotCollectionVisitor struct{ snapshot *Snapshot }
