@@ -141,8 +141,16 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 		if nodePatternStr == "" {
 			continue
 		}
-		if _, err := e.planCreateNode(ctx, nodePatternStr, createdNodes, createdEdges, plan); err != nil {
+		pathVar, nodePattern := parseCreatePathAssignment(nodePatternStr)
+		node, err := e.planCreateNode(ctx, nodePattern, createdNodes, createdEdges, plan)
+		if err != nil {
 			return nil, err
+		}
+		if pathVar != "" {
+			if createdPaths == nil {
+				createdPaths = make(map[string]PathResult)
+			}
+			createdPaths[pathVar] = PathResult{Nodes: []*storage.Node{node}}
 		}
 	}
 

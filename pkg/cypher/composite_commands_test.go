@@ -408,7 +408,7 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 
 	t.Run("drop composite direct branches", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		_, err := exec.executeDropCompositeDatabase(ctx, "DROP COMPOSITE DATABASE c")
+		_, err := exec.executeDatabaseDrop(ctx, "DROP COMPOSITE DATABASE c", dropCompositeDatabase)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "database manager not available")
 
@@ -425,20 +425,20 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 		}
 		require.NoError(t, adapter.CreateCompositeDatabase(t.Context(), "c_drop", constituents))
 
-		_, err = exec.executeDropCompositeDatabase(ctx, "DROP COMPOSITE DATABASE")
+		_, err = exec.executeDatabaseDrop(ctx, "DROP COMPOSITE DATABASE", dropCompositeDatabase)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "database name expected")
 
-		_, err = exec.executeDropCompositeDatabase(ctx, "DROP DATABASE c_drop")
+		_, err = exec.executeDatabaseDrop(ctx, "DROP DATABASE c_drop", dropCompositeDatabase)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid DROP COMPOSITE DATABASE syntax")
 
-		res, err := exec.executeDropCompositeDatabase(ctx, "DROP COMPOSITE DATABASE c_drop")
+		res, err := exec.executeDatabaseDrop(ctx, "DROP COMPOSITE DATABASE c_drop", dropCompositeDatabase)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"c_drop"}}, res.Rows)
 
 		require.NoError(t, adapter.CreateCompositeDatabase(t.Context(), "c_flex", constituents))
-		res, err = exec.executeDropCompositeDatabase(ctx, "DROP\tCOMPOSITE\tDATABASE\tc_flex")
+		res, err = exec.executeDatabaseDrop(ctx, "DROP\tCOMPOSITE\tDATABASE\tc_flex", dropCompositeDatabase)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"c_flex"}}, res.Rows)
 	})

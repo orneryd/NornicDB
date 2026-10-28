@@ -135,8 +135,9 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 // which isn't "no rows" (#1055).
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH "):])
+	if end := keywordEndAt(pattern, 0, "MATCH"); end > 0 &&
+		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(pattern, 0, end, "MATCH") {
+		pattern = strings.TrimSpace(pattern[queryGapEnd(pattern, end):])
 	}
 	clauses := splitOptionalMatchClauses(pattern)
 	if len(clauses) != 1 {

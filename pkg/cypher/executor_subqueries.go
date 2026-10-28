@@ -115,11 +115,8 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				}
 			}
 			optionalPart = strings.TrimSpace(optionalPart[:end])
-			if strings.HasPrefix(upperASCII(optionalPart), "OPTIONAL MATCH") {
-				requiredPart := optionalPart
-				if len(requiredPart) >= len("OPTIONAL MATCH") {
-					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
-				}
+			if prefixEnd := keywordEndAt(optionalPart, 0, "OPTIONAL MATCH"); prefixEnd > 0 {
+				requiredPart := "MATCH" + optionalPart[prefixEnd:]
 				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
 				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
 				if fallbackErr != nil {
@@ -473,36 +470,6 @@ func prefixUnionBranches(ctx context.Context, prefix, body string) string {
 		branches[i] = prefix + " " + branch
 	}
 	return strings.Join(branches, separator)
-}
-
-// callSeedIsFirstNode reports whether a MATCH … CALL { … } needs only the
-// MATCH's first node from the outer row: the pattern is that one node pattern,
-// and every variable the subquery imports (CALL (x, …) or a leading WITH x, …)
-// is that node's variable.
-func callSeedIsFirstNode(pattern, variable string, callImportVars []string, subqueryBody string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || pattern[0] != '(' || cyphertext.FindMatchingDelimiter(pattern, 0, '(', ')', cyphertext.OpeningDelimiter) != len(pattern)-1 {
-		return false
-	}
-	imports := callImportVars
-	if withVars, _, hasWith, err := parseLeadingWithImports(subqueryBody); err == nil && hasWith {
-		imports = append(append([]string(nil), imports...), withVars...)
-	}
-	for _, imported := range imports {
-		if !strings.EqualFold(strings.TrimSpace(imported), variable) && strings.TrimSpace(imported) != "*" {
-			return false
-		}
-	}
-	return true
-}
-
-func importsVariable(vars []string, variable string) bool {
-	for _, v := range vars {
-		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(variable)) {
-			return true
-		}
-	}
-	return false
 }
 
 // makeSubqueryReadOnly converts a subquery with writes to a read-only version for row counting.
@@ -874,7 +841,7 @@ func isPatternVariableAt(text string, index, length int) bool {
 		// parenthesis is a function, unless it is the clause keyword
 		// (MATCH (n), OPTIONAL MATCH (n), CREATE (n), MERGE (n)).
 		opening := strings.LastIndexByte(text[:index], '(')
-		if word := wordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
+		if word := rawWordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
 			return false
 		}
 		return next == ':' || next == ')' || next == '{'
@@ -890,18 +857,6 @@ func isPatternVariableAt(text string, index, length int) bool {
 
 // wordBefore is the identifier that ends right before index (spaces
 // skipped), "" when another character comes first.
-func wordBefore(text string, index int) string {
-	end := index
-	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
-		end--
-	}
-	start := end
-	for start > 0 && cyphertext.NamePartAt(text, start-1) {
-		start--
-	}
-	return text[start:end]
-}
-
 // isPatternClauseKeyword reports whether word is a keyword a pattern
 // follows: MATCH, CREATE, MERGE.
 func isPatternClauseKeyword(word string) bool {
@@ -919,23 +874,23 @@ func precededByAS(text string, index int) bool {
 
 // previousNonSpace is the last non-space byte before index, 0 at the start.
 func previousNonSpace(text string, index int) byte {
-	for index > 0 {
-		index--
-		if !cyphertext.IsWhitespaceAt(text, index) {
-			return text[index]
-		}
+	if index <= 0 {
+		return 0
 	}
-	return 0
+	at, found := cyphertext.NeighborIndex(text, index, cyphertext.Before)
+	if !found {
+		return 0
+	}
+	return text[at]
 }
 
 // nextNonSpace is the first non-space byte at or after index, 0 at the end.
 func nextNonSpace(text string, index int) byte {
-	for ; index < len(text); index++ {
-		if !cyphertext.IsWhitespaceAt(text, index) {
-			return text[index]
-		}
+	at, found := cyphertext.NeighborIndex(text, index, cyphertext.AtOrAfter)
+	if !found {
+		return 0
 	}
-	return 0
+	return text[at]
 }
 
 func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {

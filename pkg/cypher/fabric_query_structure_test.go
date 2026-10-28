@@ -11,6 +11,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/config"
 	grammar "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,6 +126,18 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 					} {
 						t.Run(fmt.Sprintf("%s/quoted_%v/%s", word, quoted, position.name), func(t *testing.T) {
 							query := fmt.Sprintf(position.query, name)
+							if position.name == "dynamic_graph_argument" && !quoted && (word == "ALL" || word == "DISTINCT") {
+								// Both modifiers leave this selector with zero arguments. Community
+								// gates dynamic USE; its scalar DISTINCT control instead reports
+								// invalid modifier use before arity. Keep these error contexts separate.
+								referenceError := "Insufficient parameters"
+								if word == "DISTINCT" {
+									referenceError = "Invalid use of DISTINCT with function 'byName'"
+								}
+								reference := "WITH 'comp.one' AS " + name + " RETURN graph.byName(" + name + ")"
+								fabricCompareGrammarCase(t, base, driver, query, reference, "Insufficient parameters", referenceError)
+								return
+							}
 							fabricCompareGrammarCase(t, base, driver, query, strings.NewReplacer("USE graph.byName("+name+") ", "", "USE comp.one ", "", "USE comp ", "").Replace(query))
 						})
 					}
@@ -134,11 +147,22 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 	}
 }
 
-func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.DriverWithContext, query, reference string) {
+func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.DriverWithContext, query, reference string, wantError ...string) {
 	t.Helper()
 	ctx := context.Background()
 	ref, referenceErr := neo4j.ExecuteQuery(ctx, driver, reference, nil, neo4j.EagerResultTransformer)
-	if referenceErr != nil {
+	if len(wantError) > 0 {
+		// The first fragment is native; an optional second is the reference's
+		// context-specific diagnostic, when its earlier validation differs.
+		referenceError := wantError[0]
+		if len(wantError) > 1 {
+			referenceError = wantError[1]
+		}
+		require.ErrorContains(t, referenceErr, referenceError, "Neo4j argument/modifier control")
+		var classified *neo4j.Neo4jError
+		require.ErrorAs(t, referenceErr, &classified)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.Code)
+	} else if referenceErr != nil {
 		if e, ok := referenceErr.(*neo4j.Neo4jError); ok && (e.Code == "Neo.ClientError.Statement.SyntaxError" || e.Code == "Neo.ClientError.Statement.SemanticError") {
 			t.Skipf("Neo4j does not admit this spelling as a variable in this context: %v", referenceErr)
 		}
@@ -154,6 +178,18 @@ func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.
 		want, err = json.Marshal(rows)
 		require.NoError(t, err)
 	}
+	var columns []string
+	if ref != nil {
+		columns = ref.Keys
+	}
+	fabricAssertGrammarCase(t, base, query, columns, string(want), wantError...)
+}
+
+// fabricAssertGrammarCase owns the native implicit/explicit result contract.
+// Reference callers supply observed outcomes; isolated tests supply fixed outcomes.
+func fabricAssertGrammarCase(t *testing.T, base *StorageExecutor, query string, columns []string, want string, wantError ...string) {
+	t.Helper()
+	ctx := context.Background()
 	for _, explicit := range []bool{false, true} {
 		exec := base
 		if explicit {
@@ -166,9 +202,15 @@ func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.
 			_, endErr := exec.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, endErr)
 		}
+		if len(wantError) > 0 {
+			require.ErrorContains(t, err, wantError[0], "explicit=%v query=%s", explicit, query)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+			continue
+		}
 		require.NoError(t, err, "explicit=%v query=%s", explicit, query)
-		require.Equal(t, ref.Keys, result.Columns, "explicit=%v query=%s", explicit, query)
-		fabricStructureRows(t, result.Rows, string(want))
+		require.Equal(t, columns, result.Columns, "explicit=%v query=%s", explicit, query)
+		fabricStructureRows(t, result.Rows, want)
 	}
 }
 

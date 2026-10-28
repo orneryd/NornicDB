@@ -37,36 +37,83 @@ func (c *idleSnapshotLock) AcquireSnapshotReader(info storage.SnapshotReaderInfo
 	}, nil
 }
 
-func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
+// fabricLocalSnapshotFixture captures the shared native construction of a
+// Fabric composite database and its local leaf, authentication, and an idle
+// snapshot lifecycle controller. The
+// constructor runs every original setup step (test server, token, database,
+// leaf, seed, composite, lifecycle setter resolution, controller allocation)
+// but deliberately does not install the controller or take the lock; the
+// caller installs the controller and takes the lock so deferred lifetime
+// ownership stays visible at the call site.
+type fabricLocalSnapshotFixture struct {
+	server *Server
+	leaf   storage.Engine
+	token  string
+	setter interface {
+		SetLifecycleController(storage.MVCCLifecycleController)
+	}
+	controller *idleSnapshotLock
+	release    sync.Once
+}
+
+// newFabricLocalSnapshotFixture performs the original shared native
+// construction. It does not install the controller and does not lock, so the
+// failing-require ownership expectations at each test site remain unchanged.
+func newFabricLocalSnapshotFixture(
+	t *testing.T,
+	label string,
+	composite string,
+) *fabricLocalSnapshotFixture {
+	t.Helper()
 	server, auth := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, auth, "admin")
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
 	leaf, err := server.dbManager.GetStorage("idleblocked")
 	require.NoError(t, err)
-	_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"IdleProbe"}})
+	_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{label}})
 	require.NoError(t, err)
-	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "idlecomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), composite, []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
 	setter, ok := unwrapInnerStorage(leaf).(interface {
 		SetLifecycleController(storage.MVCCLifecycleController)
 	})
 	require.True(t, ok)
 	controller := &idleSnapshotLock{entered: make(chan struct{}), finished: make(chan struct{})}
-	setter.SetLifecycleController(controller)
-	defer setter.SetLifecycleController(nil)
-	controller.mu.Lock()
-	var release sync.Once
-	defer release.Do(controller.mu.Unlock)
-	server.txSessions = txsession.NewManager(500*time.Millisecond, server.newExecutorForDatabase)
-	server.txSessions.SetLifetimeContext(server.requestsCtx)
-	router := server.buildRouter()
-	request := func(path, body string) *httptest.ResponseRecorder {
+	return &fabricLocalSnapshotFixture{
+		server:     server,
+		leaf:       leaf,
+		token:      token,
+		setter:     setter,
+		controller: controller,
+	}
+}
+
+// requestFor runs the original session-manager lifetime/context setup and
+// router construction (once per fixture), then returns the original HTTP
+// request closure bound to the fixture server and token.
+func (f *fabricLocalSnapshotFixture) requestFor(ttl time.Duration) func(path, body string) *httptest.ResponseRecorder {
+	f.server.txSessions = txsession.NewManager(ttl, f.server.newExecutorForDatabase)
+	f.server.txSessions.SetLifetimeContext(f.server.requestsCtx)
+	router := f.server.buildRouter()
+	return func(path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-		r.Header.Set("Authorization", token)
+		r.Header.Set("Authorization", f.token)
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, r)
 		return w
 	}
+}
+
+func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
+	f := newFabricLocalSnapshotFixture(t, "IdleProbe", "idlecomp")
+	controller := f.controller
+	setter := f.setter
+	setter.SetLifecycleController(controller)
+	defer setter.SetLifecycleController(nil)
+	controller.mu.Lock()
+	release := &f.release
+	defer release.Do(controller.mu.Unlock)
+	request := f.requestFor(500 * time.Millisecond)
 	begin := request("/db/idlecomp/tx", `{"statements":[{"statement":"USE idlecomp.l MATCH (n:IdleProbe) RETURN count(n) AS c"}]}`)
 	require.Equal(t, http.StatusCreated, begin.Code, begin.Body.String())
 	var opened TransactionResponse
@@ -117,35 +164,16 @@ func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
 }
 
 func TestFabricHTTPCommitWaitsForLocalStorageOutcome(t *testing.T) {
-	server, auth := setupTestServer(t)
-	token := "Bearer " + getAuthToken(t, auth, "admin")
-	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
-	leaf, err := server.dbManager.GetStorage("idleblocked")
-	require.NoError(t, err)
-	_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
-	require.NoError(t, err)
-	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
-	setter, ok := unwrapInnerStorage(leaf).(interface {
-		SetLifecycleController(storage.MVCCLifecycleController)
-	})
-	require.True(t, ok)
-	controller := &idleSnapshotLock{entered: make(chan struct{}), finished: make(chan struct{})}
+	f := newFabricLocalSnapshotFixture(t, "Seed", "commitcomp")
+	leaf := f.leaf
+	controller := f.controller
+	setter := f.setter
 	setter.SetLifecycleController(controller)
 	defer setter.SetLifecycleController(nil)
 	controller.mu.Lock()
-	var release sync.Once
+	release := &f.release
 	defer release.Do(controller.mu.Unlock)
-	server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase)
-	server.txSessions.SetLifetimeContext(server.requestsCtx)
-	router := server.buildRouter()
-	request := func(path, body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-		r.Header.Set("Authorization", token)
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, r)
-		return w
-	}
+	request := f.requestFor(time.Minute)
 	begin := request("/db/commitcomp/tx", `{"statements":[{"statement":"USE commitcomp.l CREATE (:CommitOutcome {id:'late'}) RETURN 7 AS k"}]}`)
 	require.Equal(t, http.StatusCreated, begin.Code, begin.Body.String())
 	var opened TransactionResponse

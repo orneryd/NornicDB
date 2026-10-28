@@ -103,7 +103,7 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
 				require.NoError(t, engine.UpdateNode(node))
 			case "drop":
-				require.NoError(t, (&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: s.dbManager}, db: s.db, server: s}).DropDatabase(t.Context(), database))
+				require.NoError(t, (&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(s.dbManager), db: s.db, server: s}).DropDatabase(t.Context(), database))
 			}
 			if end == "write" || end == "backfill" || end == "disconnect" {
 				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "n": 1}, token)

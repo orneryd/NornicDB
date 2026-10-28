@@ -153,7 +153,7 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (
 	// Enable multi-db commands (SHOW/CREATE/DROP DATABASE...) when supported.
 	// The adapter lives in server_db.go (same package), so we can reuse it here.
 	if r.dbManager != nil {
-		exec.SetDatabaseManager(&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: r.dbManager}, db: r.db, server: nil})
+		exec.SetDatabaseManager(&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(r.dbManager), db: r.db, server: nil})
 	}
 	return exec, nil
 }

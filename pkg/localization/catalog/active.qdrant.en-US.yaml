@@ -108,3 +108,7 @@
 - id: qdrant.invalid_quantization_config
   description: Unsupported or invalid vector compression configuration.
   other: "invalid quantization configuration: {{.Cause}}"
+
+- id: qdrant.delete_point_failed
+  description: Qdrant point deletion failed; no storage cause is disclosed.
+  other: "failed to delete point {{.PointID}}"

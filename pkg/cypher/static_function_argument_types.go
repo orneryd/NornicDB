@@ -14,7 +14,7 @@ import (
 // accepts with a SyntaxError "Type mismatch: expected X but was Y", whatever
 // the data (toInteger(n) for a node n, toUpper(1), left('a', 'b'), …). A
 // static type is known for literals, list and map literals, arithmetic over
-// them (staticLiteralTypeName), variables bound to nodes, relationships and
+// them (staticLiteralType), variables bound to nodes, relationships and
 // paths, and variables bound to a literal by WITH … AS or UNWIND
 // (staticTypeScope). Everything else is left to the row evaluator.
 
@@ -428,13 +428,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			return nil
 		}
 		inner := strings.TrimSpace(text[open+1 : closing])
-		inner, _ = cutDistinctArgument(inner)
-		if strings.EqualFold(inner, "ALL") {
-			// f(all) is f's ALL modifier with no argument, as in Neo4j
-			// (count(all) fails "Insufficient parameters"), not a variable
-			// named all (#907).
-			inner = ""
-		}
+		argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+		inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
 		if strings.EqualFold(name.Value, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
 				for _, expression := range parameters {

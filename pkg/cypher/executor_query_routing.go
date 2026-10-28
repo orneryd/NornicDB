@@ -176,7 +176,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if startsWithCreate && withIdx > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
-	if findKeywordIndex(cypher, "UNWIND") == 0 || startsWithKeywordFold(cypher, "FOR") ||
+	if startsWithKeywordFold(cypher, "UNWIND") || startsWithKeywordFold(cypher, "FOR") ||
 		startsWithKeywordFold(cypher, "LET") || startsWithKeywordFold(cypher, "FILTER") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
@@ -263,21 +263,21 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
 		return e.executeCompositeCommand(ctx, cypher, compositeCreateCommand)
 	case isCreateOrReplaceDatabaseQuery(cypher):
-		return e.executeCreateOrReplaceDatabase(ctx, cypher)
+		return e.executeDatabaseCreate(ctx, cypher, replaceExistingDatabase)
 	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
-		return e.executeCreateDatabase(ctx, cypher)
+		return e.executeDatabaseCreate(ctx, cypher, createNewDatabase)
 	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "CALL") == 0:
+	case startsWithKeywordFold(cypher, "CALL"):
 		return e.executeCall(ctx, cypher)
-	case findKeywordIndex(cypher, "RETURN") == 0:
+	case startsWithKeywordFold(cypher, "RETURN"):
 		return e.executeReturn(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
-		return e.executeDropCompositeDatabase(ctx, cypher)
+		return e.executeDatabaseDrop(ctx, cypher, dropCompositeDatabase)
 	case startsWithKeywords(cypher, "DROP", "DATABASE"):
-		return e.executeDropDatabase(ctx, cypher)
+		return e.executeDatabaseDrop(ctx, cypher, dropStandardDatabase)
 	case startsWithKeywords(cypher, "DROP", "ALIAS"):
 		return e.executeDropAlias(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
@@ -295,9 +295,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
-	case findKeywordIndex(cypher, "WITH") == 0:
+	case startsWithKeywordFold(cypher, "WITH"):
 		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "UNWIND") == 0:
+	case startsWithKeywordFold(cypher, "UNWIND"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "FOREACH") == 0:
 		return e.executeRequiredPipeline(ctx, cypher)
@@ -355,8 +355,8 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	if returnIdx == -1 {
+	returnIdx := queryGapEnd(cypher, 0)
+	if !startsWithKeywordFold(cypher[returnIdx:], "RETURN") {
 		return nil, localizedError(localization.CypherTransactionsReturnClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 

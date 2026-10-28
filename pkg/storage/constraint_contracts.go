@@ -21,15 +21,6 @@ import (
 // ccSkipSpaces advances past whitespace.
 func ccSkipSpaces(s string, i int) int { end, _ := cyphertext.GapEnd(s, i); return end }
 
-// ccScanIdent reads an identifier at position i. Returns ("", i) if none.
-func ccScanIdent(s string, i int) (string, int) {
-	name, ok := cyphertext.ScanIdentifier(s, i)
-	if !ok {
-		return "", i
-	}
-	return name.Value, name.End
-}
-
 // ccScanComparator reads a comparison operator at position i.
 func ccScanComparator(s string, i int) (string, int) {
 	if i >= len(s) {
@@ -67,7 +58,7 @@ func ccScanLabels(s string, i int) ([]string, int) {
 		}
 		p++ // skip ':'
 		p = ccSkipSpaces(s, p)
-		label, next := ccScanIdent(s, p)
+		label, next := cyphertext.IdentifierValue(s, p)
 		if label == "" {
 			return labels, i // colon without ident — don't consume
 		}
@@ -81,7 +72,7 @@ func ccScanLabels(s string, i int) ([]string, int) {
 func ccScanNodeContents(s string, i int) ([]string, int, bool) {
 	p := ccSkipSpaces(s, i)
 	// Optional variable name
-	if _, next := ccScanIdent(s, p); next > p {
+	if _, next := cyphertext.IdentifierValue(s, p); next > p {
 		p = next
 	}
 	// Zero or more :Label
@@ -534,7 +525,7 @@ func parsePropertyInExpression(expr string) (bool, []interface{}, string, error)
 	p := 0
 
 	// ident (variable name)
-	_, p = ccScanIdent(s, p)
+	_, p = cyphertext.IdentifierValue(s, p)
 	if p == 0 {
 		return false, nil, "", nil
 	}
@@ -546,7 +537,7 @@ func parsePropertyInExpression(expr string) (bool, []interface{}, string, error)
 	p++
 	p = ccSkipSpaces(s, p)
 	// property name
-	property, next := ccScanIdent(s, p)
+	property, next := cyphertext.IdentifierValue(s, p)
 	if property == "" {
 		return false, nil, "", nil
 	}
@@ -747,7 +738,7 @@ func parseConstraintPattern(raw string) (contractPattern, error) {
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	relType, next := ccScanIdent(s, p)
+	relType, next := cyphertext.IdentifierValue(s, p)
 	if relType == "" {
 		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
@@ -816,7 +807,7 @@ func isDistinctEndpointsExpression(expr string) bool {
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	if _, next := ccScanIdent(s, p); next == p {
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
 		return false
 	} else {
 		p = next
@@ -847,7 +838,7 @@ func isDistinctEndpointsExpression(expr string) bool {
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	if _, next := ccScanIdent(s, p); next == p {
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
 		return false
 	} else {
 		p = next
@@ -877,7 +868,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	if _, next := ccScanIdent(s, p); next == p {
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
 		return false, "", ""
 	} else {
 		p = next
@@ -893,7 +884,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	leftProp, next := ccScanIdent(s, p)
+	leftProp, next := cyphertext.IdentifierValue(s, p)
 	if leftProp == "" {
 		return false, "", ""
 	}
@@ -919,7 +910,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	if _, next := ccScanIdent(s, p); next == p {
+	if _, next := cyphertext.IdentifierValue(s, p); next == p {
 		return false, "", ""
 	} else {
 		p = next
@@ -935,7 +926,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 	}
 	p++
 	p = ccSkipSpaces(s, p)
-	rightProp, next := ccScanIdent(s, p)
+	rightProp, next := cyphertext.IdentifierValue(s, p)
 	if rightProp == "" {
 		return false, "", ""
 	}
@@ -954,7 +945,7 @@ func parseRelationshipPropertyComparisonExpression(expr string) (bool, string, s
 	p := 0
 
 	// ident (variable)
-	_, next := ccScanIdent(s, p)
+	_, next := cyphertext.IdentifierValue(s, p)
 	if next == p {
 		return false, "", "", nil, nil
 	}
@@ -967,7 +958,7 @@ func parseRelationshipPropertyComparisonExpression(expr string) (bool, string, s
 	p++
 	p = ccSkipSpaces(s, p)
 	// property
-	property, next := ccScanIdent(s, p)
+	property, next := cyphertext.IdentifierValue(s, p)
 	if property == "" {
 		return false, "", "", nil, nil
 	}

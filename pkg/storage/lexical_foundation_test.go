@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestConstraintLexicalFoundation(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, value)
 	}
-	name, end := ccScanIdent("`café key`\u00a0tail", 0)
+	name, end := cyphertext.IdentifierValue("`café key`\u00a0tail", 0)
 	require.Equal(t, "café key", name)
 	require.Equal(t, len("`café key`"), end)
 }

@@ -1514,6 +1514,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "qdrant.database_access_denied", Constructor: "QdrantDatabaseAccessDenied", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.database_write_denied", Constructor: "QdrantDatabaseWriteDenied", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.delete_collection_failed", Constructor: "QdrantDeleteCollectionFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "qdrant.delete_point_failed", Constructor: "QdrantDeletePointFailed", Fields: []string{"PointID"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.embed_query_failed", Constructor: "QdrantEmbedQueryFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.field_required", Constructor: "QdrantFieldRequired", Fields: []string{"Field"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.fields_required", Constructor: "QdrantFieldsRequired", Fields: []string{"Fields"}, PluralForms: []string{"other"}},

@@ -374,51 +374,6 @@ func TestCreateCompositeDatabase_InvalidConstituent(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestCreateCompositeDatabase_DuplicateAlias(t *testing.T) {
-	manager, _ := setupTestManager(t)
-
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-
-	// Try to create composite with duplicate alias
-	constituents := []ConstituentRef{
-		{DatabaseName: "db1", Alias: "alias1", Type: "local", AccessMode: "read_write"},
-		{DatabaseName: "db2", Alias: "alias1", Type: "local", AccessMode: "read_write"}, // Duplicate alias
-	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate")
-}
-
-func TestCreateCompositeDatabase_CompositeAsConstituent(t *testing.T) {
-	manager, _ := setupTestManager(t)
-
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-
-	// Create first composite
-	constituents1 := []ConstituentRef{
-		{DatabaseName: "db1", Alias: "db1", Type: "local", AccessMode: "read_write"},
-		{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
-	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents1)
-	require.NoError(t, err)
-
-	// Try to use composite as constituent
-	constituents2 := []ConstituentRef{
-		{DatabaseName: "composite1", Alias: "comp1", Type: "local", AccessMode: "read_write"},
-	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite2", constituents2)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot use composite database")
-}
-
 func TestDropCompositeDatabase(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 
@@ -499,26 +454,15 @@ func TestAddConstituent(t *testing.T) {
 
 func TestAddConstituent_DuplicateAlias(t *testing.T) {
 	manager, _ := setupTestManager(t)
-
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db3"})
-	require.NoError(t, err)
-
-	// Create composite database
 	constituents := []ConstituentRef{
 		{DatabaseName: "db1", Alias: "alias1", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db2", Alias: "alias2", Type: "local", AccessMode: "read_write"},
 	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents)
-	require.NoError(t, err)
+	seedCompositeTestCatalog(t, manager, []string{"db1", "db2", "db3"}, "composite1", constituents)
 
 	// Try to add constituent with duplicate alias
 	newConstituent := ConstituentRef{DatabaseName: "db3", Alias: "alias1", Type: "local", AccessMode: "read_write"}
-	err = manager.AddConstituent(t.Context(), "composite1", newConstituent)
+	err := manager.AddConstituent(t.Context(), "composite1", newConstituent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
@@ -602,23 +546,14 @@ func TestRemoveConstituent(t *testing.T) {
 
 func TestRemoveConstituent_NotFound(t *testing.T) {
 	manager, _ := setupTestManager(t)
-
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-
-	// Create composite database
 	constituents := []ConstituentRef{
 		{DatabaseName: "db1", Alias: "db1", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
 	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents)
-	require.NoError(t, err)
+	seedCompositeTestCatalog(t, manager, []string{"db1", "db2"}, "composite1", constituents)
 
 	// Try to remove non-existent constituent
-	err = manager.RemoveConstituent(t.Context(), "composite1", "nonexistent")
+	err := manager.RemoveConstituent(t.Context(), "composite1", "nonexistent")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -632,22 +567,13 @@ func TestRemoveConstituent_NotComposite(t *testing.T) {
 func TestListConstituents(t *testing.T) {
 	manager, _ := setupTestManager(t)
 
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db3"})
-	require.NoError(t, err)
-
-	// Create composite database
+	// Create composite database over the original ordered db1/db2/db3 catalog.
 	constituents := []ConstituentRef{
 		{DatabaseName: "db1", Alias: "alias1", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db2", Alias: "alias2", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db3", Alias: "alias3", Type: "local", AccessMode: "read_write"},
 	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents)
-	require.NoError(t, err)
+	seedCompositeTestCatalog(t, manager, []string{"db1", "db2", "db3"}, "composite1", constituents)
 
 	// List constituents
 	list, err := manager.GetCompositeConstituents("composite1")
@@ -741,27 +667,16 @@ func TestConstituentRef_Validate(t *testing.T) {
 func TestListCompositeDatabases(t *testing.T) {
 	manager, _ := setupTestManager(t)
 
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db3"})
-	require.NoError(t, err)
-
-	// Create composite databases
-	constituents1 := []ConstituentRef{
+	// Create the first composite over the original ordered db1/db2 catalog.
+	seedCompositeTestCatalog(t, manager, []string{"db1", "db2"}, "composite1", []ConstituentRef{
 		{DatabaseName: "db1", Alias: "db1", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
-	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite1", constituents1)
-	require.NoError(t, err)
+	})
 
-	constituents2 := []ConstituentRef{
+	// Create the second composite over the original db3 constituent.
+	seedCompositeTestCatalog(t, manager, []string{"db3"}, "composite2", []ConstituentRef{
 		{DatabaseName: "db3", Alias: "db3", Type: "local", AccessMode: "read_write"},
-	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite2", constituents2)
-	require.NoError(t, err)
+	})
 
 	// List composite databases
 	composites := manager.ListCompositeDatabases()
@@ -778,27 +693,71 @@ func TestListCompositeDatabases(t *testing.T) {
 
 func TestIsCompositeDatabase(t *testing.T) {
 	manager, _ := setupTestManager(t)
-
-	// Create constituent databases
-	err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db1"})
-	require.NoError(t, err)
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "db2"})
-	require.NoError(t, err)
-
-	// Create standard database
-	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "standard_db"})
-	require.NoError(t, err)
-
-	// Create composite database
 	constituents := []ConstituentRef{
 		{DatabaseName: "db1", Alias: "db1", Type: "local", AccessMode: "read_write"},
 		{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
 	}
-	err = manager.CreateCompositeDatabase(t.Context(), "composite_db", constituents)
-	require.NoError(t, err)
+	seedCompositeTestCatalog(t, manager, []string{"db1", "db2", "standard_db"}, "composite_db", constituents)
 
 	// Check if composite
 	assert.True(t, manager.IsCompositeDatabase("composite_db"))
 	assert.False(t, manager.IsCompositeDatabase("standard_db"))
 	assert.False(t, manager.IsCompositeDatabase("nonexistent"))
+}
+
+// seedCompositeTestCatalog retains the caller's manager and ordered database
+// fixture while sharing successful native catalog preparation across consumers.
+func seedCompositeTestCatalog(t *testing.T, manager *DatabaseManager, databases []string, name string, refs []ConstituentRef) {
+	t.Helper()
+	seedCatalogDatabases(t, manager, databases)
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), name, refs))
+}
+
+func seedCatalogDatabases(t *testing.T, manager *DatabaseManager, databases []string) {
+	t.Helper()
+	for _, database := range databases {
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: database}))
+	}
+}
+
+// TestCompositeConstituentAdmission preserves the distinct duplicate-alias and
+// nested-composite rejection policies over their exact original catalog shapes.
+func TestCompositeConstituentAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		databases     []string
+		preparedName  string
+		prepared      []ConstituentRef
+		requestedName string
+		requested     []ConstituentRef
+		errorText     string
+	}{
+		{
+			name: "TestCreateCompositeDatabase_DuplicateAlias", databases: []string{"db1", "db2"}, requestedName: "composite1",
+			requested: []ConstituentRef{
+				{DatabaseName: "db1", Alias: "alias1", Type: "local", AccessMode: "read_write"},
+				{DatabaseName: "db2", Alias: "alias1", Type: "local", AccessMode: "read_write"},
+			}, errorText: "duplicate",
+		},
+		{
+			name: "TestCreateCompositeDatabase_CompositeAsConstituent", databases: []string{"db1", "db2"}, preparedName: "composite1",
+			prepared: []ConstituentRef{
+				{DatabaseName: "db1", Alias: "db1", Type: "local", AccessMode: "read_write"},
+				{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
+			}, requestedName: "composite2",
+			requested: []ConstituentRef{{DatabaseName: "composite1", Alias: "comp1", Type: "local", AccessMode: "read_write"}},
+			errorText: "cannot use composite database",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager, _ := setupTestManager(t)
+			seedCatalogDatabases(t, manager, test.databases)
+			if test.preparedName != "" {
+				seedCompositeTestCatalog(t, manager, nil, test.preparedName, test.prepared)
+			}
+			err := manager.CreateCompositeDatabase(t.Context(), test.requestedName, test.requested)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), test.errorText)
+		})
+	}
 }

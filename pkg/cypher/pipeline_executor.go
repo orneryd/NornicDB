@@ -197,23 +197,56 @@ func pipelineClausesFor(ctx context.Context, cypher string) ([]pipelineClause, b
 	return splitPipelineClausesAllowingProcedureCalls(ctx, cypher)
 }
 
-// splitUnwindBody splits an UNWIND clause's body (after UNWIND) at its
-// top-level AS into the list expression and the alias; an AS inside a
-// string, list or map belongs to the expression.
-func splitUnwindBody(body string) (list, alias string, ok bool) {
-	index := topLevelKeywordIndex(body, "AS")
-	if index <= 0 {
-		return "", "", false
+// unwindBodySource keeps the admitted source views needed by iteration and
+// top-level execution. aliasTail stays whole so semantic validation rejects
+// trailing tokens; variableWritten and remainder share its canonical name extent.
+type unwindBodySource struct {
+	expression      string
+	aliasTail       string
+	variableWritten string
+	remainder       string
+}
+
+// splitUnwindBody reads a full original UNWIND clause with the existing native
+// scanner. AS in an operand or identifier remains part of the expression.
+func splitUnwindBody(source string) (unwindBodySource, bool) {
+	head := queryGapEnd(source, 0)
+	if !startsWithKeywordFold(source[head:], "UNWIND") {
+		return unwindBodySource{}, false
 	}
-	return strings.TrimSpace(body[:index]), strings.TrimSpace(body[index+len("AS"):]), true
+	exprStart := queryGapEnd(source, keywordEndAt(source, head, "UNWIND"))
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	for from := exprStart; ; {
+		at := keywordIndexFrom(source, "AS", from, opts)
+		if at < 0 {
+			return unwindBodySource{}, false
+		}
+		if wordIsName(source, at) || insideCaseBlock(source, at) {
+			from = at + len("AS")
+			continue
+		}
+		expression := strings.TrimSpace(source[exprStart:at])
+		aliasStart := queryGapEnd(source, at+len("AS"))
+		token, _, found := cyphertext.ScanIdentifierExtent(source, aliasStart)
+		if expression == "" || !found {
+			return unwindBodySource{}, false
+		}
+		return unwindBodySource{
+			expression:      expression,
+			aliasTail:       strings.TrimSpace(source[aliasStart:]),
+			variableWritten: source[aliasStart:token.End],
+			remainder:       strings.TrimSpace(source[token.End:]),
+		}, true
+	}
 }
 
 // pipelineClauseBody is a clause's text after its keyword, which the
 // clause splitter matched in any letter case (Return, rEtUrN).
 func pipelineClauseBody(text, keyword string) string {
 	text = strings.TrimSpace(text)
-	if len(text) >= len(keyword) && strings.EqualFold(text[:len(keyword)], keyword) {
-		text = text[len(keyword):]
+	if end := keywordEndAt(text, 0, keyword); end > 0 {
+		text = text[queryGapEnd(text, end):]
 	}
 	return strings.TrimSpace(text)
 }
@@ -234,6 +267,7 @@ type pipelineClauseSplit struct {
 	clauses      []pipelineClause
 	ok           bool
 	topLevelCall bool
+	firstReturn  string
 }
 
 const pipelineClauseSplitLimit = 4096
@@ -241,7 +275,8 @@ const pipelineClauseSplitLimit = 4096
 // splitPipelineClauses cuts a statement into its pipeline clauses (see
 // parsePipelineClauses); a CALL makes it unsupported.
 func splitPipelineClauses(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	return cachedPipelineClauses(ctx, cypher, false)
+	split := cachedPipelineClauses(ctx, cypher, false)
+	return split.clauses, split.ok
 }
 
 // splitPipelineClausesAllowingProcedureCalls is splitPipelineClauses that also
@@ -249,30 +284,31 @@ func splitPipelineClauses(ctx context.Context, cypher string) ([]pipelineClause,
 // kind pipelineClauseCall, for the pipeline executor and call-aware semantic
 // validation. splitPipelineClauses rejects statements with procedure calls.
 func splitPipelineClausesAllowingProcedureCalls(ctx context.Context, cypher string) ([]pipelineClause, bool) {
-	return cachedPipelineClauses(ctx, cypher, true)
+	split := cachedPipelineClauses(ctx, cypher, true)
+	return split.clauses, split.ok
 }
 
 // cachedPipelineClauses computes the split of a text once, for both
 // callers: without procedure calls as clauses, a text with a CALL of its own
 // is unsupported, and any other text splits the same way. Callers get their
 // own copy of the clause list.
-func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bool) ([]pipelineClause, bool) {
+func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bool) pipelineClauseSplit {
 	if ctx.Err() != nil {
-		return nil, false
+		return pipelineClauseSplit{}
 	}
 	key := semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25")
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[key]
 	pipelineClauseSplits.RUnlock()
 	if !cached {
-		split.clauses, split.ok, split.topLevelCall = parsePipelineClauses(ctx, cypher)
+		split = parsePipelineClauses(ctx, cypher)
 		if ctx.Err() != nil {
-			return nil, false
+			return pipelineClauseSplit{}
 		}
 		pipelineClauseSplits.Lock()
 		if ctx.Err() != nil {
 			pipelineClauseSplits.Unlock()
-			return nil, false
+			return pipelineClauseSplit{}
 		}
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
 			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
@@ -281,41 +317,46 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 		pipelineClauseSplits.Unlock()
 	}
 	if split.topLevelCall && !procedureCalls {
-		return nil, false
+		return pipelineClauseSplit{}
 	}
-	if split.clauses == nil {
-		return nil, split.ok
+	if split.clauses != nil {
+		split.clauses = append([]pipelineClause(nil), split.clauses...)
 	}
-	return append([]pipelineClause(nil), split.clauses...), split.ok
+	return split
 }
 
-// parsePipelineClauses walks the query from left to right and slices it on
-// top-level MATCH/CREATE/WITH/UNWIND/RETURN keywords, with top-level
-// procedure calls (CALL proc(args) YIELD …) as clauses. Returns (clauses,
-// true) on success. On anything unsupported (e.g. nested MERGE or CALL
-// subquery) returns (nil, false) so the caller falls back. topLevelCall
-// reports whether the query has a CALL of its own (cachedPipelineClauses).
-func parsePipelineClauses(ctx context.Context, source string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+// parsePipelineClauses projects the retained query-body product once. A final
+// RETURN remains available for semantic column export when USE or FINISH makes
+// the body unsupported by execution's pipeline; unsupported clauses stay nil.
+func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSplit {
 	body := readQueryBody(ctx, source, 0, len(source))
 	if body.status != queryBodyRead || len(body.branches) != 1 {
-		return nil, false, false
+		return pipelineClauseSplit{}
 	}
 	branch := body.branches[0]
+	split := pipelineClauseSplit{}
+	if len(branch.clauses) > 0 {
+		last := branch.clauses[len(branch.clauses)-1]
+		if last.kind == pipelineClauseReturn {
+			split.firstReturn = strings.TrimSpace(last.text)
+		}
+	}
 	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
-		return nil, false, false
+		return split
 	}
 	// Inline embedding candidates keep the bound syntax of their WITH; the
 	// pipeline frame resolves them like the scope compiler does.
 	for index, clause := range branch.clauses {
 		if clause.kind == pipelineClauseCall || clause.kind == pipelineClauseCallSubquery {
-			topLevelCall = true
+			split.topLevelCall = true
 		}
 		item := clause.pipelineClause
 		item.syntax = clause.syntax
 		item.embeddingCandidate = embeddingCandidate(branch.clauses, index)
-		clauses = append(clauses, item)
+		split.clauses = append(split.clauses, item)
 	}
-	return clauses, true, topLevelCall
+	split.ok = true
+	return split
 }
 
 // pipelineApplyOptionally runs an OPTIONAL CALL (pipelineClause.optional)
@@ -1111,7 +1152,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
+	matchBody := pipelineClauseBody(clauses[0].text, "MATCH")
 	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
 		return nil, false, nil
 	}
@@ -1156,7 +1197,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
+	matchBody := pipelineClauseBody(clauses[0].text, "MATCH")
 	whereClause := ""
 	if whereIndex := topLevelKeywordIndex(matchBody, "WHERE"); whereIndex >= 0 {
 		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
@@ -1463,19 +1504,21 @@ func normalizePipelineWhitespace(query string) string {
 // ---- clause appliers ----
 
 func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, error) {
-	if body, repeatable := stripRepeatableElements(strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); repeatable {
-		ctx, clause = withRepeatableElements(ctx), "OPTIONAL MATCH "+body
+	body := pipelineClauseBody(clause, "OPTIONAL MATCH")
+	if pattern, repeatable := stripRepeatableElements(body); repeatable {
+		ctx, body = withRepeatableElements(ctx), pattern
+		clause = "OPTIONAL MATCH " + body
 	}
-	if shortest, ok, err := e.parseShortestPathMatch(ctx, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); ok || err != nil {
+	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
 		return e.pipelineApplyShortestPathMatch(ctx, rows, shortest, true)
 	}
-	if err := validateBoundPatternNodes(rows, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); err != nil {
+	if err := validateBoundPatternNodes(rows, body); err != nil {
 		return nil, err
 	}
-	optionalClause := splitOptionalMatchClauses(strings.TrimSpace(clause[len("OPTIONAL MATCH"):]))
+	optionalClause := splitOptionalMatchClauses(body)
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
 	}
@@ -1659,7 +1702,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
+	pattern := pipelineClauseBody(clause, "MATCH")
 	whereClause := ""
 	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
@@ -1982,7 +2025,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 		return nil, false
 	}
 
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
+	pattern := pipelineClauseBody(clause, "MATCH")
 	whereClause := ""
 	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
@@ -2033,7 +2076,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 }
 
 func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
+	pattern := pipelineClauseBody(clause, "MATCH")
 	whereClause := ""
 	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])

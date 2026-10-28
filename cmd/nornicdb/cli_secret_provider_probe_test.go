@@ -52,11 +52,8 @@ func TestCLISecretProviderErrors(t *testing.T) {
 			if provider == "ollama" {
 				apiURL = strings.Replace(apiURL, "://", "://probe:"+cliSecretProbeEnv+"@", 1)
 			}
-			client, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: provider, APIKey: cliSecretProbeEnv, APIURL: apiURL, APIPath: "/v1/embeddings", Model: "probe", Dimensions: 3, Timeout: time.Second})
-			if err != nil {
-				t.Fatal("synthetic provider could not initialize")
-			}
-			_, err = client.Embed(context.Background(), "probe")
+			client := newCLISecretProbeEmbedder(t, provider, apiURL, cliSecretProbeEnv)
+			_, err := client.Embed(context.Background(), "probe")
 			check(t, err)
 		})
 	}
@@ -124,15 +121,22 @@ func TestCLISecretProviderOpaqueCredential(t *testing.T) {
 	defer upstream.Close()
 	for _, provider := range []string{"openai", "voyage"} {
 		t.Run(provider, func(t *testing.T) {
-			client, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: provider, APIKey: credential, APIURL: upstream.URL, APIPath: "/v1/embeddings", Model: "probe", Dimensions: 3, Timeout: time.Second})
-			if err != nil {
-				t.Fatal("synthetic provider could not initialize")
-			}
-			_, err = client.Embed(context.Background(), "probe")
+			client := newCLISecretProbeEmbedder(t, provider, upstream.URL, credential)
+			_, err := client.Embed(context.Background(), "probe")
 			if err == nil {
 				t.Fatal("mock rejection produced no error")
 			}
 			assertCLISecretAbsent(t, "opaque credential error", []byte(err.Error()))
 		})
 	}
+}
+
+// newCLISecretProbeEmbedder retains the synthetic provider construction contract.
+func newCLISecretProbeEmbedder(t *testing.T, provider, apiURL, credential string) embed.Embedder {
+	t.Helper()
+	client, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: provider, APIKey: credential, APIURL: apiURL, APIPath: "/v1/embeddings", Model: "probe", Dimensions: 3, Timeout: time.Second})
+	if err != nil {
+		t.Fatal("synthetic provider could not initialize")
+	}
+	return client
 }

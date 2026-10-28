@@ -436,7 +436,7 @@ func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
 		typeName := parameterPropertyAccessType(value)
 		// UNWIND $m AS x binds the list's elements: only a list of strings
 		// gives them a static type (String) that a property access rejects.
-		if projected && !accessed && strings.EqualFold(previousWord(cypher, dollar), "UNWIND") {
+		if projected && !accessed && strings.EqualFold(rawWordBefore(cypher, dollar), "UNWIND") {
 			if typeName == "List<String>" {
 				return true
 			}

@@ -7,13 +7,15 @@ package storage
 import (
 	"strings"
 
-	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/labelrouting"
 )
 
 // QueryAnalyzer analyzes queries to extract routing information.
 type QueryAnalyzer struct {
-	// Label-based routing: label -> []constituent aliases
-	labelRouting map[string][]string
+	// Label-based routing: normalized label -> []constituent aliases. The
+	// label table is the shared labelrouting owner; this analyzer keeps its
+	// current lock-free access because it has never held a lock.
+	labelRouting labelrouting.Table
 
 	// Property-based routing: property name -> value -> constituent alias
 	propertyRouting map[string]map[interface{}]string
@@ -25,7 +27,7 @@ type QueryAnalyzer struct {
 // NewQueryAnalyzer creates a new query analyzer for composite routing.
 func NewQueryAnalyzer() *QueryAnalyzer {
 	return &QueryAnalyzer{
-		labelRouting:     make(map[string][]string),
+		labelRouting:     labelrouting.New(),
 		propertyRouting:  make(map[string]map[interface{}]string),
 		propertyDefaults: make(map[string]string),
 	}
@@ -33,7 +35,7 @@ func NewQueryAnalyzer() *QueryAnalyzer {
 
 // SetLabelRouting configures label-based routing.
 func (a *QueryAnalyzer) SetLabelRouting(label string, constituents []string) {
-	a.labelRouting[cyphertext.NameLower(label)] = constituents
+	a.labelRouting.Set(label, constituents)
 }
 
 // SetPropertyRouting configures property-based routing.
@@ -90,31 +92,15 @@ func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
 }
 
 // RouteQuery determines which constituents to query based on query info.
+//
+// Only a complete nonempty label mapping wins. No labels, any unknown label
+// and an all-known mapping whose union is empty all continue into the existing
+// property lookup and finally return the caller slice; label routing never
+// introduces property fallback of its own.
 func (a *QueryAnalyzer) RouteQuery(queryInfo *QueryInfo, allConstituents []string) []string {
 	// Try label-based routing first
-	if len(queryInfo.Labels) > 0 {
-		constituentSet := make(map[string]bool)
-		allFound := true
-
-		for _, label := range queryInfo.Labels {
-			labelLower := cyphertext.NameLower(label)
-			if constituents, exists := a.labelRouting[labelLower]; exists {
-				for _, alias := range constituents {
-					constituentSet[alias] = true
-				}
-			} else {
-				allFound = false
-				break
-			}
-		}
-
-		if allFound && len(constituentSet) > 0 {
-			result := make([]string, 0, len(constituentSet))
-			for alias := range constituentSet {
-				result = append(result, alias)
-			}
-			return result
-		}
+	if selection := a.labelRouting.Select(queryInfo.Labels); selection.Kind == labelrouting.SelectionMapped {
+		return selection.Aliases
 	}
 
 	// Try property-based routing

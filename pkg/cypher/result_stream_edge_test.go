@@ -97,7 +97,8 @@ func TestResultStreamChecksReturnArguments(t *testing.T) {
 // statement before any row was handed on, and fails it after.
 func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	clauses, valid, _ := parsePipelineClauses(t.Context(), "RETURN x")
+	split := parsePipelineClauses(t.Context(), "RETURN x")
+	clauses, valid := split.clauses, split.ok
 	require.True(t, valid)
 	declineAfter := func(rows int) pipelineRowSource {
 		return func(yield func(pipelineRow) bool) bool {

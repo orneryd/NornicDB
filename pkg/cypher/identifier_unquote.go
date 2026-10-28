@@ -41,11 +41,11 @@ func unquoteBacktickIdentifier(raw string) (string, error) {
 	if len(s) < 2 || !isCypherBacktickByte(s[0]) || !isCypherBacktickByte(s[len(s)-1]) {
 		return s, nil
 	}
-	name, ok := cyphertext.ScanIdentifier(s, 0)
-	if !ok || !name.Quoted || name.End != len(s) {
+	name, ok := cyphertext.UnquoteBacktick(s)
+	if !ok {
 		// Internal parser detail: every caller wraps this cause in an admin or
 		// composite localized error before returning it from query execution.
 		return "", fmt.Errorf("invalid quoted identifier %q", raw)
 	}
-	return name.Value, nil
+	return name, nil
 }

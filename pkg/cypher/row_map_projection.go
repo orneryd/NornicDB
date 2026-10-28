@@ -31,8 +31,8 @@ const (
 
 // mapProjectionSplit owns the common variable{items} boundary. Runtime keeps
 // the submitted variable spelling and trims items; static analysis resolves the
-// symbolic name and excludes unbound keywords before its scope-specific check.
-func mapProjectionSplit(expression string, policy mapProjectionPolicy) (variable, items string, ok bool) {
+// symbolic name and admits a keyword name only when its supplied scope binds it.
+func mapProjectionSplit(expression string, policy mapProjectionPolicy, scope *staticTypeScope) (variable, items string, ok bool) {
 	if policy == mapProjectionRuntime {
 		expression = strings.TrimSpace(expression)
 	}
@@ -48,7 +48,7 @@ func mapProjectionSplit(expression string, policy mapProjectionPolicy) (variable
 	} else {
 		variable = simpleSemanticIdentifier(variable)
 		_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
-		if variable == "" || isCypherKeyword(variable) && !subqueryName || isSubqueryBrace(expression, open) {
+		if variable == "" || isCypherKeyword(variable) && !subqueryName && !(scope != nil && scope.bound(variable)) || isSubqueryBrace(expression, open) {
 			return "", "", false
 		}
 	}
@@ -60,7 +60,7 @@ func mapProjectionSplit(expression string, policy mapProjectionPolicy) (variable
 }
 
 func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	variable, inner, projection := mapProjectionSplit(expression, mapProjectionRuntime)
+	variable, inner, projection := mapProjectionSplit(expression, mapProjectionRuntime, nil)
 	if !projection {
 		return nil, false, false, nil
 	}
@@ -128,14 +128,11 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			if !cyphertext.IsIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
-			value, ok, err := e.evaluateRowValue(item, values)
-			if err != nil {
-				return nil, true, false, err
-			}
+			value, ok := values[normalizePropertyKey(item)]
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKey(item)] = value
+			result[normalizePropertyKey(item)] = cypherfn.RuntimeValue(value)
 		}
 	}
 	return result, true, true, nil

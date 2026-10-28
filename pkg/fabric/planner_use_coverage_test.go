@@ -88,57 +88,6 @@ func TestPlan_DynamicUseInUnionBranches(t *testing.T) {
 	}
 }
 
-// TestPlan_DynamicUseInImportingCallSubquery pins a CALL subquery whose
-// importing WITH is followed by a dynamic USE: the outer clauses run on the
-// session graph, and the subquery body, with its importing WITH kept and
-// the USE removed, runs on the reference resolved from the imported row.
-func TestPlan_DynamicUseInImportingCallSubquery(t *testing.T) {
-	planner := NewFabricPlanner(plannerUseCatalog())
-	read, _ := recordedCallImports("g")
-	planner.SetCallImportReader(read)
-	fragment, err := planner.Plan(t.Context(),
-		"UNWIND $graphs AS g CALL { WITH g USE graph.byName(g) MATCH (n) RETURN count(n) AS c } RETURN g, c", "cmp", cyphertext.RawSource)
-	require.NoError(t, err)
-
-	execs := collectPlannedExecs(fragment)
-	require.Len(t, execs, 3)
-
-	require.Equal(t, "UNWIND $graphs AS g RETURN *", execs[0].Query)
-	require.Equal(t, "cmp", execs[0].GraphName)
-	require.Nil(t, execs[0].Graph)
-
-	require.Equal(t, "WITH g MATCH (n) RETURN count(n) AS c", execs[1].Query)
-	require.Empty(t, execs[1].GraphName)
-	require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"g"}}, execs[1].Graph)
-	require.Equal(t, "cmp", execs[1].Scope)
-	init, ok := execs[1].Input.(*FragmentInit)
-	require.True(t, ok, "expected *FragmentInit, got %T", execs[1].Input)
-	require.Equal(t, []string{"g"}, init.ImportColumns)
-
-	require.Equal(t, "RETURN g, c", execs[2].Query)
-	require.Equal(t, "cmp", execs[2].GraphName)
-}
-
-// TestPlan_DynamicTopLevelUseWithStaticSubquery pins that after a dynamic
-// top-level USE, a CALL subquery with a static USE runs on its constituent
-// and the clauses after the subquery run on the dynamic reference.
-func TestPlan_DynamicTopLevelUseWithStaticSubquery(t *testing.T) {
-	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(),
-		"USE graph.byName($g) CALL { USE cmp.a RETURN 1 AS one } RETURN one", "cmp", cyphertext.RawSource)
-	require.NoError(t, err)
-
-	execs := collectPlannedExecs(fragment)
-	require.Len(t, execs, 2)
-	require.Equal(t, "cmp.a", execs[0].GraphName)
-	require.Nil(t, execs[0].Graph)
-	require.Equal(t, "RETURN 1 AS one", execs[0].Query)
-
-	require.Equal(t, "RETURN one", execs[1].Query)
-	require.Empty(t, execs[1].GraphName)
-	require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"$g"}}, execs[1].Graph)
-	require.Equal(t, "cmp", execs[1].Scope)
-}
-
 // TestParseLeadingWithUse_NameStartingWithUse pins that a name that only
 // starts with the letters USE after an importing WITH is not a USE clause:
 // the body is returned unchanged. The name here continues with a non-ASCII
@@ -146,9 +95,80 @@ func TestPlan_DynamicTopLevelUseWithStaticSubquery(t *testing.T) {
 // the USE grammar treats as part of the name.
 func TestParseLeadingWithUse_NameStartingWithUse(t *testing.T) {
 	body := "WITH a USEא MATCH (n) RETURN n"
-	use, rewritten, ok, err := parseLeadingWithUse(t.Context(), body)
+	use, rewritten, ok, err := parseLeadingWithUse(t.Context(), body, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Equal(t, UseClause{}, use)
 	require.Equal(t, body, rewritten)
+}
+
+func TestPlan_DynamicUseSubqueryPositions(t *testing.T) {
+	outerTable := []struct {
+		name         string
+		query        string
+		importColumn string
+		count        int
+		check        func(*testing.T, []*FragmentExec)
+	}{
+		{
+			name:         "TestPlan_DynamicUseInImportingCallSubquery",
+			query:        "UNWIND $graphs AS g CALL { WITH g USE graph.byName(g) MATCH (n) RETURN count(n) AS c } RETURN g, c",
+			importColumn: "g",
+			count:        3,
+			check: func(t *testing.T, execs []*FragmentExec) {
+				// TestPlan_DynamicUseInImportingCallSubquery pins a CALL subquery whose
+				// importing WITH is followed by a dynamic USE: the outer clauses run on the
+				// session graph, and the subquery body, with its importing WITH kept and
+				// the USE removed, runs on the reference resolved from the imported row.
+				require.Equal(t, "UNWIND $graphs AS g RETURN *", execs[0].Query)
+				require.Equal(t, "cmp", execs[0].GraphName)
+				require.Nil(t, execs[0].Graph)
+
+				require.Equal(t, "WITH g MATCH (n) RETURN count(n) AS c", execs[1].Query)
+				require.Empty(t, execs[1].GraphName)
+				require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"g"}}, execs[1].Graph)
+				require.Equal(t, "cmp", execs[1].Scope)
+				init, ok := execs[1].Input.(*FragmentInit)
+				require.True(t, ok, "expected *FragmentInit, got %T", execs[1].Input)
+				require.Equal(t, []string{"g"}, init.ImportColumns)
+
+				require.Equal(t, "RETURN g, c", execs[2].Query)
+				require.Equal(t, "cmp", execs[2].GraphName)
+			},
+		},
+		{
+			name:         "TestPlan_DynamicTopLevelUseWithStaticSubquery",
+			query:        "USE graph.byName($g) CALL { USE cmp.a RETURN 1 AS one } RETURN one",
+			importColumn: "",
+			count:        2,
+			check: func(t *testing.T, execs []*FragmentExec) {
+				// TestPlan_DynamicTopLevelUseWithStaticSubquery pins that after a dynamic
+				// top-level USE, a CALL subquery with a static USE runs on its constituent
+				// and the clauses after the subquery run on the dynamic reference.
+				require.Equal(t, "cmp.a", execs[0].GraphName)
+				require.Nil(t, execs[0].Graph)
+				require.Equal(t, "RETURN 1 AS one", execs[0].Query)
+
+				require.Equal(t, "RETURN one", execs[1].Query)
+				require.Empty(t, execs[1].GraphName)
+				require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"$g"}}, execs[1].Graph)
+				require.Equal(t, "cmp", execs[1].Scope)
+			},
+		},
+	}
+
+	for _, tc := range outerTable {
+		t.Run(tc.name, func(t *testing.T) {
+			planner := NewFabricPlanner(plannerUseCatalog())
+			if tc.importColumn != "" {
+				read, _ := recordedCallImports(tc.importColumn)
+				planner.SetCallImportReader(read)
+			}
+			fragment, err := planner.Plan(t.Context(), tc.query, "cmp", cyphertext.RawSource)
+			require.NoError(t, err)
+			execs := collectPlannedExecs(fragment)
+			require.Len(t, execs, tc.count)
+			tc.check(t, execs)
+		})
+	}
 }

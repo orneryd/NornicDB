@@ -71,6 +71,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve named single-node CREATE path bindings and their node labels, properties
+  and publication atomicity.
+
+- Preserve keyword-shaped ORDER BY operands and comment-separated ORDER BY spans
+  without introducing additional query parsing.
+
+- Accept whitespace and comment separators between `DETACH` and `DELETE` in
+  row-scoped mutations when query normalization is disabled.
+
+- Read compound keyword spans consistently for OPTIONAL MATCH, DISTINCT,
+  MERGE actions and string/null predicates when query normalization is disabled.
+
+- Report invalid Fabric CALL scopes before missing parameters; retain parameter
+  checks before execution and EXPLAIN's existing missing-parameter behavior.
+
+- Qdrant point deletion reports rejected storage mutations instead of returning
+  `Completed` while the point remains stored. Missing points remain idempotent.
+
+- Accept flexible whitespace in CREATE OR REPLACE DATABASE and reject malformed
+  IF NOT EXISTS suffixes before creating or replacing catalog state.
+
+- Reject malformed database DROP targets and invalid trailing clauses before
+  catalog deletion. Standard and composite commands share quoted-name handling.
+- Reduce Unicode lexer-input allocations and repeated Fabric keyword scans.
+
 - Fix recursive graph-component JSON encoding while preserving exact admitted UTF-16 identities through an opt-in decoder policy.
 
 - Encrypt saved remote constituent credentials and resolve runtime identities

@@ -210,8 +210,8 @@ func isExpressionOperatorWord(word string) bool {
 // false for text that isn't a DELETE clause.
 func deleteClauseTargets(clause string) (targets []string, detach, ok bool) {
 	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "DETACH DELETE") {
-		detach, body = true, strings.TrimSpace(body[len("DETACH"):])
+	if startsWithKeywordFold(body, "DETACH") {
+		detach, body = true, body[queryGapEnd(body, len("DETACH")):]
 	}
 	if !startsWithKeywordFold(body, "DELETE") {
 		return nil, false, false

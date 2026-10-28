@@ -28,7 +28,7 @@ func TestBoltDatabaseManagerAdapter_ValidAndInvalidConversions(t *testing.T) {
 		{DatabaseName: "db2", Alias: "db2", Type: "local", AccessMode: "read_write"},
 	}))
 
-	adapter := &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}}
+	adapter := &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)}
 
 	info := &catalogadapter.InfoView{Info: &multidb.DatabaseInfo{
 		Name:      "composite1",

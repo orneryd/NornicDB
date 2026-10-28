@@ -145,10 +145,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create a user object from claims for token generation
-	roles := make([]auth.Role, len(claims.Roles))
-	for i, r := range claims.Roles {
-		roles[i] = auth.Role(r)
-	}
+	roles := authRoleValues(claims.Roles)
 	user := &auth.User{
 		ID:       claims.Sub,
 		Username: claims.Username,
@@ -447,20 +444,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 // handleChangePassword allows users to change their own password.
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writePostRequired(w, r)
-		return
-	}
-
-	if s.auth == nil {
-		s.writeAuthenticationNotConfigured(w, r)
-		return
-	}
-
-	// Get authenticated user
-	claims := getClaims(r)
+	claims := s.selfServiceClaims(w, r, http.MethodPost, localization.PostRequired())
 	if claims == nil {
-		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -469,21 +454,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"new_password"`
 	}
 
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeInvalidRequestBody(w, r)
+	username, ok := s.readSelfServiceActor(w, r, &req, claims)
+	if !ok {
 		return
-	}
-
-	// Get username from claims
-	username := claims.Username
-	if username == "" {
-		// Fallback to subject if username not in claims
-		user, err := s.auth.GetUserByID(claims.Sub)
-		if err != nil {
-			s.writeUserNotFound(w, r)
-			return
-		}
-		username = user.Username
 	}
 
 	// Change password
@@ -502,20 +475,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateProfile allows users to update their own profile information.
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PutRequired(), ErrMethodNotAllowed)
-		return
-	}
-
-	if s.auth == nil {
-		s.writeAuthenticationNotConfigured(w, r)
-		return
-	}
-
-	// Get authenticated user
-	claims := getClaims(r)
+	claims := s.selfServiceClaims(w, r, http.MethodPut, localization.PutRequired())
 	if claims == nil {
-		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -524,21 +485,9 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeInvalidRequestBody(w, r)
+	username, ok := s.readSelfServiceActor(w, r, &req, claims)
+	if !ok {
 		return
-	}
-
-	// Get username from claims
-	username := claims.Username
-	if username == "" {
-		// Fallback to subject if username not in claims
-		user, err := s.auth.GetUserByID(claims.Sub)
-		if err != nil {
-			s.writeUserNotFound(w, r)
-			return
-		}
-		username = user.Username
 	}
 
 	// Update user profile
@@ -571,10 +520,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		roles := make([]auth.Role, len(req.Roles))
-		for i, r := range req.Roles {
-			roles[i] = auth.Role(r)
-		}
+		roles := authRoleValues(req.Roles)
 
 		user, err := s.auth.CreateUser(req.Username, req.Password, roles)
 		if err != nil {
@@ -619,10 +565,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 
 		var roles []auth.Role
 		if len(req.Roles) > 0 {
-			roles = make([]auth.Role, len(req.Roles))
-			for i, r := range req.Roles {
-				roles[i] = auth.Role(r)
-			}
+			roles = authRoleValues(req.Roles)
 		}
 		if err := s.auth.UpdateRolesAndStatus(r.Context(), username, roles, req.Disabled); err != nil {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)

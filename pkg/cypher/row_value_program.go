@@ -299,7 +299,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 	if isCaseExpression(expr) {
 		return bound(expr, c.compileCase(expr), impureRowValue())
 	}
-	if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime); projection {
+	if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime, nil); projection {
 		return rowTextValue(expr)
 	}
 	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {

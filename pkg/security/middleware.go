@@ -2,11 +2,11 @@
 package security
 
 import (
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"golang.org/x/text/language"
 )
 
 // SecurityMiddleware wraps HTTP handlers with security validations.
@@ -48,26 +48,6 @@ func (m *SecurityMiddleware) SetLocalizer(manager *localization.Manager) {
 	m.localizer = manager
 }
 
-func (m *SecurityMiddleware) writeError(w http.ResponseWriter, r *http.Request, message localization.Message, status int) {
-	text := message.Fallback
-	tag := language.AmericanEnglish
-	if m.localizer != nil {
-		ctx := r.Context()
-		preferences, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
-		if err == nil && len(preferences) > 0 {
-			match := m.localizer.Resolve("http", preferences...)
-			ctx = localization.WithPreferences(ctx, match.Tag)
-		}
-		if rendered, resolved, err := m.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
-			text = rendered
-			tag = resolved
-		}
-	}
-	w.Header().Set("Content-Language", tag.String())
-	w.Header().Add("Vary", "Accept-Language")
-	http.Error(w, text, status)
-}
-
 // ValidateRequest performs comprehensive security validation on incoming requests.
 func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +55,7 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		for name, values := range r.Header {
 			for _, value := range values {
 				if err := ValidateHeaderValue(value); err != nil {
-					m.writeError(w, r, localization.InvalidHeader(name, err), http.StatusBadRequest)
+					httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.InvalidHeader(name, err), http.StatusBadRequest, httpresponse.PlainText)
 					return
 				}
 			}
@@ -88,7 +68,7 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 			if len(parts) == 2 {
 				token := strings.TrimSpace(parts[1])
 				if err := ValidateToken(token); err != nil {
-					m.writeError(w, r, localization.InvalidAuthorizationToken(err), http.StatusUnauthorized)
+					httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.InvalidAuthorizationToken(err), http.StatusUnauthorized, httpresponse.PlainText)
 					return
 				}
 			}
@@ -98,7 +78,7 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		query := r.URL.Query()
 		if tokenParam := query.Get("token"); tokenParam != "" {
 			if err := ValidateToken(tokenParam); err != nil {
-				m.writeError(w, r, localization.InvalidTokenParameter(err), http.StatusUnauthorized)
+				httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.InvalidTokenParameter(err), http.StatusUnauthorized, httpresponse.PlainText)
 				return
 			}
 		}
@@ -112,7 +92,7 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		for _, param := range urlParams {
 			if urlValue := query.Get(param); urlValue != "" {
 				if err := ValidateURL(urlValue, urlPolicy); err != nil {
-					m.writeError(w, r, localization.InvalidURLParameter(param, err), http.StatusBadRequest)
+					httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.InvalidURLParameter(param, err), http.StatusBadRequest, httpresponse.PlainText)
 					return
 				}
 			}

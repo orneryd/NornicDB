@@ -8,23 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplyWithProjection_ExpressionFallbackBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_with_more_cov"))
-	ctx := context.Background()
-
-	n := &storage.Node{
-		ID:         "n1",
-		Labels:     []string{"Node"},
-		Properties: map[string]interface{}{"name": "alice"},
-	}
-	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{"n": n, "score": int64(7)}}, "WITH toUpper(n.name) AS upper", nil, false)
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{"upper": "ALICE"}}, projected)
-	_, err := exec.Execute(ctx, "WITH 7 AS score WITH ghost.prop AS g RETURN g", nil)
-	require.Error(t, err)
-	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-}
-
 func TestExecuteMergeWithChain_ChainBreakSkipsIntermediateClauses(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "merge_chain_skip_cov")
@@ -134,4 +117,56 @@ func TestExecuteMergeWithChain_RelationshipBranchesAndChainBreak(t *testing.T) {
 	verify, err = exec.Execute(ctx, "MATCH (x:A {id:'x'}) RETURN count(x)", nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, verify.Rows[0][0])
+}
+
+func TestApplyWithProjection_Populations(t *testing.T) {
+	fallbackNode := &storage.Node{ID: "n1", Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "alice"}}
+	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
+	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
+	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
+	type projectionCase struct {
+		clause  string
+		rows    []pipelineRow
+		failure bool
+	}
+	for _, group := range []struct {
+		name, namespace      string
+		input                []pipelineRow
+		cases                []projectionCase
+		checkMissingProperty bool
+	}{
+		{"TestApplyWithProjection_ExpressionFallbackBranches", "merge_with_more_cov", []pipelineRow{{"n": fallbackNode, "score": int64(7)}}, []projectionCase{{"WITH toUpper(n.name) AS upper", []pipelineRow{{"upper": "ALICE"}}, false}}, true},
+		{"TestApplyWithProjection_Branches", "test", input, []projectionCase{
+			{"WITH *", input, false},
+			{"WITH n", []pipelineRow{{"n": n}}, false},
+			{"WITH answer AS projected", []pipelineRow{{"projected": int64(42)}}, false},
+			{"WITH n + 1 AS invalid", nil, true},
+		}, false},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), group.namespace))
+			ctx := context.Background()
+			for _, test := range group.cases {
+				operationCtx := ctx
+				if test.failure {
+					operationCtx = withExpressionFailureSlot(ctx)
+				}
+				projected, ok := exec.pipelineApplyWith(operationCtx, group.input, test.clause, nil, false)
+				if test.failure {
+					require.False(t, ok)
+					require.Nil(t, projected)
+					require.Error(t, getExpressionFailure(operationCtx))
+					require.Contains(t, statusText(getExpressionFailure(operationCtx)), "Neo.ClientError.Statement.TypeError")
+				} else {
+					require.True(t, ok)
+					require.Equal(t, test.rows, projected)
+				}
+			}
+			if group.checkMissingProperty {
+				_, err := exec.Execute(ctx, "WITH 7 AS score WITH ghost.prop AS g RETURN g", nil)
+				require.Error(t, err)
+				require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+			}
+		})
+	}
 }

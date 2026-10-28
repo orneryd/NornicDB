@@ -347,13 +347,19 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 	if start > 0 && (s[start-1] == '.' || s[start-1] == '$' || s[start-1] == ':') {
 		return false // a property, parameter or label completes an operand
 	}
-	switch word := lowerASCII(s[start : j+1]); word {
-	case "case", "when", "then", "else":
-		// After the keyword an operand is expected; after a variable of that
-		// name, it is complete.
-		return caseKeywordAtMode(s, start, upperASCII(word), balancePrefix)
-	case "with", "where", "return":
-		if word == "with" && casePreviousWordIn(s, start, "starts", "ends") {
+	word := s[start : j+1]
+	switch {
+	// A constant keyword preserves the contextual CASE decision without copying source.
+	case equalFoldASCII(word, "case"):
+		return caseKeywordAtMode(s, start, "CASE", balancePrefix)
+	case equalFoldASCII(word, "when"):
+		return caseKeywordAtMode(s, start, "WHEN", balancePrefix)
+	case equalFoldASCII(word, "then"):
+		return caseKeywordAtMode(s, start, "THEN", balancePrefix)
+	case equalFoldASCII(word, "else"):
+		return caseKeywordAtMode(s, start, "ELSE", balancePrefix)
+	case equalFoldASCII(word, "with"), equalFoldASCII(word, "where"), equalFoldASCII(word, "return"):
+		if equalFoldASCII(word, "with") && casePreviousWordIn(s, start, "starts", "ends") {
 			return true // STARTS WITH, ENDS WITH
 		}
 		// Clause keywords start the text or follow a complete clause; where
@@ -363,12 +369,12 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 			return !caseWordRoleAt(s, j+1, caseTestContinuation, false)
 		}
 		return !caseOperandExpectedBeforeMode(s, start, balancePrefix)
-	case "and", "or", "xor", "in", "contains", "as":
+	case equalFoldASCII(word, "and"), equalFoldASCII(word, "or"), equalFoldASCII(word, "xor"), equalFoldASCII(word, "in"), equalFoldASCII(word, "contains"), equalFoldASCII(word, "as"):
 		// Infix keywords follow a complete operand. Where one is expected,
 		// or at the start of a CASE body read on its own (and WHEN 1 …), the
 		// word is a variable that completes one.
 		return caseHasPreviousToken(s, start) && !caseOperandExpectedBeforeMode(s, start, balancePrefix)
-	case "not", "distinct":
+	case equalFoldASCII(word, "not"), equalFoldASCII(word, "distinct"):
 		// Prefix keywords stand where an operand is expected, as a variable
 		// does: the word is the keyword unless what follows ends an operand.
 		return !caseWordRoleAt(s, j+1, casePrefixVariable, balancePrefix)
@@ -397,8 +403,8 @@ func caseTypeParameterCloses(s string, j int) bool {
 				for start > 0 && cyphertext.NamePartAt(s, start-1) {
 					start--
 				}
-				switch lowerASCII(s[start:end]) {
-				case "list", "array", "any":
+				switch word := s[start:end]; {
+				case equalFoldASCII(word, "list"), equalFoldASCII(word, "array"), equalFoldASCII(word, "any"):
 					return true
 				}
 				return false
@@ -418,17 +424,14 @@ func caseTypeParameterCloses(s string, j int) bool {
 
 // casePreviousWordIn reports whether the word before s[i] is one of words.
 func casePreviousWordIn(s string, i int, words ...string) bool {
-	j := i - 1
-	for j >= 0 && cyphertext.IsWhitespaceAt(s, j) {
-		j--
-	}
+	j, _ := cyphertext.NeighborIndex(s, i, cyphertext.Before)
 	end := j + 1
 	for j >= 0 && cyphertext.NamePartAt(s, j) {
 		j--
 	}
-	previous := lowerASCII(s[j+1 : end])
+	previous := s[j+1 : end]
 	for _, word := range words {
-		if previous == word {
+		if equalFoldASCII(previous, word) {
 			return true
 		}
 	}
@@ -437,12 +440,8 @@ func casePreviousWordIn(s string, i int, words ...string) bool {
 
 // caseHasPreviousToken reports whether anything but space precedes s[i].
 func caseHasPreviousToken(s string, i int) bool {
-	for j := i - 1; j >= 0; j-- {
-		if !cyphertext.IsWhitespaceAt(s, j) {
-			return true
-		}
-	}
-	return false
+	_, found := cyphertext.NeighborIndex(s, i, cyphertext.Before)
+	return found
 }
 
 // caseNestedLacksEnd reports, for a CASE right after CASE at s[i], whether
@@ -494,8 +493,8 @@ func caseOperandEndsAt(s string, i int) bool {
 	if !cyphertext.NameStartAt(s, i) {
 		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
 	}
-	switch caseWordAt(s, i) {
-	case "then", "else", "end", "as", "and", "or", "xor", "is", "in", "contains", "starts", "ends":
+	switch word := caseWordAt(s, i); {
+	case equalFoldASCII(word, "then"), equalFoldASCII(word, "else"), equalFoldASCII(word, "end"), equalFoldASCII(word, "as"), equalFoldASCII(word, "and"), equalFoldASCII(word, "or"), equalFoldASCII(word, "xor"), equalFoldASCII(word, "is"), equalFoldASCII(word, "in"), equalFoldASCII(word, "contains"), equalFoldASCII(word, "starts"), equalFoldASCII(word, "ends"):
 		return true
 	}
 	return false
@@ -509,7 +508,7 @@ func caseBinaryOperatorAt(s string, i int) bool {
 	return (s[i] == '+' || s[i] == '-') && i+1 < len(s) && cyphertext.IsWhitespaceAt(s, i+1)
 }
 
-// caseWordAt is the lower-case identifier word starting at s[i].
+// caseWordRole selects the source context in which a CASE word is read.
 type caseWordRole uint8
 
 const (
@@ -539,7 +538,7 @@ func caseWordRoleAt(s string, i int, role caseWordRole, balancePrefix bool) bool
 		if i >= len(s) || !cyphertext.NameStartAt(s, i) {
 			return i >= len(s)
 		}
-		if word == "end" && (strings.TrimSpace(s[i+len(word):]) == "" || balancePrefix && casePrefixEndRequired(s, i)) {
+		if equalFoldASCII(word, "end") && (strings.TrimSpace(s[i+len(word):]) == "" || balancePrefix && casePrefixEndRequired(s, i)) {
 			return true
 		}
 		if matchKeywordAt(s, queryGapEnd(s, i+len(word)), "WHEN") {
@@ -553,18 +552,20 @@ func caseWordRoleAt(s string, i int, role caseWordRole, balancePrefix bool) bool
 		if !cyphertext.NameStartAt(s, i) {
 			return strings.IndexByte(".=<>*/%^", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || s[i] == '[' && i == start
 		}
-		switch word {
-		case "and", "or", "xor", "is", "in", "contains", "starts", "ends", "when":
+		switch {
+		case equalFoldASCII(word, "and"), equalFoldASCII(word, "or"), equalFoldASCII(word, "xor"), equalFoldASCII(word, "is"), equalFoldASCII(word, "in"), equalFoldASCII(word, "contains"), equalFoldASCII(word, "starts"), equalFoldASCII(word, "ends"), equalFoldASCII(word, "when"):
 			return !caseOperandEndsAt(s, i+len(word))
 		}
 	}
 	return false
 }
 
+// caseWordAt returns the written source view; consumers compare ASCII keywords
+// without normalizing or allocating an identity copy.
 func caseWordAt(s string, i int) string {
 	end := i
 	end = cyphertext.NamePartEnd(s, end)
-	return lowerASCII(s[i:end])
+	return s[i:end]
 }
 
 func isCaseWordStart(expression string, index int) bool {

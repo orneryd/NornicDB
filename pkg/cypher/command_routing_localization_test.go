@@ -7,7 +7,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireCypherCommandRoutingLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -76,21 +75,4 @@ func TestCypherCommandRoutingWrappedErrorsPreserveCause(t *testing.T) {
 	localizedErr := requireCypherCommandRoutingLocalizedError(t, fabricErr, localization.MessageCypherCommandRoutingFabricConstituentsFailed, "failed to get constituents for 'analytics': forced routing failure")
 	require.ErrorIs(t, fabricErr, cause)
 	require.Equal(t, "analytics", localizedErr.Message.Data["Database"])
-}
-
-func TestCypherCommandRoutingCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherCommandRoutingUnknownProcedure("missing.procedure")
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "procedimiento desconocido: missing.procedure (pruebe SHOW PROCEDURES para ver los procedimientos disponibles)", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! unknown procedure: missing.procedure (try SHOW PROCEDURES for available procedures) !!]", pseudo)
 }

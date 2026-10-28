@@ -2,7 +2,6 @@ package bolt
 
 import (
 	"context"
-	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
@@ -23,27 +22,34 @@ func TestStatementCacheFamilyDroppedDatabaseCaches(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = manager.Close() })
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
-	adapter := &boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: manager}}
+	adapter := &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(manager)}
 	session := &Session{server: server, forwardedAuthHeader: "Bearer lifecycle-test"}
-	for i := range 64 {
-		name := fmt.Sprintf("cache_tenant_%d", i)
-		if err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
-			t.Fatal(err)
-		}
-		executor, err := session.getExecutorForDatabase(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := executor.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
-			t.Fatal(err)
-		}
-		if err := adapter.DropDatabase(t.Context(), name); err != nil {
-			t.Fatal(err)
-		}
-		retired := executor.(*boltQueryExecutorAdapter).executor
-		// Inspect existing cache fields so this regression also runs before the owner API.
-		assertDroppedBoltTextCacheEmpty(t, retired)
-	}
+	var executor QueryExecutor
+	fixtureowner.RunCatalogDropCycles(t, 64, "cache_tenant_",
+		func(name string) error {
+			return adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name})
+		},
+		func(name string) error {
+			var err error
+			executor, err = session.getExecutorForDatabase(name)
+			if err != nil {
+				return err
+			}
+			if _, err := executor.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
+				return err
+			}
+			return nil
+		},
+		func(name string) error {
+			if err := adapter.DropDatabase(t.Context(), name); err != nil {
+				return err
+			}
+			retired := executor.(*boltQueryExecutorAdapter).executor
+			// Inspect existing cache fields so this regression also runs before the owner API.
+			assertDroppedBoltTextCacheEmpty(t, retired)
+			return nil
+		},
+	)
 	if len(server.executors) != 0 {
 		t.Fatal("bearer path cached execution state")
 	}

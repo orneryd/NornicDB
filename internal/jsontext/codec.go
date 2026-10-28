@@ -169,19 +169,11 @@ func (r RawMessage) MarshalJSON() ([]byte, error) {
 type NumberMap map[string]any
 
 func (m *NumberMap) UnmarshalJSON(raw []byte) error {
-	value, err := decodeValue(raw, true)
+	object, err := decodeNumberContainer[map[string]any](raw, "json: cannot unmarshal non-object into NumberMap")
 	if err != nil {
 		return err
 	}
-	if value == nil {
-		*m = nil
-		return nil
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		return errors.New("json: cannot unmarshal non-object into NumberMap")
-	}
-	if *m == nil {
+	if object == nil || *m == nil {
 		*m = object
 	} else {
 		for key, value := range object {
@@ -195,20 +187,30 @@ func (m *NumberMap) UnmarshalJSON(raw []byte) error {
 type NumberList []any
 
 func (m *NumberList) UnmarshalJSON(raw []byte) error {
-	value, err := decodeValue(raw, true)
+	list, err := decodeNumberContainer[[]any](raw, "json: cannot unmarshal non-array into NumberList")
 	if err != nil {
 		return err
 	}
-	if value == nil {
-		*m = nil
-		return nil
-	}
-	list, ok := value.([]any)
-	if !ok {
-		return errors.New("json: cannot unmarshal non-array into NumberList")
-	}
 	*m = list
 	return nil
+}
+
+// decodeNumberContainer owns exact-number decoding, null and container shape.
+// Destination reuse remains the concrete container's assignment policy.
+func decodeNumberContainer[T map[string]any | []any](raw []byte, mismatch string) (T, error) {
+	var zero T
+	value, err := decodeValue(raw, true)
+	if err != nil {
+		return zero, err
+	}
+	if value == nil {
+		return zero, nil
+	}
+	typed, ok := value.(T)
+	if !ok {
+		return zero, errors.New(mismatch)
+	}
+	return typed, nil
 }
 
 func decodeValue(raw []byte, projected bool) (any, error) {

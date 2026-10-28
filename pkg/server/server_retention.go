@@ -13,20 +13,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/retention"
 )
 
-func (s *Server) registerRetentionRoutes(mux *http.ServeMux) {
-	s.registerRouteTable(mux, []routeSpec{
-		{"/admin/retention/policies", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPoliciesRoute) }},
-		{"/admin/retention/policies/{id}", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPolicyRoute) }},
-		{"/admin/retention/policies/defaults", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionDefaultsRoute) }},
-		{"/admin/retention/holds", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionHoldsRoute) }},
-		{"/admin/retention/holds/{id}", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionHoldRoute) }},
-		{"/admin/retention/erasures", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionErasuresRoute) }},
-		{"/admin/retention/erasures/{id}/process", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionProcessRoute) }},
-		{"/admin/retention/sweep", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionSweepRoute) }},
-		{"/admin/retention/status", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionStatusRoute) }},
-	})
-}
-
 func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *retention.Manager {
 	permissions := []auth.Permission{auth.PermRead, auth.PermAdmin}
 	if r.Method != http.MethodGet {

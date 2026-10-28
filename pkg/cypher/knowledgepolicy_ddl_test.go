@@ -10,6 +10,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestKnowledgeQuotedStringValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		value string
+		end   int
+	}{
+		{
+			name:  "TestKpScanQuotedString_SingleQuote",
+			input: "'hello world'",
+			value: "hello world",
+			end:   13,
+		},
+		{
+			name:  "TestKpScanQuotedString_DoubleQuote",
+			input: `"hello"`,
+			value: "hello",
+			end:   7,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			val, j := kpScanQuotedString(test.input, 0)
+			assert.Equal(t, test.value, val)
+			assert.Equal(t, test.end, j)
+		})
+	}
+}
+
 // ── Non-knowledge-policy statements ─────────────────────────────────────────
 
 // ── CREATE DECAY PROFILE … OPTIONS (bundle) ────────────────────────────────
@@ -113,6 +142,8 @@ func TestKpScanDecimal_Negative(t *testing.T) {
 	}{
 		{name: "floating", input: "-3.14", floating: true, want: float64(-3.14), end: 5},
 		{name: "integer", input: "-99", want: int64(-99), end: 3},
+		{name: "TestKpScanNumber_Integer", input: "42", floating: true, want: float64(42.0), end: 2},
+		{name: "TestKpScanInt_Valid", input: "12345", floating: false, want: int64(12345), end: 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var value any
@@ -130,37 +161,28 @@ func TestKpScanDecimal_Negative(t *testing.T) {
 	}
 }
 
-func TestKpScanNumber_Integer(t *testing.T) {
-	f, j, ok := kpScanDecimal[float64]("42", 0)
-	require.True(t, ok)
-	assert.Equal(t, 42.0, f)
-	assert.Equal(t, 2, j)
-}
-
 func TestKpScanNumber_InvalidInput(t *testing.T) {
 	_, _, ok := kpScanDecimal[float64]("abc", 0)
 	assert.False(t, ok)
 }
 
-func TestKpScanInt_Valid(t *testing.T) {
-	n, j, ok := kpScanDecimal[int64]("12345", 0)
-	require.True(t, ok)
-	assert.Equal(t, int64(12345), n)
-	assert.Equal(t, 5, j)
-}
-
-func TestKpScanBool_True(t *testing.T) {
-	b, j, ok := kpScanBool("TRUE rest", 0)
-	require.True(t, ok)
-	assert.True(t, b)
-	assert.Equal(t, 4, j)
-}
-
-func TestKpScanBool_False(t *testing.T) {
-	b, j, ok := kpScanBool("FALSE rest", 0)
-	require.True(t, ok)
-	assert.False(t, b)
-	assert.Equal(t, 5, j)
+func TestKnowledgeBooleanValues(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input string
+		value bool
+		end   int
+	}{
+		{"TestKpScanBool_True", "TRUE rest", true, 4},
+		{"TestKpScanBool_False", "FALSE rest", false, 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, end, ok := kpScanBool(test.input, 0)
+			require.True(t, ok)
+			assert.Equal(t, test.value, value)
+			assert.Equal(t, test.end, end)
+		})
+	}
 }
 
 func TestKpScanBool_Invalid(t *testing.T) {
@@ -168,37 +190,8 @@ func TestKpScanBool_Invalid(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestKpScanQuotedString_SingleQuote(t *testing.T) {
-	val, j := kpScanQuotedString("'hello world'", 0)
-	assert.Equal(t, "hello world", val)
-	assert.Equal(t, 13, j)
-}
-
-func TestKpScanQuotedString_DoubleQuote(t *testing.T) {
-	val, j := kpScanQuotedString(`"hello"`, 0)
-	assert.Equal(t, "hello", val)
-	assert.Equal(t, 7, j)
-}
-
 func TestKpScanQuotedString_Unterminated(t *testing.T) {
 	_, j := kpScanQuotedString("'unterminated", 0)
-	assert.Equal(t, -1, j)
-}
-
-func TestKpScanBraceBlock_Balanced(t *testing.T) {
-	inner, j := kpScanBraceBlock("{ a: 1, b: { c: 2 } }", 0)
-	assert.Equal(t, " a: 1, b: { c: 2 } ", inner)
-	assert.Equal(t, 21, j)
-}
-
-func TestKpScanBraceBlock_NoTrailingWhitespace(t *testing.T) {
-	inner, j := kpScanBraceBlock("{abc}", 0)
-	assert.Equal(t, "abc", inner)
-	assert.Equal(t, 5, j)
-}
-
-func TestKpScanBraceBlock_Unbalanced(t *testing.T) {
-	_, j := kpScanBraceBlock("{ a: 1, b: { c: 2 }", 0)
 	assert.Equal(t, -1, j)
 }
 
@@ -210,24 +203,6 @@ func TestKpMatchKeywordAt_CaseInsensitive(t *testing.T) {
 
 func TestKpMatchKeywordAt_NoPartialMatch(t *testing.T) {
 	assert.Equal(t, -1, cyphertext.KeywordEnd("CREATING", 0, "CREATE", cyphertext.CypherWord))
-}
-
-func TestKpScanIdent_ValidIdent(t *testing.T) {
-	name, j := kpScanIdent("my_ident123 rest", 0)
-	assert.Equal(t, "my_ident123", name)
-	assert.Equal(t, 11, j)
-}
-
-func TestKpScanIdent_StartsWithDigit(t *testing.T) {
-	name, j := kpScanIdent("123abc", 0)
-	assert.Equal(t, "", name)
-	assert.Equal(t, 0, j)
-}
-
-func TestKpScanIdent_Empty(t *testing.T) {
-	name, j := kpScanIdent("", 0)
-	assert.Equal(t, "", name)
-	assert.Equal(t, 0, j)
 }
 
 // ── Plan-syntax DDL examples ──────────────────────────────────────────────────
@@ -811,43 +786,6 @@ func TestKnowledgePolicyDDLProducts_AlterDecayProfileBindingCmd(t *testing.T) {
 	})
 }
 
-func TestKnowledgePolicyDDLProducts_DropDecayProfileCmd(t *testing.T) {
-	runKPProductCases(t, []kpDDLProductCase[*DropDecayProfileCmd]{
-		{name: "TestParseDDL_DropDecayProfile", query: `DROP DECAY PROFILE slow_decay`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
-			assert.Equal(t, "slow_decay", c.Name)
-			assert.False(t, c.IfExists)
-
-		}},
-		{name: "TestParseDDL_DropDecayProfile_IfExists", query: `DROP DECAY PROFILE IF EXISTS slow_decay`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
-			assert.Equal(t, "slow_decay", c.Name)
-			assert.True(t, c.IfExists)
-
-		}},
-		{name: "TestParseDDL_DropDecayProfile_QuotedName", query: `DROP DECAY PROFILE 'my-profile'`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
-			assert.Equal(t, "my-profile", c.Name)
-
-		}},
-		{name: "TestPlanDDL_DropDecayProfileByName", query: `DROP DECAY PROFILE session_record_retention;`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
-			assert.Equal(t, "session_record_retention", c.Name)
-
-		}},
-	})
-}
-
-func TestKnowledgePolicyDDLProducts_ShowDecayProfilesCmd(t *testing.T) {
-	runKPProductCases(t, []kpDDLProductCase[*ShowDecayProfilesCmd]{
-		{name: "TestParseDDL_ShowDecayProfiles", query: `SHOW DECAY PROFILES`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
-
-		}},
-		{name: "TestParseDDL_ShowDecayProfiles_CaseInsensitive", query: `show decay profiles`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
-
-		}},
-		{name: "TestPlanDDL_ShowDecayProfiles", query: `SHOW DECAY PROFILES;`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
-
-		}},
-	})
-}
-
 func TestKnowledgePolicyDDLProducts_CreatePromotionProfileCmd(t *testing.T) {
 	runKPProductCases(t, []kpDDLProductCase[*CreatePromotionProfileCmd]{
 		{name: "TestParseDDL_CreatePromotionProfile", query: `CREATE PROMOTION PROFILE boost OPTIONS {
@@ -905,33 +843,6 @@ func TestKnowledgePolicyDDLProducts_AlterPromotionProfileCmd(t *testing.T) {
 			assert.Equal(t, "boost", c.Name)
 			assert.Equal(t, 3.0, c.Updates["multiplier"])
 			assert.Equal(t, 0.95, c.Updates["scoreCap"])
-
-		}},
-	})
-}
-
-func TestKnowledgePolicyDDLProducts_DropPromotionProfileCmd(t *testing.T) {
-	runKPProductCases(t, []kpDDLProductCase[*DropPromotionProfileCmd]{
-		{name: "TestParseDDL_DropPromotionProfile", query: `DROP PROMOTION PROFILE boost`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
-			assert.Equal(t, "boost", c.Name)
-			assert.False(t, c.IfExists)
-
-		}},
-		{name: "TestParseDDL_DropPromotionProfile_IfExists", query: `DROP PROMOTION PROFILE IF EXISTS boost`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
-			assert.Equal(t, "boost", c.Name)
-			assert.True(t, c.IfExists)
-
-		}},
-		{name: "TestPlanDDL_DropPromotionProfile", query: `DROP PROMOTION PROFILE reinforced_tier;`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
-			assert.Equal(t, "reinforced_tier", c.Name)
-
-		}},
-	})
-}
-
-func TestKnowledgePolicyDDLProducts_ShowPromotionProfilesCmd(t *testing.T) {
-	runKPProductCases(t, []kpDDLProductCase[*ShowPromotionProfilesCmd]{
-		{name: "TestParseDDL_ShowPromotionProfiles", query: `SHOW PROMOTION PROFILES`, stage: RawSource, check: func(t *testing.T, c *ShowPromotionProfilesCmd) {
 
 		}},
 	})
@@ -1242,7 +1153,89 @@ func TestKnowledgePolicyDDLProducts_AlterPromotionPolicyDefinitionCmd(t *testing
 	})
 }
 
-func TestKnowledgePolicyDDLProducts_DropPromotionPolicyCmd(t *testing.T) {
+// TestKnowledgeScannerValueExtents keeps the original decoded-value and extent
+// controls while the grammar consumers share canonical identifier admission.
+func TestKnowledgeScannerValueExtents(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		read          func(string, int) (string, int)
+		source, value string
+		end           int
+		checkValue    bool
+	}{
+		{"TestKpScanBraceBlock_Balanced", kpScanBraceBlock, "{ a: 1, b: { c: 2 } }", " a: 1, b: { c: 2 } ", 21, true},
+		{"TestKpScanBraceBlock_NoTrailingWhitespace", kpScanBraceBlock, "{abc}", "abc", 5, true},
+		{"TestKpScanBraceBlock_Unbalanced", kpScanBraceBlock, "{ a: 1, b: { c: 2 }", "", -1, false},
+		{"TestKpScanIdent_ValidIdent", cyphertext.IdentifierValue, "my_ident123 rest", "my_ident123", 11, true},
+		{"TestKpScanIdent_StartsWithDigit", cyphertext.IdentifierValue, "123abc", "", 0, true},
+		{"TestKpScanIdent_Empty", cyphertext.IdentifierValue, "", "", 0, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, end := test.read(test.source, 0)
+			if test.checkValue {
+				assert.Equal(t, test.value, value)
+			}
+			assert.Equal(t, test.end, end)
+		})
+	}
+}
+
+// TestKnowledgePolicyCatalogProducts registers the typed DROP/SHOW cases with
+// their existing shared execution owner. Each original input, command-type
+// assertion, field assertion and named subcase remains unchanged.
+func TestKnowledgePolicyCatalogProducts(t *testing.T) {
+	runKPProductCases(t, []kpDDLProductCase[*DropDecayProfileCmd]{
+		{name: "TestParseDDL_DropDecayProfile", query: `DROP DECAY PROFILE slow_decay`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
+			assert.Equal(t, "slow_decay", c.Name)
+			assert.False(t, c.IfExists)
+
+		}},
+		{name: "TestParseDDL_DropDecayProfile_IfExists", query: `DROP DECAY PROFILE IF EXISTS slow_decay`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
+			assert.Equal(t, "slow_decay", c.Name)
+			assert.True(t, c.IfExists)
+
+		}},
+		{name: "TestParseDDL_DropDecayProfile_QuotedName", query: `DROP DECAY PROFILE 'my-profile'`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
+			assert.Equal(t, "my-profile", c.Name)
+
+		}},
+		{name: "TestPlanDDL_DropDecayProfileByName", query: `DROP DECAY PROFILE session_record_retention;`, stage: RawSource, check: func(t *testing.T, c *DropDecayProfileCmd) {
+			assert.Equal(t, "session_record_retention", c.Name)
+
+		}},
+	})
+	runKPProductCases(t, []kpDDLProductCase[*ShowDecayProfilesCmd]{
+		{name: "TestParseDDL_ShowDecayProfiles", query: `SHOW DECAY PROFILES`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
+
+		}},
+		{name: "TestParseDDL_ShowDecayProfiles_CaseInsensitive", query: `show decay profiles`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
+
+		}},
+		{name: "TestPlanDDL_ShowDecayProfiles", query: `SHOW DECAY PROFILES;`, stage: RawSource, check: func(t *testing.T, c *ShowDecayProfilesCmd) {
+
+		}},
+	})
+	runKPProductCases(t, []kpDDLProductCase[*DropPromotionProfileCmd]{
+		{name: "TestParseDDL_DropPromotionProfile", query: `DROP PROMOTION PROFILE boost`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
+			assert.Equal(t, "boost", c.Name)
+			assert.False(t, c.IfExists)
+
+		}},
+		{name: "TestParseDDL_DropPromotionProfile_IfExists", query: `DROP PROMOTION PROFILE IF EXISTS boost`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
+			assert.Equal(t, "boost", c.Name)
+			assert.True(t, c.IfExists)
+
+		}},
+		{name: "TestPlanDDL_DropPromotionProfile", query: `DROP PROMOTION PROFILE reinforced_tier;`, stage: RawSource, check: func(t *testing.T, c *DropPromotionProfileCmd) {
+			assert.Equal(t, "reinforced_tier", c.Name)
+
+		}},
+	})
+	runKPProductCases(t, []kpDDLProductCase[*ShowPromotionProfilesCmd]{
+		{name: "TestParseDDL_ShowPromotionProfiles", query: `SHOW PROMOTION PROFILES`, stage: RawSource, check: func(t *testing.T, c *ShowPromotionProfilesCmd) {
+
+		}},
+	})
 	runKPProductCases(t, []kpDDLProductCase[*DropPromotionPolicyCmd]{
 		{name: "TestParseDDL_DropPromotionPolicy", query: `DROP PROMOTION POLICY fact_promo`, stage: RawSource, check: func(t *testing.T, c *DropPromotionPolicyCmd) {
 			assert.Equal(t, "fact_promo", c.Name)
@@ -1259,9 +1252,6 @@ func TestKnowledgePolicyDDLProducts_DropPromotionPolicyCmd(t *testing.T) {
 
 		}},
 	})
-}
-
-func TestKnowledgePolicyDDLProducts_ShowPromotionPoliciesCmd(t *testing.T) {
 	runKPProductCases(t, []kpDDLProductCase[*ShowPromotionPoliciesCmd]{
 		{name: "TestParseDDL_ShowPromotionPolicies", query: `SHOW PROMOTION POLICIES`, stage: RawSource, check: func(t *testing.T, c *ShowPromotionPoliciesCmd) {
 

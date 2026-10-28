@@ -371,3 +371,29 @@ func doubleQuoteStringLiterals(expression string) string {
 }
 
 func useKeywordAt(query string, at int) bool { return keywordAt(query, at, "USE") }
+
+// splitAtTopLevelUse splits query at the first top-level USE after any other
+// text, with indexTopLevelKeyword as the one reader of quote, comment and
+// nesting traversal. It returns the original source before and from USE; a
+// leading USE stays with parseLeadingUse, and a query without such a USE
+// returns empty strings and false.
+func splitAtTopLevelUse(query string, isName ClauseKeywordNameReader) (string, string, bool) {
+	start := 0
+	for {
+		idx := indexTopLevelKeyword(query[start:], "USE")
+		if idx < 0 {
+			return "", "", false
+		}
+		at := start + idx
+		// Leading USE is already handled by parseLeadingUse.
+		if strings.TrimSpace(query[:at]) == "" {
+			start = at + len("USE")
+			continue
+		}
+		if !clauseKeywordAt(query, at, "USE", isName) {
+			start = at + len("USE")
+			continue
+		}
+		return query[:at], query[at:], true
+	}
+}
