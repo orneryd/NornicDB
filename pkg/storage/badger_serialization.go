@@ -127,6 +127,14 @@ func putValueEncoder(encoder *valueEncoder) {
 }
 
 func (e *valueEncoder) encode(value any) ([]byte, error) {
+	e.reset()
+	if err := e.msgpack.Encode(value); err != nil {
+		return nil, err
+	}
+	return e.buffer.Bytes(), nil
+}
+
+func (e *valueEncoder) reset() {
 	e.buffer.Reset()
 	e.buffer.WriteString(serializationMagic)
 	e.buffer.WriteByte(serializationVersion)
@@ -137,10 +145,6 @@ func (e *valueEncoder) encode(value any) ([]byte, error) {
 		// Reset options and dictionaries just as msgpack.Marshal does.
 		e.msgpack.Reset(&e.buffer)
 	}
-	if err := e.msgpack.Encode(value); err != nil {
-		return nil, err
-	}
-	return e.buffer.Bytes(), nil
 }
 
 // decodeValue reads a value emitted by encodeValue OR a legacy

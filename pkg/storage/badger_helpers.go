@@ -468,7 +468,8 @@ func (b *BadgerEngine) deleteEdgeBetweenHeadIfMatchesInTxn(txn *badger.Txn, edge
 // value, which readers answer from the record, as for entries written before
 // the values existed.
 func adjacencyValueFromRecord(record []byte) []byte {
-	if _, _, _, headerEnd, err := decodeEdgeCompactHeader(record, edgeFormatCompactV2); err == nil {
+	var edge Edge
+	if _, _, headerEnd, err := decodeEdgeCompactHeaderInto(record, edgeFormatCompactV2, &edge); err == nil {
 		return append([]byte(nil), record[:headerEnd]...)
 	}
 	return []byte{}

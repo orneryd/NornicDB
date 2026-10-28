@@ -2,7 +2,6 @@ package storage
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -169,14 +168,14 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 				return err
 			}
 			if err := item.Value(func(data []byte) error {
-				candidate, err := b.projectedEdge(data, edgeID, startNum, endNum, include)
+				candidate, _, _, err := b.decodeEdgeCompactV2(namespaceForEdgeID(edgeID), data, compactEdgeProjection{Start: startNum, End: endNum, Include: include})
 				if err != nil {
 					return err
 				}
 				if candidate == nil {
 					return nil
 				}
-				candidate.StartNode, candidate.EndNode = startID, endID
+				candidate.ID, candidate.StartNode, candidate.EndNode = edgeID, startID, endID
 				if candidate.Type != edgeType || b.filterEntityByDecay(visibleRead, candidate, nowNanos) || !match(candidate) {
 					return nil
 				}
@@ -210,28 +209,6 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 		_ = b.selfHealEdgeBetweenIndexes(legacy)
 	}
 	return filterEdgesBetween(legacy, startID, endID, edgeType, properties, match), nil
-}
-
-// projectedEdge decodes an edge body's header and the properties in include
-// (all of them when include is nil). It returns nil for an edge whose
-// endpoints aren't startNum / endNum.
-func (b *BadgerEngine) projectedEdge(data []byte, edgeID EdgeID, startNum, endNum uint64, include map[string]struct{}) (*Edge, error) {
-	edge, gotStart, gotEnd, offset, err := decodeEdgeCompactHeader(data, edgeFormatCompactV2)
-	if err != nil {
-		return nil, err
-	}
-	if gotStart != startNum || gotEnd != endNum {
-		return nil, nil
-	}
-	edge.ID = edgeID
-	if offset < len(data) && (include == nil || len(include) > 0) {
-		props, err := b.decodeTokenizedPropertiesProjected(namespaceForEdgeID(edgeID), data[offset:], include)
-		if err != nil {
-			return nil, fmt.Errorf("compact edge v2: %w", err)
-		}
-		edge.Properties = props
-	}
-	return edge, nil
 }
 
 // MatchEdgesBetween matches the engine's edges as this transaction sees

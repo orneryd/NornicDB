@@ -66,9 +66,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 			}); err != nil {
 				return fmt.Errorf("stream snapshot nodes: %w", err)
 			}
-			if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
-				return write(streamSnapshotEdge, edge)
-			}); err != nil {
+			if err := writeSnapshotEdges(ctx, engine, write); err != nil {
 				return fmt.Errorf("stream snapshot edges: %w", err)
 			}
 			return nil
@@ -212,7 +210,34 @@ type snapshotFrameWriter struct {
 }
 
 func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes int64) error {
-	payload, err := w.encoder.recovery(value)
+	var payload []byte
+	var err error
+	var edge *Edge
+	var raw *snapshotEdgeTranscoder
+	if frameType == streamSnapshotEdge {
+		switch typed := value.(type) {
+		case *snapshotEdgeTranscoder:
+			raw = typed
+		case *Edge:
+			edge = typed
+		case Edge:
+			edge = &typed
+		}
+	}
+	if raw != nil {
+		w.encoder.reset()
+		err = encodeSnapshotStoredEdge(w.encoder.msgpack, &raw.edge, raw.properties)
+		payload = w.encoder.buffer.Bytes()
+	} else if edge != nil {
+		// Both the reflected encoder and the stored-body transcoder use this
+		// order. Only snapshot edge maps change order; the format is unchanged.
+		w.encoder.reset()
+		w.encoder.msgpack.SetSortMapKeys(true)
+		err = w.encoder.msgpack.Encode(prepareRecoveryEdge(edge))
+		payload = w.encoder.buffer.Bytes()
+	} else {
+		payload, err = w.encoder.recovery(value)
+	}
 	if err != nil {
 		return err
 	}
