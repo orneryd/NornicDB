@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- WAL snapshots transcode eligible stored relationship properties through the shared
+  frame writer, reducing temporary allocations while retaining stored visibility,
+  buffered writes and recovery types. Values that normalize use the strict reader.
+
 - Standard Go database creation uses `DatabaseCreateRequest{Name, Options}`.
   CREATE DATABASE initial options now publish atomically with its name through
   one authoritative catalog commit; standalone ALTER options remain separate.
