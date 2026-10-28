@@ -11,6 +11,6 @@
 - [x] Classify only the frame writer's five-byte serialization scratch field, regenerate census and pass all four affected census guards without exemptions/assertion changes.
 - [x] Resolve all three fresh duplicate findings through canonical recovery/frame owners and one shared snapshot lifecycle. Enabled unchanged analyzer passes44changedfunctions against the newly ingested release graph.
 - [x] Complete the final fresh frozen `GOFLAGS=-count=1 make test` gate:125packages pass, exit0,1575.952s, source/index fingerprints stable.
-- [ ] Commit/push checked source and publish exact head/base/source evidence; update NOR-36 for review.
+- [x] Commit/push checked source and publish exact head/base/source evidence; update NOR-36 for review. Source commit45ff18346d317cc52d3121904c80d19b8ae40f21 and PR verification comment6469174654 record completion.
 
 Maintainer local gate is `make test`; broader verification is deferred. The first completed run is historical failing evidence, not a final pass. Scoped profiled allocation observations and original benchmark receipts retain their workload/source limits. No new storage keys, payload formats, version change or migration arm are introduced. Duplicate hook/analyzer implementations and discovery/assertion implementations remain unchanged; only reviewed field and pin metadata is updated. The installed checkout-scoped hook entry point cannot select a registered PR worktree; the identical installed staged-check library is invoked directly with that root and the existing configuration.
