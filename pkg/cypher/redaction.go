@@ -191,11 +191,28 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		query = normalized.String()
 	}
 	grammarValid := grammarAccepts(query)
-	// Valid syntax supplies roles: a property named password is ordinary
-	// structure, and all literal values below are still masked. If syntax
-	// cannot establish those roles, retain fail-closed PASSWORD projection.
-	if !grammarValid && cyphertext.PasswordBoundary(query) >= 0 {
-		return RedactedPlaceholder
+	// Grammar acceptance does not make every identifier public: a remote
+	// credential may be an unquoted keyword or a quoted identifier. Consume
+	// the retained grammar's credential roles before preserving identifiers.
+	// A property named password remains ordinary query structure.
+	if source.PasswordBoundary() >= 0 {
+		if !grammarValid {
+			return RedactedPlaceholder
+		}
+		syntax, err := cantlr.ParseSyntax(ctx, query, cantlr.StatementEntry, false, cyphertext.AcceptedSource)
+		if err != nil {
+			return RedactedPlaceholder
+		}
+		credential := false
+		syntax.Walk(func(node cantlr.SyntaxNode) func() {
+			if node.Rule() == cantlr.CypherParserRULE_credentialValue {
+				credential = true
+			}
+			return nil
+		})
+		if credential {
+			return RedactedPlaceholder
+		}
 	}
 
 	var b strings.Builder

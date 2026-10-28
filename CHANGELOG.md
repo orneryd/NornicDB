@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align remote composite database administration across native and ANTLR parsers,
+  preserve quoted catalog names in SHOW/DROP commands, and reject trailing input
+  before an existing database or alias can be changed.
+
 - Preserve named single-node CREATE path bindings and their node labels, properties
   and publication atomicity.
 

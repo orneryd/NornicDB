@@ -23,6 +23,8 @@ type UseClause struct {
 	Function string
 	// Args are a dynamic reference's argument expressions, as written.
 	Args []string
+	// Arguments retains the shared grammar's exact original expression extents.
+	Arguments []cypherantlr.UseArgument
 }
 
 // IsDynamic reports whether the clause looks its graph up with a function.
@@ -125,7 +127,7 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 		}
 		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(trimmed, skipSpacesAndComments(trimmed, len("USE")))))
 	}
-	clause = UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args}, End: reference.End}
+	clause = UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args, Arguments: reference.Arguments}, End: reference.End}
 	end := reference.AcceptedEnd
 
 	next := skipSpacesAndComments(trimmed, end)
