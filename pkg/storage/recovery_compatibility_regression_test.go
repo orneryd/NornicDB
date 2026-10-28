@@ -32,10 +32,13 @@ func TestRecoveryReadsLegacySnapshotFormats(t *testing.T) {
 	var framed bytes.Buffer
 	buffered := bufio.NewWriter(&framed)
 	require.NoError(t, writeSnapshotHeader(buffered, 19, legacy.Timestamp))
+	// The frame writer retains the published records as they are: a JSON
+	// message for readers that predate typed entities, and a footer.
+	frames := snapshotFrameWriter{writer: buffered}
 	nodeJSON, err := json.Marshal(n)
 	require.NoError(t, err)
-	require.NoError(t, writeSnapshotFrame(buffered, streamSnapshotNode, json.RawMessage(nodeJSON), defaultSnapshotRecordSize))
-	require.NoError(t, writeSnapshotFrame(buffered, streamSnapshotFooter, snapshotCompletion{Nodes: 1}, defaultSnapshotRecordSize))
+	require.NoError(t, frames.write(streamSnapshotNode, json.RawMessage(nodeJSON), defaultSnapshotRecordSize))
+	require.NoError(t, frames.write(streamSnapshotFooter, snapshotCompletion{Nodes: 1}, defaultSnapshotRecordSize))
 	require.NoError(t, buffered.Flush())
 	framed.Bytes()[4] = 1
 	visitor := &recoveryFieldsVisitor{}
@@ -237,8 +240,11 @@ func TestRecoveryCodecPointerAndNilPayloads(t *testing.T) {
 	raw, err := marshalWALRecoveryPayload(nil, map[string]any{"tx_id": "t"})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"tx_id":"t"}`, string(raw))
-	raw, err = encodeRecoveryPayload(WALBulkNodesData{})
+	encoder := getValueEncoder()
+	defer putValueEncoder(encoder)
+	retained, err := encoder.recovery(WALBulkNodesData{})
 	require.NoError(t, err)
+	raw = bytes.Clone(retained)
 	var bulk WALBulkNodesData
 	require.NoError(t, decodeRecoveryPayload(raw, &bulk))
 	assert.Nil(t, bulk.Nodes)
