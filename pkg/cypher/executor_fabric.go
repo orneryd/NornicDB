@@ -421,7 +421,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
-	_, err = names.restore(nil, err, parseItems)
+	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
 	return err
 }
 
@@ -836,7 +836,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}
 	if scopeErr != nil {
-		_, scopeErr = names.restore(nil, scopeErr, parseReturnItems)
+		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
 		return nil, nil, scopeErr
 	}
 	var result *ExecuteResult
@@ -850,7 +850,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	} else {
 		result, err = exec.executeInternal(ctx, query, params)
 	}
-	result, err = names.restore(result, err, parseReturnItems)
+	result, err = (resultRestoration{names: names}).restore(result, err, parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}

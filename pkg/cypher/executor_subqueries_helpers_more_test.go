@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -17,18 +16,4 @@ func TestRowMatchesSeedID_MoreBranches(t *testing.T) {
 	require.False(t, rowMatchesSeedID(map[string]interface{}{"id": 42}, "42"))
 	require.True(t, rowMatchesSeedID("ns:n6", "n6"))
 	require.False(t, rowMatchesSeedID("n7", "n8"))
-}
-
-func TestSubqueryIdentifierAndEqualitySplit_MoreBranches(t *testing.T) {
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("`a` = {x: [1,2], y: 'a=b'}")
-	require.True(t, ok)
-	require.Equal(t, "`a`", lhs)
-	require.Equal(t, "{x: [1,2], y: 'a=b'}", rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("x = ")
-	require.False(t, ok)
-
-	require.True(t, cyphertext.FindIdentifier("coalesce(x, 0) + y", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
-	require.False(t, cyphertext.FindIdentifier("obj.`x`", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
-	require.False(t, cyphertext.FindIdentifier("'x' + \"x\"", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 }

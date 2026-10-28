@@ -531,18 +531,36 @@ func hasSchemaDefinitionContent(def *storage.SchemaDefinition) bool {
 		len(def.PromotionPolicies) > 0
 }
 
+// constraintStatementRequest names one constraint origin for the canonical
+// renderer. general carries a stored general constraint and typeConstraint is
+// nil; typeConstraint carries a stored property-type constraint and general is
+// the zero value. The origins stay distinct because a general constraint of
+// type PROPERTY_TYPE carries no expected type to render.
+type constraintStatementRequest struct {
+	general        storage.Constraint
+	typeConstraint *storage.PropertyTypeConstraint
+}
+
+// constraintStatementFormat renders the maintained CREATE CONSTRAINT prefix
+// shared by every constraint kind.
+const constraintStatementFormat = "CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s"
+
+// constraintPropertyTypeSuffix completes a property-type requirement after the
+// rendered property reference with its IS :: type.
+const constraintPropertyTypeSuffix = " IS :: %s"
+
 func exportSchemaCypher(path string, schema *storage.SchemaManager) error {
 	if schema == nil {
 		return nil
 	}
 	statements := make([]string, 0)
 	for _, constraint := range schema.GetAllConstraints() {
-		if stmt, ok := renderConstraintStatement(constraint); ok {
+		if stmt, ok := renderConstraintStatement(constraintStatementRequest{general: constraint}); ok {
 			statements = append(statements, stmt)
 		}
 	}
 	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if stmt, ok := renderPropertyTypeConstraintStatement(typeConstraint); ok {
+		if stmt, ok := renderConstraintStatement(constraintStatementRequest{typeConstraint: &typeConstraint}); ok {
 			statements = append(statements, stmt)
 		}
 	}
@@ -559,62 +577,78 @@ func exportSchemaCypher(path string, schema *storage.SchemaManager) error {
 	return os.WriteFile(path, []byte(contents), 0o600)
 }
 
-func renderConstraintStatement(c storage.Constraint) (string, bool) {
-	entity := c.EffectiveEntityType()
-	props := cypherPropertyRefs(entityVariable(entity), c.Properties)
-	var pattern string
-	var requirement string
-	switch c.Type {
-	case storage.ConstraintUnique:
-		if len(props) != 1 {
+// renderConstraintStatement renders the CREATE CONSTRAINT statement for one
+// constraint origin. A property-type request always renders, exactly as the
+// property-type export always has; a general request keeps every kind's
+// validation and admission rule and rejects PROPERTY_TYPE, which has no
+// expected type in the general constraint payload.
+func renderConstraintStatement(request constraintStatementRequest) (string, bool) {
+	var name, pattern, requirement string
+	format := constraintStatementFormat
+	var args [4]any
+	count := 3
+	if typeConstraint := request.typeConstraint; typeConstraint != nil {
+		entity := typeConstraint.EffectiveEntityType()
+		name = typeConstraint.Name
+		pattern = cypherPattern(entity, typeConstraint.Label)
+		requirement = entityVariable(entity) + "." + cyphertext.PrintIdentifier(typeConstraint.Property, nil, cyphertext.RawSource)
+		format = constraintStatementFormat + constraintPropertyTypeSuffix
+		args[3] = typeConstraint.ExpectedType
+		count = 4
+	} else {
+		c := request.general
+		entity := c.EffectiveEntityType()
+		props := cypherPropertyRefs(entityVariable(entity), c.Properties)
+		switch c.Type {
+		case storage.ConstraintUnique:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IS UNIQUE"
+		case storage.ConstraintNodeKey:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS NODE KEY"
+		case storage.ConstraintExists:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IS NOT NULL"
+		case storage.ConstraintRelationshipKey:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS RELATIONSHIP KEY"
+		case storage.ConstraintTemporal:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS TEMPORAL NO OVERLAP"
+		case storage.ConstraintDomain:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IN [" + strings.Join(formatConstraintValues(c.AllowedValues), ", ") + "]"
+		case storage.ConstraintCardinality:
+			if entity != storage.ConstraintEntityRelationship {
+				return "", false
+			}
+			pattern = cypherRelationshipPattern(c.Label, c.Direction, "", "")
+			requirement = fmt.Sprintf("MAX COUNT %d", c.MaxCount)
+		case storage.ConstraintPolicy:
+			if entity != storage.ConstraintEntityRelationship {
+				return "", false
+			}
+			pattern = cypherRelationshipPattern(c.Label, "OUTGOING", c.SourceLabel, c.TargetLabel)
+			requirement = c.PolicyMode
+		default:
 			return "", false
 		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IS UNIQUE"
-	case storage.ConstraintNodeKey:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS NODE KEY"
-	case storage.ConstraintExists:
-		if len(props) != 1 {
-			return "", false
-		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IS NOT NULL"
-	case storage.ConstraintRelationshipKey:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS RELATIONSHIP KEY"
-	case storage.ConstraintTemporal:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS TEMPORAL NO OVERLAP"
-	case storage.ConstraintDomain:
-		if len(props) != 1 {
-			return "", false
-		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IN [" + strings.Join(formatConstraintValues(c.AllowedValues), ", ") + "]"
-	case storage.ConstraintCardinality:
-		if entity != storage.ConstraintEntityRelationship {
-			return "", false
-		}
-		pattern = cypherRelationshipPattern(c.Label, c.Direction, "", "")
-		requirement = fmt.Sprintf("MAX COUNT %d", c.MaxCount)
-	case storage.ConstraintPolicy:
-		if entity != storage.ConstraintEntityRelationship {
-			return "", false
-		}
-		pattern = cypherRelationshipPattern(c.Label, "OUTGOING", c.SourceLabel, c.TargetLabel)
-		requirement = c.PolicyMode
-	default:
-		return "", false
-	}
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s", cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource), pattern, requirement), true
-}
 
-func renderPropertyTypeConstraintStatement(c storage.PropertyTypeConstraint) (string, bool) {
-	entity := c.EffectiveEntityType()
-	pattern := cypherPattern(entity, c.Label)
-	ref := entityVariable(entity) + "." + cyphertext.PrintIdentifier(c.Property, nil, cyphertext.RawSource)
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s IS :: %s", cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource), pattern, ref, c.ExpectedType), true
+		name = c.Name
+	}
+	args[0] = cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
+	args[1] = pattern
+	args[2] = requirement
+	return fmt.Sprintf(format, args[:count]...), true
 }
 
 func renderIndexStatement(index any) (string, bool) {

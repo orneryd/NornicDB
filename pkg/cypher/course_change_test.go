@@ -19,11 +19,7 @@ import (
 )
 
 func TestCourseChangeCredentialOutput(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
-	require.NoError(t, err)
-	defer manager.Close()
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	executor := newCourseChangeCredentialFixture(t)
 	var logs bytes.Buffer
 	executor.SetLogger(slog.New(slog.NewJSONHandler(&logs, nil)))
 	executor.SetSlowQueryThreshold(time.Nanosecond)
@@ -75,11 +71,7 @@ func TestCourseChangeGraphNamedGraph(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 }
 func TestCourseChangeCredentialReaderProduct(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
-	require.NoError(t, err)
-	defer manager.Close()
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	executor := newCourseChangeCredentialFixture(t)
 	for index, value := range []struct{ raw, decoded string }{
 		{"'probe741928'", "probe741928"}, {`"probe741928"`, "probe741928"}, {"`probe741928`", "probe741928"},
 		{"probe741928", "probe741928"}, {`'probe74\u0031928'`, "probe741928"}, {"`probe``741928`", "probe`741928"},
@@ -96,4 +88,15 @@ func TestCourseChangeCredentialReaderProduct(t *testing.T) {
 		}
 		require.True(t, found, "case %d: reader must retain the raw span and its exact decoded value; details withheld", index)
 	}
+}
+
+// newCourseChangeCredentialFixture preserves manager-before-owned-engines cleanup.
+func newCourseChangeCredentialFixture(t *testing.T) *StorageExecutor {
+	t.Helper()
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
+	require.NoError(t, err)
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	t.Cleanup(func() { _ = manager.Close() })
+	return executor
 }

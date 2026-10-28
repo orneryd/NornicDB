@@ -1,4 +1,5 @@
-// Package storagefault injects committed-state read failures into real engines.
+// Package storagefault supports shared storage admission and publication fault
+// fixtures using real engines.
 // It stays separate from the resource-owning testfixture package so that
 // package remains free of storage dependencies.
 package storagefault

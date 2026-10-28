@@ -25,27 +25,6 @@ func quotaExecutor(t testing.TB, limits *multidb.Limits) (*StorageExecutor, stor
 	return NewStorageExecutor(engine), engine, manager
 }
 
-func BenchmarkTransactionQuotaCommit(b *testing.B) {
-	for _, limited := range []bool{false, true} {
-		name := "unlimited"
-		var limits *multidb.Limits
-		if limited {
-			name = "node_limit"
-			limits = &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1 << 60}}
-		}
-		b.Run(name, func(b *testing.B) {
-			exec, _, _ := quotaExecutor(b, limits)
-			ctx := context.Background()
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				_, err := exec.Execute(ctx, "CREATE (:Quota {value: $value})", map[string]interface{}{"value": i})
-				require.NoError(b, err)
-			}
-		})
-	}
-}
-
 func TestTransactionQuotas(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, tc := range []struct {

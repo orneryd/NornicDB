@@ -361,9 +361,9 @@
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1404",
-      "func": "pkg/storage.writeSchemaVersionInTxn pkg/storage/badger.go:1404",
-      "where": "pkg/storage.writeSchemaVersionInTxn pkg/storage/badger.go:1404"
+      "origin": "pkg/storage/badger.go:1398",
+      "func": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1398",
+      "where": "pkg/storage.accessSchemaVersionInTxn pkg/storage/badger.go:1398"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",

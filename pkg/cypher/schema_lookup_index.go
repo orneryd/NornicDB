@@ -99,12 +99,3 @@ func cutSchemaName(text string) (string, string, bool) {
 	}
 	return name.Value, strings.TrimSpace(text[name.End:]), true
 }
-
-// showLookupIndexCreateStatement is the statement that recreates a lookup
-// index.
-func showLookupIndexCreateStatement(name, entityType string) string {
-	if entityType == string(storage.ConstraintEntityRelationship) {
-		return "CREATE LOOKUP INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR ()-[r]-() ON EACH type(r)"
-	}
-	return "CREATE LOOKUP INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR (n) ON EACH labels(n)"
-}

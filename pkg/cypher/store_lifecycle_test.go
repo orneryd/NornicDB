@@ -44,11 +44,7 @@ func TestTestMainRejectsLeakedStore(t *testing.T) {
 		_ = fixtureowner.Own(&processFixtures, fixtureowner.TrackProcess(&processFixtures, storage.NewMemoryEngine(), storage.ErrStorageClosed)) // kept alive through the child process leak check
 		return
 	}
-	binary, err := os.Executable()
-	require.NoError(t, err)
-	cmd := exec.Command(binary, "-test.run=^TestTestMainRejectsLeakedStore$")
-	cmd.Env = append(os.Environ(), leakEnv+"=1")
-	output, err := cmd.CombinedOutput()
+	output, err := runCypherTestProcess(t, "TestTestMainRejectsLeakedStore", leakEnv+"=1")
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	require.Equal(t, 1, exitErr.ExitCode())

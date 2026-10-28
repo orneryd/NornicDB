@@ -121,7 +121,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// A map projection (o {.s}, n {.*, k: 1}) has one implementation, the
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
-		if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime); projection {
+		if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime, nil); projection {
 			value, _ := e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}

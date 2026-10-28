@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"strings"
 
@@ -20,30 +19,16 @@ type topLevelUnwindPlan struct {
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
 func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
-	if unwindIdx == -1 {
+	head := queryGapEnd(cypher, 0)
+	if !startsWithKeywordFold(cypher[head:], "UNWIND") {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	afterUnwind := cypher[unwindIdx+len("UNWIND"):]
-	asRelativeIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
-	if asRelativeIdx == -1 {
+	product, ok := splitUnwindBody(cypher)
+	if !ok {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
-	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
-	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
-	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, remainderStart) {
-		remainderStart++
-	}
-	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexFunc(remainder, cyphertext.IsWhitespace)
-	plan := topLevelUnwindPlan{}
-	if spaceIdx > 0 {
-		plan.variable = strings.TrimSpace(remainder[:spaceIdx])
-		plan.remainder = strings.TrimSpace(remainder[spaceIdx:])
-	} else {
-		plan.variable = strings.TrimSpace(remainder)
-	}
+	listExpr := product.expression
+	plan := topLevelUnwindPlan{variable: product.variableWritten, remainder: product.remainder}
 
 	params := getParamsFromContext(ctx)
 	var list interface{}
@@ -166,7 +151,8 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 }
 
 func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(ctx, query)
+	split := parsePipelineClauses(ctx, query)
+	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, nil
 	}

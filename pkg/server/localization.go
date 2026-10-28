@@ -1,8 +1,8 @@
 package server
 
 import (
-	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
 	"net/http"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -25,27 +25,13 @@ func (s *Server) localizationMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
-	if s.localizer == nil {
-		if message.Fallback != "" {
-			return message.Fallback, language.AmericanEnglish
-		}
-		return string(message.ID), language.AmericanEnglish
-	}
-	text, tag, err := s.localizer.Render(ctx, localization.MessageRequest(message))
-	if err != nil {
-		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
-	}
-	return text, tag
-}
-
 func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message, err error) {
 	text := s.localizedText(w, r, message)
 	s.writeError(w, status, text, err)
 }
 
 func (s *Server) localizedText(w http.ResponseWriter, r *http.Request, message localization.Message) string {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
 	return text

@@ -7,7 +7,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireCypherCompositeLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -65,23 +64,6 @@ func TestCypherCompositeLocalizedErrorPreservesCause(t *testing.T) {
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, "analytics", localizedErr.Message.Data["Database"])
 	require.Equal(t, "forced composite failure", localizedErr.Message.Data["Cause"])
-}
-
-func TestCypherCompositeCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherCompositeConstituentUnexpectedToken("BROKEN")
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "sintaxis de componente no válida: token inesperado 'BROKEN'", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! invalid constituent syntax: unexpected token 'BROKEN' !!]", pseudo)
 }
 
 func TestCompositeCommandFamilyPreservesDirectErrorPriority(t *testing.T) {

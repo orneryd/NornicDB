@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,9 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 )
 
 // mockCypherExecutor is a test double for CypherExecutor.
@@ -237,213 +235,6 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 	}
 }
 
-func TestFabricExecutor_Apply(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}, {"b"}},
-			},
-			"MATCH (m) WHERE m.ref = $id RETURN m.name AS name": {
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{{"result"}},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{
-		Input:     &FragmentInit{},
-		Query:     "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1",
-		Columns:   []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "MATCH (m) WHERE m.ref = $id RETURN m.name AS name",
-		GraphName: "db1",
-		Columns:   []string{"name"},
-	}
-	apply := &FragmentApply{
-		Input:   outer,
-		Inner:   inner,
-		Columns: []string{"id", "name"},
-	}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// 2 outer rows x 1 inner row each = 2 combined rows
-	if result.RowCount() != 2 {
-		t.Errorf("expected 2 rows, got %d", result.RowCount())
-	}
-}
-
-func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	outerQuery := "MATCH (n) RETURN n.textKey128 AS textKey128"
-	batchedInnerQuery := "MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys RETURN tt.translationId AS __fabric_apply_key, collect(tt) AS texts"
-
-	mock := &mockCypherExecutor{
-		calls: map[string]int{},
-		results: map[string]*ResultStream{
-			outerQuery: {
-				Columns: []string{"textKey128"},
-				Rows:    [][]interface{}{{"k1"}, {"k2"}},
-			},
-			batchedInnerQuery: {
-				Columns: []string{"__fabric_apply_key", "texts"},
-				Rows:    [][]interface{}{{"k1", []interface{}{"hit-1", "hit-2"}}},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{
-		Input:     &FragmentInit{},
-		Query:     outerQuery,
-		GraphName: "db1",
-		Columns:   []string{"textKey128"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"textKey128"}, ImportColumns: []string{"textKey128"}},
-		Query:     "WITH textKey128 MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts",
-		GraphName: "db1",
-		Columns:   []string{"texts"},
-	}
-	apply := &FragmentApply{
-		Input:   outer,
-		Inner:   inner,
-		Columns: []string{"textKey128", "texts"},
-	}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
-	}
-	if got := mock.calls[batchedInnerQuery]; got != 1 {
-		t.Fatalf("expected single batched inner lookup, got %d calls", got)
-	}
-	if got := mock.calls["WITH textKey128 MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"]; got != 0 {
-		t.Fatalf("expected no per-row correlated inner calls, got %d", got)
-	}
-	// Row 1 matched.
-	if v, ok := result.Rows[0][1].([]interface{}); !ok || len(v) != 2 {
-		t.Fatalf("expected first row texts to contain 2 items, got %#v", result.Rows[0][1])
-	}
-	// Row 2 unmatched -> deterministic empty list.
-	if v, ok := result.Rows[1][1].([]interface{}); !ok || len(v) != 0 {
-		t.Fatalf("expected second row texts to be empty list, got %#v", result.Rows[1][1])
-	}
-}
-
-func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup_WithUseAndExtraPredicate(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	outerQuery := "MATCH (n) RETURN n.textKey128 AS textKey128"
-	batchedInnerQuery := "USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys AND tt.language = 'es' RETURN tt.translationId AS __fabric_apply_key, collect(tt) AS texts"
-
-	mock := &mockCypherExecutor{
-		calls: map[string]int{},
-		results: map[string]*ResultStream{
-			outerQuery: {
-				Columns: []string{"textKey128"},
-				Rows:    [][]interface{}{{"k1"}, {"k2"}},
-			},
-			batchedInnerQuery: {
-				Columns: []string{"__fabric_apply_key", "texts"},
-				Rows:    [][]interface{}{{"k2", []interface{}{"es-hit"}}},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
-	innerQuery := "WITH textKey128 USE translations.txr MATCH (tt:MongoDocument) WHERE tt.language = 'es' AND tt.translationId = textKey128 RETURN collect(tt) AS texts"
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"textKey128"}, ImportColumns: []string{"textKey128"}},
-		Query:     innerQuery,
-		GraphName: "db1",
-		Columns:   []string{"texts"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner, Columns: []string{"textKey128", "texts"}}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := mock.calls[batchedInnerQuery]; got != 1 {
-		t.Fatalf("expected single batched inner lookup, got %d calls", got)
-	}
-	if v, ok := result.Rows[0][1].([]interface{}); !ok || len(v) != 0 {
-		t.Fatalf("expected first row empty list, got %#v", result.Rows[0][1])
-	}
-	if v, ok := result.Rows[1][1].([]interface{}); !ok || len(v) != 1 {
-		t.Fatalf("expected second row one hit, got %#v", result.Rows[1][1])
-	}
-}
-
-func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup_ReversedEquality(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	outerQuery := "MATCH (n) RETURN n.textKey128 AS textKey128"
-	batchedInnerQuery := "MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys RETURN tt.translationId AS __fabric_apply_key, collect(tt) AS texts"
-
-	mock := &mockCypherExecutor{
-		calls: map[string]int{},
-		results: map[string]*ResultStream{
-			outerQuery: {
-				Columns: []string{"textKey128"},
-				Rows:    [][]interface{}{{"k1"}},
-			},
-			batchedInnerQuery: {
-				Columns: []string{"__fabric_apply_key", "texts"},
-				Rows:    [][]interface{}{{"k1", []interface{}{"hit"}}},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"textKey128"}, ImportColumns: []string{"textKey128"}},
-		Query:     "WITH textKey128 MATCH (tt:MongoDocument) WHERE textKey128 = tt.translationId RETURN collect(tt) AS texts",
-		GraphName: "db1",
-		Columns:   []string{"texts"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner, Columns: []string{"textKey128", "texts"}}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := mock.calls[batchedInnerQuery]; got != 1 {
-		t.Fatalf("expected single batched inner lookup, got %d calls", got)
-	}
-	if v, ok := result.Rows[0][1].([]interface{}); !ok || len(v) != 1 {
-		t.Fatalf("expected one hit, got %#v", result.Rows[0][1])
-	}
-}
-
 func TestFabricExecutor_Union(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
@@ -583,67 +374,6 @@ func TestLocalFragmentExecutor_Execute_WrapperPath(t *testing.T) {
 	}
 }
 
-func TestSplitTopLevelEquality_AndApplyLookupKeyString(t *testing.T) {
-	lhs, rhs, ok := splitTopLevelEquality(`tt.translationId = textKey128`)
-	if !ok || lhs != "tt.translationId" || rhs != "textKey128" {
-		t.Fatalf("unexpected equality parse: ok=%v lhs=%q rhs=%q", ok, lhs, rhs)
-	}
-	// Must ignore non-equality operators.
-	if _, _, ok := splitTopLevelEquality(`tt.translationId >= textKey128`); ok {
-		t.Fatalf("expected non-equality operator to be ignored")
-	}
-	// Must ignore nested equals inside string literal.
-	if _, _, ok := splitTopLevelEquality(`tt.expr = "a=b"`); !ok {
-		t.Fatalf("expected top-level equality to be detected")
-	}
-
-	// Semantic normalization: quoted string forms compare equal across string/bytes inputs.
-	if gotStr, gotBytes := applyLookupKeyString(`"abc"`), applyLookupKeyString([]byte(`"abc"`)); gotStr != gotBytes {
-		t.Fatalf("expected normalized lookup keys to match for string/bytes, got %q vs %q", gotStr, gotBytes)
-	}
-	// Distinct values must remain distinct.
-	if applyLookupKeyString(`"abc"`) == applyLookupKeyString(`"xyz"`) {
-		t.Fatalf("expected different string lookup keys to remain distinct")
-	}
-	// Type domains should remain separate to avoid accidental cross-type joins.
-	if applyLookupKeyString("42") == applyLookupKeyString(int64(42)) {
-		t.Fatalf("expected string and int64 lookup keys to remain type-distinct")
-	}
-	// Numbers are keyed by Cypher equality, whatever their Go type.
-	for _, equal := range [][2]interface{}{{int64(42), 42.0}, {42, int64(42)}, {int64(0), math.Copysign(0, -1)}, {uint64(7), int64(7)}, {float32(2.5), 2.5}} {
-		if applyLookupKeyString(equal[0]) != applyLookupKeyString(equal[1]) {
-			t.Fatalf("expected %T %v and %T %v to share a lookup key", equal[0], equal[0], equal[1], equal[1])
-		}
-	}
-	for _, distinct := range [][2]interface{}{{int64(9007199254740993), 9007199254740992.0}, {2.5, int64(2)}, {math.NaN(), math.NaN()}} {
-		if applyLookupKeyString(distinct[0]) == applyLookupKeyString(distinct[1]) {
-			t.Fatalf("expected %v and %v to have distinct lookup keys", distinct[0], distinct[1])
-		}
-	}
-}
-
-func TestProjectSimpleReturnFromRow(t *testing.T) {
-	cols, row, ok := projectSimpleReturnFromRow(
-		"RETURN textKey AS key, textKey128 AS key128",
-		[]string{"textKey", "textKey128"},
-		[]interface{}{"k1", "h1"},
-	)
-	if !ok {
-		t.Fatalf("expected simple return projection to be supported")
-	}
-	if len(cols) != 2 || cols[0] != "key" || cols[1] != "key128" {
-		t.Fatalf("unexpected projected columns: %#v", cols)
-	}
-	if len(row) != 2 || row[0] != "k1" || row[1] != "h1" {
-		t.Fatalf("unexpected projected row: %#v", row)
-	}
-
-	// Non-simple expression is intentionally rejected by this fast-path helper.
-	if _, _, ok := projectSimpleReturnFromRow("RETURN coalesce(textKey, textKey128) AS key", []string{"textKey"}, []interface{}{"k"}); ok {
-		t.Fatalf("expected non-simple return expression to bypass helper")
-	}
-}
-
 func TestExecuteUnionSequential_Direct(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
@@ -685,87 +415,6 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 	}
 	if len(res.Rows) != 2 {
 		t.Fatalf("expected 2 rows from sequential union, got %d", len(res.Rows))
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_Shapes(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"textKey", "textKey128"},
-		Rows: [][]interface{}{
-			{"k1", "h1"},
-			{"k2", "h2"},
-		},
-	}
-
-	ret, ok := executeApplyInMemoryProjection(input, "RETURN textKey AS key, textKey128 AS hash")
-	if !ok {
-		t.Fatalf("expected simple RETURN projection to hit in-memory path")
-	}
-	if len(ret.Columns) != 2 || ret.Columns[0] != "key" || ret.Columns[1] != "hash" {
-		t.Fatalf("unexpected columns: %#v", ret.Columns)
-	}
-
-	collectOnly, ok := executeApplyInMemoryProjection(
-		input,
-		"WITH collect({textKey: textKey, textKey128: textKey128}) AS rows RETURN rows",
-	)
-	if !ok || len(collectOnly.Rows) != 1 {
-		t.Fatalf("expected collect-map-only projection result, got ok=%v rows=%#v", ok, collectOnly.Rows)
-	}
-
-	distinctKeys, ok := executeApplyInMemoryProjection(
-		input,
-		"WITH collect({textKey128: textKey128}) AS rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys",
-	)
-	if !ok || len(distinctKeys.Rows) != 1 {
-		t.Fatalf("expected distinct-keys projection result, got ok=%v rows=%#v", ok, distinctKeys.Rows)
-	}
-}
-
-func TestExecuteApplyAsPipeline_RewritesAndExecutes(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	capture := &pipelineCaptureCypherExecutor{}
-	local := NewLocalFragmentExecutor(capture, func(name string) (storage.Engine, error) {
-		if name != "db1" {
-			return nil, fmt.Errorf("unexpected db %s", name)
-		}
-		return &mockEngine{}, nil
-	})
-	exec := NewFabricExecutor(catalog, local, nil)
-
-	input := &ResultStream{
-		Columns: []string{"textKey128", "textKey", "originalText"},
-		Rows: [][]interface{}{
-			{"h1", "k1", "o1"},
-			{"h2", "k2", "o2"},
-		},
-	}
-
-	inner := &FragmentExec{
-		Input:     &FragmentInit{},
-		Query:     "WITH textKey128 AS hash MATCH (tt) WHERE tt.translationId = hash RETURN tt.language AS language, tt.translatedText AS translatedText",
-		GraphName: "db1",
-		Columns:   []string{"language", "translatedText"},
-	}
-
-	res, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, map[string]interface{}{"p": 1}, "")
-	if err != nil {
-		t.Fatalf("unexpected pipeline error: %v", err)
-	}
-	if !used {
-		t.Fatalf("expected pipeline path to be used")
-	}
-	if res == nil || len(res.Rows) != 1 {
-		t.Fatalf("expected mocked execution result, got %#v", res)
-	}
-	if !strings.Contains(capture.lastQuery, "UNWIND $__fabric_apply_rows AS __fabric_row") {
-		t.Fatalf("expected query rewrite to UNWIND apply rows, got %q", capture.lastQuery)
-	}
-	rowsParam, ok := capture.lastParams["__fabric_apply_rows"].([]map[string]interface{})
-	if !ok || len(rowsParam) != 2 {
-		t.Fatalf("expected __fabric_apply_rows param with 2 rows, got %#v", capture.lastParams["__fabric_apply_rows"])
 	}
 }
 
@@ -910,123 +559,12 @@ func TestRewriteLeadingWithImports_NoLeadingWithReturn(t *testing.T) {
 	}
 }
 
-func TestExecuteApplyInMemoryProjection_WithCollectMapReturnAlias(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"textKey", "textKey128"},
-		Rows: [][]interface{}{
-			{"k1", "h1"},
-			{"k2", "h2"},
-		},
-	}
-	query := "WITH collect({textKey: textKey, textKey128: textKey128}) AS rows\nRETURN rows"
-	res, handled := executeApplyInMemoryProjection(input, query)
-	if !handled {
-		t.Fatal("expected projection to be handled")
-	}
-	if res == nil {
-		t.Fatal("expected non-nil projection result")
-	}
-	if len(res.Rows) != 1 {
-		t.Fatalf("expected one aggregated row, got %d", len(res.Rows))
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_ReturnOrderBySkipLimit(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"textKey128", "texts"},
-		Rows: [][]interface{}{
-			{"a2", []interface{}{}},
-			{"a1", []interface{}{"ORD-001"}},
-			{"a3", []interface{}{"ORD-003"}},
-		},
-	}
-	query := "RETURN textKey128, texts ORDER BY textKey128 SKIP 1 LIMIT 1"
-	res, handled := executeApplyInMemoryProjection(input, query)
-	if !handled {
-		t.Fatal("expected ordered projection to be handled")
-	}
-	if res == nil {
-		t.Fatal("expected non-nil projection result")
-	}
-	if len(res.Rows) != 1 {
-		t.Fatalf("expected one row after SKIP/LIMIT, got %d", len(res.Rows))
-	}
-	if got := res.Rows[0][0]; got != "a2" {
-		t.Fatalf("expected middle ordered row a2, got %#v", got)
-	}
-	texts, ok := res.Rows[0][1].([]interface{})
-	if !ok || len(texts) != 0 {
-		t.Fatalf("expected empty texts slice for a2, got %#v", res.Rows[0][1])
-	}
-}
-
 func TestMergeBindings(t *testing.T) {
 	parent := map[string]interface{}{"rows": []interface{}{1, 2}, "x": "parent"}
 	row := map[string]interface{}{"x": "row", "k": "v"}
 	got := mergeBindings(parent, row)
 	if got["rows"] == nil || got["k"] != "v" || got["x"] != "row" {
 		t.Fatalf("unexpected merged bindings: %#v", got)
-	}
-}
-
-func TestSynthesizeEmptyCollectOnlyReturn(t *testing.T) {
-	cols, row, ok := synthesizeEmptyCollectOnlyReturn("MATCH (n) RETURN collect(n.id) AS ids")
-	if !ok {
-		t.Fatal("expected collect-only return to synthesize empty row")
-	}
-	if len(cols) != 1 || cols[0] != "ids" {
-		t.Fatalf("unexpected columns: %#v", cols)
-	}
-	values, ok := row[0].([]interface{})
-	if !ok || len(values) != 0 {
-		t.Fatalf("expected empty list value, got %#v", row[0])
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_CoversShapes(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "k", "texts"},
-		Rows: [][]interface{}{
-			{
-				[]interface{}{
-					map[string]interface{}{"textKey": "k1", "textKey128": "h1"},
-					map[string]interface{}{"textKey": "k2", "textKey128": "h2"},
-				},
-				"h1",
-				[]interface{}{"t1"},
-			},
-			{
-				[]interface{}{},
-				"h2",
-				nil,
-			},
-		},
-	}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(got.Rows))
-	}
-	if got.Rows[0][0] != "k1" || got.Rows[0][1] != "h1" {
-		t.Fatalf("unexpected first row: %#v", got.Rows[0])
-	}
-	if texts, ok := got.Rows[0][2].([]interface{}); !ok || len(texts) != 1 {
-		t.Fatalf("expected one grouped text in first row, got %#v", got.Rows[0][2])
-	}
-	if got.Rows[1][0] != "k2" || got.Rows[1][1] != "h2" {
-		t.Fatalf("unexpected second row: %#v", got.Rows[1])
-	}
-	if texts, ok := got.Rows[1][2].([]interface{}); !ok || len(texts) != 0 {
-		t.Fatalf("expected empty texts fallback for second row, got %#v", got.Rows[1][2])
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_InvalidInput(t *testing.T) {
-	got := executeRowsGroupedJoinProjection(&ResultStream{
-		Columns: []string{"rows"},
-		Rows:    [][]interface{}{{[]interface{}{}}},
-	})
-	if len(got.Rows) != 0 {
-		t.Fatalf("expected empty projection rows, got %#v", got.Rows)
 	}
 }
 
@@ -1137,29 +675,6 @@ func BenchmarkCombineRowsByIndexes(b *testing.B) {
 }
 
 // --- Additional coverage tests ---
-
-func TestApplyLookupKeyString_Semantics(t *testing.T) {
-	// Nil remains a stable sentinel.
-	if got := applyLookupKeyString(nil); got == "" {
-		t.Fatalf("expected non-empty sentinel key for nil")
-	}
-	// Strings and []byte with same text should produce same key.
-	if a, b := applyLookupKeyString("world"), applyLookupKeyString([]byte("world")); a != b {
-		t.Fatalf("expected stable equality for string/[]byte values, got %q vs %q", a, b)
-	}
-	// Booleans should remain stable and distinct.
-	if applyLookupKeyString(true) == applyLookupKeyString(false) {
-		t.Fatalf("expected true/false keys to be distinct")
-	}
-	// Different numerics should remain distinct.
-	if applyLookupKeyString(int64(99)) == applyLookupKeyString(int64(100)) {
-		t.Fatalf("expected numeric keys to remain distinct")
-	}
-	// A float equal to an integer shares its key, as Cypher's = holds.
-	if applyLookupKeyString(float64(42)) != applyLookupKeyString(int64(42)) {
-		t.Fatalf("expected float64/int64 lookup keys of equal numbers to match")
-	}
-}
 
 func TestSplitTopLevelCSV_QuotedStrings(t *testing.T) {
 	// Single-quoted string containing a comma.
@@ -1647,97 +1162,6 @@ func TestLastAsIndexFold_ShortString(t *testing.T) {
 	}
 }
 
-func TestSynthesizeEmptyCollectOnlyReturn_NonCollect(t *testing.T) {
-	_, _, ok := synthesizeEmptyCollectOnlyReturn("RETURN n.id AS id")
-	if ok {
-		t.Fatal("expected non-collect return to not synthesize")
-	}
-}
-
-func TestSynthesizeEmptyCollectOnlyReturn_EmptyReturn(t *testing.T) {
-	_, _, ok := synthesizeEmptyCollectOnlyReturn("RETURN")
-	if ok {
-		t.Fatal("expected empty RETURN to not synthesize")
-	}
-}
-
-func TestSynthesizeEmptyCollectOnlyReturn_NoReturn(t *testing.T) {
-	_, _, ok := synthesizeEmptyCollectOnlyReturn("MATCH (n)")
-	if ok {
-		t.Fatal("expected no RETURN to not synthesize")
-	}
-}
-
-func TestSynthesizeEmptyCollectOnlyReturn_EmptyItem(t *testing.T) {
-	_, _, ok := synthesizeEmptyCollectOnlyReturn("RETURN ,")
-	if ok {
-		t.Fatal("expected empty item to not synthesize")
-	}
-}
-
-func TestProjectSimpleReturnFromRow_NotReturn(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("MATCH (n) RETURN n", nil, nil)
-	if ok {
-		t.Fatal("expected non-leading RETURN to fail")
-	}
-}
-
-func TestProjectSimpleReturnFromRow_EmptyClause(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN ", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected empty RETURN clause to fail")
-	}
-}
-
-func TestProjectSimpleReturnFromRow_MissingColumn(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN missing", []string{"a"}, []interface{}{1})
-	if !ok {
-		// "missing" is a simple identifier but not in input columns
-		// Re-check: the function checks colIdx for src
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_NilInput(t *testing.T) {
-	_, ok := executeApplyInMemoryProjection(nil, "RETURN x")
-	if ok {
-		t.Fatal("expected nil input to not match")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_EmptyQuery(t *testing.T) {
-	_, ok := executeApplyInMemoryProjection(&ResultStream{}, "")
-	if ok {
-		t.Fatal("expected empty query to not match")
-	}
-	_, ok = executeApplyInMemoryProjection(&ResultStream{}, "   ")
-	if ok {
-		t.Fatal("expected whitespace query to not match")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_NonSimpleReturn(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	// Expression with dot is not a simple identifier.
-	_, ok := executeApplyInMemoryProjection(input, "RETURN n.a AS x")
-	if ok {
-		t.Fatal("expected non-simple expr to not match simple return path")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_ColumnNotFound(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	_, ok := executeApplyInMemoryProjection(input, "RETURN missing AS x")
-	if ok {
-		t.Fatal("expected missing column to not match")
-	}
-}
-
 func TestRewriteFragmentWithImports_NilFragment(t *testing.T) {
 	got := rewriteFragmentWithImports(nil)
 	if got != nil {
@@ -1765,29 +1189,6 @@ func TestRewriteFragmentWithRuntimeImports_DefaultBranch(t *testing.T) {
 	got := rewriteFragmentWithRuntimeImports(init, []string{"a"})
 	if got != init {
 		t.Fatal("expected init fragment to pass through unchanged")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_Apply(t *testing.T) {
-	inner := &FragmentExec{
-		Input: &FragmentInit{ImportColumns: []string{"a"}},
-		Query: "RETURN a",
-	}
-	apply := &FragmentApply{
-		Input: &FragmentInit{},
-		Inner: inner,
-	}
-	got := rewriteFragmentWithRuntimeImports(apply, []string{"b"})
-	result, ok := got.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected *FragmentApply, got %T", got)
-	}
-	exec, ok := result.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected inner *FragmentExec, got %T", result.Inner)
-	}
-	if !strings.Contains(exec.Query, "$") {
-		t.Fatalf("expected rewritten query with params, got %q", exec.Query)
 	}
 }
 
@@ -1881,14 +1282,14 @@ func TestReplaceStandaloneVar_WithQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_Empty(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("")
+	pos, ok := findLeadingWithClauseEnd("", nil)
 	if ok || pos != 0 {
 		t.Fatalf("expected false for empty, got pos=%d ok=%v", pos, ok)
 	}
 }
 
 func TestFindLeadingWithClauseEnd_NotWith(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("MATCH (n) RETURN n")
+	pos, ok := findLeadingWithClauseEnd("MATCH (n) RETURN n", nil)
 	if ok {
 		t.Fatalf("expected false for non-WITH query, got pos=%d", pos)
 	}
@@ -1896,7 +1297,7 @@ func TestFindLeadingWithClauseEnd_NotWith(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_WithQuotes(t *testing.T) {
 	// WITH clause containing single-quoted string with a keyword.
-	pos, ok := findLeadingWithClauseEnd("WITH 'MATCH stuff' AS x MATCH (n)")
+	pos, ok := findLeadingWithClauseEnd("WITH 'MATCH stuff' AS x MATCH (n)", nil)
 	if !ok {
 		t.Fatal("expected true for WITH with quotes")
 	}
@@ -1907,7 +1308,7 @@ func TestFindLeadingWithClauseEnd_WithQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_WithDoubleQuotes(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd(`WITH "RETURN stuff" AS x RETURN y`)
+	pos, ok := findLeadingWithClauseEnd(`WITH "RETURN stuff" AS x RETURN y`, nil)
 	if !ok {
 		t.Fatal("expected true for WITH with double quotes")
 	}
@@ -1918,7 +1319,7 @@ func TestFindLeadingWithClauseEnd_WithDoubleQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_WithBackticks(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("WITH `MATCH` AS x MATCH (n)")
+	pos, ok := findLeadingWithClauseEnd("WITH `MATCH` AS x MATCH (n)", nil)
 	if !ok {
 		t.Fatal("expected true for WITH with backticks")
 	}
@@ -1930,7 +1331,7 @@ func TestFindLeadingWithClauseEnd_WithBackticks(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_Nested(t *testing.T) {
 	// Brackets/braces/parens should be skipped.
-	pos, ok := findLeadingWithClauseEnd("WITH [MATCH, x] AS arr RETURN arr")
+	pos, ok := findLeadingWithClauseEnd("WITH [MATCH, x] AS arr RETURN arr", nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
@@ -1943,45 +1344,12 @@ func TestFindLeadingWithClauseEnd_Nested(t *testing.T) {
 func TestFindLeadingWithClauseEnd_NoFollowingClause(t *testing.T) {
 	// WITH clause with no following keyword should return len(query).
 	query := "WITH a, b"
-	pos, ok := findLeadingWithClauseEnd(query)
+	pos, ok := findLeadingWithClauseEnd(query, nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
 	if pos != len(query) {
 		t.Fatalf("expected pos=%d (end of query), got %d", len(query), pos)
-	}
-}
-
-func TestExecuteApplyAsPipeline_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, nil, &FragmentExec{}, nil, "")
-	if used || err != nil {
-		t.Fatalf("expected nil input to not use pipeline, got used=%v err=%v", used, err)
-	}
-}
-
-func TestExecuteApplyAsPipeline_NoColumns(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Rows: [][]interface{}{{1}}}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, &FragmentExec{}, nil, "")
-	if used || err != nil {
-		t.Fatalf("expected no-columns input to not use pipeline, got used=%v err=%v", used, err)
-	}
-}
-
-func TestExecuteApplyAsPipeline_ReturnUsesCanonicalPipeline(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	capture := &pipelineCaptureCypherExecutor{}
-	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
-	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "RETURN a AS x", GraphName: "db1"}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if err != nil || !used {
-		t.Fatalf("expected canonical projection pipeline: used=%v err=%v", used, err)
-	}
-	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a RETURN a AS x" {
-		t.Fatalf("unexpected pipeline query: %s", capture.lastQuery)
 	}
 }
 
@@ -2039,48 +1407,6 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 	}
 }
 
-func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	capture := &pipelineCaptureCypherExecutor{}
-	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
-	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "WITH a ORDER BY a RETURN collect(a) AS values", GraphName: "db1"}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if err != nil || !used {
-		t.Fatalf("expected whole-stream continuation: used=%v err=%v", used, err)
-	}
-	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a "+inner.Query {
-		t.Fatalf("unexpected continuation query: %s", capture.lastQuery)
-	}
-}
-
-func TestExecuteApplyAsPipeline_FabricNamedColumnsProjected(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	capture := &pipelineCaptureCypherExecutor{}
-	local := NewLocalFragmentExecutor(capture, func(name string) (storage.Engine, error) {
-		return &mockEngine{}, nil
-	})
-	exec := NewFabricExecutor(catalog, local, nil)
-	input := &ResultStream{
-		Columns: []string{"__fabric_key", "a"},
-		Rows:    [][]interface{}{{"fk", "v1"}},
-	}
-	inner := &FragmentExec{Query: "WITH a AS x MATCH (n) WHERE n.id = x RETURN n", GraphName: "db1"}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !used {
-		t.Fatal("expected pipeline to be used")
-	}
-	// A query column is projected whatever its name.
-	if !strings.Contains(capture.lastQuery, "__fabric_row.__fabric_key AS __fabric_key") {
-		t.Fatalf("expected the __fabric_key query column projected, got %q", capture.lastQuery)
-	}
-}
-
 func TestFragmentContainsWrite_LeafAndInit(t *testing.T) {
 	if fragmentContainsWrite(&FragmentLeaf{Input: &FragmentExec{IsWrite: true}}) {
 		t.Log("leaf delegates to input")
@@ -2116,70 +1442,6 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 	}
 }
 
-func TestAliasesFromReturnItems(t *testing.T) {
-	items := []fabricReturnItem{
-		{prop: "name", alias: "name"},
-		{prop: "age", alias: "age"},
-	}
-	aliases := aliasesFromReturnItems(items)
-	if len(aliases) != 2 || aliases[0] != "name" || aliases[1] != "age" {
-		t.Fatalf("expected [name age], got %v", aliases)
-	}
-}
-
-func TestFabricExecutor_ApplyBatchedLookupRows(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	outerQuery := "MATCH (n) RETURN n.id AS id"
-	batchedInnerQuery := "MATCH (m:Person) WHERE m.id IN $__fabric_apply_keys RETURN m.id AS __fabric_apply_key, m.name AS name, m.age AS age"
-
-	mock := &mockCypherExecutor{
-		calls: map[string]int{},
-		results: map[string]*ResultStream{
-			outerQuery: {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"id1"}, {"id2"}, {"id3"}},
-			},
-			batchedInnerQuery: {
-				Columns: []string{"__fabric_apply_key", "name", "age"},
-				Rows: [][]interface{}{
-					{"id1", "Alice", 30},
-					{"id2", "Bob", 25},
-				},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "WITH id MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age",
-		GraphName: "db1",
-		Columns:   []string{"name", "age"},
-	}
-	apply := &FragmentApply{
-		Input: outer, Inner: inner, Columns: []string{"id", "name", "age"},
-	}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// id1 and id2 matched, id3 has no matches -> 2 rows.
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
-	}
-	if got := mock.calls[batchedInnerQuery]; got != 1 {
-		t.Fatalf("expected single batched lookup, got %d", got)
-	}
-}
-
 func TestExecuteExec_RecordBindingsMerged(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
@@ -2202,30 +1464,6 @@ func TestExecuteExec_RecordBindingsMerged(t *testing.T) {
 	}
 }
 
-func TestApplySimpleResultModifiers_EmptyRows(t *testing.T) {
-	result := &ResultStream{Columns: []string{"x"}, Rows: nil}
-	applySimpleResultModifiers(result, "ORDER BY x", map[string]string{"x": "x"})
-	if len(result.Rows) != 0 {
-		t.Fatal("expected no modification on empty rows")
-	}
-}
-
-func TestApplySimpleResultModifiers_NilResult(t *testing.T) {
-	applySimpleResultModifiers(nil, "ORDER BY x", nil)
-	// Should not panic.
-}
-
-func TestApplySimpleResultModifiers_SkipAllRows(t *testing.T) {
-	result := &ResultStream{
-		Columns: []string{"x"},
-		Rows:    [][]interface{}{{1}, {2}},
-	}
-	applySimpleResultModifiers(result, "SKIP 10", map[string]string{})
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected all rows skipped, got %d", len(result.Rows))
-	}
-}
-
 func TestRewriteLeadingWithImports_EmptyImports(t *testing.T) {
 	query := "WITH a MATCH (n) RETURN n"
 	got := rewriteLeadingWithImports(query, nil)
@@ -2243,193 +1481,6 @@ func TestRewriteLeadingWithImports_WithOnly(t *testing.T) {
 	got := rewriteLeadingWithImports(query, []string{"a"})
 	if got != "WITH $a AS a" {
 		t.Fatalf("expected WITH-only rewrite, got %q", got)
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_RowsGroupedJoin(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "k", "texts"},
-		Rows: [][]interface{}{
-			{
-				[]interface{}{
-					map[string]interface{}{"textKey": "k1", "textKey128": "h1"},
-				},
-				"h1",
-				[]interface{}{"t1"},
-			},
-		},
-	}
-	query := "WITH rows, collect({k: k, texts: texts}) AS grouped UNWIND rows AS r WITH r, [g IN grouped WHERE g.k = r.textKey128][0] AS hit RETURN r.textKey AS textKey, r.textKey128 AS textKey128, coalesce(hit.texts, []) AS texts"
-	res, ok := executeApplyInMemoryProjection(input, query)
-	if !ok {
-		t.Fatal("expected rows-grouped-join projection to match")
-	}
-	if res == nil || len(res.Rows) == 0 {
-		t.Fatal("expected non-empty result")
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_MapSliceInput(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "k", "texts"},
-		Rows: [][]interface{}{
-			{
-				[]map[string]interface{}{
-					{"textKey": "k1", "textKey128": "h1"},
-				},
-				"h1",
-				[]interface{}{"t1"},
-			},
-		},
-	}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 1 {
-		t.Fatalf("expected 1 row from map slice, got %d", len(got.Rows))
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_WrongRowsType(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "k", "texts"},
-		Rows: [][]interface{}{
-			{"not-a-slice", "h1", []interface{}{"t1"}},
-		},
-	}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 0 {
-		t.Fatalf("expected 0 rows for wrong type, got %d", len(got.Rows))
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_EmptyInput(t *testing.T) {
-	input := &ResultStream{Columns: []string{"rows", "k", "texts"}, Rows: [][]interface{}{}}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 0 {
-		t.Fatalf("expected 0 rows for empty input, got %d", len(got.Rows))
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_MissingColumns(t *testing.T) {
-	input := &ResultStream{Columns: []string{"rows"}, Rows: [][]interface{}{{[]interface{}{}}}}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 0 {
-		t.Fatalf("expected 0 rows for missing columns, got %d", len(got.Rows))
-	}
-}
-
-func TestExecuteRowsGroupedJoinProjection_RowsIdxOutOfBounds(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "k", "texts"},
-		Rows:    [][]interface{}{{}}, // row too short
-	}
-	got := executeRowsGroupedJoinProjection(input)
-	if len(got.Rows) != 0 {
-		t.Fatalf("expected 0 rows for short row, got %d", len(got.Rows))
-	}
-}
-
-func TestExecuteCollectedMapJoinFlatProjection(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "sourceId", "language", "translatedText"},
-		Rows: [][]interface{}{
-			{
-				[]interface{}{
-					map[string]interface{}{
-						"sourceId":     "s1",
-						"textKey":      "k1",
-						"originalText": "o1",
-					},
-					map[string]interface{}{
-						"sourceId":     "s2",
-						"textKey":      "k2",
-						"originalText": "o2",
-					},
-				},
-				"s1",
-				"es",
-				"uno",
-			},
-			{
-				[]interface{}{
-					map[string]interface{}{
-						"sourceId":     "s1",
-						"textKey":      "k1",
-						"originalText": "o1",
-					},
-					map[string]interface{}{
-						"sourceId":     "s2",
-						"textKey":      "k2",
-						"originalText": "o2",
-					},
-				},
-				"s1",
-				"fr",
-				"un",
-			},
-			{
-				[]interface{}{
-					map[string]interface{}{
-						"sourceId":     "s1",
-						"textKey":      "k1",
-						"originalText": "o1",
-					},
-					map[string]interface{}{
-						"sourceId":     "s2",
-						"textKey":      "k2",
-						"originalText": "o2",
-					},
-				},
-				"s2",
-				"es",
-				"dos",
-			},
-		},
-	}
-
-	query := "WITH rows, collect({sourceId: sourceId, language: language, translatedText: translatedText}) AS hits UNWIND rows AS r WITH r, [h IN hits WHERE h.sourceId = r.sourceId] AS ms UNWIND ms AS m RETURN r.sourceId AS sourceId, r.textKey AS textKey, r.originalText AS originalText, m.language AS language, m.translatedText AS translatedText"
-	got, ok := executeCollectedMapJoinFlatProjection(input, query)
-	if !ok {
-		t.Fatal("expected structural projection to match")
-	}
-	if got == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if len(got.Columns) != 5 {
-		t.Fatalf("expected 5 columns, got %v", got.Columns)
-	}
-	if len(got.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(got.Rows))
-	}
-	if got.Rows[0][0] != "s1" || got.Rows[0][1] != "k1" || got.Rows[0][2] != "o1" {
-		t.Fatalf("unexpected first row: %#v", got.Rows[0])
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_RowsHitsFlatJoinPattern(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"rows", "sourceId", "language", "translatedText"},
-		Rows: [][]interface{}{
-			{
-				[]interface{}{
-					map[string]interface{}{
-						"sourceId":     "s1",
-						"textKey":      "k1",
-						"originalText": "o1",
-					},
-				},
-				"s1",
-				"es",
-				"uno",
-			},
-		},
-	}
-	query := "WITH rows, collect({sourceId: sourceId, language: language, translatedText: translatedText}) AS hits UNWIND rows AS r WITH r, [h IN hits WHERE h.sourceId = r.sourceId] AS ms UNWIND ms AS m RETURN r.sourceId AS sourceId, r.textKey AS textKey, r.originalText AS originalText, m.language AS language, m.translatedText AS translatedText"
-	res, ok := executeApplyInMemoryProjection(input, query)
-	if !ok {
-		t.Fatal("expected rows-hits flat join projection to match")
-	}
-	if res == nil || len(res.Rows) != 1 {
-		t.Fatalf("expected one projected row, got %#v", res)
 	}
 }
 
@@ -2480,50 +1531,6 @@ func TestSplitLeadingModifierClause_Empty(t *testing.T) {
 	clause, rest := splitLeadingModifierClause("", "SKIP")
 	if clause != "" || rest != "" {
 		t.Fatalf("expected empty, got clause=%q rest=%q", clause, rest)
-	}
-}
-
-func TestApplySimpleResultModifiers_OrderByUnknownColumn(t *testing.T) {
-	result := &ResultStream{
-		Columns: []string{"x"},
-		Rows:    [][]interface{}{{2}, {1}},
-	}
-	// Unknown column in ORDER BY should be skipped (no-op sort).
-	applySimpleResultModifiers(result, "ORDER BY unknown", map[string]string{})
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows unchanged, got %d", len(result.Rows))
-	}
-}
-
-func TestParseSimpleResultModifiers_UnknownModifier(t *testing.T) {
-	specs, skip, limit := parseSimpleResultModifiers("BOGUS stuff", map[string]string{})
-	if len(specs) != 0 || skip != 0 || limit != -1 {
-		t.Fatalf("expected defaults for unknown modifier, got specs=%v skip=%d limit=%d", specs, skip, limit)
-	}
-}
-
-func TestProjectInputRowsAsMaps_InvalidSpec(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	// No colon in spec.
-	_, ok := projectInputRowsAsMaps(input, "invalid")
-	if ok {
-		t.Fatal("expected false for spec without colon")
-	}
-	// Non-simple key.
-	_, ok = projectInputRowsAsMaps(input, "a.b: c")
-	if ok {
-		t.Fatal("expected false for non-simple key")
-	}
-}
-
-func TestProjectInputRowsAsMaps_EmptySpec(t *testing.T) {
-	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	_, ok := projectInputRowsAsMaps(input, "")
-	if ok {
-		t.Fatal("expected false for empty spec")
 	}
 }
 
@@ -2586,147 +1593,6 @@ func TestExecuteExec_WithTransaction(t *testing.T) {
 	// Should have registered a sub-transaction.
 	if len(tx.Participants()) != 1 {
 		t.Fatalf("expected 1 participant, got %d", len(tx.Participants()))
-	}
-}
-
-func TestExecuteApply_EmptyInnerResultNoCollect(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}},
-			},
-			"MATCH (m) WHERE m.ref = $id RETURN m.name AS name": {
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{}, // Empty inner result.
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "MATCH (m) WHERE m.ref = $id RETURN m.name AS name",
-		GraphName: "db1", Columns: []string{"name"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner, Columns: []string{"id", "name"}}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty inner means the outer row is dropped (no collect).
-	if result.RowCount() != 0 {
-		t.Fatalf("expected 0 rows for empty inner without collect, got %d", result.RowCount())
-	}
-}
-
-func TestExecuteApply_EmptyInnerWithCollectSynthesizes(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}},
-			},
-			"MATCH (m) WHERE m.ref = $id RETURN collect(m.name) AS names": {
-				Columns: []string{"names"},
-				Rows:    [][]interface{}{}, // Empty — synthesized with [].
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "MATCH (m) WHERE m.ref = $id RETURN collect(m.name) AS names",
-		GraphName: "db1", Columns: []string{"names"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner, Columns: []string{"id", "names"}}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 1 {
-		t.Fatalf("expected 1 row with synthesized empty collect, got %d", result.RowCount())
-	}
-}
-
-func TestExecuteApply_EmptyInnerResultDropsRow(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}},
-			},
-			"RETURN 1 AS one": {
-				Columns: []string{"one"},
-				Rows:    [][]interface{}{}, // Empty result — row dropped.
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1 AS one",
-		GraphName: "db1", Columns: []string{"one"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty inner result → outer row is dropped.
-	if result.RowCount() != 0 {
-		t.Fatalf("expected 0 rows, got %d", result.RowCount())
-	}
-}
-
-func TestExecuteApply_InputError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{err: fmt.Errorf("input error")}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id",
-		GraphName: "db1",
-	}
-	inner := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	_, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err == nil {
-		t.Fatal("expected error for apply input failure")
-	}
-	if !strings.Contains(err.Error(), "apply input failed") {
-		t.Fatalf("expected 'apply input failed' in error, got: %v", err)
 	}
 }
 
@@ -2967,308 +1833,6 @@ func TestSubstituteVarsWithParams_EmptyVar(t *testing.T) {
 	}
 }
 
-func TestExtractApplyCorrelationWhere_RHSVarProp(t *testing.T) {
-	// Reversed: importCol on LHS, var.prop on RHS.
-	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("textKey128 = tt.translationId", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
-	if !ok {
-		t.Fatal("expected correlation extraction to succeed")
-	}
-	if matchVar != "tt" || matchProp != "translationId" {
-		t.Fatalf("expected tt.translationId, got %s.%s", matchVar, matchProp)
-	}
-	if otherWhere != "" {
-		t.Fatalf("expected no other where, got %q", otherWhere)
-	}
-}
-
-func TestExtractApplyCorrelationWhere_NoCorrelation(t *testing.T) {
-	_, _, _, ok := cyphertext.ExtractCorrelationWhere("a = b", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
-	if ok {
-		t.Fatal("expected no correlation when import col not found")
-	}
-}
-
-func TestExtractApplyCorrelationWhere_WithExtraTerms(t *testing.T) {
-	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("tt.translationId = textKey128 AND tt.language = 'es'", "textKey128", splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
-	if !ok {
-		t.Fatal("expected extraction to succeed")
-	}
-	if matchVar != "tt" || matchProp != "translationId" {
-		t.Fatalf("unexpected match: %s.%s", matchVar, matchProp)
-	}
-	if otherWhere != "tt.language = 'es'" {
-		t.Fatalf("unexpected otherWhere: %q", otherWhere)
-	}
-}
-
-// TestTryExecuteApplyBatchedLookupRows_AllowsImportNotNullGuard covers the
-// row-lookup admission owner: an import IS NOT NULL guard is sanitized away and
-// the lookup stays batched.
-func TestTryExecuteApplyBatchedLookup_AdmissionGate(t *testing.T) {
-	cases := []struct {
-		name              string
-		collect, nilInner bool
-		columns           []string
-		rows              [][]interface{}
-		query             string
-	}{
-		{collect: true, name: "collect/nil input", nilInner: true, columns: nil, rows: nil, query: ""},
-		{collect: true, name: "collect/empty aggregate rows", columns: []string{"k"}, rows: [][]interface{}{}, query: ""},
-		{collect: true, name: "collect/non matching query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "MATCH (n) RETURN n"},
-		{collect: true, name: "collect/write query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k CREATE (n) RETURN collect(n) AS nodes"},
-		{collect: true, name: "collect/import col not in outer columns", columns: []string{"otherCol"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"},
-		{collect: true, name: "collect/standalone import col in other where", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k AND k > 0 RETURN collect(n) AS nodes"},
-		{collect: true, name: "collect/no where clause", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) RETURN collect(n) AS nodes"},
-		{name: "rows/nil input", nilInner: true, columns: nil, rows: nil, query: ""},
-		{name: "rows/non matching query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "MATCH (n) RETURN n"},
-		{name: "rows/query contains collect", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"},
-		{name: "rows/write query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k SET n.x = 1 RETURN n.x AS x"},
-		{name: "rows/import col not in outer columns", columns: []string{"other"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN n.name AS name"},
-		{name: "rows/empty return clause", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN "},
-		{name: "rows/no correlation", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.x = 'literal' RETURN n.y AS y"},
-		{name: "rows/non simple return items", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN count(n) AS cnt"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			exec := NewFabricExecutor(NewCatalog(), nil, nil)
-			var input *ResultStream
-			if tc.columns != nil {
-				input = &ResultStream{Columns: tc.columns, Rows: tc.rows}
-			}
-			var inner *FragmentExec
-			if !tc.nilInner {
-				inner = &FragmentExec{Query: tc.query}
-			}
-			var result *ResultStream
-			var handled bool
-			var err error
-			if tc.collect {
-				result, handled, err = exec.tryExecuteApplyBatchedLookup(context.Background(), nil, tc.columns, nil, inner, nil, "", input)
-			} else {
-				result, handled, err = exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-			}
-			if handled {
-				t.Fatalf("expected not handled, got result %#v", result)
-			}
-			if result != nil {
-				t.Fatalf("expected nil result for unhandled case, got %#v", result)
-			}
-			if err != nil {
-				t.Fatalf("expected no error for unhandled case, got %v", err)
-			}
-		})
-	}
-}
-
-func TestTryExecuteApplyBatchedLookup_AllNilKeys(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		collect     bool
-		columns     []string
-		query       string
-		wantColumns string
-		wantRows    int
-	}{
-		{"collect", true, []string{"textKey128"}, "WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts", "textKey128,texts", 2},
-		{"rows", false, []string{"id"}, "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name", "id,name", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			catalog := NewCatalog()
-			catalog.Register("db1", &LocationLocal{DBName: "db1"})
-			mock := &mockCypherExecutor{results: map[string]*ResultStream{}, calls: map[string]int{}}
-			exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-			input := &ResultStream{Columns: tc.columns, Rows: [][]interface{}{{nil}, {nil}}}
-			inner := &FragmentExec{Query: tc.query, GraphName: "db1"}
-			var result *ResultStream
-			var handled bool
-			var err error
-			if tc.collect {
-				result, handled, err = exec.tryExecuteApplyBatchedLookup(context.Background(), nil, input.Columns, nil, inner, nil, "", input)
-			} else {
-				result, handled, err = exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !handled {
-				t.Fatal("expected handled for all-nil keys")
-			}
-			if len(result.Rows) != tc.wantRows {
-				t.Fatalf("expected %d rows, got %d", tc.wantRows, len(result.Rows))
-			}
-			if got := strings.Join(result.Columns, ","); got != tc.wantColumns {
-				t.Fatalf("expected columns %q, got %q", tc.wantColumns, got)
-			}
-			for i, row := range result.Rows {
-				if row[0] != nil {
-					t.Fatalf("row %d: expected nil outer key preserved, got %#v", i, row[0])
-				}
-				texts, ok := row[1].([]interface{})
-				if !ok || len(texts) != 0 {
-					t.Fatalf("row %d: expected empty collect list, got %#v", i, row[1])
-				}
-			}
-			if len(mock.calls) != 0 {
-				t.Fatalf("expected no inner query execution for all-nil keys, got calls %v", mock.calls)
-			}
-		})
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_AllowsImportNotNullGuard(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	batchedQuery := "MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys RETURN tt.translationId AS __fabric_apply_key, tt.language AS language, tt.translatedText AS translatedText"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			batchedQuery: {
-				Columns: []string{"__fabric_apply_key", "language", "translatedText"},
-				Rows: [][]interface{}{
-					{"s1", "es", "uno"},
-					{"s2", "fr", "deux"},
-				},
-			},
-		},
-		calls: map[string]int{},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	input := &ResultStream{
-		Columns: []string{"sourceId"},
-		Rows:    [][]interface{}{{"s1"}, {"s2"}},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"sourceId"}, ImportColumns: []string{"sourceId"}},
-		Query:     "WITH sourceId MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId AND sourceId IS NOT NULL RETURN tt.language AS language, tt.translatedText AS translatedText",
-		GraphName: "db1",
-		Columns:   []string{"language", "translatedText"},
-	}
-	res, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !handled {
-		t.Fatal("expected handled for import not-null guard")
-	}
-	if len(res.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(res.Rows))
-	}
-	if mock.calls[batchedQuery] != 1 {
-		t.Fatalf("expected batched query execution; calls=%v", mock.calls)
-	}
-}
-
-func TestTryExecuteApplyBatchedCountLookup_TraversalPattern(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	batchedQuery := "MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId IN $__fabric_apply_keys RETURN tt.translationId AS __fabric_apply_key, count(*) AS c"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			batchedQuery: {
-				Columns: []string{"__fabric_apply_key", "c"},
-				Rows: [][]interface{}{
-					{"s1", int64(2)},
-					{"s2", int64(1)},
-				},
-			},
-		},
-		calls: map[string]int{},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	input := &ResultStream{
-		Columns: []string{"sourceId"},
-		Rows:    [][]interface{}{{"s1"}, {"s2"}, {"s3"}},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"sourceId"}, ImportColumns: []string{"sourceId"}},
-		Query:     "WITH sourceId MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId = sourceId RETURN count(*) AS c",
-		GraphName: "db1",
-		Columns:   []string{"c"},
-	}
-
-	res, handled, err := exec.tryExecuteApplyBatchedCountLookup(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !handled {
-		t.Fatal("expected handled traversal count lookup")
-	}
-	if len(res.Rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(res.Rows))
-	}
-	if got := res.Rows[0][1]; got != int64(2) {
-		t.Fatalf("expected s1 count=2, got %#v", got)
-	}
-	if got := res.Rows[1][1]; got != int64(1) {
-		t.Fatalf("expected s2 count=1, got %#v", got)
-	}
-	if got := res.Rows[2][1]; got != int64(0) {
-		t.Fatalf("expected s3 count=0, got %#v", got)
-	}
-	if mock.calls[batchedQuery] < 1 {
-		t.Fatalf("expected batched traversal count query execution; calls=%v", mock.calls)
-	}
-}
-
-func TestTryExecuteApplyBatchedCountLookup_AllowsImportNotNullGuard(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	batchedQuery := "MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys RETURN tt.translationId AS __fabric_apply_key, count(*) AS c"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			batchedQuery: {
-				Columns: []string{"__fabric_apply_key", "c"},
-				Rows: [][]interface{}{
-					{"s1", int64(3)},
-				},
-			},
-		},
-		calls: map[string]int{},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	input := &ResultStream{
-		Columns: []string{"sourceId"},
-		Rows:    [][]interface{}{{"s1"}},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"sourceId"}, ImportColumns: []string{"sourceId"}},
-		Query:     "WITH sourceId MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId AND sourceId IS NOT NULL RETURN count(*) AS c",
-		GraphName: "db1",
-		Columns:   []string{"c"},
-	}
-
-	res, handled, err := exec.tryExecuteApplyBatchedCountLookup(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !handled {
-		t.Fatal("expected handled for import not-null guard")
-	}
-	if len(res.Rows) != 1 || res.Rows[0][1] != int64(3) {
-		t.Fatalf("unexpected result rows: %#v", res.Rows)
-	}
-	if mock.calls[batchedQuery] < 1 {
-		t.Fatalf("expected batched query execution; calls=%v", mock.calls)
-	}
-}
-
-func TestTryExecuteApplyBatchedCountLookup_WriteQueryNotHandled(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"sourceId"}, Rows: [][]interface{}{{"s1"}}}
-	inner := &FragmentExec{
-		Query: "WITH sourceId MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId CREATE (x:Audit) RETURN count(*) AS c",
-	}
-	_, handled, _ := exec.tryExecuteApplyBatchedCountLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for write query")
-	}
-}
-
 func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -3294,91 +1858,6 @@ func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 				t.Fatalf("where mismatch: got %q want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestExecuteApply_InnerError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	callCount := 0
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}},
-			},
-		},
-	}
-	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
-		mock:      mock,
-		callCount: &callCount,
-		failAt:    2, // Fail on second call (inner execution).
-	}, func(name string) (storage.Engine, error) {
-		return &mockEngine{}, nil
-	})
-	exec := NewFabricExecutor(catalog, localExec, nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1 AS one",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	_, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err == nil || !strings.Contains(err.Error(), "apply inner failed") {
-		t.Fatalf("expected apply inner error, got: %v", err)
-	}
-}
-
-func TestHasKeywordAt_PrevIsIdentChar(t *testing.T) {
-	// hasKeywordAt (executor.go version) should reject when preceded by ident char.
-	if hasKeywordAt("xMATCH (n)", 1, "MATCH") {
-		t.Fatal("expected false when preceded by letter")
-	}
-	if hasKeywordAt("1MATCH (n)", 1, "MATCH") {
-		t.Fatal("expected false when preceded by digit")
-	}
-	if hasKeywordAt("_MATCH (n)", 1, "MATCH") {
-		t.Fatal("expected false when preceded by underscore")
-	}
-}
-
-func TestExecuteApplyAsPipeline_NonSimpleColumnName(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	capture := &pipelineCaptureCypherExecutor{}
-	local := NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, local, nil)
-	input := &ResultStream{
-		Columns: []string{"a.b"}, // Non-simple identifier.
-		Rows:    [][]interface{}{{"v"}},
-	}
-	inner := &FragmentExec{Query: "WITH x AS y MATCH (n) RETURN n", GraphName: "db1"}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if err != nil || !used {
-		t.Fatalf("expected quoted non-simple column to use pipeline: used=%v err=%v", used, err)
-	}
-	if want := "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`a.b` AS `a.b` WITH x AS y MATCH (n) RETURN n"; capture.lastQuery != want {
-		t.Fatalf("unexpected pipeline query: got %q, want %q", capture.lastQuery, want)
-	}
-}
-
-func TestExecuteApplyAsPipeline_RowWrapperInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{
-		Columns:    []string{"__fabric_row"},
-		Rows:       [][]interface{}{{"v"}},
-		RowWrapper: true, // The pipeline's own row wrapper.
-	}
-	inner := &FragmentExec{Query: "WITH x AS y MATCH (n) RETURN n"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected the row wrapper input to prevent pipeline")
 	}
 }
 
@@ -3418,7 +1897,7 @@ func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
 func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
 	// Escaped single quote inside WITH clause.
 	query := "WITH 'it''s' AS x MATCH (n)"
-	pos, ok := findLeadingWithClauseEnd(query)
+	pos, ok := findLeadingWithClauseEnd(query, nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
@@ -3478,17 +1957,6 @@ func TestFragmentContainsWrite_LeafInputWrite(t *testing.T) {
 	}
 	if !fragmentContainsWrite(leaf) {
 		t.Fatal("expected leaf with write input to be detected")
-	}
-}
-
-func TestProjectInputRowsAsMaps_NonSimpleValue(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	_, ok := projectInputRowsAsMaps(input, "key: a.b")
-	if ok {
-		t.Fatal("expected false for non-simple value identifier")
 	}
 }
 
@@ -3613,41 +2081,6 @@ func TestRemoteFragmentExecutor_Close_Empty(t *testing.T) {
 	err := re.Close()
 	if err != nil {
 		t.Fatalf("unexpected error closing empty executor: %v", err)
-	}
-}
-
-func TestExecuteApply_ProjectSimpleReturnFastPath(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id, n.name AS name": {
-				Columns: []string{"id", "name"},
-				Rows:    [][]interface{}{{"a", "Alice"}, {"b", "Bob"}},
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
-		GraphName: "db1", Columns: []string{"id", "name"},
-	}
-	// Inner is a simple RETURN projection of outer columns.
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id", "name"}, ImportColumns: []string{"id", "name"}},
-		Query:     "RETURN id, name",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
 	}
 }
 
@@ -3838,190 +2271,6 @@ RETURN translationId`
 	}
 }
 
-func TestExecuteApply_BatchedCollectLookupError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	// Outer query succeeds, inner batched query fails.
-	callCount := 0
-	outerQuery := "MATCH (n) RETURN n.id AS textKey128"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			outerQuery: {Columns: []string{"textKey128"}, Rows: [][]interface{}{{"k1"}}},
-		},
-	}
-	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
-		mock: mock, callCount: &callCount, failAt: 2,
-	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
-
-	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"textKey128"}, ImportColumns: []string{"textKey128"}},
-		Query:     "WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	_, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err == nil {
-		t.Fatal("expected error from batched collect lookup")
-	}
-	if !strings.Contains(err.Error(), "apply inner failed") {
-		t.Fatalf("expected 'apply inner failed' in error, got: %v", err)
-	}
-}
-
-func TestExecuteApply_BatchedRowLookupError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	callCount := 0
-	outerQuery := "MATCH (n) RETURN n.id AS id"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			outerQuery: {Columns: []string{"id"}, Rows: [][]interface{}{{"k1"}}},
-		},
-	}
-	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
-		mock: mock, callCount: &callCount, failAt: 2,
-	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
-
-	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"id"}}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name, n.age AS age",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	_, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err == nil {
-		t.Fatal("expected error from batched row lookup")
-	}
-	if !strings.Contains(err.Error(), "apply inner failed") {
-		t.Fatalf("expected 'apply inner failed' in error, got: %v", err)
-	}
-}
-
-func TestExecuteApply_PipelineError(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	callCount := 0
-	outerQuery := "MATCH (n) RETURN n.id AS id, n.name AS name"
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			outerQuery: {Columns: []string{"id", "name"}, Rows: [][]interface{}{{"k1", "Alice"}}},
-		},
-	}
-	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
-		mock: mock, callCount: &callCount, failAt: 2,
-	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
-
-	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"id", "name"}}
-	// Non-simple WITH clause (not just imports) triggers pipeline path.
-	inner := &FragmentExec{
-		Input:     &FragmentInit{},
-		Query:     "WITH id AS x, name AS y MATCH (m) WHERE m.x = x RETURN m.z AS z",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	_, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err == nil {
-		t.Fatal("expected error from pipeline")
-	}
-	if !strings.Contains(err.Error(), "apply inner failed") {
-		t.Fatalf("expected 'apply inner failed', got: %v", err)
-	}
-}
-
-func TestExecuteApply_InMemoryProjectionHandled(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id, n.name AS name": {
-				Columns: []string{"id", "name"},
-				Rows:    [][]interface{}{{"a", "Alice"}, {"b", "Bob"}},
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
-		GraphName: "db1", Columns: []string{"id", "name"},
-	}
-	// In-memory projection: simple RETURN of outer columns.
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id", "name"}},
-		Query:     "RETURN id AS key, name AS val",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows from in-memory projection, got %d", result.RowCount())
-	}
-	if result.Columns[0] != "key" || result.Columns[1] != "val" {
-		t.Fatalf("expected columns [key val], got %v", result.Columns)
-	}
-}
-
-func TestExecuteApply_InnerNonExec(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id": {
-				Columns: []string{"id"},
-				Rows:    [][]interface{}{{"a"}},
-			},
-			"RETURN 1 AS x": {
-				Columns: []string{"x"},
-				Rows:    [][]interface{}{{1}},
-			},
-			"RETURN 2 AS x": {
-				Columns: []string{"x"},
-				Rows:    [][]interface{}{{2}},
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	// Inner is a union (not FragmentExec) — skips all optimization paths.
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
-		GraphName: "db1", Columns: []string{"id"},
-	}
-	inner := &FragmentUnion{
-		Init:    &FragmentInit{},
-		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
-		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 2 AS x", GraphName: "db1"},
-		Columns: []string{"x"},
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// 1 outer row × 2 inner rows = 2 combined rows.
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
-	}
-}
-
 func TestExecuteUnionSequential_NilResults(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
@@ -4047,143 +2296,6 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 	}
 }
 
-func TestExecuteApply_PerRowProjectionFastPath(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"MATCH (n) RETURN n.id AS id, n.name AS name": {
-				Columns: []string{"id", "name"},
-				Rows:    [][]interface{}{{"a", "Alice"}, {"b", "Bob"}},
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
-		GraphName: "db1", Columns: []string{"id", "name"},
-	}
-	// Inner is a per-row simple RETURN that should hit projectSimpleReturnFromRow.
-	// Use FragmentApply with inner columns set empty so result.Columns starts empty.
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"id", "name"}, ImportColumns: []string{"id", "name"}},
-		Query:     "RETURN id AS key, name AS val",
-		GraphName: "db1",
-	}
-	apply := &FragmentApply{Input: outer, Inner: inner, Columns: nil}
-
-	result, err := exec.Execute(context.Background(), nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
-	}
-	// Columns should be set by the fast-path.
-	if len(result.Columns) < 2 {
-		t.Fatalf("expected at least 2 columns, got %v", result.Columns)
-	}
-}
-
-func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *testing.T) {
-	spec, ok := parseApplyCorrelatedLookupSubquery(t.Context(),
-		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1",
-	)
-	if !ok {
-		t.Fatal("expected parse to succeed")
-	}
-	if spec.importCol != "sourceId" {
-		t.Fatalf("unexpected import column: %q", spec.importCol)
-	}
-	if spec.useClause != "USE translations.txr" {
-		t.Fatalf("unexpected use clause: %q", spec.useClause)
-	}
-	if spec.matchPart != "(tt:MongoDocument)" {
-		t.Fatalf("unexpected match part: %q", spec.matchPart)
-	}
-	if spec.wherePart != "tt.translationId = sourceId" {
-		t.Fatalf("unexpected where part: %q", spec.wherePart)
-	}
-	if spec.returnProjection != "tt.language AS language, tt.translatedText AS translatedText" {
-		t.Fatalf("unexpected return projection: %q", spec.returnProjection)
-	}
-	if spec.returnModifiers != "ORDER BY tt.language DESC LIMIT 1" {
-		t.Fatalf("unexpected return modifiers: %q", spec.returnModifiers)
-	}
-
-	spec, ok = parseApplyCorrelatedLookupSubquery(t.Context(),
-		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) RETURN tt.language AS language",
-	)
-	if !ok {
-		t.Fatal("expected parse without WHERE to succeed")
-	}
-	if spec.wherePart != "" {
-		t.Fatalf("expected empty where part, got %q", spec.wherePart)
-	}
-}
-
-func TestFabricExecutor_ApplyBatchedLookupRows_ModifiersPerOuterKey(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	outerQuery := "MATCH (n) RETURN n.id AS sourceId"
-	batchedInnerQuery := "USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId IN $__fabric_apply_keys AND tt.language IS NOT NULL AND tt.translatedText IS NOT NULL RETURN tt.translationId AS __fabric_apply_key, tt.language AS language, tt.translatedText AS translatedText"
-
-	mock := &mockCypherExecutor{
-		calls: map[string]int{},
-		results: map[string]*ResultStream{
-			outerQuery: {
-				Columns: []string{"sourceId"},
-				Rows:    [][]interface{}{{"id1"}, {"id2"}},
-			},
-			batchedInnerQuery: {
-				Columns: []string{"__fabric_apply_key", "language", "translatedText"},
-				Rows: [][]interface{}{
-					{"id1", "en", "hello"},
-					{"id1", "es", "hola"},
-					{"id2", "de", "hallo"},
-					{"id2", "fr", "bonjour"},
-				},
-			},
-		},
-	}
-
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-	ctx := context.Background()
-
-	outer := &FragmentExec{
-		Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"sourceId"},
-	}
-	inner := &FragmentExec{
-		Input:     &FragmentInit{Columns: []string{"sourceId"}, ImportColumns: []string{"sourceId"}},
-		Query:     "WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId AND tt.language IS NOT NULL AND tt.translatedText IS NOT NULL RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1",
-		GraphName: "db1",
-		Columns:   []string{"language", "translatedText"},
-	}
-	apply := &FragmentApply{
-		Input: outer, Inner: inner, Columns: []string{"sourceId", "language", "translatedText"},
-	}
-
-	result, err := exec.Execute(ctx, nil, apply, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RowCount() != 2 {
-		t.Fatalf("expected 2 rows, got %d", result.RowCount())
-	}
-	if got := mock.calls[batchedInnerQuery]; got != 1 {
-		t.Fatalf("expected single batched lookup, got %d", got)
-	}
-	if result.Rows[0][0] != "id1" || result.Rows[0][1] != "es" {
-		t.Fatalf("unexpected first row: %v", result.Rows[0])
-	}
-	if result.Rows[1][0] != "id2" || result.Rows[1][1] != "fr" {
-		t.Fatalf("unexpected second row: %v", result.Rows[1])
-	}
-}
-
 func TestSplitTopLevelEquality_NestedParens(t *testing.T) {
 	// Equals inside nested parens should be skipped.
 	_, _, ok := splitTopLevelEquality("func(a = b)")
@@ -4203,83 +2315,6 @@ func TestSplitTopLevelEquality_NestedBraces(t *testing.T) {
 	_, _, ok := splitTopLevelEquality("{a = b}")
 	if ok {
 		t.Fatal("expected no top-level equality inside braces")
-	}
-}
-
-func TestProjectSimpleReturnFromRow_EmptyItemInReturn(t *testing.T) {
-	// Trailing comma creates empty item.
-	_, _, ok := projectSimpleReturnFromRow("RETURN a, ", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected false for empty item in RETURN")
-	}
-}
-
-func TestProjectSimpleReturnFromRow_NonSimpleAlias(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected false for non-simple alias")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_ReturnEmptyItem(t *testing.T) {
-	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	_, ok := executeApplyInMemoryProjection(input, "RETURN a, ")
-	// Empty item → returns false.
-	if ok {
-		t.Fatal("expected false for RETURN with empty trailing item")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_CollectMapMismatchedAlias(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	// rowsAlias != returnAlias → not handled.
-	_, ok := executeApplyInMemoryProjection(input,
-		"WITH collect({a: a}) AS rows RETURN other")
-	if ok {
-		t.Fatal("expected not handled for mismatched alias")
-	}
-}
-
-func TestExecuteApplyInMemoryProjection_DistinctKeysMismatch(t *testing.T) {
-	input := &ResultStream{
-		Columns: []string{"a"},
-		Rows:    [][]interface{}{{1}},
-	}
-	// The distinct-keys pattern with mismatched variable names.
-	_, ok := executeApplyInMemoryProjection(input,
-		"WITH collect({a: a}) AS rows UNWIND rows AS r WITH collect(DISTINCT r.a) AS keys RETURN other")
-	if ok {
-		t.Fatal("expected not handled for mismatched distinct keys alias")
-	}
-}
-
-func TestSynthesizeEmptyCollectOnlyReturn_MultiCollect(t *testing.T) {
-	cols, row, ok := synthesizeEmptyCollectOnlyReturn("RETURN collect(n.id) AS ids, collect(n.name) AS names")
-	if !ok {
-		t.Fatal("expected multi-collect to synthesize")
-	}
-	if len(cols) != 2 || cols[0] != "ids" || cols[1] != "names" {
-		t.Fatalf("expected [ids names], got %v", cols)
-	}
-	for i, v := range row {
-		arr, ok := v.([]interface{})
-		if !ok || len(arr) != 0 {
-			t.Fatalf("expected empty list at index %d, got %v", i, v)
-		}
-	}
-}
-
-func TestApplySimpleResultModifiers_LimitOnly(t *testing.T) {
-	result := &ResultStream{
-		Columns: []string{"x"},
-		Rows:    [][]interface{}{{1}, {2}, {3}, {4}, {5}},
-	}
-	applySimpleResultModifiers(result, "LIMIT 3", map[string]string{})
-	if len(result.Rows) != 3 {
-		t.Fatalf("expected 3 rows after LIMIT, got %d", len(result.Rows))
 	}
 }
 
@@ -4310,29 +2345,6 @@ func TestPopulateFromManager_WithAliases(t *testing.T) {
 	}
 }
 
-// Fabric's own names in a pipeline rewrite never take a name the statement
-// or its caller uses: a query column or caller parameter spelled like them
-// keeps its value.
-func TestExecuteApplyAsPipeline_PrivateNamesAreFree(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	capture := &pipelineCaptureCypherExecutor{}
-	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
-	input := &ResultStream{Columns: []string{"a", "__fabric_row"}, Rows: [][]interface{}{{1, 2}}}
-	inner := &FragmentExec{Query: "RETURN a + __fabric_row AS x", GraphName: "db1"}
-	params := map[string]interface{}{"__fabric_apply_rows": "caller"}
-	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, params, "")
-	if err != nil || !used {
-		t.Fatalf("expected the projection pipeline: used=%v err=%v", used, err)
-	}
-	if capture.lastQuery != "UNWIND $__fabric_apply_rows_1 AS __fabric_row_1 WITH __fabric_row_1.a AS a, __fabric_row_1.__fabric_row AS __fabric_row RETURN a + __fabric_row AS x" {
-		t.Fatalf("unexpected pipeline query: %s", capture.lastQuery)
-	}
-	if capture.lastParams["__fabric_apply_rows"] != "caller" {
-		t.Fatalf("expected the caller's parameter kept, got %#v", capture.lastParams["__fabric_apply_rows"])
-	}
-}
-
 // A remote fragment binds what it imports from parameters of its own; a
 // scope clause's imports run in that scope on the remote.
 func TestRemoteImportStatementNamesAndScope(t *testing.T) {
@@ -4360,121 +2372,4 @@ func TestRemoteImportStatementNamesAndScope(t *testing.T) {
 	dropResultColumns(res, scoped)
 	require.Equal(t, []string{"v"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(11)}}, res.Rows)
-}
-
-func TestBatchedReturnItemReaders(t *testing.T) {
-	type parserSelector int
-	const (
-		parseProperties parserSelector = iota
-		parseCounts
-	)
-
-	tests := []struct {
-		name        string
-		parser      parserSelector
-		text        string
-		matchVar    string
-		wantOK      bool
-		wantLen     int
-		wantAliases []string // nil means aliases are not asserted
-		wantProps   []string // nil means props are not asserted; element checked only when non-empty
-	}{
-		{
-			name:        "lookup success",
-			parser:      parseProperties,
-			text:        "n.name AS name, n.age AS age",
-			matchVar:    "n",
-			wantOK:      true,
-			wantLen:     2,
-			wantAliases: []string{"name", "age"},
-			wantProps:   []string{"name", "age"},
-		},
-		{
-			name:     "lookup wrong match variable",
-			parser:   parseProperties,
-			text:     "m.name AS name",
-			matchVar: "n",
-			wantOK:   false,
-		},
-		{
-			name:     "lookup empty return",
-			parser:   parseProperties,
-			text:     "",
-			matchVar: "n",
-			wantOK:   false,
-		},
-		{
-			name:     "lookup non-simple alias",
-			parser:   parseProperties,
-			text:     "n.name AS n.alias",
-			matchVar: "n",
-			wantOK:   false,
-		},
-		{
-			name:     "lookup expression without dot",
-			parser:   parseProperties,
-			text:     "justName",
-			matchVar: "n",
-			wantOK:   false,
-		},
-		{
-			name:        "count success",
-			parser:      parseCounts,
-			text:        "count(*) AS c, count(tt) AS n, count(tt.id) AS ids",
-			wantOK:      true,
-			wantLen:     3,
-			wantAliases: []string{"c", "n", "ids"},
-		},
-		{
-			name:   "count non-count aggregate",
-			parser: parseCounts,
-			text:   "sum(tt.x) AS s",
-			wantOK: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var aliases, props []string
-			var ok bool
-			switch tt.parser {
-			case parseProperties:
-				items, parsed := readPropertyReturnItems(tt.text, tt.matchVar)
-				ok = parsed
-				for _, item := range items {
-					aliases = append(aliases, item.alias)
-					props = append(props, item.prop)
-				}
-			case parseCounts:
-				items, parsed := readCountReturnItems(tt.text)
-				ok = parsed
-				for _, item := range items {
-					aliases = append(aliases, item.alias)
-				}
-			}
-
-			if ok != tt.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
-			}
-			if !tt.wantOK {
-				return
-			}
-			if len(aliases) != tt.wantLen {
-				t.Fatalf("len(aliases) = %d, want %d", len(aliases), tt.wantLen)
-			}
-			for index, want := range tt.wantAliases {
-				if aliases[index] != want {
-					t.Fatalf("items[%d].alias = %q, want %q", index, aliases[index], want)
-				}
-			}
-
-			if tt.wantProps != nil {
-				for i, want := range tt.wantProps {
-					if props[i] != want {
-						t.Fatalf("items[%d].prop = %q, want %q", i, props[i], want)
-					}
-				}
-			}
-		})
-	}
 }

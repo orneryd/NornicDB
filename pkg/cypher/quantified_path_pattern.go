@@ -531,8 +531,8 @@ func elementPredicateSpans(pattern string, from, to int) [][2]int {
 			if close < 0 || close > to {
 				return spans
 			}
-			if where := topLevelKeywordIndex(pattern[index+1:close], "WHERE"); where >= 0 {
-				spans = append(spans, [2]int{index + 1 + where, close})
+			if where := elementWhereIndex(pattern, index, close); where >= 0 {
+				spans = append(spans, [2]int{where, close})
 			}
 			index = close
 		}

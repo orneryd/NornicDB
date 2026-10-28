@@ -19,7 +19,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context) error {
 	}
 	migrated, changed := false, false
 	err := b.db.Update(func(txn *badger.Txn) error {
-		version, err := readSchemaVersionInTxn(txn)
+		version, err := accessSchemaVersionInTxn(txn, loadSchemaVersion, 0)
 		if err != nil {
 			return err
 		}
@@ -84,7 +84,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := writeSchemaVersionInTxn(txn, storageVersionCatalogV4); err != nil {
+		if _, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, storageVersionCatalogV4); err != nil {
 			return err
 		}
 		migrated = true

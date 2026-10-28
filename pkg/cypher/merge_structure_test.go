@@ -94,7 +94,7 @@ func TestSplitMergeClauseActions(t *testing.T) {
 	many := splitMergeClauseActions("(n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9", nil)
 	require.Equal(t, 9, many.onMatch.len())
 	require.Equal(t, "n.i = 9", many.onMatch.assignments(8))
-	require.Equal(t, "SET n.c = 3", many.onMatch.set(2))
+	require.Equal(t, "SET n.c = 3", inlineOverflowAt(many.onMatch.inline[:], many.onMatch.overflow, 2))
 }
 
 // A MERGE path reads each relationship as a single-relationship MERGE does:

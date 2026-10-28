@@ -16,15 +16,8 @@ func TestTransactionalBatchSizeDiagnostic(t *testing.T) {
 	text, _, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "CALL IN TRANSACTIONS requires a positive INTEGER batch size, got 1.5", text)
-	registered := false
-	for _, entry := range localization.CatalogManifest {
-		if entry.ID == message.ID {
-			registered = true
-			require.Equal(t, "CypherSubqueriesBatchSizeInvalid", entry.Constructor)
-			require.Equal(t, []string{"Value"}, entry.Fields)
-		}
-	}
-	require.True(t, registered)
+	entry := mustDiagnosticManifest(t, message.ID, "CypherSubqueriesBatchSizeInvalid")
+	require.Equal(t, []string{"Value"}, entry.Fields)
 }
 
 func TestTransactionalBatchAdmissionDiagnostics(t *testing.T) {
@@ -48,15 +41,24 @@ func TestTransactionalBatchAdmissionDiagnostics(t *testing.T) {
 					require.Equal(t, sample.english, text)
 				}
 			}
-			registered := false
-			for _, entry := range localization.CatalogManifest {
-				if entry.ID == sample.message.ID {
-					registered = true
-					require.Equal(t, sample.constructor, entry.Constructor)
-					require.ElementsMatch(t, sample.fields, entry.Fields)
-				}
-			}
-			require.True(t, registered)
+			entry := mustDiagnosticManifest(t, sample.message.ID, sample.constructor)
+			require.ElementsMatch(t, sample.fields, entry.Fields)
 		})
 	}
+}
+
+func mustDiagnosticManifest(t *testing.T, messageID localization.MessageID, constructor string) localization.CatalogManifestEntry {
+	t.Helper()
+	registered := false
+	var match localization.CatalogManifestEntry
+	for _, entry := range localization.CatalogManifest {
+		if entry.ID == messageID {
+			require.False(t, registered, "duplicate manifest entry for %s", messageID)
+			registered = true
+			require.Equal(t, constructor, entry.Constructor)
+			match = entry
+		}
+	}
+	require.True(t, registered, "manifest entry missing for %s", messageID)
+	return match
 }

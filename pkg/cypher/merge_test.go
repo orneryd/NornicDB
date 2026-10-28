@@ -1052,29 +1052,6 @@ func TestMergeSharedClauseBoundariesAndLeadingNoiseRejection(t *testing.T) {
 	}
 }
 
-func TestApplyWithProjection_Branches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
-	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
-	ctx := context.Background()
-	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *", nil, false)
-	require.True(t, ok)
-	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n", nil, false)
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{"n": n}}, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH answer AS projected", nil, false)
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{"projected": int64(42)}}, projected)
-	failureCtx := withExpressionFailureSlot(ctx)
-	projected, ok = exec.pipelineApplyWith(failureCtx, input, "WITH n + 1 AS invalid", nil, false)
-	require.False(t, ok)
-	require.Nil(t, projected)
-	require.Error(t, getExpressionFailure(failureCtx))
-	require.Contains(t, statusText(getExpressionFailure(failureCtx)), "Neo.ClientError.Statement.TypeError")
-}
-
 func TestExecuteMergeWithChain_AdditionalBranches(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")

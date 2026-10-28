@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -31,7 +30,7 @@ func TestRuntimeQueryCredentialErrorsAreRedacted(t *testing.T) {
 			errors.New("connection failed"),
 		))
 	}
-	manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
+	manager, _, err := newCredentialPersistenceFixture(t, cfg)
 	if err != nil {
 		t.Fatal("manager setup failed")
 	}

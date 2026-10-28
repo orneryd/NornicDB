@@ -93,6 +93,13 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		if next >= len(query) {
 			return
 		}
+		// In Cypher 5, a complete binding clause ends WITH's all projection.
+		// Cypher 25 retains its ALL modifier before keyword-shaped subscripts.
+		if !cypher25 && equalFoldASCII(word, "WITH") {
+			if _, clause := splitUnwindBody(query[next:]); clause {
+				return
+			}
+		}
 		signOrList := cypher25 && strings.IndexByte("+-[", query[next]) >= 0
 		if !signOrList && (next == all+3 || !startsProjectedExpression(query, next)) {
 			return
@@ -136,6 +143,9 @@ func startsOperand(query string, at int) bool {
 // keyword that would make ALL a variable (RETURN all AS x, RETURN all ORDER
 // BY …), starts at query[at].
 func startsProjectedExpression(query string, at int) bool {
+	if startsWithClauseAfterName(query[at:]) {
+		return false
+	}
 	if strings.IndexByte(",;)}=<>+-*/%^.[|", query[at]) >= 0 {
 		return false
 	}

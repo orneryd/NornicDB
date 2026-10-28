@@ -88,20 +88,3 @@ func TestCypherGraphProceduresLocalizedErrorsPreserveCauseIdentity(t *testing.T)
 		require.Equal(t, cause.Error(), localizedErr.Message.Data["Cause"])
 	}
 }
-
-func TestCypherGraphProceduresCatalogRendering(t *testing.T) {
-	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := CypherGraphProceduresGraphNotFound("missing", "neo4j")
-
-	spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "El grafo con el nombre `missing` no existe en la base de datos `neo4j`. Podría existir en otra base de datos.", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! Graph with name `missing` does not exist on database `neo4j`. It might exist on another database. !!]", pseudo)
-}

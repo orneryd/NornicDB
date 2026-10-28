@@ -79,3 +79,15 @@ func TestSourceStageRejectsUnknownEnum(t *testing.T) {
 	require.Error(t, source.Err)
 	require.NotContains(t, source.Err.Error(), "sensitive")
 }
+
+func TestCodepointBoundariesSingleAllocation(t *testing.T) {
+	source := NewSource(t.Context(), "Aλ"+string([]byte{0xed, 0xa0, 0x80})+"😀", AcceptedSource)
+	var boundaries []int
+	var err error
+	allocs := testing.AllocsPerRun(100, func() {
+		boundaries, err = source.CodepointBoundaries(t.Context())
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 1, 3, 6, 10}, boundaries)
+	require.LessOrEqual(t, allocs, 1.0, "the returned boundary table requires one allocation, without growth copies")
+}

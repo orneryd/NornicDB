@@ -185,20 +185,17 @@ APPLY {
 func newBootstrapSchema(t *testing.T) *storage.SchemaManager {
 	t.Helper()
 	sm := storage.NewSchemaManager()
-	for _, stmt := range allBootstrapDDL() {
-		parseDDLAndApply(t, sm, stmt)
-	}
-	return sm
-}
-
-func TestBootstrap_AllDDLParses(t *testing.T) {
-	sm := storage.NewSchemaManager()
 	for i, stmt := range allBootstrapDDL() {
 		parseDDLAndApply(t, sm, stmt)
 		if t.Failed() {
 			t.Fatalf("failed at DDL statement %d", i)
 		}
 	}
+	return sm
+}
+
+func TestBootstrap_AllDDLParses(t *testing.T) {
+	newBootstrapSchema(t)
 }
 
 func TestBootstrap_Counts(t *testing.T) {

@@ -188,7 +188,7 @@ func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMe
 	if !startsWithKeywordFold(body, "MERGE") {
 		return spec, false
 	}
-	body = strings.TrimSpace(body[len("MERGE"):])
+	body = pipelineClauseBody(body, "MERGE")
 	arrowIdx := strings.Index(body, "]->")
 	if arrowIdx < 0 {
 		return spec, false

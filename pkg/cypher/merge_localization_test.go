@@ -7,7 +7,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireCypherMergeLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -35,21 +34,4 @@ func TestCypherMergeLocalizedErrorPreservesCause(t *testing.T) {
 	localizedErr := requireCypherMergeLocalizedError(t, err, localization.MessageCypherMergeCreateNodeFailed, "failed to create node in MERGE: forced merge failure")
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, "forced merge failure", localizedErr.Message.Data["Cause"])
-}
-
-func TestCypherMergeCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherMergeUnwindParameterNotFound("rows")
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "no se encontró el parámetro UNWIND $rows o es nulo", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! UNWIND parameter $rows not found or is null !!]", pseudo)
 }

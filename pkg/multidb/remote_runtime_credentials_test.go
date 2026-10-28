@@ -72,7 +72,7 @@ func TestRemoteRuntimeCredentialErrorsAreRedacted(t *testing.T) {
 		t.Fatal("invalid endpoint reached factory")
 		return nil, nil
 	}
-	manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
+	manager, _, err := newCredentialPersistenceFixture(t, config)
 	require.NoError(t, err)
 	defer manager.Close()
 	err = manager.CreateCompositeDatabase(t.Context(), "invalid_uri", []ConstituentRef{{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@%invalid"}})

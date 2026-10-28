@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/labelrouting"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -35,7 +35,7 @@ type CompositeEngine struct {
 	accessModes map[string]string // "read", "write", "read_write"
 
 	// Routing configuration for label-based and property-based routing
-	labelRouting     map[string][]string               // label -> []constituent aliases
+	labelRouting     labelrouting.Table                // normalized label -> []constituent aliases
 	propertyRouting  map[string]map[interface{}]string // property name -> value -> constituent alias
 	propertyDefaults map[string]string                 // property name -> default constituent
 
@@ -81,7 +81,7 @@ func NewCompositeEngine(
 	accessModes map[string]string,
 ) *CompositeEngine {
 	// Initialize routing configuration with intelligent defaults
-	labelRouting := make(map[string][]string)
+	labelRouting := labelrouting.New()
 	propertyRouting := make(map[string]map[interface{}]string)
 	propertyDefaults := make(map[string]string)
 
@@ -91,7 +91,7 @@ func NewCompositeEngine(
 		if mode == "write" || mode == "read_write" {
 			writableConstituents = append(writableConstituents, alias)
 			// Auto-configure: label matching alias routes to that constituent
-			labelRouting[cyphertext.NameLower(alias)] = []string{alias}
+			labelRouting.Set(alias, []string{alias})
 		}
 	}
 
@@ -116,7 +116,7 @@ func NewCompositeEngine(
 func (c *CompositeEngine) SetLabelRouting(label string, constituents []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.labelRouting[cyphertext.NameLower(label)] = constituents
+	c.labelRouting.Set(label, constituents)
 }
 
 // SetPropertyRouting configures property-based routing for a specific property value.

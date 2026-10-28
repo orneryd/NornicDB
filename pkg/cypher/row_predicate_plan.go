@@ -390,7 +390,7 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	if !hasPrefixFoldASCII(text, "NOT ") && mayContainArithmetic(text) {
 		if scan, ok := scanComparisonChain(text); ok && scan.count == 1 {
-			span := scan.operator(0)
+			span := inlineOverflowAt(scan.inline[:], scan.overflow, 0)
 			operator := text[span.offset : span.offset+span.length]
 			if operator != "=~" {
 				left, leftOK := parseRowOperand(scan.operand(text, 0), rowOperandCompiled)

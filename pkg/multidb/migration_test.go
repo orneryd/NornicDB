@@ -139,36 +139,13 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 // TestMigration_AlreadyPrefixedData verifies that migration doesn't
 // affect data that already has namespace prefixes (already migrated).
 func TestMigration_AlreadyPrefixedData(t *testing.T) {
-	inner := newLegacyTestEngine(t)
-
-	// Create data with namespace prefix (simulating already-migrated data)
-	prefixedNode := &storage.Node{
-		ID:     storage.NodeID("nornic:already-prefixed"),
-		Labels: []string{"Prefixed"},
-		Properties: map[string]any{
-			"status": "migrated",
-		},
+	seed := &storage.Node{
+		ID:         storage.NodeID("nornic:already-prefixed"),
+		Labels:     []string{"Prefixed"},
+		Properties: map[string]any{"status": "migrated"},
 	}
-	_, err := inner.CreateNode(prefixedNode)
-	require.NoError(t, err)
-
-	// Create DatabaseManager
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	// Migration should complete (no unprefixed data to migrate)
-	assert.True(t, manager.isMigrationComplete())
-
-	// Verify prefixed data is still accessible
-	store, err := manager.GetDefaultStorage()
-	require.NoError(t, err)
-
-	// Note: NamespacedEngine will unprefix the ID, so we look for "already-prefixed"
-	retrieved, err := store.GetNode(storage.NodeID("already-prefixed"))
-	require.NoError(t, err)
-	assert.Equal(t, "already-prefixed", string(retrieved.ID))
-	assert.Equal(t, "migrated", retrieved.Properties["status"])
+	// NamespacedEngine unprefixes the ID, so we read "already-prefixed".
+	runMigrationVisibility(t, seed, "already-prefixed", "status", "migrated", false)
 }
 
 // TestMigration_MixedData verifies migration handles mix of prefixed and unprefixed data.
@@ -229,39 +206,12 @@ func TestMigration_MixedData(t *testing.T) {
 // TestMigration_NoMigrationOnSecondStart verifies that migration
 // doesn't run again if already completed (idempotency).
 func TestMigration_NoMigrationOnSecondStart(t *testing.T) {
-	inner := newLegacyTestEngine(t)
-
-	// First startup - create unprefixed data and migrate
-	oldNode := &storage.Node{
-		ID:     storage.NodeID("legacy-node"),
-		Labels: []string{"Legacy"},
-		Properties: map[string]any{
-			"migrated": true,
-		},
+	seed := &storage.Node{
+		ID:         storage.NodeID("legacy-node"),
+		Labels:     []string{"Legacy"},
+		Properties: map[string]any{"migrated": true},
 	}
-	_, err := inner.CreateNode(oldNode)
-	require.NoError(t, err)
-
-	manager1, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	assert.True(t, manager1.isMigrationComplete())
-	// Don't close manager1 - just create a new one with the same storage
-
-	// Second startup - migration should be skipped
-	manager2, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager2.Close()
-
-	assert.True(t, manager2.isMigrationComplete(), "Migration should already be complete")
-
-	// Verify data is still accessible
-	store, err := manager2.GetDefaultStorage()
-	require.NoError(t, err)
-
-	retrieved, err := store.GetNode(storage.NodeID("legacy-node"))
-	require.NoError(t, err)
-	assert.Equal(t, "legacy-node", string(retrieved.ID))
-	assert.Equal(t, true, retrieved.Properties["migrated"])
+	runMigrationVisibility(t, seed, "legacy-node", "migrated", true, true)
 }
 
 // TestMigration_EdgeRelationshipsPreserved verifies that edge relationships
@@ -443,4 +393,36 @@ func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
 			assert.False(t, exists, "node should not have injected db property")
 		})
 	}
+}
+
+// runMigrationVisibility seeds one node on a fresh legacy engine, opens a
+// DatabaseManager (optionally a second on the same engine to model a restart),
+// asserts migration completion, and verifies the node is readable through the
+// default storage with the expected property preserved.
+func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, prop string, want any, restart bool) {
+	t.Helper()
+	inner := newLegacyTestEngine(t)
+	_, err := inner.CreateNode(seed)
+	require.NoError(t, err)
+
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
+	require.NoError(t, err)
+	assert.True(t, manager.isMigrationComplete())
+
+	if restart {
+		manager2, err := NewDatabaseManager(t.Context(), inner, nil)
+		require.NoError(t, err)
+		defer manager2.Close()
+		assert.True(t, manager2.isMigrationComplete(), "Migration should already be complete")
+		manager = manager2
+	} else {
+		defer manager.Close()
+	}
+
+	store, err := manager.GetDefaultStorage()
+	require.NoError(t, err)
+	retrieved, err := store.GetNode(storage.NodeID(readID))
+	require.NoError(t, err)
+	assert.Equal(t, readID, string(retrieved.ID))
+	assert.Equal(t, want, retrieved.Properties[prop])
 }

@@ -121,7 +121,11 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		}
 		upper := standaloneKeyword(name.Value)
 		kind := standaloneClauseKind(query, upper, name.End, end)
-		if kind == standaloneStageItems && standaloneOperandPosition(previousWord, last) {
+		distinctModifier := false
+		if upper == "DISTINCT" && (previousWord == "WITH" || previousWord == "RETURN" || previousWord == "YIELD") {
+			_, distinctModifier = cutDistinct(query[index:end])
+		}
+		if kind == standaloneStageItems && !distinctModifier && standaloneOperandPosition(previousWord, last) {
 			// A keyword where an operand is expected is a variable:
 			// RETURN finish, n.id AS optional, WITH a, match.
 			previousWord, last = "", cyphertext.RuneAt(query, name.End-1)
@@ -171,7 +175,9 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			*edits = append(*edits, labelRewriteEdit{start: index, end: name.End, text: "SKIP"})
 		}
 		if upper == "ORDER" {
-			name.End = skipSpaces(query, name.End) + len("BY")
+			name.End = keywordEndAt(query[:end], index, "ORDER BY")
+			// BY is the last consumed word and expects the sort operand.
+			upper = "BY"
 		}
 		previousWord, last = upper, cyphertext.RuneAt(query, name.End-1)
 		index = name.End
@@ -212,9 +218,11 @@ var standaloneKeywords = func() map[string]string {
 // standaloneOperandWord reports whether word (upper case) expects an
 // operand after it: an operator word, AS, BY, or a clause's opening keyword.
 func standaloneOperandWord(word string) bool {
+	if isExpressionBoundaryWord(word) {
+		return true
+	}
 	switch word {
-	case "AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
-		"STARTS", "ENDS", "CONTAINS", "WITH", "RETURN", "WHERE", "UNWIND", "SET", "SKIP", "OFFSET", "LIMIT":
+	case "IS", "STARTS", "ENDS", "CONTAINS", "SKIP", "OFFSET", "LIMIT":
 		return true
 	}
 	return false
@@ -233,8 +241,8 @@ func standaloneOperandPosition(previousWord string, last rune) bool {
 func standaloneClauseKind(query, upper string, next, end int) int {
 	switch upper {
 	case "ORDER":
-		after := skipSpaces(query, next)
-		if after+len("BY") <= end && matchKeywordAt(query, after, "BY") {
+		after, unfinished := cyphertext.GapEnd(query[:end], next)
+		if unfinished < 0 && after > next && after+len("BY") <= end && matchKeywordAt(query[:end], after, "BY") {
 			return standaloneStageOrder
 		}
 	case "SKIP", "OFFSET":

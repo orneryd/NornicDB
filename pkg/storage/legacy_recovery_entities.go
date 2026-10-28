@@ -17,11 +17,7 @@ func (n *legacyNode) UnmarshalJSON(raw []byte) error {
 		*Fields
 		Properties jsontext.NumberMap `json:"properties"`
 	}{Fields: (*Fields)(n.Node), Properties: jsontext.NumberMap(n.Properties)}
-	if err := jsontext.Unmarshal(raw, &view, jsontext.ProjectedInput); err != nil {
-		return err
-	}
-	n.Properties = map[string]any(view.Properties)
-	return nil
+	return decodeLegacyEntityFields(raw, &view, &view.Properties, &n.Properties)
 }
 func (e *legacyEdge) UnmarshalJSON(raw []byte) error {
 	if e.Edge == nil {
@@ -32,12 +28,19 @@ func (e *legacyEdge) UnmarshalJSON(raw []byte) error {
 		*Fields
 		Properties jsontext.NumberMap `json:"properties"`
 	}{Fields: (*Fields)(e.Edge), Properties: jsontext.NumberMap(e.Properties)}
-	if err := jsontext.Unmarshal(raw, &view, jsontext.ProjectedInput); err != nil {
+	return decodeLegacyEntityFields(raw, &view, &view.Properties, &e.Properties)
+}
+
+// decodeLegacyEntityFields shares projected decoding and successful property
+// header publication; concrete views keep their historical typed field schemas.
+func decodeLegacyEntityFields(raw []byte, view any, properties *jsontext.NumberMap, destination *map[string]any) error {
+	if err := jsontext.Unmarshal(raw, view, jsontext.ProjectedInput); err != nil {
 		return err
 	}
-	e.Properties = map[string]any(view.Properties)
+	*destination = map[string]any(*properties)
 	return nil
 }
+
 func legacyNodeView(node *Node) *legacyNode {
 	if node == nil {
 		return nil

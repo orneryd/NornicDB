@@ -19,7 +19,24 @@ import (
 
 // testDatabaseRegistry owns map membership and deletion for database-command
 // fixtures; each fixture retains its own database-image construction policy.
-type testDatabaseRegistry[T any] struct{ databases map[string]T }
+type testCatalogOperation uint8
+
+const (
+	testCatalogCreateDatabase testCatalogOperation = iota
+	testCatalogDropDatabase
+	testCatalogCreateAlias
+	testCatalogDropAlias
+	testCatalogGetLimits
+	testCatalogSetLimits
+	testCatalogFailureCount
+)
+
+// Each fixture configures failures before exposing its manager to an executor.
+// Default fixtures retain their zero-value, no-failure behavior.
+type testDatabaseRegistry[T any] struct {
+	databases       map[string]T
+	catalogFailures [testCatalogFailureCount]error
+}
 
 func (m *testDatabaseRegistry[T]) Exists(name string) bool {
 	_, exists := m.databases[name]
@@ -27,6 +44,9 @@ func (m *testDatabaseRegistry[T]) Exists(name string) bool {
 }
 
 func (m *testDatabaseRegistry[T]) DropDatabase(ctx context.Context, name string) error {
+	if err := m.catalogFailures[testCatalogDropDatabase]; err != nil {
+		return err
+	}
 	if !m.Exists(name) {
 		return fmt.Errorf("database '%s' does not exist", name)
 	}
@@ -37,8 +57,9 @@ func (m *testDatabaseRegistry[T]) DropDatabase(ctx context.Context, name string)
 // mockDatabaseManager implements DatabaseManagerInterface for testing.
 type mockDatabaseManager struct {
 	testDatabaseRegistry[*mockDatabaseInfo]
-	limits    map[string]interface{} // Store limits per database
-	defaultDB string
+	limits             map[string]interface{} // Store limits per database
+	defaultDB          string
+	resolutionOverride string
 
 	systemStore storage.Engine
 }
@@ -68,6 +89,9 @@ func newMockDatabaseManager(t testing.TB) *mockDatabaseManager {
 }
 
 func (m *mockDatabaseManager) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
+	if err := m.catalogFailures[testCatalogCreateDatabase]; err != nil {
+		return err
+	}
 	if _, exists := m.databases[request.Name]; exists {
 		return fmt.Errorf("database '%s' already exists", request.Name)
 	}
@@ -89,10 +113,16 @@ func (m *mockDatabaseManager) ListDatabases() []DatabaseInfoInterface {
 }
 
 func (m *mockDatabaseManager) CreateAlias(ctx context.Context, alias, databaseName string) error {
+	if err := m.catalogFailures[testCatalogCreateAlias]; err != nil {
+		return err
+	}
 	return fmt.Errorf("not implemented in mock")
 }
 
 func (m *mockDatabaseManager) DropAlias(ctx context.Context, alias string) error {
+	if err := m.catalogFailures[testCatalogDropAlias]; err != nil {
+		return err
+	}
 	return fmt.Errorf("not implemented in mock")
 }
 
@@ -101,6 +131,9 @@ func (m *mockDatabaseManager) ListAliases(databaseName string) map[string]string
 }
 
 func (m *mockDatabaseManager) ResolveDatabase(nameOrAlias string) (string, error) {
+	if m.resolutionOverride != "" {
+		return m.resolutionOverride, nil
+	}
 	if m.Exists(nameOrAlias) {
 		return nameOrAlias, nil
 	}
@@ -108,6 +141,9 @@ func (m *mockDatabaseManager) ResolveDatabase(nameOrAlias string) (string, error
 }
 
 func (m *mockDatabaseManager) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
+	if err := m.catalogFailures[testCatalogSetLimits]; err != nil {
+		return err
+	}
 	if _, exists := m.databases[databaseName]; !exists {
 		return fmt.Errorf("database '%s' does not exist", databaseName)
 	}
@@ -116,6 +152,9 @@ func (m *mockDatabaseManager) SetDatabaseLimits(ctx context.Context, databaseNam
 }
 
 func (m *mockDatabaseManager) GetDatabaseLimits(databaseName string) (interface{}, error) {
+	if err := m.catalogFailures[testCatalogGetLimits]; err != nil {
+		return nil, err
+	}
 	if _, exists := m.databases[databaseName]; !exists {
 		return nil, fmt.Errorf("database '%s' does not exist", databaseName)
 	}
@@ -259,14 +298,8 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 }
 
 func TestSystemCommands_DropDatabase(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	store, exec, mockDBM := newDatabaseCommandFixture(t)
 	ctx := context.Background()
-
-	mockDBM := newMockDatabaseManager(t)
-	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"})
 	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
 	mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
 	exec.SetDatabaseManager(mockDBM)

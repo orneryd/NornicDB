@@ -260,7 +260,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
-		defer func() { result, retErr = normalized.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
 	}
 	cypher = source.Text
 	// The statement as the client sent it may not call NornicDB's internal
@@ -289,14 +289,14 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if rewrite != nil {
 		cypher = canonical
 		ctx = withSourceRewrite(ctx, rewrite)
-		defer func() { result, retErr = rewrite.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: rewrite}).restore(result, retErr, nil) }()
 	}
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
 		cypher = grouped
 		ctx = withSourceRewrite(ctx, numericRewrite)
-		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: numericRewrite}).restore(result, retErr, nil) }()
 	}
 	// GQL function aliases (collect_list, ln, …) call the function they
 	// name; columns and messages keep the client's text.
@@ -304,7 +304,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
 			cypher = aliased
 			ctx = withSourceRewrite(ctx, aliasRewrite)
-			defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
+			defer func() { result, retErr = (resultRestoration{source: aliasRewrite}).restore(result, retErr, nil) }()
 		} else {
 			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
 		}
@@ -327,7 +327,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	cypher, _, preambleRewrite = readCypherPreamble(cypher)
 	if preambleRewrite != nil {
 		ctx = withSourceRewrite(ctx, preambleRewrite)
-		defer func() { result, retErr = preambleRewrite.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: preambleRewrite}).restore(result, retErr, nil) }()
 	}
 	ctx, cypher = trimSourceText(ctx, cypher, trimSourceTerminator)
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
@@ -339,7 +339,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if separated, separateRewrite := separateCypher25Parameters(cypher); separateRewrite != nil {
 			cypher = separated
 			ctx = withSourceRewrite(ctx, separateRewrite)
-			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
+			defer func() { result, retErr = (resultRestoration{source: separateRewrite}).restore(result, retErr, nil) }()
 		}
 	}
 	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
@@ -356,7 +356,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			// statement pay for heap-allocated defers. Restored last pass first.
 			defer func() {
 				for index := len(expressionRewrites) - 1; index >= 0; index-- {
-					result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+					result, retErr = (resultRestoration{source: expressionRewrites[index]}).restore(withoutGeneratedColumns(result), retErr, nil)
 				}
 			}()
 		} else {
@@ -372,7 +372,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		} else if structureRewrite != nil {
 			cypher = composed
 			ctx = withSourceRewrite(ctx, structureRewrite)
-			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+			defer func() {
+				result, retErr = (resultRestoration{source: structureRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
+			}()
 		} else if !mayUseQueryStructure(cypher) {
 			// Only the quick check's verdict is the text's alone.
 			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
@@ -483,7 +485,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
 		defer func() {
-			result, retErr = names.restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
 		}()
 	}
 
@@ -492,15 +494,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
 		cypher = desugared
 		ctx = withSourceRewrite(ctx, orderRewrite)
-		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
+		defer func() { result, retErr = (resultRestoration{source: orderRewrite}).restore(result, retErr, nil) }()
 	}
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if fabricQuery || e.shouldUseFabricPlanner(ctx, cypher) {
-		if err := e.statementParametersError(ctx, cypher, params); err != nil {
-			return nil, err
-		}
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
@@ -632,7 +631,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		rowsRewritten = true
 		cypher = desugared
 		ctx = withSourceRewrite(ctx, labelRewrite)
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+		defer func() {
+			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
+		}()
 	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
@@ -984,7 +985,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// either keeps it. A streamed result is not cached.
 	if stream != nil && info.IsReadOnly && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
 		ctx = armResultStream(ctx, stream, cypher, func(columns []string) []string {
-			restored, _ := rewrite.restore(&ExecuteResult{Columns: columns}, nil)
+			restored, _ := (resultRestoration{source: rewrite}).restore(&ExecuteResult{Columns: columns}, nil, nil)
 			return restored.Columns
 		}, func(rows [][]interface{}) {
 			e.recordMaterializedResultAccess(&ExecuteResult{Rows: rows})

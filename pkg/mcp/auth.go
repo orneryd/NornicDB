@@ -30,9 +30,9 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,7 +41,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"golang.org/x/text/language"
 )
 
 // ============================================================================
@@ -476,27 +475,6 @@ func (m *AuthMiddleware) SetLocalizer(manager *localization.Manager) {
 	m.localizer = manager
 }
 
-func (m *AuthMiddleware) writeLocalizedError(w http.ResponseWriter, r *http.Request, message localization.Message, status int) {
-	text := message.Fallback
-	tag := language.AmericanEnglish
-	if m.localizer != nil {
-		ctx := r.Context()
-		preferences, _, err := language.ParseAcceptLanguage(r.Header.Get("Accept-Language"))
-		if err == nil && len(preferences) > 0 {
-			match := m.localizer.Resolve("http", preferences...)
-			ctx = localization.WithPreferences(ctx, match.Tag)
-		}
-		if rendered, resolved, err := m.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
-			text = rendered
-			tag = resolved
-		}
-	}
-	body, _ := json.Marshal(map[string]string{"error": text})
-	w.Header().Set("Content-Language", tag.String())
-	w.Header().Add("Vary", "Accept-Language")
-	http.Error(w, string(body), status)
-}
-
 // AuthContext holds authentication context for a request.
 // This is populated FROM JWT CLAIMS ONLY - nothing is stored server-side.
 type AuthContext struct {
@@ -574,14 +552,14 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 
 		// Token required
 		if token == "" && m.config.RequireAuth {
-			m.writeLocalizedError(w, r, localization.MCPAuthenticationRequired(), http.StatusUnauthorized)
+			httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.MCPAuthenticationRequired(), http.StatusUnauthorized, httpresponse.JSONErrorText)
 			return
 		}
 
 		// Validate JWT signature and expiration - NO DATABASE LOOKUP
 		claims, err := m.validateJWT(token)
 		if err != nil {
-			m.writeLocalizedError(w, r, localization.MCPInvalidOrExpiredToken(), http.StatusUnauthorized)
+			httpresponse.WriteLocalizedRejection(w, r, m.localizer, localization.MCPInvalidOrExpiredToken(), http.StatusUnauthorized, httpresponse.JSONErrorText)
 			return
 		}
 
@@ -594,7 +572,7 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 			if !allowed {
 				var localized *nornicerrors.Localized
 				if errors.As(err, &localized) {
-					m.writeLocalizedError(w, r, localized.Message, http.StatusTooManyRequests)
+					httpresponse.WriteLocalizedRejection(w, r, m.localizer, localized.Message, http.StatusTooManyRequests, httpresponse.JSONErrorText)
 				} else {
 					http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusTooManyRequests)
 				}

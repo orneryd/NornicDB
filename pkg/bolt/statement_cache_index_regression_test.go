@@ -2,7 +2,6 @@ package bolt
 
 import (
 	"context"
-	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -19,22 +18,22 @@ func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
 	defer manager.Close()
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	session := &Session{server: server}
-	for i := range 64 {
-		name := fmt.Sprintf("gate_cached_%d", i)
-		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
-			t.Fatal(err)
-		}
-		executor, err := session.getExecutorForDatabase(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := executor.Execute(context.Background(), "RETURN 67 AS gate_value", nil); err != nil {
-			t.Fatal(err)
-		}
-		if err := manager.DropDatabase(t.Context(), name); err != nil {
-			t.Fatal(err)
-		}
-	}
+	fixtureowner.RunCatalogDropCycles(t, 64, "gate_cached_",
+		func(name string) error {
+			return manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name})
+		},
+		func(name string) error {
+			executor, err := session.getExecutorForDatabase(name)
+			if err != nil {
+				return err
+			}
+			_, err = executor.Execute(context.Background(), "RETURN 67 AS gate_value", nil)
+			return err
+		},
+		func(name string) error {
+			return manager.DropDatabase(t.Context(), name)
+		},
+	)
 	if len(server.executors) != 0 {
 		t.Fatalf("catalog registry retired owners, but server retained %d dropped execution views", len(server.executors))
 	}

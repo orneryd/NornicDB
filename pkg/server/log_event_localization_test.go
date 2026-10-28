@@ -92,34 +92,6 @@ func TestGraphQLEnabledLogPreservesFieldsAcrossLocales(t *testing.T) {
 	)
 }
 
-func testRouterLogAcrossLocales(t *testing.T, eventID, english, spanish string, invoke func(*Server), assertFields func(*testing.T, map[string]any)) {
-	t.Helper()
-	for _, test := range []struct {
-		name    string
-		tag     language.Tag
-		message string
-	}{
-		{name: "English", tag: language.AmericanEnglish, message: english},
-		{name: "Spanish", tag: language.EuropeanSpanish, message: spanish},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var output bytes.Buffer
-			logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "server")
-			manager, err := localization.NewManager([]language.Tag{test.tag}, logger)
-			require.NoError(t, err)
-			server := &Server{config: &Config{}, log: logger, localizer: manager}
-
-			invoke(server)
-
-			record := findJSONLogRecord(t, output.Bytes(), eventID, english)
-			require.Equal(t, test.message, record["msg"])
-			require.Equal(t, eventID, record["event_id"])
-			require.Equal(t, "server", record["component"])
-			assertFields(t, record)
-		})
-	}
-}
-
 func withUIAssets(t *testing.T, enabled bool, assets fs.FS) {
 	t.Helper()
 	originalEnabled, originalAssets := UIEnabled, UIAssets
@@ -341,58 +313,6 @@ func TestHTTP2EnabledLogPreservesFieldsAcrossLocales(t *testing.T) {
 	}
 }
 
-func testServerLogAcrossLocales(t *testing.T, eventID, english, spanish string, configure func(*Config), assertFields func(*testing.T, map[string]any)) {
-	t.Helper()
-	for _, test := range []struct {
-		name    string
-		tag     language.Tag
-		message string
-	}{
-		{name: "English", tag: language.AmericanEnglish, message: english},
-		{name: "Spanish", tag: language.EuropeanSpanish, message: spanish},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			// The database freezes key selection at Open; configure the real startup
-			// owner before the server consumes that selection for its log event.
-			t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
-			dbConfig := nornicdb.DefaultConfig()
-			if eventID == "server.remote_credentials.key_fallback" {
-				t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "")
-				t.Setenv("NORNICDB_ENCRYPTION_PASSWORD", "test-database-encryption-password")
-				dbConfig.Database.EncryptionPassword = "test-database-encryption-password"
-			}
-			db, err := nornicdb.Open("", dbConfig)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, db.Close()) })
-
-			var output synchronizedLogBuffer
-			logger := slog.New(slog.NewJSONHandler(&output, nil))
-			manager, err := localization.NewManager([]language.Tag{test.tag}, logger)
-			require.NoError(t, err)
-			config := DefaultConfig()
-			config.MCPEnabled = false
-			config.EmbeddingEnabled = false
-			config.Logger = logger
-			config.Localizer = manager
-			if configure != nil {
-				configure(config)
-			}
-
-			server, err := New(db, nil, config)
-			require.NoError(t, err)
-			t.Cleanup(func() { stopTestServer(t, server) })
-
-			record := findJSONLogRecord(t, output.Bytes(), eventID, english)
-			require.Equal(t, test.message, record["msg"])
-			require.Equal(t, eventID, record["event_id"])
-			require.Equal(t, "server", record["component"])
-			if assertFields != nil {
-				assertFields(t, record)
-			}
-		})
-	}
-}
-
 // synchronizedLogBuffer snapshots log output while server startup goroutines may write.
 type synchronizedLogBuffer struct {
 	mu     sync.Mutex
@@ -427,4 +347,77 @@ func findJSONLogRecord(t *testing.T, output []byte, eventID, englishMessage stri
 	}
 	require.FailNow(t, "log event not found", "event_id=%s", eventID)
 	return nil
+}
+
+func testRouterLogAcrossLocales(t *testing.T, eventID, english, spanish string, invoke func(*Server), assertFields func(*testing.T, map[string]any)) {
+	t.Helper()
+	testLogRecordAcrossLocales(t, eventID, english, spanish, func(t *testing.T, tag language.Tag) []byte {
+		var output bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "server")
+		manager, err := localization.NewManager([]language.Tag{tag}, logger)
+		require.NoError(t, err)
+		server := &Server{config: &Config{}, log: logger, localizer: manager}
+
+		invoke(server)
+
+		return output.Bytes()
+	}, func(t *testing.T, record map[string]any) { assertFields(t, record) })
+}
+func testServerLogAcrossLocales(t *testing.T, eventID, english, spanish string, configure func(*Config), assertFields func(*testing.T, map[string]any)) {
+	t.Helper()
+	testLogRecordAcrossLocales(t, eventID, english, spanish, func(t *testing.T, tag language.Tag) []byte {
+		// The database freezes key selection at Open; configure the real startup
+		// owner before the server consumes that selection for its log event.
+		t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
+		dbConfig := nornicdb.DefaultConfig()
+		if eventID == "server.remote_credentials.key_fallback" {
+			t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "")
+			t.Setenv("NORNICDB_ENCRYPTION_PASSWORD", "test-database-encryption-password")
+			dbConfig.Database.EncryptionPassword = "test-database-encryption-password"
+		}
+		db, err := nornicdb.Open("", dbConfig)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+		var output synchronizedLogBuffer
+		logger := slog.New(slog.NewJSONHandler(&output, nil))
+		manager, err := localization.NewManager([]language.Tag{tag}, logger)
+		require.NoError(t, err)
+		config := DefaultConfig()
+		config.MCPEnabled = false
+		config.EmbeddingEnabled = false
+		config.Logger = logger
+		config.Localizer = manager
+		if configure != nil {
+			configure(config)
+		}
+
+		server, err := New(db, nil, config)
+		require.NoError(t, err)
+		t.Cleanup(func() { stopTestServer(t, server) })
+
+		return output.Bytes()
+	}, assertFields)
+}
+
+func testLogRecordAcrossLocales(t *testing.T, eventID, english, spanish string, observe func(*testing.T, language.Tag) []byte, assertFields func(*testing.T, map[string]any)) {
+	t.Helper()
+	for _, test := range []struct {
+		name    string
+		tag     language.Tag
+		message string
+	}{
+		{name: "English", tag: language.AmericanEnglish, message: english},
+		{name: "Spanish", tag: language.EuropeanSpanish, message: spanish},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			record := findJSONLogRecord(t, observe(t, test.tag), eventID, english)
+			require.Equal(t, test.message, record["msg"])
+			require.Equal(t, eventID, record["event_id"])
+			require.Equal(t, "server", record["component"])
+			if assertFields != nil {
+				assertFields(t, record)
+			}
+		})
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func (p *createOptionsSubmissionProbe) SubmitEntityCommit(ctx context.Context, p
 	p.prepared = prepared
 	p.receipt, p.receiptOwner = storage.NewCommitReceipt(settle)
 	if p.mode == "applied-ack-error" {
-		if err := p.finish(storage.CommitApplied); err != nil {
+		if err := storagefault.FinishPreparedReceipt(p.prepared, p.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict}); err != nil {
 			return nil, err
 		}
 	}
@@ -52,18 +53,6 @@ func (p *createOptionsSubmissionProbe) SubmitEntityCommit(ctx context.Context, p
 		close(p.submitted)
 	}
 	return p.receipt, nil
-}
-func (p *createOptionsSubmissionProbe) finish(state storage.CommitOutcomeState) error {
-	if state == storage.CommitApplied {
-		if err := p.prepared.Commit(nil); err != nil {
-			return err
-		}
-	} else {
-		p.prepared.Abort()
-	}
-	outcome := storage.CommitOutcome{State: state, Err: storage.ErrConflict}
-	p.receiptOwner.PublishPhysical(outcome)
-	return p.receiptOwner.Resolve(outcome)
 }
 
 // Historical fail-first evidence preserves the old second-submit and option-
@@ -108,7 +97,7 @@ func TestCreateDatabaseOptionsFailurePublishesNothing(t *testing.T) {
 				if mode == "pending-discarded" {
 					state = storage.CommitDiscarded
 				}
-				require.NoError(t, backing.finish(state))
+				require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: state, Err: storage.ErrConflict}))
 			} else {
 				err = execute()
 			}

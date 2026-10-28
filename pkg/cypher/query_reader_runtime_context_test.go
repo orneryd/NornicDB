@@ -150,7 +150,7 @@ func requireRuntimeReaderGrammarDiagnostic(t *testing.T, query string, err error
 	}
 	grammarErr := cypherantlr.ValidateContext(t.Context(), source, cyphertext.RawSource)
 	require.Error(t, grammarErr)
-	_, want := rewrite.restore(nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr))
+	_, want := (resultRestoration{source: rewrite}).restore(nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr), nil)
 	require.EqualError(t, err, want.Error())
 }
 
@@ -165,6 +165,13 @@ func TestMalformedCallScopeClauseDiagnosticOnBothParsers(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
+			t.Run("procedure named call with unclosed arguments", func(t *testing.T) {
+				executor := NewStorageExecutor(newTestMemoryEngine(t))
+				_, err := executor.Execute(t.Context(), "CALL call(1", nil)
+				require.EqualError(t, err, "Neo.ClientError.Statement.SyntaxError: syntax error: unbalanced parentheses")
+				requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+			})
+
 			for _, test := range []struct{ name, query string }{
 				{"literal import", "CALL (1) { RETURN 1 AS value } RETURN value"},
 				{"expression import", "WITH 1 AS x CALL (x + 1) { RETURN 1 AS value } RETURN value"},
@@ -181,35 +188,29 @@ func TestMalformedCallScopeClauseDiagnosticOnBothParsers(t *testing.T) {
 					requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 				})
 			}
-			for _, test := range []struct{ name, query, nornicDiagnostic string }{
-				{"valid scope with another syntax error", "WITH 1 AS x CALL (x) { RETURN x AS value } RETURN value +", "CALL imports must contain only variable names"},
-				{"parentheses without a subquery body", "CALL (1) RETURN 1 +", "CALL imports must contain only variable names"},
-				{"procedure named call", "CALL call(1) RETURN 1 +", "CALL imports must contain only variable names"},
-				{"labels procedure", "CALL db.labels() RETURN 1 +", "CALL imports must contain only variable names"},
-				{"apoc procedure", "CALL apoc.x(1) RETURN 1 +", "CALL imports must contain only variable names"},
-				{"single quoted text", "RETURN 'CALL (1) { RETURN 1 }' AS text, 1 +", ""},
-				{"double quoted text", "RETURN \"CALL (1) { RETURN 1 }\" AS text, 1 +", ""},
-				{"line comment", "RETURN 1 // CALL (1) { RETURN 1 }\n+", ""},
-				{"block comment", "RETURN 1 /* CALL (1) { RETURN 1 } */ +", ""},
-				{"EXISTS body with another syntax error", "RETURN EXISTS { CALL () { RETURN 1 AS value } RETURN value + } AS ok", ""},
-				{"COUNT body with another syntax error", "RETURN COUNT { CALL () { RETURN 1 AS value } RETURN value + } AS count", ""},
-				{"COLLECT body with another syntax error", "RETURN COLLECT { CALL () { RETURN 1 AS value } RETURN value + } AS values", ""},
+			for _, test := range []struct{ name, query string }{
+				{"valid scope with another syntax error", "WITH 1 AS x CALL (x) { RETURN x AS value } RETURN value +"},
+				{"parentheses without a subquery body", "CALL (1) RETURN 1 +"},
+				{"procedure named call", "CALL call(1) RETURN 1 +"},
+				{"labels procedure", "CALL db.labels() RETURN 1 +"},
+				{"apoc procedure", "CALL apoc.x(1) RETURN 1 +"},
+				{"single quoted text", "RETURN 'CALL (1) { RETURN 1 }' AS text, 1 +"},
+				{"double quoted text", "RETURN \"CALL (1) { RETURN 1 }\" AS text, 1 +"},
+				{"line comment", "RETURN 1 // CALL (1) { RETURN 1 }\n+"},
+				{"block comment", "RETURN 1 /* CALL (1) { RETURN 1 } */ +"},
+				{"EXISTS body with another syntax error", "RETURN EXISTS { CALL () { RETURN 1 AS value } RETURN value + } AS ok"},
+				{"COUNT body with another syntax error", "RETURN COUNT { CALL () { RETURN 1 AS value } RETURN value + } AS count"},
+				{"COLLECT body with another syntax error", "RETURN COLLECT { CALL () { RETURN 1 AS value } RETURN value + } AS values"},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					// None of these has a malformed scope clause. In particular,
 					// a procedure's arguments must not supply one.
 					executor := NewStorageExecutor(newTestMemoryEngine(t))
 					_, err := executor.Execute(t.Context(), test.query, nil)
-					if parser == config.ParserTypeANTLR || test.nornicDiagnostic == "" {
-						// Preserve the grammar owner's exact localized diagnostic,
-						// including its structural source coordinates. Raw ANTLR
-						// token excerpts are not the credentials layer's contract.
-						requireRuntimeReaderGrammarDiagnostic(t, test.query, err)
-					} else {
-						// Keep the default parser's existing diagnostic, including
-						// its known import error for a later CALL parse failure.
-						require.ErrorContains(t, err, test.nornicDiagnostic)
-					}
+					// A valid scope or procedure with a later syntax error uses the
+					// canonical grammar diagnostic on either parser; it must never
+					// masquerade as malformed CALL imports.
+					requireRuntimeReaderGrammarDiagnostic(t, test.query, err)
 					requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 				})
 			}

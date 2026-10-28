@@ -631,7 +631,7 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if !startsWithKeywordFold(trimmed, "MERGE") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	rest := strings.TrimSpace(trimmed[len("MERGE"):])
+	rest := pipelineClauseBody(trimmed, "MERGE")
 	if !strings.HasPrefix(rest, "(") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}

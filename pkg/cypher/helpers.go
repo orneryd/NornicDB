@@ -201,12 +201,9 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
 		return false
 	}
-	j := afterFirst
-	if j >= len(s) || !cyphertext.IsWhitespaceAt(s, j) {
+	j, unfinished := cyphertext.GapEnd(s, afterFirst)
+	if j <= afterFirst || unfinished >= 0 {
 		return false
-	}
-	for j < len(s) && cyphertext.IsWhitespaceAt(s, j) {
-		j++
 	}
 	afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
 	return ok && keywordBoundaryOK(s, afterSecond, keywordBoundaryWord, keywordAfter)
@@ -244,13 +241,10 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 			continue
 		}
 
-		j := afterFirst
-		if j >= len(s) || !cyphertext.IsWhitespaceAt(s, j) {
+		j, unfinished := cyphertext.GapEnd(s, afterFirst)
+		if j <= afterFirst || unfinished >= 0 {
 			searchFrom = idx + 1
 			continue
-		}
-		for j < len(s) && cyphertext.IsWhitespaceAt(s, j) {
-			j++
 		}
 
 		afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)

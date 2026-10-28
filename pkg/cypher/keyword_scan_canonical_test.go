@@ -256,9 +256,9 @@ func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 	require.Equal(t, "MATCH (n) WHERE n.x = RETURN n", canonical)
 	column := strings.Index(canonical, "RETURN")
 	message := fmt.Sprintf("Invalid input: line 1:%d mismatched input 'RETURN'", column)
-	restored, _ := rewrite.restoreValue(message, sourceDiagnosticText)
+	restored, _ := (resultRestoration{source: rewrite}).value(message, sourceDiagnosticText)
 	require.Equal(t, "Invalid input: line 3:2 mismatched input 'RETURN'", restored)
-	restored, _ = rewrite.restoreValue("Invalid input: line 9:0 x", sourceDiagnosticText)
+	restored, _ = (resultRestoration{source: rewrite}).value("Invalid input: line 9:0 x", sourceDiagnosticText)
 	require.Equal(t, "Invalid input: line 9:0 x", restored)
 
 	crOnly := "MATCH (n)\r  WHERE n.x =\r  RETURN n"
@@ -267,7 +267,7 @@ func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 	require.Equal(t, "MATCH (n) WHERE n.x = RETURN n", canonical)
 	column = strings.Index(canonical, "RETURN")
 	message = fmt.Sprintf("Invalid input: line 1:%d mismatched input 'RETURN'", column)
-	restored, _ = rewrite.restoreValue(message, sourceDiagnosticText)
+	restored, _ = (resultRestoration{source: rewrite}).value(message, sourceDiagnosticText)
 	require.Equal(t, "Invalid input: line 3:2 mismatched input 'RETURN'", restored)
 }
 
@@ -287,27 +287,27 @@ func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 			"plan":  map[string]interface{}{"details": []interface{}{"n.x IS NULL", 2.5}, "rows": int64(1)},
 		},
 	}
-	restored, err := rewrite.restore(result, fmt.Errorf("Invalid input 'n.x IS NULL' near \"RETURN n\""))
+	restored, err := (resultRestoration{source: rewrite}).restore(result, fmt.Errorf("Invalid input 'n.x IS NULL' near \"RETURN n\""), nil)
 	require.Equal(t, "n.x IS  NULL", restored.Rows[0][0])
 	require.Equal(t, []interface{}{"n.x IS  NULL", int64(1)}, restored.Rows[1][0])
 	require.Equal(t, original, restored.Metadata["query"])
 	require.Equal(t, []interface{}{"n.x IS  NULL", 2.5}, restored.Metadata["plan"].(map[string]interface{})["details"])
 	require.Equal(t, "n.x IS NULL", result.Rows[0][0], "the cached result stays canonical")
 	require.EqualError(t, err, "Invalid input 'n.x IS  NULL' near \"RETURN n\"")
-	restoredMessage, _ := rewrite.restoreValue("whole: "+canonical, sourceDiagnosticText)
+	restoredMessage, _ := (resultRestoration{source: rewrite}).value("whole: "+canonical, sourceDiagnosticText)
 	require.Equal(t, "whole: "+original, restoredMessage)
-	restoredMessage, _ = rewrite.restoreValue("nothing to map", sourceDiagnosticText)
+	restoredMessage, _ = (resultRestoration{source: rewrite}).value("nothing to map", sourceDiagnosticText)
 	require.Equal(t, "nothing to map", restoredMessage)
 
 	// A plain statement's rows are data: never rewritten.
 	_, plain := canonicalizeQueryText("RETURN  'n.x IS NULL' AS s")
 	data := &ExecuteResult{Columns: []string{"s"}, Rows: [][]interface{}{{"RETURN 'n.x IS NULL' AS s"}}}
-	kept, err := plain.restore(data, nil)
+	kept, err := (resultRestoration{source: plain}).restore(data, nil, nil)
 	require.NoError(t, err)
 	require.Same(t, data, kept)
 
 	var nilRewrite *queryRewrite
-	same, sameErr := nilRewrite.restore(data, nil)
+	same, sameErr := (resultRestoration{source: nilRewrite}).restore(data, nil, nil)
 	require.Same(t, data, same)
 	require.NoError(t, sameErr)
 }

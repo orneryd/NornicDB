@@ -119,14 +119,6 @@
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "db089cb920dc122b6d2ea001b351ad911371778dc05c20c3980bd0637e2f5e81"
   },
-  "pkg/cypher/keyword_scan.go:restoreValue": {
-    "reason": "Reviewed source presentation owner with explicit value/diagnostic purpose. Structured localization coordinates use Source.OriginalPosition; map/list/row branches copy only changed children. Numeric payloads remain opaque with unchanged type and identity; no generic numeric conversion or admission is introduced.",
-    "sha256": "9d8542a922fe8f6c3a48aabedaba0ddfde666ec7875560d5cfd2e684f2c73eca"
-  },
-  "pkg/cypher/quoted_variables.go:restoreValue": {
-    "reason": "Reviewed quoted-name presentation traversal: strings and plan fields delegate typed restoreSourceText policies; existing map/list/plan recursion is retained. Numeric values remain opaque leaves, with no parsing, coercion or checked numeric target.",
-    "sha256": "e3113acd898e2b45082f270170ab116c1c083746c85c575a5885000f7c56d396"
-  },
   "pkg/cypher/match_multi.go:cartesianShiftValueKey": {
     "reason": "Compiler/index specialization handles a fixed native fast shape and falls back to the generic owner for other representations.",
     "sha256": "4bf44211129d38568ba8d9990254c448e96bbacbadb801e9a326d2328093cccb"
@@ -268,8 +260,8 @@
     "sha256": "c9b0f4987a0b88f9b895d553bfaf9e5104bc48f3f78aae2b693981d45b02023f"
   },
   "pkg/cypher/row_value_program.go:compileValue": {
-    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged. NOR-15 uses the source-width-aware null predicate reader; review confirms the native literal cases and generic input boundary remain unchanged. Current map-projection admission calls mapProjectionSplit(expr,mapProjectionRuntime); source review confirms the existing post-parse native literal switch and runtime numeric/list boundary remain unchanged. TestMapProjectionBoundaryPolicies and public row expression tests preserve the boundary. Qualified function admission now calls inspectFunctionCall(...,qualifiedFunctionCall) and reads its same name/inner product; reviewed source diff changes only that call/product, leaving every native literal kind and generic numeric/list boundary unchanged. TestStandaloneFunctionCallPurposes and TestStandaloneFunctionCallPublicConsumers retain call-shape policy controls alongside TestRowOperandPolicyPopulations and TestRowValueProgramAdapterConsistency.",
-    "sha256": "b0e52f69f101525afe68c31fbd5d90cb480647cbb2dfbd218fbc74b614543780"
+    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged. NOR-15 uses the source-width-aware null predicate reader; review confirms the native literal cases and generic input boundary remain unchanged. Current map-projection admission calls mapProjectionSplit(expr,mapProjectionRuntime); source review confirms the existing post-parse native literal switch and runtime numeric/list boundary remain unchanged. TestMapProjectionBoundaryPolicies and public row expression tests preserve the boundary. Qualified function admission now calls inspectFunctionCall(...,qualifiedFunctionCall) and reads its same name/inner product; reviewed source diff changes only that call/product, leaving every native literal kind and generic numeric/list boundary unchanged. TestStandaloneFunctionCallPurposes and TestStandaloneFunctionCallPublicConsumers retain call-shape policy controls alongside TestRowOperandPolicyPopulations and TestRowValueProgramAdapterConsistency. Reviewed static-scope signature migration adds nil to mapProjectionSplit(expr,mapProjectionRuntime,nil); runtime policy never reads the static-only scope parameter. Exact declaration diff changes only this argument; existing post-parse literal type specialization and generic numeric/list reader boundary remain unchanged. TestMapProjectionBoundaryPolicies, TestRowOperandPolicyPopulations, TestRowValueProgramAdapterConsistency and canonical numeric conversion/literal cases retain the affected contracts.",
+    "sha256": "d4267ff476a0a63cd85fc07da4597043d3f087fd075417f8a51cfc344575feeb"
   },
   "pkg/cypher/fn/runtime_value.go:RuntimeValue": {
     "reason": "Runtime null normalization at the producer boundary; numeric scalars and primitive lists pass through unchanged, with no narrowing or numeric interpretation.",
@@ -294,5 +286,9 @@
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
     "sha256": "669666ccb6e2abce773554afd5848d65c33f6174136d3fc4c79b1236e35115f6"
+  },
+  "pkg/cypher/result_restoration.go:value": {
+    "reason": "One canonical presentation-tree owner replaces both source and quoted-name map/list/row traversal and leaf dispatch. Numeric leaves remain opaque with unchanged type; source text/diagnostics retain Source coordinate and fragment policy, quoted plans retain identifier rendering, and both retain their original container copying contracts. Public restoration and quoted-variable regressions plus TestRestoredResultContainerOwnership exercise both entry points; this does not read, admit or coerce generic numeric/list inputs.",
+    "sha256": "b18d2ce2710edccbe59e2aa938b57ab7a65f14e92bf4ac4923fa3736ebd5d10a"
   }
 }

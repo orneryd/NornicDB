@@ -136,31 +136,6 @@ func TestTransactionIDFilterRejectsNonExpression(t *testing.T) {
 	}
 }
 
-// aliasDatabaseManager is the mock database manager with aliases.
-type aliasDatabaseManager struct {
-	*mockDatabaseManager
-	aliases map[string]map[string]string
-}
-
-func (m *aliasDatabaseManager) ListAliases(databaseName string) map[string]string {
-	return m.aliases[databaseName]
-}
-
-// TestShowDatabasesListsAliases: SHOW DATABASES lists each database's
-// aliases, sorted.
-func TestShowDatabasesListsAliases(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	manager := &aliasDatabaseManager{
-		mockDatabaseManager: newMockDatabaseManager(t),
-		aliases:             map[string]map[string]string{"nornic": {"zeta": "nornic", "alpha": "nornic"}},
-	}
-	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}))
-	exec.SetDatabaseManager(manager)
-	result, err := exec.Execute(context.Background(), "SHOW DATABASES YIELD name, aliases WHERE name = 'nornic'", nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"nornic", []string{"alpha", "zeta"}}}, result.Rows)
-}
-
 // TestShowIndexesRelationshipFulltextIndex: a fulltext index on
 // relationship types is listed as a RELATIONSHIP index of those types.
 func TestShowIndexesRelationshipFulltextIndex(t *testing.T) {
@@ -252,4 +227,21 @@ func TestShowSchemaValueHelpers(t *testing.T) {
 		"a": true, "b": 3, "c": 0.5, "d": "x", "e": int64(7), "f": float32(0.25),
 	}))
 	require.Nil(t, showConstraintCreateStatement(storage.Constraint{Name: "c", Type: storage.ConstraintType("OTHER"), Label: "L"}))
+}
+
+// TestShowDatabasesListsAliases: SHOW DATABASES lists each database's
+// aliases, sorted.
+func TestShowDatabasesListsAliases(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, manager.Close())
+	})
+	require.NoError(t, manager.CreateAlias(t.Context(), "zeta", "nornic"))
+	require.NoError(t, manager.CreateAlias(t.Context(), "alpha", "nornic"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	result, err := exec.Execute(context.Background(), "SHOW DATABASES YIELD name, aliases WHERE name = 'nornic'", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"nornic", []string{"alpha", "zeta"}}}, result.Rows)
 }

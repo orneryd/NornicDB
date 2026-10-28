@@ -849,13 +849,9 @@ func (r *labelExpressionRewriter) readsPatternVariable(expression string) bool {
 		if !ok {
 			continue
 		}
-		before := i - 1
-		for before >= 0 && cyphertext.IsWhitespaceAt(expression, before) {
-			before--
-		}
-		after := skipASCIISpaces(expression, end, len(expression))
-		if r.patternVariables[symbolicNameValue(name)] && (before < 0 || expression[before] != '.' && expression[before] != '$') &&
-			(after >= len(expression) || expression[after] != ':') {
+		before := cyphertext.NeighborByte(expression, i, cyphertext.Before)
+		after := cyphertext.NeighborByte(expression, end, cyphertext.AtOrAfter)
+		if r.patternVariables[symbolicNameValue(name)] && before != '.' && before != '$' && after != ':' {
 			return true
 		}
 		i = end - 1
@@ -1324,7 +1320,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		skip := !wordIsName(q, wordStart)
 		switch word {
 		case "CASE":
-			skip = caseKeywordAt(q, wordStart, word) && caseWordAt(q, skipSpaces(q, min(is+2, len(q)))) == "when"
+			skip = caseKeywordAt(q, wordStart, word) && equalFoldASCII(caseWordAt(q, skipSpaces(q, min(is+2, len(q)))), "when")
 		case "WHEN", "THEN", "ELSE":
 			skip = caseKeywordAt(q, wordStart, word)
 		}

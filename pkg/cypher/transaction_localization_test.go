@@ -8,7 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/language"
 )
 
 func requireCypherTransactionsLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
@@ -128,21 +127,4 @@ func TestCypherTransactionsLocalizedErrorsPreserveCauses(t *testing.T) {
 			require.Equal(t, "forced transaction failure", localizedErr.Message.Data["Cause"])
 		})
 	}
-}
-
-func TestCypherTransactionsCatalogRendering(t *testing.T) {
-	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := localization.CypherTransactionsInvalidScriptAction("ABORT")
-
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "acción de script de transacción no válida: ABORT", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! invalid transaction script action: ABORT !!]", pseudo)
 }

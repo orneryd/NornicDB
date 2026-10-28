@@ -121,9 +121,14 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 				at := start
 				for index := 0; index < len(word); index++ {
 					if cyphertext.IsWhitespaceAt(word, index) {
-						for at < end && cyphertext.IsWhitespaceAt(expr, at) {
-							at++
+						for index+1 < len(word) && cyphertext.IsWhitespaceAt(word, index+1) {
+							index++
 						}
+						next, unfinished := cyphertext.GapEnd(expr, at)
+						if next <= at || unfinished >= 0 {
+							return false
+						}
+						at = next
 					} else {
 						if expr[at] != word[index] {
 							return false

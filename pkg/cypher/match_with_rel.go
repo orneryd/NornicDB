@@ -24,19 +24,7 @@ func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr 
 	copy(sorted, nodes)
 
 	sort.Slice(sorted, func(i, j int) bool {
-		for _, spec := range specs {
-			val1, _ := sorted[i].Properties[spec.propName]
-			val2, _ := sorted[j].Properties[spec.propName]
-
-			cmp := e.compareOrderValues(val1, val2)
-			if cmp != 0 {
-				if spec.descending {
-					return cmp > 0
-				}
-				return cmp < 0
-			}
-		}
-		return false // All equal
+		return e.compareNodeOrderSpecs(sorted[i], sorted[j], specs) < 0
 	})
 
 	return sorted

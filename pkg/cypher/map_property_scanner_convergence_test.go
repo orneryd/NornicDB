@@ -136,7 +136,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/keyword_scan.go:inPatternClause":              "canonical clause-boundary reader",
 		"pkg/cypher/keyword_scan.go:stripCommentText":             "canonical Cypher comment-removal traversal; optional edit sink retains AST source provenance",
 		"internal/cyphertext/source_unicode.go:PrintIdentifier":   "canonical stage-aware identifier source printer; raw source escapes literal backslashes and unpaired units, accepted tokens retain identity; tested by TestUnicodeSourceLiteralAndStoredNamePolicies and TestStoredLiteralUnicodeNameSourceRoundtrip",
-		"pkg/cypher/keyword_scan.go:restoreValue":                 "canonical typed metadata/diagnostic restoration owner; prose quotation recovers source fragments and Source.OriginalPosition maps parser coordinates",
+		"pkg/cypher/result_restoration.go:value":                  "canonical typed metadata/diagnostic restoration owner; prose quotation recovers source fragments and Source.OriginalPosition maps parser coordinates",
 		"internal/cyphertext/structure.go:FindMatchingDelimiter":  "canonical quote/comment-aware delimiter reader",
 		"internal/cyphertext/string.go:DecodeString":              "canonical Cypher string decoder",
 		"pkg/cypher/quoted_variables.go:isBacktickQuotedName":     "canonical quoted symbolic-name validator",

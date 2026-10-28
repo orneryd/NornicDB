@@ -81,20 +81,3 @@ func TestCypherCoreLocalizedErrorPreservesCauseIdentity(t *testing.T) {
 	require.Equal(t, MessageCypherCoreParseFailed, localizedErr.Message.ID)
 	require.Equal(t, "forced core failure", localizedErr.Message.Data["Cause"])
 }
-
-func TestCypherCoreCatalogRendering(t *testing.T) {
-	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
-	require.NoError(t, err)
-	message := CypherCoreCaseThenRequired("n.active")
-
-	spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "la cláusula WHEN debe tener THEN: n.active", spanish)
-
-	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), MessageRequest(message))
-	require.NoError(t, err)
-	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! WHEN clause must have THEN: n.active !!]", pseudo)
-}

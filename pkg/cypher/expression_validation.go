@@ -53,6 +53,9 @@ func forEachListOperand(text string, visit func(start, in int) error) error {
 			i+2 >= len(text) || cyphertext.NamePartAt(text, i+2) {
 			continue
 		}
+		if wordIsName(text, i) {
+			continue
+		}
 		if err := visit(queryGapEnd(text, i+2), i); err != nil {
 			return err
 		}
@@ -461,12 +464,17 @@ func bindingFunctionBeforeParen(text string, open int) string {
 	if start == end || start > 0 && cyphertext.NamePartAt(text, start-1) {
 		return ""
 	}
-	switch strings.ToLower(text[start:end]) {
-	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
-	default:
-		return ""
+	name := text[start:end]
+	if !cyphertext.PlainASCII(name) {
+		// Retain this reader's existing Unicode lower-case admission.
+		name = strings.ToLower(name)
 	}
+	for _, function := range [...]string{"any", "all", "none", "single", "filter", "reduce", "allreduce", "foreach"} {
+		if equalFoldASCII(name, function) {
+			return text[start:end]
+		}
+	}
+	return ""
 }
 
 // localBindingNames caches the names a text binds itself

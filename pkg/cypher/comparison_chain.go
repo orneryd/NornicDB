@@ -25,22 +25,15 @@ func (scan *comparisonChainScan) append(span comparisonOperatorSpan) {
 	scan.count++
 }
 
-func (scan *comparisonChainScan) operator(index int) comparisonOperatorSpan {
-	if index < len(scan.inline) {
-		return scan.inline[index]
-	}
-	return scan.overflow[index-len(scan.inline)]
-}
-
 func (scan *comparisonChainScan) operand(expression string, index int) string {
 	start := 0
 	if index > 0 {
-		previous := scan.operator(index - 1)
+		previous := inlineOverflowAt(scan.inline[:], scan.overflow, index-1)
 		start = previous.offset + previous.length
 	}
 	end := len(expression)
 	if index < scan.count {
-		end = scan.operator(index).offset
+		end = inlineOverflowAt(scan.inline[:], scan.overflow, index).offset
 	}
 	return strings.TrimSpace(expression[start:end])
 }
@@ -96,7 +89,7 @@ func evaluateScannedComparisonChain(
 	hasNull, resolved := false, leftOK
 	firstErr := leftErr
 	for index := 0; index < scan.count; index++ {
-		span := scan.operator(index)
+		span := inlineOverflowAt(scan.inline[:], scan.overflow, index)
 		operator := expression[span.offset : span.offset+span.length]
 		right, rightOK, rightErr := resolve(index+1, scan.operand(expression, index+1))
 		if firstErr == nil {
@@ -152,7 +145,7 @@ func splitComparisonChain(expression string) ([]string, []string, bool) {
 	operands := make([]string, scan.count+1)
 	operators := make([]string, scan.count)
 	for index := 0; index < scan.count; index++ {
-		span := scan.operator(index)
+		span := inlineOverflowAt(scan.inline[:], scan.overflow, index)
 		operands[index] = scan.operand(expression, index)
 		operators[index] = expression[span.offset : span.offset+span.length]
 	}

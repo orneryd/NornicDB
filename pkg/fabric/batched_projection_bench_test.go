@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// BenchmarkBatchedProjectionRead measures the complete consumed projection:
+// typed items plus aliases. Earlier reader-only results omit alias work and
+// are not a directly comparable baseline for this contract.
 func BenchmarkBatchedProjectionRead(b *testing.B) {
 	for _, size := range []int{1, 8, 64} {
 		properties := make([]string, size)
@@ -19,19 +22,20 @@ func BenchmarkBatchedProjectionRead(b *testing.B) {
 			if count {
 				name, source = "count", strings.Join(counts, ", ")
 			}
+			shape := applyLookupShapeRows
+			if count {
+				shape = applyLookupShapeCount
+			}
 			b.Run(fmt.Sprintf("%s/%d", name, size), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
+					facts, ok := readApplyLookupProjection(shape, source, "n")
+					items := len(facts.returnItems)
 					if count {
-						items, ok := readCountReturnItems(source)
-						if !ok || len(items) != size {
-							b.Fatal("count projection declined")
-						}
-					} else {
-						items, ok := readPropertyReturnItems(source, "n")
-						if !ok || len(items) != size {
-							b.Fatal("property projection declined")
-						}
+						items = len(facts.countItems)
+					}
+					if !ok || items != size || len(facts.aliases) != size {
+						b.Fatal("complete typed projection and aliases declined")
 					}
 				}
 			})

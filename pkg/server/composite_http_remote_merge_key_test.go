@@ -62,7 +62,7 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 	cmpStore, err := mgr.GetStorageWithAuth("cmp_h", token)
 	require.NoError(t, err)
 	exec := cypher.NewStorageExecutor(cmpStore)
-	exec.SetDatabaseManager(&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}})
+	exec.SetDatabaseManager(&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(mgr)})
 	ctx := cypher.WithAuthToken(context.Background(), token)
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)

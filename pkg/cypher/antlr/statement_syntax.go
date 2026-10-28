@@ -67,16 +67,46 @@ func (syntax StatementSyntax) LeadingCall() (SyntaxNode, bool) {
 	return found, found.Valid()
 }
 
-// SyntaxNode is an immutable node identity within a StatementSyntax.
-type SyntaxNode struct {
+// syntaxNode and syntaxToken close the node/token kind sets of syntaxView.
+// They are unexported, so only a closed type switch can choose the arena that
+// owns a view's id.
+type syntaxNode struct{}
+type syntaxToken struct{}
+
+// syntaxView is the single two-word identity shared by nodes and tokens: the
+// retained statement product and a stable index into its node or token arena.
+type syntaxView[nodeKind syntaxNode | syntaxToken] struct {
 	data *statementSyntaxData
 	id   int
 }
 
+// SyntaxNode is an immutable node identity within a StatementSyntax.
+type SyntaxNode struct{ syntaxView[syntaxNode] }
+
 // SyntaxToken is an immutable lexer-token identity within a StatementSyntax.
-type SyntaxToken struct {
-	data  *statementSyntaxData
-	index int
+type SyntaxToken struct{ syntaxView[syntaxToken] }
+
+// Span selects the owned node/token arena and maps its half-open interval
+// through the retained source-coordinate owner once.
+func (view syntaxView[nodeKind]) Span() (int, int) {
+	var member nodeKind
+	var accepted cyphertext.Span
+	switch any(member).(type) {
+	case syntaxNode:
+		item := view.data.nodes[view.id]
+		accepted = cyphertext.Span{Start: item.start, End: item.end}
+	case syntaxToken:
+		item := view.data.tokens[view.id]
+		accepted = cyphertext.Span{Start: item.start, End: item.end}
+	}
+	span, _ := view.data.view.OriginalSpan(accepted, cyphertext.SourceExtent)
+	return span.Start, span.End
+}
+
+// Text returns the selected node or token's exact original source bytes.
+func (view syntaxView[nodeKind]) Text() string {
+	start, end := view.Span()
+	return view.data.view.Original[start:end]
 }
 
 // SyntaxVisitor enters a node and optionally restores its state on exit.
@@ -361,13 +391,17 @@ func walkSyntax[T any](node T, children func(T) []T, enter func(T) func()) {
 func (syntax StatementSyntax) Source() string { return syntax.data.view.Original }
 
 // Root is the root of this grammar entry. Node IDs are stable within the source.
-func (syntax StatementSyntax) Root() SyntaxNode { return SyntaxNode{syntax.data, 0} }
+func (syntax StatementSyntax) Root() SyntaxNode {
+	return SyntaxNode{syntaxView[syntaxNode]{syntax.data, 0}}
+}
 
 // TokenCount includes hidden whitespace, comment channels and EOF.
 func (syntax StatementSyntax) TokenCount() int { return len(syntax.data.tokens) }
 
 // Token returns an immutable token view, not a lexer token pointer.
-func (syntax StatementSyntax) Token(index int) SyntaxToken { return SyntaxToken{syntax.data, index} }
+func (syntax StatementSyntax) Token(index int) SyntaxToken {
+	return SyntaxToken{syntaxView[syntaxToken]{syntax.data, index}}
+}
 
 // Window selects a retained rule by its live-token interval. Whitespace and
 // comments around a braced body do not change its identity or original spans.
@@ -390,12 +424,12 @@ func (syntax StatementSyntax) Window(start, end int, rules ...int) (SyntaxNode, 
 			}
 			if first < 0 {
 				if item.start == item.end && item.start >= start && item.end <= end {
-					return SyntaxNode{syntax.data, id}, true
+					return SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}, true
 				}
 				continue
 			}
 			if item.firstToken == first && item.afterToken == after {
-				return SyntaxNode{syntax.data, id}, true
+				return SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}, true
 			}
 			if rule == CypherParserRULE_query && item.afterToken == after {
 				for _, childID := range item.children {
@@ -404,7 +438,7 @@ func (syntax StatementSyntax) Window(start, end int, rules ...int) (SyntaxNode, 
 						continue
 					}
 					if child.firstToken == first {
-						return SyntaxNode{syntax.data, id}, true
+						return SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}, true
 					}
 					break
 				}
@@ -432,7 +466,7 @@ func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
 		leaves[i] = visitor(root)
 	}
 	for _, child := range root.data.nodes[root.id].children {
-		(SyntaxNode{root.data, child}).Walk(visitors...)
+		SyntaxNode{syntaxView[syntaxNode]{root.data, child}}.Walk(visitors...)
 	}
 	for i := len(visitors) - 1; i >= 0; i-- {
 		if leaves[i] != nil {
@@ -453,23 +487,10 @@ func (node SyntaxNode) Valid() bool { return node.data != nil && node.id >= 0 }
 // Rule is a generated CypherParserRULE value, or -1 for a terminal.
 func (node SyntaxNode) Rule() int { return node.data.nodes[node.id].rule }
 
-// Span returns the original, half-open UTF-8 byte interval.
-func (node SyntaxNode) Span() (int, int) {
-	item := node.data.nodes[node.id]
-	span, _ := node.data.view.OriginalSpan(cyphertext.Span{Start: item.start, End: item.end}, cyphertext.SourceExtent)
-	return span.Start, span.End
-}
-
 // TokenRange returns the half-open interval in the one retained token stream.
 func (node SyntaxNode) TokenRange() (int, int) {
 	item := node.data.nodes[node.id]
 	return item.firstToken, item.afterToken
-}
-
-// Text returns original text. Expression evaluation may request Code instead.
-func (node SyntaxNode) Text() string {
-	start, end := node.Span()
-	return node.data.view.Original[start:end]
 }
 
 // Code removes comments using the retained lexer channels, preserving gaps
@@ -505,7 +526,7 @@ func (node SyntaxNode) Name() (string, bool) {
 // Parent returns the enclosing CST node, if this is not the root.
 func (node SyntaxNode) Parent() (SyntaxNode, bool) {
 	parent := node.data.nodes[node.id].parent
-	return SyntaxNode{node.data, parent}, parent >= 0
+	return SyntaxNode{syntaxView[syntaxNode]{node.data, parent}}, parent >= 0
 }
 
 // ChildCount is the number of direct CST children, including terminals.
@@ -513,7 +534,7 @@ func (node SyntaxNode) ChildCount() int { return len(node.data.nodes[node.id].ch
 
 // Child returns a direct immutable child view.
 func (node SyntaxNode) Child(index int) SyntaxNode {
-	return SyntaxNode{node.data, node.data.nodes[node.id].children[index]}
+	return SyntaxNode{syntaxView[syntaxNode]{node.data, node.data.nodes[node.id].children[index]}}
 }
 
 // ChildRule returns a direct rule child, or an absent view. It never searches
@@ -524,7 +545,7 @@ func (node SyntaxNode) ChildRule(rule int) SyntaxNode {
 	}
 	for _, id := range node.data.nodes[node.id].children {
 		if node.data.nodes[id].rule == rule {
-			return SyntaxNode{node.data, id}
+			return SyntaxNode{syntaxView[syntaxNode]{node.data, id}}
 		}
 	}
 	return SyntaxNode{}
@@ -535,7 +556,7 @@ func (node SyntaxNode) DirectToken(kind int) (SyntaxToken, bool) {
 	for _, id := range node.data.nodes[node.id].children {
 		child := node.data.nodes[id]
 		if child.rule < 0 && child.firstToken >= 0 && node.data.tokens[child.firstToken].kind == kind {
-			return SyntaxToken{node.data, child.firstToken}, true
+			return SyntaxToken{syntaxView[syntaxToken]{node.data, child.firstToken}}, true
 		}
 	}
 	return SyntaxToken{}, false
@@ -564,23 +585,10 @@ func (node SyntaxNode) QualifiedName() string {
 }
 
 // Kind is the generated lexer token kind, including EOF.
-func (token SyntaxToken) Kind() int { return token.data.tokens[token.index].kind }
+func (token SyntaxToken) Kind() int { return token.data.tokens[token.id].kind }
 
 // Channel is the lexer channel; comments and whitespace are retained.
-func (token SyntaxToken) Channel() int { return token.data.tokens[token.index].channel }
-
-// Span returns this token's original, half-open UTF-8 byte interval.
-func (token SyntaxToken) Span() (int, int) {
-	item := token.data.tokens[token.index]
-	span, _ := token.data.view.OriginalSpan(cyphertext.Span{Start: item.start, End: item.end}, cyphertext.SourceExtent)
-	return span.Start, span.End
-}
-
-// Text returns the token's original source, without decoding or rewriting it.
-func (token SyntaxToken) Text() string {
-	start, end := token.Span()
-	return token.data.view.Original[start:end]
-}
+func (token SyntaxToken) Channel() int { return token.data.tokens[token.id].channel }
 
 func (syntax StatementSyntax) recordCredentials(ctx context.Context) {
 	set := contextslot.Get[cyphertext.CredentialSet](ctx)

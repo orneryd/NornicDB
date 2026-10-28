@@ -164,25 +164,6 @@ func TestRuntimeConstituentCacheInvalidatesCredentialAndAliasChanges(t *testing.
 	}
 }
 
-func TestDatabaseManager_EncryptRemoteCredential_EmptyReject(t *testing.T) {
-	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, &Config{
-		RemoteCredentialEncryptionKey: "key",
-	})
-	require.NoError(t, err)
-	defer manager.Close()
-
-	_, err = manager.encryptRemoteCredential(remoteCredentialRequireValue, "")
-	assert.Error(t, err, "empty password must be rejected")
-	requireLocalizedMessageID(t, err, localization.MessageMultidbRemotePasswordEmpty)
-
-	_, err = manager.encryptRemoteCredential(remoteCredentialRequireValue, "   ")
-	assert.Error(t, err, "whitespace-only password must be rejected")
-	requireLocalizedMessageID(t, err, localization.MessageMultidbRemotePasswordEmpty)
-}
-
 func TestDatabaseManager_EncryptRemoteCredential_AllowEmptyContrast(t *testing.T) {
 	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
@@ -249,39 +230,66 @@ func TestDatabaseManager_RemoteCredentialNoCipherConfigured(t *testing.T) {
 	}
 }
 
-func TestDatabaseManager_DecryptStoredRemotePassword_EmptyReject(t *testing.T) {
-	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	_, err = manager.decryptStoredRemotePassword("")
-	assert.Error(t, err)
-	requireLocalizedMessageID(t, err, localization.MessageMultidbStoredPasswordMissing)
-
-	_, err = manager.decryptStoredRemotePassword("   ")
-	assert.Error(t, err)
-}
-
 func TestDatabaseManager_RemoteCredentialRecovery(t *testing.T) {
-	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-	manager, err := NewDatabaseManager(t.Context(), inner, &Config{RemoteCredentialEncryptionKey: "test-key"})
-	require.NoError(t, err)
-	defer manager.Close()
-	encrypted, err := manager.encryptRemoteCredential(remoteCredentialRequireValue, "my-secret")
-	require.NoError(t, err)
-	require.True(t, isEncryptedRemoteCredential(encrypted))
-	for _, tc := range []struct{ name, stored, want string }{
-		{"ciphertext", encrypted, "my-secret"},
-		{"legacy-plaintext", "legacy-plaintext", "legacy-plaintext"},
+	for _, tc := range []struct {
+		name, key, stored, want string
+		encrypted               bool
+	}{
+		{"ciphertext", "test-key", "my-secret", "my-secret", true},
+		{"legacy-plaintext", "key", "legacy-plaintext", "legacy-plaintext", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			actual, err := manager.decryptStoredRemotePassword(tc.stored)
+			inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, &Config{RemoteCredentialEncryptionKey: tc.key})
+			require.NoError(t, err)
+			defer manager.Close()
+			stored := tc.stored
+			if tc.encrypted {
+				stored, err = manager.encryptRemoteCredential(remoteCredentialRequireValue, stored)
+				require.NoError(t, err)
+				require.True(t, isEncryptedRemoteCredential(stored))
+			}
+			actual, err := manager.decryptStoredRemotePassword(stored)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, actual)
+		})
+	}
+}
+
+// TestRemoteCredentialRequiredValues preserves both original key configurations,
+// empty/whitespace inputs and their exact checked diagnostic identities.
+func TestRemoteCredentialRequiredValues(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		config   *Config
+		encrypt  bool
+		messages [2]string
+		ids      [2]localization.MessageID
+	}{
+		{"TestDatabaseManager_EncryptRemoteCredential_EmptyReject", &Config{RemoteCredentialEncryptionKey: "key"}, true,
+			[2]string{"empty password must be rejected", "whitespace-only password must be rejected"},
+			[2]localization.MessageID{localization.MessageMultidbRemotePasswordEmpty, localization.MessageMultidbRemotePasswordEmpty}},
+		{"TestDatabaseManager_DecryptStoredRemotePassword_EmptyReject", nil, false,
+			[2]string{}, [2]localization.MessageID{localization.MessageMultidbStoredPasswordMissing, ""}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			defer inner.Close()
+			manager, err := NewDatabaseManager(t.Context(), inner, test.config)
+			require.NoError(t, err)
+			defer manager.Close()
+			for index, input := range []string{"", "   "} {
+				if test.encrypt {
+					_, err = manager.encryptRemoteCredential(remoteCredentialRequireValue, input)
+				} else {
+					_, err = manager.decryptStoredRemotePassword(input)
+				}
+				assert.Error(t, err, test.messages[index])
+				if test.ids[index] != "" {
+					requireLocalizedMessageID(t, err, test.ids[index])
+				}
+			}
 		})
 	}
 }

@@ -9,6 +9,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDatabaseManagerCreateAliasRejections(t *testing.T) {
+	cases := []struct {
+		name   string
+		alias  string
+		target string
+	}{
+		{
+			name:   "TestDatabaseManager_CreateAlias_TargetNotExist",
+			alias:  "badalias",
+			target: "doesnotexist",
+		},
+		{
+			// "nornic" is already a database name — alias must not shadow it
+			name:   "TestDatabaseManager_CreateAlias_ConflictsWithDBName",
+			alias:  "nornic",
+			target: "nornic",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestManager(t)
+
+			err := m.CreateAlias(t.Context(), tc.alias, tc.target)
+			assert.Error(t, err)
+		})
+	}
+}
+
 func newTestManager(t *testing.T) *DatabaseManager {
 	t.Helper()
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
@@ -111,19 +140,6 @@ func TestDatabaseManager_CreateAlias(t *testing.T) {
 	m := newTestManager(t)
 	err := m.CreateAlias(t.Context(), "myalias", "nornic")
 	require.NoError(t, err)
-}
-
-func TestDatabaseManager_CreateAlias_TargetNotExist(t *testing.T) {
-	m := newTestManager(t)
-	err := m.CreateAlias(t.Context(), "badalias", "doesnotexist")
-	assert.Error(t, err)
-}
-
-func TestDatabaseManager_CreateAlias_ConflictsWithDBName(t *testing.T) {
-	m := newTestManager(t)
-	// "nornic" is already a database name — alias must not shadow it
-	err := m.CreateAlias(t.Context(), "nornic", "nornic")
-	assert.Error(t, err)
 }
 
 func TestDatabaseManager_DropAlias(t *testing.T) {

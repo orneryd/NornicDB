@@ -233,7 +233,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	mergePattern := strings.TrimSpace(cypher)
 	if startsWithKeywordFold(mergePattern, "MERGE") {
-		mergePattern = strings.TrimSpace(mergePattern[len("MERGE"):])
+		mergePattern = pipelineClauseBody(mergePattern, "MERGE")
 	}
 
 	// A relationship pattern: (a)-[r:TYPE]->(b)
