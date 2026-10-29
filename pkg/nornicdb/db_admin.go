@@ -1904,11 +1904,19 @@ func (db *DB) anonymizedNodeCopy(node *storage.Node, anonymousID string) *storag
 // search index build is still running (search.ErrSearchIndexBuilding), it
 // waits for that build once and runs search again. DB.Search and
 // DB.HybridSearchWithOptions use it, so the DB API answers searches right
-// after Open instead of failing while the background build runs.
+// after Open instead of failing while the background build runs. A caller
+// whose context ends during that wait gets its own cancellation or deadline,
+// not the build-in-progress error.
 func (db *DB) searchAfterInitialBuild(ctx context.Context, run func() (*search.SearchResponse, error)) (*search.SearchResponse, error) {
 	response, err := run()
 	if errors.Is(err, search.ErrSearchIndexBuilding) {
-		if waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()); waitErr == nil {
+		waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName())
+		// Both signals can be ready; the wait may report a successful build
+		// even though the caller's context has already ended.
+		switch {
+		case ctx != nil && ctx.Err() != nil:
+			return nil, ctx.Err()
+		case waitErr == nil:
 			response, err = run()
 		}
 	}
