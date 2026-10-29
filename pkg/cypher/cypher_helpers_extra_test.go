@@ -1019,7 +1019,7 @@ func TestCypherHelpers_DatabaseNameAndRemoveNodeFromSearch(t *testing.T) {
 	execNoNS.removeNodeFromSearch("plain-id")
 
 	// With search service configured, prefixed IDs should be unprefixed before removal.
-	svc := search.NewService(base)
+	svc := search.NewService(base, search.DefaultVectorDimensions, nil)
 	execNoNS.SetSearchService(svc)
 	execNoNS.removeNodeFromSearch("tenant_cov:node-1")
 	execNoNS.removeNodeFromSearch("node-2")

@@ -37,7 +37,7 @@ func TestHNSWBackgroundBuildAnswersExactly(t *testing.T) {
 func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close(); _ = engine.Close() })
 	if fileBacked {
 		vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)
@@ -126,7 +126,7 @@ func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 func TestHNSWBackgroundBuildCancelledByOwner(t *testing.T) {
 	for _, drop := range []bool{false, true} {
 		t.Run(map[bool]string{false: "close", true: "drop"}[drop], func(t *testing.T) {
-			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
+			svc := NewService(newTestMemoryEngine(t), 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 			started := make(chan struct{})
@@ -183,7 +183,7 @@ func (g *cancelSearchCandidateGenerator) SearchCandidates(ctx context.Context, _
 }
 
 func TestSearchCancelledContextDoesNotRetryFallback(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -243,7 +243,7 @@ func TestHNSWCancelledPreparationDoesNotStartCPUFallback(t *testing.T) {
 }
 
 func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+	svc := NewService(newNamespacedEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "old", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	svc.hnswVectorsChanging.Store(true)
@@ -263,7 +263,7 @@ func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
 }
 
 func TestHNSWPublishedGraphUsesCurrentVectorStore(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+	svc := NewService(newNamespacedEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
@@ -282,7 +282,7 @@ func TestHNSWPublishedGraphUsesCurrentVectorStore(t *testing.T) {
 }
 
 func TestHNSWFailedJobsReleaseContexts(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+	svc := NewService(newNamespacedEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	// A dimension mismatch fails inside the worker, after source validation.

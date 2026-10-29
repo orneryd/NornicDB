@@ -10,6 +10,9 @@ The base generator creates `upgrade:a` with two persisted names (`value` and
 base's `crashClose` test helper to stop without draining the buffer. All 20
 records have empty historical `PropKeys` and no complete table or dictionary ID.
 The temporal value checks that the upgrade preserves the typed physical bytes.
+For v1.4.4 these fixtures verify that an unauthorized open preserves the old
+files, while an authorized V4 upgrade converts their WAL framing, recovers all
+20 updates, retains the original WAL, and reopens without repeating the writes.
 
 | Fixture | Writer base | ZIP SHA-256 |
 | --- | --- | --- |

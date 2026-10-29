@@ -191,7 +191,7 @@ func TestSearchTextChunksKeepsAppliedEmptyRerankSelection(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				ctx := context.Background()
 				engine := newNamespacedEngine(t)
-				service := NewServiceWithDimensions(engine, 2)
+				service := NewService(engine, 2, nil)
 				t.Cleanup(func() { require.NoError(t, service.Close()) })
 				service.SetSearchResultCachePolicy(0, 0)
 				for _, id := range []string{"a", "b", "c"} {
@@ -240,7 +240,7 @@ func TestSearchTextChunksKeepsAppliedEmptyRerankSelection(t *testing.T) {
 func TestMultiChunkCataloguePreservesRerankEligibility(t *testing.T) {
 	ctx := context.Background()
 	engine := newNamespacedEngine(t)
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	service.SetSearchResultCachePolicy(0, 0)
 	for _, id := range []string{"a", "b", "c"} {

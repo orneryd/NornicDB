@@ -91,7 +91,7 @@ func TestLocateReadsAnalyzeTerms(t *testing.T) {
 
 func newMatchTestService(t *testing.T) (*Service, storage.Engine) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	return service, engine
 }
@@ -201,7 +201,7 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badgerEngine.Close() })
 	engine := storage.NewNamespacedEngine(badgerEngine, "nornic")
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 
 	properties := map[string]any{"text": "alpha beta. gamma delta."}

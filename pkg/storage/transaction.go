@@ -196,21 +196,6 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	return nodeCopy
 }
 
-func copyNodeProjectedWithoutEmbeddings(node *Node, properties []string) *Node {
-	out := copyNodeWithoutEmbeddings(node)
-	if out == nil || properties == nil {
-		return out
-	}
-	projected := make(map[string]any, len(properties))
-	for _, property := range properties {
-		if value, ok := out.Properties[property]; ok {
-			projected[property] = value
-		}
-	}
-	out.Properties = projected
-	return out
-}
-
 // copyEdge creates a deep copy of an edge.
 // Used by transactions to preserve state for rollback.
 func copyEdge(edge *Edge) *Edge {

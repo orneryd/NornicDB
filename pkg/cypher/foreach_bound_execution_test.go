@@ -25,7 +25,9 @@ func TestForeachRejectsMalformedBodyBeforeRows(t *testing.T) {
 					require.NoError(t, err)
 				}
 				_, err := exec.Execute(context.Background(), "MATCH (t:T) FOREACH (i IN [1,2] | "+body+") RETURN t.id", nil)
-				require.ErrorContains(t, err, "SyntaxError")
+				var classified interface{ BoltErrorCode() string }
+				require.ErrorAs(t, err, &classified)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
 				result, err := exec.Execute(context.Background(), "MATCH (n:W) RETURN count(n)", nil)
 				require.NoError(t, err)
 				require.Equal(t, int64(0), result.Rows[0][0])

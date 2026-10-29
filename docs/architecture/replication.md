@@ -18,8 +18,9 @@ NornicDB supports three replication modes to meet different availability and con
 ## Cluster upgrades
 
 Upgrade every node in a cluster before resuming replication with this version.
-Signed cluster messages always require a nonce and `SignatureV2`; old-format
-(v1 or nonce-less) messages are rejected. During a mixed-version window, peers
+Cluster messages now use MessagePack and signed messages require a nonce and
+`SignatureV2`; old gob messages and v1 or nonce-less signatures are rejected.
+During a mixed-version window, peers
 reject messages and close connections: heartbeats, WAL replication, Raft consensus
 and forwarded writes across the version boundary fail. Plan a coordinated upgrade
 with a replication interruption. See [Securing Replication Traffic](../user-guides/clustering.md#securing-replication-traffic)
@@ -65,11 +66,11 @@ for the operator-visible errors and replay-cache behavior.
 pkg/replication/
 ├── config.go           # Configuration loading and validation
 ├── replicator.go       # Core Replicator interface and factory
-├── transport.go        # ClusterTransport over TCP (gob-framed messages)
+├── transport.go        # ClusterTransport over TCP (MessagePack-framed messages)
 ├── ha_standby.go       # Hot Standby implementation
 ├── raft.go             # Raft consensus implementation
 ├── multi_region.go     # Multi-region coordinator
-├── codec.go            # Gob codecs (node/edge payloads, helpers)
+├── storage_adapter.go  # Entity application, replication WAL and snapshots
 ├── handlers.go         # Cluster message dispatch/handler registration
 ├── chaos_test.go       # Chaos testing infrastructure
 ├── scenario_test.go    # E2E scenario tests
@@ -118,7 +119,7 @@ type Replicator interface {
 
 ## Current Implementation Notes
 
-- **Transport**: `pkg/replication/transport.go` uses a plain TCP listener with framed **gob** messages for cluster RPCs (heartbeat, WAL batch, Raft messages).
+- **Transport**: `pkg/replication/transport.go` uses a TCP listener with framed MessagePack messages for cluster RPCs (heartbeat, WAL batch, Raft messages).
 - **Payloads**: `pkg/replication/codec.go` defines replication-safe payloads for nodes/edges. Node payloads include embeddings (`NamedEmbeddings`, `ChunkEmbeddings`) so embeddings replicate in HA mode.
 - **Write Path**: the base storage engine is wrapped by `pkg/replication/replicated_engine.go`, which converts writes into `replication.Command` and routes them through the active `Replicator`.
 - **WAL Streaming**: `pkg/replication/storage_adapter.go` maintains a persistent WAL (restart/recovery) plus an in-memory WAL slice to avoid repeated full-file scans during streaming, and uses an async WAL write queue for lower per-write latency.
@@ -190,11 +191,13 @@ type Storage interface {
 
 ### Wire Format
 
-The cluster protocol uses length-prefixed `gob`-encoded payloads over TCP. Encoder/decoder live in `pkg/replication/codec.go`.
+The cluster protocol uses length-prefixed MessagePack payloads over TCP. The
+transport is in `pkg/replication/transport.go` and the payload codec is in
+`pkg/storage/entity_payload_codec.go`.
 
 ```
 ┌─────────────┬─────────────────────────────────────┐
-│ Length (4B) │           gob Payload               │
+│ Length (4B) │       MessagePack Payload           │
 │ Big Endian  │                                     │
 └─────────────┴─────────────────────────────────────┘
 ```

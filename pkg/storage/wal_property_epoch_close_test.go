@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -22,24 +23,40 @@ import (
 
 func init() { walDowngradeRecovery = RecoverBufferedCommitsAtOpen }
 
-func walEpochRawBodies(t *testing.T, path string) ([][]byte, []uint8) {
+// walEpochRawBodies reports the physical version of every complete record, the
+// raw bytes of each ordinary buffered-commit body and the number of authority
+// controls. Current v5 frames carry both controls and ordinary entries, so the
+// two are told apart by isWALPropertyEpoch(entry), never by the version byte.
+// A record past the last complete boundary is skipped, so a deliberately
+// damaged tail never has to be decoded.
+func walEpochRawBodies(t *testing.T, path string) (bodies [][]byte, versions []uint8, controls int) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var bodies [][]byte
-	var versions []uint8
 	for offset := 0; offset < len(raw); {
+		if offset+9 > len(raw) {
+			break
+		}
 		size := int(binary.LittleEndian.Uint32(raw[offset+5 : offset+9]))
 		end := offset + int(alignUp(int64(9+size+4+8)))
-		entry, err := decodeWALEntry(raw[offset+9:offset+9+size], raw[offset+4])
+		if end > len(raw) {
+			break
+		}
+		if binary.LittleEndian.Uint32(raw[offset:offset+4]) != walMagic {
+			break
+		}
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, raw[offset+9:offset+9+size], raw[offset+4])
 		require.NoError(t, err)
 		versions = append(versions, raw[offset+4])
-		if entry.Operation == OpBufferedCommit {
+		if isWALPropertyEpoch(entry) {
+			controls++
+		} else if entry.Operation == OpBufferedCommit {
 			bodies = append(bodies, append([]byte(nil), raw[offset:end]...))
 		}
 		offset = end
 	}
-	return bodies, versions
+	return bodies, versions, controls
 }
 
 func TestWALPropertyEpochCleanStopClosesAuthority(t *testing.T) {
@@ -48,15 +65,19 @@ func TestWALPropertyEpochCleanStopClosesAuthority(t *testing.T) {
 	}
 }
 
+// The whole log — authority controls and ordinary entries — stays in the
+// current v5 framing. Nothing is downgraded for an older reader; the clean
+// close only closes the authority span.
 func TestWALPropertyEpochSynchronousRestoreCleanStop(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("NORNICDB_WAL_COMPAT_DIR", dir)
 	t.Setenv("NORNICDB_WAL_COMPAT_MODE", "write-clean-sync-restore")
 	TestWALPublicDowngradeFixture(t)
-	_, versions := walEpochRawBodies(t, filepath.Join(dir, "wal", "wal.log"))
+	_, versions, controls := walEpochRawBodies(t, filepath.Join(dir, "wal", "wal.log"))
 	require.NotEmpty(t, versions)
+	require.NotZero(t, controls, "the restore attachment must have written its authority control")
 	for _, version := range versions {
-		require.Equal(t, walFormatVersionV3, version, "a clean synchronous restore must permit the old reader without compaction")
+		require.Equal(t, walFormatVersionCurrent, version, "a clean restore publishes only the current framing")
 	}
 }
 
@@ -78,41 +99,121 @@ func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	path := filepath.Join(logDir, "wal.log")
-	before, versions := walEpochRawBodies(t, path)
-	require.Contains(t, versions, walFormatVersionPropertyEpoch)
+	before, versions, controls := walEpochRawBodies(t, path)
+	require.Contains(t, versions, walFormatVersionCurrent)
+	require.NotZero(t, controls, "the acknowledged commit carries its dictionary authority")
 	if walFirst {
 		require.NoError(t, w.Close())
+		require.NoError(t, source.Close())
+	} else {
+		require.NoError(t, source.Close())
+		require.NoError(t, w.Close())
 	}
-	require.NoError(t, source.Close())
-	require.NoError(t, w.Close())
-	after, versions := walEpochRawBodies(t, path)
-	require.Equal(t, before, after, "clean conversion must copy ordinary frames byte for byte")
+	after, versions, controls := walEpochRawBodies(t, path)
+	require.Equal(t, before, after, "closing the authority must copy the ordinary bodies byte for byte")
+	require.NotZero(t, controls)
 	for _, version := range versions {
-		require.Equal(t, walFormatVersionV3, version)
+		require.Equal(t, walFormatVersionCurrent, version)
 	}
 	entries, err := ReadWALEntriesFromDir(logDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.NotNil(t, entries[0].PropertyEpoch, "foreign historical replay still has its complete names")
-	// Emulate an older writer by adding an ordinary v3 frame directly, without
-	// the new generic-append owner clearing authority on its behalf.
+	// Append an unbound current frame directly after the closed authority to
+	// verify that the sealed span cannot lend its dictionary to a later body.
 	legacy := entries[0]
 	legacy.Sequence++
 	legacy.PropertyEpoch = nil
+	legacy.Data = bytes.Clone(legacy.Data)
+	legacy.Checksum = crc32Checksum(legacy.Data)
 	var buffer bytes.Buffer
-	payload, err := encodeWALEntryV3(&buffer, &legacy)
+	payload, err := processWALEntryPayload(walPayloadEncode, &buffer, &legacy, nil, 0)
 	require.NoError(t, err)
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	require.NoError(t, err)
 	writer := bufio.NewWriter(file)
-	_, err = writeAtomicRecordBufio(writer, payload, walFormatVersionV3)
+	_, err = writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent)
 	require.NoError(t, err)
 	require.NoError(t, writer.Flush())
 	require.NoError(t, file.Close())
 	entries, err = ReadWALEntriesFromDir(logDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
-	require.Nil(t, entries[1].PropertyEpoch, "old appends cannot borrow closed authority")
+	require.Nil(t, entries[1].PropertyEpoch, "a body after the closed span cannot borrow its authority")
+}
+
+// Old v1-v4 records and a headerless historical JSON log are refused without
+// mutation. Each case places the unsupported bytes after one complete current
+// record, because a file with no decodable leading record is exactly the
+// torn-tail case the repair owner is allowed to truncate.
+func TestWALPropertyEpochOldFramingRefusedWithoutMutation(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	data := []byte(`{"tx_id":"old"}`)
+	var current bytes.Buffer
+	payload, err := processWALEntryPayload(walPayloadEncode, &current, &WALEntry{Sequence: 1, Timestamp: time.Now().UTC(), Operation: OpCheckpoint, Data: []byte(`{}`), Checksum: crc32Checksum([]byte(`{}`))}, nil, 0)
+	require.NoError(t, err)
+	lead, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
+	records := map[string][]byte{}
+	for version := uint8(1); version < walFormatVersionCurrent; version++ {
+		entry := WALEntry{Sequence: 2, Timestamp: time.Now().UTC(), Operation: OpCreateNode, Data: data}
+		entry.Checksum = crc32Checksum(entry.Data)
+		var payload []byte
+		var err error
+		if version < 3 {
+			payload, err = json.Marshal(entry)
+		} else {
+			payload, err = processWALEntryPayload(walPayloadEncode, &bytes.Buffer{}, &entry, nil, 0)
+		}
+		require.NoError(t, err)
+		record, _ := buildAtomicRecord(payload, version)
+		records[fmt.Sprintf("version %d", version)] = append(bytes.Clone(lead), record...)
+	}
+	records["headerless json"] = append(bytes.Clone(lead), []byte(`{"seq":2,"op":"create_node"}`+"\n")...)
+	for name, raw := range records {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := walActivePath(dir)
+			require.NoError(t, os.WriteFile(path, raw, 0600))
+			w, err := NewWAL(dir, DefaultWALConfig())
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			require.Nil(t, w)
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, raw, after, "a refused WAL must not be repaired or converted")
+			require.NoFileExists(t, walPropertyEpochUnsealedPath(dir))
+			// A second open must refuse the same bytes again rather than
+			// publish a converted copy next to them.
+			_, err = NewWAL(dir, DefaultWALConfig())
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			after, err = os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, raw, after)
+			// Recovery must also refuse before restoring any snapshot.
+			destination := newTestMemoryEngine(t)
+			_, _, err = RecoverIntoEngine(destination, dir, "")
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			count, err := destination.NodeCount()
+			require.NoError(t, err)
+			require.Zero(t, count)
+		})
+	}
+	// The producer routes of an already opened log must refuse the framing when
+	// the file underneath them is replaced by a mixed old-format log.
+	t.Run("producer routes", func(t *testing.T) {
+		mixed := records[fmt.Sprintf("version %d", walFormatVersionV3)]
+		source, _, commit := bindingCostFixture(t, 1)
+		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = wal.Close() })
+		require.NoError(t, os.WriteFile(walActivePath(wal.Config().Dir), mixed, 0600))
+		wal.mu.Lock()
+		wal.propertyEpochFormatChecked, wal.propertyEpochKnown = false, false
+		wal.mu.Unlock()
+		require.ErrorIs(t, wal.AppendBufferedCommit(commit, source.propKeyDict), ErrWALUnsupportedVersion)
+		after, err := os.ReadFile(walActivePath(wal.Config().Dir))
+		require.NoError(t, err)
+		require.Equal(t, mixed, after, "a refused producer route writes nothing")
+	})
 }
 
 func TestWALPropertyEpochCleanProofInvalidatedByForeignRestore(t *testing.T) {
@@ -142,7 +243,11 @@ func TestWALPropertyEpochCleanProofInvalidatedByForeignRestore(t *testing.T) {
 	}
 }
 
-func TestWALPropertyEpochRestoreRearmsOlderReaderRefusal(t *testing.T) {
+// Truncation after a snapshot drops the control that carried authority. A new
+// foreign restore writes the unsealed marker before publishing its own control,
+// so a crash during restore cannot expose the previous clean span; the next
+// clean close seals that control in place.
+func TestWALPropertyEpochRestoreRearmsAuthority(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dest := reviewBindingEngine(t, t.TempDir())
 	w, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -152,12 +257,25 @@ func TestWALPropertyEpochRestoreRearmsOlderReaderRefusal(t *testing.T) {
 	snapshot, err := w.CreateSnapshot(dest)
 	require.NoError(t, err)
 	require.NoError(t, SaveSnapshot(snapshot, filepath.Join(t.TempDir(), "empty.snapshot")))
-	require.NoError(t, w.TruncateAfterSnapshot(snapshot.Sequence))
-	_, versions := walEpochRawBodies(t, walActivePath(w.Config().Dir))
-	require.NotContains(t, versions, walFormatVersionPropertyEpoch)
+	require.NoError(t, w.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
+	_, versions, controls := walEpochRawBodies(t, walActivePath(w.Config().Dir))
+	require.Zero(t, controls, "the truncated log retains no authority control")
 	require.NoError(t, dest.beginSemanticPropertyRestore())
-	_, versions = walEpochRawBodies(t, walActivePath(w.Config().Dir))
-	require.Contains(t, versions, walFormatVersionPropertyEpoch, "a crash during restore must not expose the old clean log")
+	require.FileExists(t, walPropertyEpochUnsealedPath(w.Config().Dir), "a crash during restore must not expose the old clean log")
+	_, versions, controls = walEpochRawBodies(t, walActivePath(w.Config().Dir))
+	require.NotZero(t, controls, "the restore publishes its new authority in the current framing")
+	for _, version := range versions {
+		require.Equal(t, walFormatVersionCurrent, version)
+	}
+	// The clean close seals that control instead of leaving an open span.
+	require.NoError(t, dest.Close())
+	require.NoError(t, w.Close())
+	require.NoFileExists(t, walPropertyEpochUnsealedPath(w.Config().Dir))
+	_, versions, controls = walEpochRawBodies(t, walActivePath(w.Config().Dir))
+	require.NotZero(t, controls, "sealing keeps the control and closes its span")
+	for _, version := range versions {
+		require.Equal(t, walFormatVersionCurrent, version)
+	}
 }
 
 func TestWALPropertyEpochFailedConversionKeepsOriginal(t *testing.T) {
@@ -168,8 +286,8 @@ func TestWALPropertyEpochFailedConversionKeepsOriginal(t *testing.T) {
 	path := walActivePath(wal.Config().Dir)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// A truncated final ordinary record must not cause any preceding v4
-	// authority to be converted in place before complete validation succeeds.
+	// A truncated final ordinary record must not cause the preceding authority
+	// control to be sealed in place before complete validation succeeds.
 	raw = raw[:len(raw)-1]
 	require.NoError(t, os.WriteFile(path, raw, 0600))
 	require.Error(t, sealWALPropertyEpochFile(path))
@@ -178,48 +296,88 @@ func TestWALPropertyEpochFailedConversionKeepsOriginal(t *testing.T) {
 	require.Equal(t, raw, after)
 }
 
-// Close reads each file once to validate it, check unapplied records and find
-// its controls. Legacy JSON and unlisted segments still reach that check, as
-// with the directory visitor, and neither becomes a conversion candidate.
+// Verify current and unsupported recovery files under the same seal-plan contract.
 func TestWALPropertyEpochSealPlanVisitsEveryRecoveryFile(t *testing.T) {
-	t.Cleanup(config.WithWALEnabled())
-	dir := t.TempDir()
-	wal, err := NewWAL(dir, DefaultWALConfig())
-	require.NoError(t, err)
-	require.NoError(t, wal.Close())
-	legacy := func(seq uint64) []byte {
-		data := []byte(`{"tx_id":"legacy"}`)
-		raw, err := json.Marshal(WALEntry{Sequence: seq, Timestamp: time.Now(), Operation: OpBufferedCommit, Data: data, Checksum: crc32Checksum(data)})
+	t.Run("unsupported framing", func(t *testing.T) {
+		t.Cleanup(config.WithWALEnabled())
+		dir := t.TempDir()
+		wal, err := NewWAL(dir, DefaultWALConfig())
 		require.NoError(t, err)
-		return append(raw, '\n')
-	}
-	require.NoError(t, os.WriteFile(walActivePath(dir), append(legacy(0), legacy(9)...), 0600))
-	require.NoError(t, os.MkdirAll(walSegmentsDir(dir), 0700))
-	segment := filepath.Join(walSegmentsDir(dir), "seg-00000000000000000003-00000000000000000003.wal")
-	entry := WALEntry{Sequence: 3, Timestamp: time.Now(), Operation: OpCreateNode, Data: []byte(`{}`)}
-	entry.Checksum = crc32Checksum(entry.Data)
-	var buffer bytes.Buffer
-	payload, err := encodeWALEntryV3(&buffer, &entry)
-	require.NoError(t, err)
-	var record bytes.Buffer
-	_, err = writeAtomicRecordBufio(&record, payload, walFormatVersionV3)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(segment, record.Bytes(), 0600))
-	var seen []uint64
-	wal.mu.Lock()
-	plans, err := wal.planPropertyEpochSealLocked(func(entry WALEntry) error {
-		seen = append(seen, entry.Sequence)
-		return nil
+		require.NoError(t, wal.Close())
+		legacy := []byte(`{"tx_id":"legacy"}` + "\n")
+		require.NoError(t, os.WriteFile(walActivePath(dir), legacy, 0600))
+		require.NoError(t, os.MkdirAll(walSegmentsDir(dir), 0700))
+		segment := filepath.Join(walSegmentsDir(dir), "seg-00000000000000000003-00000000000000000003.wal")
+		entry := WALEntry{Sequence: 3, Timestamp: time.Now(), Operation: OpCreateNode, Data: []byte(`{}`)}
+		entry.Checksum = crc32Checksum(entry.Data)
+		var buffer bytes.Buffer
+		payload, err := processWALEntryPayload(walPayloadEncode, &buffer, &entry, nil, 0)
+		require.NoError(t, err)
+		old, _ := buildAtomicRecord(payload, walFormatVersionV3)
+		require.NoError(t, os.WriteFile(segment, old, 0600))
+		require.NoError(t, writeWALManifest(dir, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}}))
+		var seen []uint64
+		wal.mu.Lock()
+		plans, err := wal.planPropertyEpochSealLocked(func(entry WALEntry) error {
+			seen = append(seen, entry.Sequence)
+			return nil
+		})
+		wal.mu.Unlock()
+		require.ErrorIs(t, err, ErrWALUnsupportedVersion, "old framing in a recovery file stops the plan")
+		require.Nil(t, plans)
+		require.Empty(t, seen, "no entry is visited before the framing check refuses the file")
+		after, err := os.ReadFile(segment)
+		require.NoError(t, err)
+		require.Equal(t, old, after, "an old segment is never rewritten")
+		after, err = os.ReadFile(walActivePath(dir))
+		require.NoError(t, err)
+		require.Equal(t, legacy, after, "a legacy active file is never rewritten")
+
 	})
-	wal.mu.Unlock()
-	require.NoError(t, err)
-	require.Equal(t, []uint64{3, 9}, seen, "sequence zero is skipped, as by the directory visitor")
-	require.Len(t, plans, 1, "only listed segments and the active file are converted")
-	require.Empty(t, plans[0].controls)
-	wal.mu.Lock()
-	_, err = wal.planPropertyEpochSealLocked(func(WALEntry) error { return errors.New("veto") })
-	wal.mu.Unlock()
-	require.ErrorContains(t, err, "veto")
+	t.Run("current framing", func(t *testing.T) {
+		t.Cleanup(config.WithWALEnabled())
+		dir := t.TempDir()
+		wal, err := NewWAL(dir, DefaultWALConfig())
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+		require.NoError(t, os.MkdirAll(walSegmentsDir(dir), 0700))
+		segment := filepath.Join(walSegmentsDir(dir), "seg-00000000000000000003-00000000000000000003.wal")
+		segmentEntry := WALEntry{Sequence: 3, Timestamp: time.Now(), Operation: OpCreateNode, Data: []byte(`{}`)}
+		segmentEntry.Checksum = crc32Checksum(segmentEntry.Data)
+		var buffer bytes.Buffer
+		payload, err := processWALEntryPayload(walPayloadEncode, &buffer, &segmentEntry, nil, 0)
+		require.NoError(t, err)
+		segmentRecord, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
+		require.NoError(t, os.WriteFile(segment, segmentRecord, 0600))
+		activeEntry := WALEntry{Sequence: 9, Timestamp: time.Now(), Operation: OpCreateNode, Data: []byte(`{}`)}
+		activeEntry.Checksum = crc32Checksum(activeEntry.Data)
+		payload, err = processWALEntryPayload(walPayloadEncode, &buffer, &activeEntry, nil, 0)
+		require.NoError(t, err)
+		activeRecord, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
+		require.NoError(t, os.WriteFile(walActivePath(dir), activeRecord, 0600))
+		require.NoError(t, writeWALManifest(dir, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}}))
+		var seen []uint64
+		wal.mu.Lock()
+		plans, err := wal.planPropertyEpochSealLocked(func(entry WALEntry) error {
+			seen = append(seen, entry.Sequence)
+			return nil
+		})
+		wal.mu.Unlock()
+		require.NoError(t, err)
+		require.Equal(t, []uint64{3, 9}, seen, "the listed segment and the active file are visited once each")
+		require.Len(t, plans, 2)
+		for _, plan := range plans {
+			require.Empty(t, plan.controls, "an ordinary current record is not an authority control")
+		}
+		after, err := os.ReadFile(walActivePath(dir))
+		require.NoError(t, err)
+		require.Equal(t, activeRecord, after, "a plan without controls rewrites nothing")
+		wal.mu.Lock()
+		_, err = wal.planPropertyEpochSealLocked(func(WALEntry) error { return errors.New("veto") })
+		wal.mu.Unlock()
+		require.ErrorContains(t, err, "veto")
+
+	})
 }
 
 func TestWALPropertyEpochSealPlanRejectsChangedFile(t *testing.T) {
@@ -232,6 +390,8 @@ func TestWALPropertyEpochSealPlanRejectsChangedFile(t *testing.T) {
 	plan, err := scanWALPropertyEpochFile(path, func(WALEntry) error { visited++; return nil })
 	require.NoError(t, err)
 	require.NotEmpty(t, plan.controls)
+	_, _, controls := walEpochRawBodies(t, path)
+	require.Equal(t, len(plan.controls), controls, "a control is recognized by payload, not by framing version")
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 	require.NoError(t, err)
 	require.Equal(t, len(entries)+len(plan.controls), visited, "controls and records arrive in the scanning read")
@@ -243,7 +403,7 @@ func TestWALPropertyEpochSealPlanRejectsChangedFile(t *testing.T) {
 	require.ErrorContains(t, plan.apply(), "changed between scan and sealing")
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.Equal(t, append(raw, 0), after, "a rejected plan leaves the older-reader guard in place")
+	require.Equal(t, append(raw, 0), after, "a rejected plan leaves the original log in place")
 }
 
 // An ordinary synchronous log never received a control, so clean close does
@@ -308,8 +468,11 @@ func TestWALPropertyEpochUnsealedMarker(t *testing.T) {
 				require.True(t, w.propertyEpochUnsealed, "a marker that was not removed stays pending")
 				return
 			}
-			_, versions := walEpochRawBodies(t, walActivePath(logDir))
-			require.Contains(t, versions, walFormatVersionPropertyEpoch)
+			_, versions, controls := walEpochRawBodies(t, walActivePath(logDir))
+			require.NotZero(t, controls)
+			for _, version := range versions {
+				require.Equal(t, walFormatVersionCurrent, version)
+			}
 			// Crash: neither the engine's clean close nor its conversion runs.
 			crashClose(t, b, w)
 			b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")}))
@@ -320,12 +483,13 @@ func TestWALPropertyEpochUnsealedMarker(t *testing.T) {
 			require.True(t, w.propertyEpochUnsealed, "a reopened log keeps the marker")
 			require.NoError(t, NewWALEngine(b, w).Close())
 			require.NoFileExists(t, marker)
-			_, versions = walEpochRawBodies(t, walActivePath(logDir))
+			_, versions, controls = walEpochRawBodies(t, walActivePath(logDir))
 			require.NotEmpty(t, versions)
+			require.NotZero(t, controls, "sealing closes the control span instead of removing it")
 			for _, version := range versions {
-				require.Equal(t, walFormatVersionV3, version)
+				require.Equal(t, walFormatVersionCurrent, version)
 			}
-			// Compaction of a sealed log finds nothing to convert.
+			// Compaction of a sealed log finds nothing left to convert.
 			w, err = NewWAL(logDir, DefaultWALConfig())
 			require.NoError(t, err)
 			fixtureowner.Own(t, w)
@@ -338,8 +502,8 @@ func TestWALPropertyEpochUnsealedMarker(t *testing.T) {
 	}
 }
 
-// Every v4 frame must pass the marker owner; a writer that skipped it would
-// leave a control that clean close never converts.
+// Every authority control must pass the marker owner; a writer that skipped it
+// would leave a control that clean close never seals.
 func TestWALPropertyEpochFramesUseMarkerOwner(t *testing.T) {
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")

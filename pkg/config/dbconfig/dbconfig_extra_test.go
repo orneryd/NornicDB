@@ -7,22 +7,6 @@ import (
 )
 
 // ============================================================================
-// normalizeBM25Engine
-// ============================================================================
-
-func TestNormalizeBM25Engine_V1(t *testing.T) {
-	assert.Equal(t, "v1", normalizeBM25Engine("v1"))
-	assert.Equal(t, "v1", normalizeBM25Engine("V1"))
-	assert.Equal(t, "v1", normalizeBM25Engine("  v1  "))
-}
-
-func TestNormalizeBM25Engine_Default(t *testing.T) {
-	assert.Equal(t, "v2", normalizeBM25Engine("v2"))
-	assert.Equal(t, "v2", normalizeBM25Engine("anything"))
-	assert.Equal(t, "v2", normalizeBM25Engine(""))
-}
-
-// ============================================================================
 // dbNameFromNodeID
 // ============================================================================
 

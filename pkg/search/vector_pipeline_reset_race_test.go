@@ -16,7 +16,7 @@ import (
 func TestGetOrCreateVectorPipelineConcurrentWithReset(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	for i := 0; i < 8; i++ {
 		require.NoError(t, svc.IndexNode(&storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("n-%d", i)),

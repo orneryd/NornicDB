@@ -160,6 +160,8 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 					return err
 				}))
 				data := WALBufferedCommitData{TxID: "historical", Namespace: "binding", Writes: map[string][]byte{string(nodeKey("binding:a")): body}}
+				data.NumericBindings, err = captureWALNumericBindings(source.idDict, data.Writes, nil, nil)
+				require.NoError(t, err)
 				if bound {
 					var encoded []byte
 					encoded, err = bufferedWALPropertyBindings(data.Writes, source.propKeyDict)

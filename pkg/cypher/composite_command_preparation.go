@@ -146,15 +146,6 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 		remainingStart += len(before) - len(remaining)
 	}
 
-	// If IF NOT EXISTS and database already exists, return success silently.
-	if ifNotExists && e.dbManager != nil && e.dbManager.IsCompositeDatabase(dbName) {
-		return &preparedCompositeCommand{database: dbName, action: compositeCreate, noOp: true}, nil
-	}
-	// Also handle IF NOT EXISTS when a standard database with that name exists.
-	if ifNotExists && e.dbManager != nil && e.dbManager.Exists(dbName) {
-		return &preparedCompositeCommand{database: dbName, action: compositeCreate, noOp: true}, nil
-	}
-
 	// Parse constituents (ALIAS ... FOR DATABASE ... [AT ...] [SECRET REF ...])
 	constituents := []interface{}{}
 	if remaining != "" {
@@ -170,6 +161,17 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 			}
 			constituents = append(constituents, ref)
 		}
+	}
+
+	// Consume the complete syntax before deciding that an existing database
+	// makes the command a no-op. Unused target semantics remain deferred.
+	// If IF NOT EXISTS and database already exists, return success silently.
+	if ifNotExists && e.dbManager != nil && e.dbManager.IsCompositeDatabase(dbName) {
+		return &preparedCompositeCommand{database: dbName, action: compositeCreate, noOp: true}, nil
+	}
+	// Also handle IF NOT EXISTS when a standard database with that name exists.
+	if ifNotExists && e.dbManager != nil && e.dbManager.Exists(dbName) {
+		return &preparedCompositeCommand{database: dbName, action: compositeCreate, noOp: true}, nil
 	}
 
 	if len(constituents) == 0 {
@@ -257,16 +259,11 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 	// Check for ADD or DROP
 	remainingStart := dbNameEnd + len(cypher[dbNameEnd:]) - len(strings.TrimLeftFunc(cypher[dbNameEnd:], cyphertext.IsWhitespace))
 	remaining := strings.TrimSpace(cypher[remainingStart:])
-	upperRemaining := upperASCII(remaining)
-
-	if strings.HasPrefix(upperRemaining, "ADD ALIAS") {
-		tokens, spans, err := tokenizeSource(remaining)
-		if err != nil {
-			return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
-		}
-		if len(tokens) < 2 || !equalFoldASCII(tokens[0], "ADD") || !equalFoldASCII(tokens[1], "ALIAS") {
-			return nil, localizedError(localization.CypherCompositeAlterAddAliasExpected(), nil)
-		}
+	tokens, spans, err := tokenizeSource(remaining)
+	if err != nil {
+		return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
+	}
+	if len(tokens) >= 2 && equalFoldASCII(tokens[0], "ADD") && equalFoldASCII(tokens[1], "ALIAS") {
 		idx := 1
 		constituent, err := parseConstituentFromTokens(tokens, &idx, &adminCredentialReader{source: remaining, mapping: cyphertext.SourceFor(ctx, cypher), base: remainingStart, spans: spans, set: statementCredentials(ctx)})
 		if err != nil {
@@ -277,41 +274,20 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 		}
 		return &preparedCompositeCommand{database: dbName, action: compositeAdd, constituent: constituent}, nil
 
-	} else if strings.HasPrefix(upperRemaining, "DROP ALIAS") {
-		// DROP ALIAS alias
-		dropIdx := findMultiWordKeywordIndex(remaining, "DROP", "ALIAS")
-		if dropIdx == -1 {
-			return nil, localizedError(localization.CypherCompositeAlterDropAliasExpected(), nil)
+	} else if len(tokens) >= 2 && equalFoldASCII(tokens[0], "DROP") && equalFoldASCII(tokens[1], "ALIAS") {
+		if len(tokens) < 3 {
+			return nil, localizedError(localization.CypherCompositeDropAliasNameEmpty(), nil)
 		}
-
-		// Skip "DROP ALIAS" and whitespace
-		aliasStart := dropIdx + len("DROP")
-		for aliasStart < len(remaining) && cyphertext.IsWhitespaceAt(remaining, aliasStart) {
-			aliasStart++
+		if len(tokens) > 3 {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCompositeConstituentUnexpectedToken(tokens[3]))
 		}
-		if aliasStart+len("ALIAS") <= len(remaining) && strings.EqualFold(remaining[aliasStart:aliasStart+len("ALIAS")], "ALIAS") {
-			aliasStart += len("ALIAS")
-			for aliasStart < len(remaining) && cyphertext.IsWhitespaceAt(remaining, aliasStart) {
-				aliasStart++
-			}
+		aliasName, err := parseCypherValueToken(tokens[2])
+		if err != nil {
+			return nil, err
 		}
-
-		// Extract alias name (until newline or end)
-		aliasNameEnd := aliasStart
-		for aliasNameEnd < len(remaining) && !cyphertext.IsWhitespaceAt(remaining, aliasNameEnd) && remaining[aliasNameEnd] != '\n' {
-			aliasNameEnd++
-		}
-
-		aliasName := strings.TrimSpace(remaining[aliasStart:aliasNameEnd])
-		aliasName = strings.ReplaceAll(aliasName, " ", "")
-		aliasName = strings.ReplaceAll(aliasName, "\t", "")
-		aliasName = strings.ReplaceAll(aliasName, "\n", "")
-		aliasName = strings.ReplaceAll(aliasName, "\r", "")
-
 		if aliasName == "" {
 			return nil, localizedError(localization.CypherCompositeDropAliasNameEmpty(), nil)
 		}
-
 		return &preparedCompositeCommand{database: dbName, action: compositeDrop, alias: aliasName}, nil
 
 	} else {

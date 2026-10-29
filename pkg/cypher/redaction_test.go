@@ -333,3 +333,44 @@ func TestRedactLiterals_MalformedInputsNeverLeak(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactLiterals_RemoteURLGrammarRole(t *testing.T) {
+	const secret = "synthetic-role-url-credential-938472"
+	for _, target := range []string{"nornic", "`nornic`"} {
+		for _, quote := range []string{"'", "\"", "`"} {
+			query := "CREATE COMPOSITE DATABASE role_probe ALIAS r FOR DATABASE " + target + " AT " + quote + "http://admin:" + secret + "@example.invalid" + quote
+			t.Run(target+quote, func(t *testing.T) {
+				for _, comments := range []bool{false, true} {
+					input := query
+					if comments {
+						input = strings.Replace(query, " AT ", " /* context */ AT ", 1)
+					}
+					got := RedactLiterals(input)
+					if comments {
+						got = redactLiteralsContext(t.Context(), input, true, redactGrammarAccepts)
+					}
+					if strings.Contains(got, secret) {
+						t.Fatalf("credential leaked: %q", got)
+					}
+					if !strings.Contains(got, RedactedPlaceholder) {
+						t.Fatalf("missing placeholder: %q", got)
+					}
+				}
+			})
+		}
+	}
+	for _, prefix := range []string{"CREATE COMPOSITE DATABASE role_probe", "ALTER COMPOSITE DATABASE role_probe ADD"} {
+		for _, option := range []string{" AT `http://admin:" + secret + "@example.invalid`", " SECRET REF `" + secret + "`"} {
+			query := prefix + " ALIAS r FOR DATABASE `nornic`" + option
+			got := RedactLiterals(query)
+			if strings.Contains(got, secret) || !strings.Contains(got, RedactedPlaceholder) {
+				t.Fatal("remote credential role was not redacted")
+			}
+		}
+	}
+	for _, query := range []string{"MATCH (at) RETURN at", "RETURN `at`", "MATCH (secret) RETURN secret", "CREATE COMPOSITE DATABASE role_probe ALIAS r FOR DATABASE `nornic` AT $uri"} {
+		if got := RedactLiterals(query); got != query {
+			t.Fatalf("non-credential structure changed: got %q want %q", got, query)
+		}
+	}
+}

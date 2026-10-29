@@ -35,7 +35,7 @@ func bindingCostFixture(t testing.TB, count int) (*BadgerEngine, *WAL, *buffered
 	w, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
-	return b, w, &bufferedCommit{namespace: "perf", txID: "cost", writes: map[string][]byte{string(nodeKey("perf:a")): body}}
+	return b, w, &bufferedCommit{namespace: "perf", txID: "cost", walIDs: b.idDict, writes: map[string][]byte{string(nodeKey("perf:a")): body}}
 }
 
 // Fixed samples measure production steady append before and after a much larger

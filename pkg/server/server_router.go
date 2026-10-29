@@ -338,7 +338,7 @@ func (s *Server) registerProductRoutes(mux *http.ServeMux) {
 		{"/admin/gpu/test", auth.PermAdmin, s.handleGPUTest},
 
 		// Per-database config overrides (admin only)
-		{"/admin/databases/config/keys", auth.PermAdmin, s.handleDbConfigKeys},
+		{"/admin/databases/config/keys", auth.PermAdmin, s.handleDbConfigPrefix},
 		{"/admin/databases/", auth.PermAdmin, s.handleDbConfigPrefix},
 		{"/admin/retention/policies", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPoliciesRoute) }},
 		{"/admin/retention/policies/{id}", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPolicyRoute) }},

@@ -723,9 +723,9 @@ Boolean settings accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`. Any ot
 
 **Replay protection.** When the replication secret is configured, every message must carry a fresh 16-byte nonce and `SignatureV2`, covering the message type, sender, timestamp, nonce and payload. Replay protection is always enabled for signed traffic. Old-format (v1 or nonce-less) messages are rejected. Each receiver remembers a sender's nonce until the message leaves the 30-second timestamp window; a replay within that window is rejected. The cache is per receiving node and starts empty after a restart.
 
-**Cluster upgrade requirement.** Upgrade every node in a cluster before resuming replication with this version. Nodes running this version cannot communicate with nodes that still send old-format signed messages. Plan a coordinated cluster upgrade with an interruption to replication; a mixed-version rolling upgrade does not keep the cluster operational.
+**Cluster upgrade requirement.** Upgrade every node in a cluster before resuming replication with this version. The cluster wire format is now MessagePack; older nodes use gob. Nodes running this version also reject old-format signed messages. Plan a coordinated cluster upgrade with an interruption to replication; a mixed-version rolling upgrade does not keep the cluster operational.
 
-During a mixed-version window, upgraded nodes log `[Cluster] Auth failed` with `message has no replay-protection nonce; upgrade the sending node` and close the peer connection. Older nodes reject the upgraded nodes' messages because the v1 signature is absent. Heartbeats, WAL replication, fencing and promotion between old and upgraded nodes fail; standbys stop catching up, Raft peers can lose quorum, and forwarded writes across the version boundary fail. Resume normal cluster service only after every node has been upgraded.
+During a mixed-version window, peers cannot decode each other's cluster messages and close the connection. Heartbeats, WAL replication, fencing and promotion between old and upgraded nodes fail; standbys stop catching up, Raft peers can lose quorum, and forwarded writes across the version boundary fail. Resume normal cluster service only after every node has been upgraded.
 
 ---
 
@@ -826,11 +826,11 @@ Client                  Leader               Follower 1         Follower 2
 
 ### Wire Protocol
 
-The cluster protocol uses a simple length-prefixed JSON format:
+The cluster protocol uses length-prefixed MessagePack messages:
 
 ```
 ┌─────────────┬─────────────────────────────────────┐
-│ Length (4B) │          JSON Payload               │
+│ Length (4B) │       MessagePack Payload           │
 │ Big Endian  │                                     │
 └─────────────┴─────────────────────────────────────┘
 ```

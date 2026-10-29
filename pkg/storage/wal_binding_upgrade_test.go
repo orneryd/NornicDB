@@ -105,9 +105,9 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				data, err := decodeBufferedWALRecord(entry)
 				require.NoError(t, err)
 				require.NotEmpty(t, data.TxID)
-				marked, err := recovered.bufferedFlushMarkerExists("", data.TxID, "")
+				marker, err := recovered.observeBufferedCommitReceipt(bufferedReceiptRead{txID: data.TxID})
 				require.NoError(t, err)
-				require.False(t, marked, "fixture update unexpectedly reached storage")
+				require.False(t, marker.present, "fixture update unexpectedly reached storage")
 			}
 			name, ok := recovered.propKeyDict.lookup("legacy", 1)
 			require.True(t, ok)

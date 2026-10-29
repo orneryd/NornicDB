@@ -53,7 +53,7 @@ func TestHNSWScalarDefaultUpgradesSavedFloatGraph(t *testing.T) {
 	dir := t.TempDir()
 	hnswPath := filepath.Join(dir, "hnsw")
 	open := func(engine storage.Engine) *Service {
-		svc := NewServiceWithDimensions(engine, dimensions)
+		svc := NewService(engine, dimensions, nil)
 		svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
 		svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
 		svc.SetHNSWIndexPath(hnswPath)

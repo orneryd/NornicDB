@@ -106,7 +106,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 			prior, err := engine.GetStoredNode("test:a")
 			require.NoError(t, err)
 			require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"prepared": true}}, images))
-			prepared, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+			prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
 			t.Cleanup(prepared.Abort)
 			require.False(t, events.has("node updated test:a"), "preparation must not publish before acceptance")

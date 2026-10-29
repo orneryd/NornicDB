@@ -19,6 +19,13 @@ func (b *BadgerEngine) migrateLegacyPolicyMetadata(ctx context.Context) error {
 			if (prefix == 0x11 || prefix == 0x12) && bytes.IndexByte(key[1:], 0) >= 0 && !serializedMap {
 				return 0, false, nil
 			}
+			// The old deindex queue and commit receipts share 0x13. Physical
+			// flush markers have empty values; logical replication receipts
+			// have a length-prefixed key and a one-byte value. Keep both so
+			// replay remains idempotent after migration and restart.
+			if prefix == prefixBufferedFlush && (len(value) == 0 || isLogicalCommitReceipt(key, value)) {
+				return 0, false, nil
+			}
 			entityID := string(key[1:])
 			switch prefix {
 			case 0x11:

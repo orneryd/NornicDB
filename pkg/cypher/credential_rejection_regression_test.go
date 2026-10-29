@@ -49,3 +49,23 @@ func TestCredentialRejectionPublic(t *testing.T) {
 		}
 	}
 }
+
+func TestShowCompositeTrailingTokensPublic(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	for _, query := range []string{"SHOW COMPOSITE DATABASES garbage", "SHOW COMPOSITE DATABASES garbage YIELD name"} {
+		if _, err := executor.Execute(context.Background(), query, nil); err == nil {
+			t.Error("trailing tokens accepted")
+		}
+	}
+	for _, query := range []string{"SHOW COMPOSITE DATABASES", "SHOW COMPOSITE DATABASES YIELD name RETURN name"} {
+		if _, err := executor.Execute(context.Background(), query, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

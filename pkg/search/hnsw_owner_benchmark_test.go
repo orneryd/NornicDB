@@ -14,7 +14,7 @@ import (
 func lifecycleBenchmarkFixture(b *testing.B, indexed bool) (*Service, *storage.NamespacedEngine, []float32) {
 	b.Helper()
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "hnsw-bench")
-	svc := NewServiceWithDimensions(engine, 64)
+	svc := NewService(engine, 64, nil)
 	svc.SetRuntimeStrategyTransitionsEnabled(false)
 	rng := rand.New(rand.NewSource(86))
 	var query []float32

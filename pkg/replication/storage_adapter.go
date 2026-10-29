@@ -3,6 +3,8 @@ package replication
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -126,6 +128,29 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		return err
 	}
 
+	// Decode once before publishing to the replication WAL. An unreadable
+	// command must never be replayed to a peer after its caller saw rejection.
+	var envelope storage.EntityTransactionEnvelope
+	var operations []storage.Operation
+	var prefix string
+	var err error
+	switch cmd.Type {
+	case CmdCommitTransaction:
+		if cmd.accepted == nil || cmd.accepted.owner != a.engine {
+			envelope, operations, err = storage.DecodeEntityTransaction(cmd.Data)
+		}
+	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
+		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
+		operations, _, err = decodeEntityCommandOperations(cmd.Type, cmd.Data)
+	case CmdDeleteByPrefix:
+		prefix, err = decodeDeleteByPrefix(cmd.Data)
+	default:
+		return localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+	}
+	if err != nil {
+		return err
+	}
+
 	// Record in persistent WAL (write-ahead logging)
 	record := replicationWALRecord{
 		Timestamp: cmd.Timestamp.UnixNano(),
@@ -165,36 +190,17 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 			execErr = cmd.accepted.apply()
 			break
 		}
-		receipt, err := storage.SubmitAcceptedEntityTransaction(context.Background(), a.engine, cmd.Data, nil)
+		receipt, err := storage.SubmitAcceptedEntityTransaction(context.Background(), a.engine, envelope, operations, nil)
 		if err != nil {
 			execErr = err
 		} else {
 			execErr = receipt.WaitPhysicalOutcome(context.Background()).Err
 		}
-	case CmdCreateNode:
-		execErr = applyDirectEntityCommand(a.engine, CmdCreateNode, cmd.Data)
-	case CmdUpdateNode:
-		execErr = applyDirectEntityCommand(a.engine, CmdUpdateNode, cmd.Data)
-	case CmdDeleteNode:
-		execErr = applyDirectEntityCommand(a.engine, CmdDeleteNode, cmd.Data)
-	case CmdCreateEdge:
-		execErr = applyDirectEntityCommand(a.engine, CmdCreateEdge, cmd.Data)
-	case CmdUpdateEdge:
-		execErr = applyDirectEntityCommand(a.engine, CmdUpdateEdge, cmd.Data)
-	case CmdDeleteEdge:
-		execErr = applyDirectEntityCommand(a.engine, CmdDeleteEdge, cmd.Data)
+	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
+		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
+		execErr = applyDirectEntityCommand(a.engine, cmd.Type, operations)
 	case CmdDeleteByPrefix:
-		execErr = a.applyDeleteByPrefix(cmd.Data)
-	case CmdBulkCreateNodes:
-		execErr = applyDirectEntityCommand(a.engine, CmdBulkCreateNodes, cmd.Data)
-	case CmdBulkCreateEdges:
-		execErr = applyDirectEntityCommand(a.engine, CmdBulkCreateEdges, cmd.Data)
-	case CmdBulkDeleteNodes:
-		execErr = applyDirectEntityCommand(a.engine, CmdBulkDeleteNodes, cmd.Data)
-	case CmdBulkDeleteEdges:
-		execErr = applyDirectEntityCommand(a.engine, CmdBulkDeleteEdges, cmd.Data)
-	default:
-		execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+		_, _, execErr = a.engine.DeleteByPrefix(prefix)
 	}
 
 	// The WAL writer owns queued position and memory publication exactly once.
@@ -322,19 +328,17 @@ func (a *StorageAdapter) flushWALBatch() {
 	}
 }
 
-// applyCreateNode creates a node from command data.
-func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
+func decodeDeleteByPrefix(data []byte) (string, error) {
 	var req struct {
 		Prefix string
 	}
 	if err := storage.DecodeCommandPayload(data, &req); err != nil {
-		return localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
+		return "", localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
 	}
 	if req.Prefix == "" {
-		return localizedError(localization.ReplicationStoragePrefixRequired(), nil)
+		return "", localizedError(localization.ReplicationStoragePrefixRequired(), nil)
 	}
-	_, _, err := a.engine.DeleteByPrefix(req.Prefix)
-	return err
+	return req.Prefix, nil
 }
 
 func (a *StorageAdapter) FlushWAL() error {
@@ -427,8 +431,15 @@ func (a *StorageAdapter) GetWALPosition() (uint64, error) {
 	return a.walPosition.Load(), nil
 }
 
-// GetWALEntries returns WAL entries starting from the given position.
+// GetWALEntries returns WAL entries after the given position. A zero limit
+// returns an empty window; a negative limit is invalid.
 func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error) {
+	if maxEntries < 0 {
+		return nil, fmt.Errorf("replication WAL entry limit must not be negative: %d", maxEntries)
+	}
+	if maxEntries == 0 {
+		return []*WALEntry{}, nil
+	}
 	// Keep the shared backing array locked until the result window is copied:
 	// pruning compacts and clears it in place.
 	a.memWALMu.RLock()
@@ -449,9 +460,9 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 			a.memWALMu.RUnlock()
 			return []*WALEntry{}, nil
 		}
-		end := lo + maxEntries
-		if end > len(mem) {
-			end = len(mem)
+		end := len(mem)
+		if maxEntries < len(mem)-lo {
+			end = lo + maxEntries
 		}
 		entries := make([]*WALEntry, end-lo)
 		copy(entries, mem[lo:end])
@@ -485,29 +496,28 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 			continue
 		}
 
-		// Prefer the current record format, but tolerate older WALs.
-		var (
-			ts  int64
-			cmd *Command
-		)
-		var rec replicationWALRecord
-		if err := storage.DecodeCommandPayload(storageEntry.Data, &rec); err == nil && rec.Command != nil {
-			ts = rec.Timestamp
-			cmd = rec.Command
-		} else {
-			continue // Skip corrupted/legacy entries
-		}
-
 		pos := storageEntry.Sequence
-		if pos > fromPosition {
-			entries = append(entries, &WALEntry{
-				Position:  pos,
-				Timestamp: ts,
-				Command:   cmd,
-			})
-			if len(entries) >= maxEntries {
-				break
-			}
+		if pos <= fromPosition {
+			continue
+		}
+		// Never return a later position after dropping an unreadable command:
+		// the receiver could acknowledge a window with a missing write.
+		var rec replicationWALRecord
+		if err := json.Unmarshal(storageEntry.Data, &rec); err != nil {
+			err = fmt.Errorf("replication WAL entry %d: %w", pos, err)
+			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		if rec.Command == nil {
+			err := fmt.Errorf("replication WAL entry %d has no command", pos)
+			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		entries = append(entries, &WALEntry{
+			Position:  pos,
+			Timestamp: rec.Timestamp,
+			Command:   rec.Command,
+		})
+		if len(entries) >= maxEntries {
+			break
 		}
 	}
 
@@ -555,11 +565,7 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
 
-	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}{
+	snapshot := storage.ReplicationSnapshot{
 		WALPosition: a.walPosition.Load(),
 		Nodes:       nodes,
 		Edges:       edges,
@@ -581,11 +587,7 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 		return localizedError(localization.ReplicationStorageReadSnapshotFailed(err), err)
 	}
 
-	var snapshot struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}
+	var snapshot storage.ReplicationSnapshot
 
 	if err := storage.DecodeCommandPayload(data, &snapshot); err != nil {
 		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)

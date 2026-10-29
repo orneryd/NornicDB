@@ -72,7 +72,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							}
 							b := &solR3ReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
 							t.Cleanup(b.open)
-							svc := NewServiceWithDimensions(b, 2)
+							svc := NewService(b, 2, nil)
 							t.Cleanup(func() { _ = svc.Close() })
 							if warm {
 								require.NoError(t, svc.BuildIndexes(ctx))
@@ -203,7 +203,7 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 			require.NoError(t, store.CreateEdge(edge))
 			b := &solR3RelationshipSnapshot{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
 			t.Cleanup(b.open)
-			svc := NewServiceWithDimensions(b, 2)
+			svc := NewService(b, 2, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			svc.EnableRelationshipSearch(nil)
 			svc.StartRelationshipIndex()

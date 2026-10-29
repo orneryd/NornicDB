@@ -97,7 +97,7 @@ func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 	t.Parallel()
 
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
 		ID:     "nornic:doc-vectors",
@@ -141,7 +141,7 @@ func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 	t.Parallel()
 
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a"})
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 func TestIndexEdge_ReplacesExistingRelationshipVectors(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	edge := &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",
@@ -235,7 +235,7 @@ func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {
 
 	ctx := context.Background()
 	query := benchmarkRelationshipVector(0, dim)
-	svc := NewServiceWithDimensions(engine, dim)
+	svc := NewService(engine, dim, nil)
 	require.NoError(b, svc.BuildIndexes(ctx))
 	require.True(b, svc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 

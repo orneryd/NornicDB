@@ -239,7 +239,7 @@ func buildDocsSearchFixture(tb testing.TB, chunks []docsCorpusChunk) *Service {
 	tb.Helper()
 	base := newTestMemoryEngine(tb)
 	engine := storage.NewNamespacedEngine(base, "docs-benchmark")
-	svc := NewServiceWithDimensions(engine, docsVectorDims)
+	svc := NewService(engine, docsVectorDims, nil)
 	svc.resultCache = nil
 
 	for _, chunk := range chunks {

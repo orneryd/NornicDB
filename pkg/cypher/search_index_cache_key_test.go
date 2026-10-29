@@ -15,7 +15,7 @@ import (
 // is saved (#945).
 func TestCachedSearchProcedureSeesIndexChanges(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	exec := NewStorageExecutor(store)
 	exec.SetSearchService(svc)
 	ctx := context.Background()

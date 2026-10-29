@@ -5,6 +5,7 @@ import (
 
 	"context"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -26,7 +27,7 @@ func TestSol1482R2CypherCommittedReadCannotResurrectNewerDelete(t *testing.T) {
 		_, err := older.Execute(ctx, "MATCH (n:Doc) SET n.content = 'currentword' RETURN n.content", nil)
 		done <- err
 	}()
-	barrier.wait(t, "committed refresh")
+	runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "committed refresh did not reach its observation")
 	_, err := newer.Execute(ctx, "MATCH (n:Doc) DETACH DELETE n", nil)
 	require.NoError(t, err)
 	barrier.open()
@@ -41,7 +42,7 @@ func TestSol1482R3ExplicitCommitAndRollback(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	exec := NewStorageExecutor(store)
 	exec.SetSearchService(svc)
@@ -74,7 +75,7 @@ func TestSol1482R3SuppressedEdgeDoesNotConsumeTopK(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	exec := NewStorageExecutor(store)
 	exec.SetSearchService(svc)

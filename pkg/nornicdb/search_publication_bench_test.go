@@ -21,7 +21,7 @@ func openPublicationBenchDB(b *testing.B, flushNodes int) (*DB, *dbSearchService
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = db.Close() })
 	dbName := db.defaultDatabaseName()
-	_, err = db.EnsureSearchIndexesBuilt(context.Background(), dbName, nil)
+	_, err = db.EnsureSearchIndexes(context.Background(), dbName, nil, SearchIndexBuildWait)
 	require.NoError(b, err)
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
@@ -67,4 +67,3 @@ func BenchmarkDeferredSearchFlushThroughput(b *testing.B) {
 	}
 	b.ReportMetric(float64(b.N*nodes)/b.Elapsed().Seconds(), "nodes/s")
 }
-

@@ -229,7 +229,7 @@ func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
 	wal.Close()
 
 	// Read back and verify order
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}

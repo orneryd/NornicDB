@@ -114,7 +114,7 @@ func TestCallDbRetrieveAndRerank(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
@@ -145,7 +145,7 @@ func TestCallDbRetrieveUsesPerChunkOuterRRF(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -172,7 +172,7 @@ func TestCallDbRetrieveContinuesBeyondInitialLimit(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -195,7 +195,7 @@ func TestCallDbRetrieveContinuesBeyondInitialLimit(t *testing.T) {
 func TestCallDbRetrieveContinuationBypassesCypherResultCache(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	exec.SetSearchService(service)
 
 	for index := 0; index < 3; index++ {
@@ -309,7 +309,7 @@ func TestCallDbRetrieveAppliesPropertyFilters(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -478,7 +478,7 @@ func TestCallDbRetrieveFailClosedRequiresEmbedding(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
@@ -497,7 +497,7 @@ func TestCallDbRetrieveFailClosedPreservesEmbedderCause(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(&failingVectorEmbedder{err: context.DeadlineExceeded})
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
@@ -514,7 +514,7 @@ func TestCallDbRetrieveFailOpenReturnsEmbeddingFallbackReason(t *testing.T) {
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(&failingVectorEmbedder{err: context.DeadlineExceeded})
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
@@ -531,7 +531,7 @@ func TestCallDbRetrieveFailClosedRejectsStringEmbedding(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 
@@ -691,7 +691,7 @@ func TestCallDbRerankCompletionThenMinScore(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			service := search.NewService(engine)
+			service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.SetReranker(&malformedReranker{results: testCase.provider})
 			exec := NewStorageExecutor(engine)
@@ -722,7 +722,7 @@ func TestCallDbRerankProviderFailuresReturnError(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			service := search.NewService(engine)
+			service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.SetReranker(provider)
 			exec := NewStorageExecutor(engine)
@@ -734,54 +734,43 @@ func TestCallDbRerankProviderFailuresReturnError(t *testing.T) {
 	}
 }
 
-func TestRerankTruthfulnessFencedStructuredPublicPath(t *testing.T) {
-	for name, providerOutput := range map[string]string{
-		"markdown_fence": "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n```",
-		"trailing_prose": "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n``` candidates ranked",
-	} {
-		t.Run(name, func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			service := search.NewService(engine)
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			service.SetReranker(search.NewLLMReranker(&search.LLMRerankerConfig{
-				Enabled: true, Timeout: time.Second, MaxCandidates: 3,
-			}, func(context.Context, string) (string, error) {
-				return providerOutput, nil
-			}))
-			exec := NewStorageExecutor(engine)
-			exec.SetSearchService(service)
-
-			response, err := exec.Execute(context.Background(), "CALL db.rerank({query: 'q', candidates: [{id: 'a', content: 'a', score: 0.3}, {id: 'b', content: 'b', score: 0.2}, {id: 'c', content: 'c', score: 0.1}]}) YIELD id RETURN id", nil)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"c"}, {"a"}, {"b"}}, response.Rows)
-		})
-	}
-}
-
-func TestRerankTruthfulnessRejectsAmbiguousStructuredPublicPath(t *testing.T) {
+// TestRerankTruthfulnessStructuredPublicPath covers every fenced structured provider envelope through the public db.rerank path: envelopes that must be accepted in the provider order, and ambiguous or conflicting envelopes that must fail closed instead of silently producing an order. Each case builds its own engine, search service and LLM reranker, so no provider or result state is shared between the accepted and rejected populations.
+func TestRerankTruthfulnessStructuredPublicPath(t *testing.T) {
 	object := `{"order":[2,0],"scores":[0.9,0.8]}`
 	fence := func(body string) string { return "```json\n" + body + "\n```" }
-	for name, providerOutput := range map[string]string{
-		"two_json_fences":             fence(object) + "\n" + fence(`{"order":[0,2],"scores":[0.9,0.8]}`),
-		"fence_then_second_object":    fence(object) + `{"ranked":[{"index":0,"score":0.9}]}`,
-		"bare_second_object":          object + " " + object,
-		"fence_then_truncated_object": fence(object) + `{"order":[`,
-		"conflicting_representations": `{"ranked":[{"index":2,"score":0.9}],"order":[0,2],"scores":[0.9,0.8]}`,
-		"duplicate_ranking_field":     `{"ranked":[{"index":2,"score":0.9}],"ranked":[{"index":0,"score":0.8}]}`,
-	} {
-		t.Run(name, func(t *testing.T) {
+	cases := []struct {
+		name           string
+		providerOutput string
+		wantAccepted   bool
+	}{
+		{name: "markdown_fence", providerOutput: "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n```", wantAccepted: true},
+		{name: "trailing_prose", providerOutput: "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n``` candidates ranked", wantAccepted: true},
+		{name: "two_json_fences", providerOutput: fence(object) + "\n" + fence(`{"order":[0,2],"scores":[0.9,0.8]}`)},
+		{name: "fence_then_second_object", providerOutput: fence(object) + `{"ranked":[{"index":0,"score":0.9}]}`},
+		{name: "bare_second_object", providerOutput: object + " " + object},
+		{name: "fence_then_truncated_object", providerOutput: fence(object) + `{"order":[`},
+		{name: "conflicting_representations", providerOutput: `{"ranked":[{"index":2,"score":0.9}],"order":[0,2],"scores":[0.9,0.8]}`},
+		{name: "duplicate_ranking_field", providerOutput: `{"ranked":[{"index":2,"score":0.9}],"ranked":[{"index":0,"score":0.8}]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			service := search.NewService(engine)
+			service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.SetReranker(search.NewLLMReranker(&search.LLMRerankerConfig{
 				Enabled: true, Timeout: time.Second, MaxCandidates: 3,
 			}, func(context.Context, string) (string, error) {
-				return providerOutput, nil
+				return testCase.providerOutput, nil
 			}))
 			exec := NewStorageExecutor(engine)
 			exec.SetSearchService(service)
 
 			response, err := exec.Execute(context.Background(), "CALL db.rerank({query: 'q', candidates: [{id: 'a', content: 'a', score: 0.3}, {id: 'b', content: 'b', score: 0.2}, {id: 'c', content: 'c', score: 0.1}]}) YIELD id RETURN id", nil)
+			if testCase.wantAccepted {
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"c"}, {"a"}, {"b"}}, response.Rows)
+				return
+			}
 			require.ErrorContains(t, err, "rerank failed")
 			require.Nil(t, response)
 		})
@@ -800,7 +789,7 @@ func TestRerankTruthfulnessFilteredOutcomePublicPaths(t *testing.T) {
 
 	t.Run("explicit all-filtered outcome stays empty", func(t *testing.T) {
 		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-		service := search.NewService(engine)
+		service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		service.SetReranker(newLLM(allFiltered, 0.5))
 		exec := NewStorageExecutor(engine)
@@ -813,7 +802,7 @@ func TestRerankTruthfulnessFilteredOutcomePublicPaths(t *testing.T) {
 
 	t.Run("explicit filter plus flat survivors keeps only survivors", func(t *testing.T) {
 		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-		service := search.NewService(engine)
+		service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		service.SetReranker(newLLM(`{"ranked":[{"index":0,"score":0.1},{"index":1,"score":0.8},{"index":2,"score":0.8}]}`, 0.5))
 		exec := NewStorageExecutor(engine)
@@ -845,7 +834,7 @@ func TestRerankTruthfulnessFilteredOutcomePublicPaths(t *testing.T) {
 				})
 				require.NoError(t, err)
 			}
-			service := search.NewServiceWithDimensions(engine, 2)
+			service := search.NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.SetSearchResultCachePolicy(0, 0)
 			service.SetReranker(testCase.provider)
@@ -954,7 +943,7 @@ func TestCallDbRetrieveFailClosedReportsFailedSearch(t *testing.T) {
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0, 0}})
-	svc := search.NewServiceWithDimensions(store, 4)
+	svc := search.NewService(store, 4, nil)
 	svc.FixVectorDimensions()
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)

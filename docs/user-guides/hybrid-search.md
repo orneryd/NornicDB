@@ -292,9 +292,10 @@ NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true   # or search.relationships_enabled: 
   nodes' lists are.
 - **Persistence**: the keyword index is built from storage when the database
   opens. With `NORNICDB_PERSIST_SEARCH_INDEXES`, the vectors are kept beside
-  the BM25 index (`bm25.relationships`), so a restart embeds only
+  the BM25 index (`bm25.v2.relationships`), so a restart embeds only
   relationships that changed; without it, every relationship is embedded
-  again at startup.
+  again at startup. Existing gob snapshots are converted during the authorized
+  v1.4.4 upgrade; see [Recovery format compatibility](../operations/recovery-format-compatibility.md#persisted-relationship-search-vectors).
 
 Search with `relationships: true` over HTTP, or with
 `db.retrieveRelationships` in Cypher. Results are ranked by keyword and vector

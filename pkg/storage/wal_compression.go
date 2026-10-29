@@ -11,18 +11,15 @@ import (
 
 // WAL buffered-commit payload compression. Every acknowledged write-behind
 // commit serializes its full payload (operations, raw KV writes/deletes,
-// property-key tokens) into the WAL for kill -9 recovery; that payload is
-// JSON with repetitive structure and previously blew the WAL up to several
-// times the Badger data size. Lossless zstd shrinks it by ~5-10× with no
-// durability impact: the decompressed bytes are identical to what was
-// acknowledged, so replay is byte-for-byte equivalent.
+// property-key tokens) into the WAL for kill -9 recovery. The typed payload
+// preserves binary keys and is compressed without changing its contents.
 
 var (
 	walZstdEncOnce sync.Once
 	walZstdEnc     *zstd.Encoder
 )
 
-// A buffered commit is a single recovery unit. Its decoded JSON must stay
+// A buffered commit is a single recovery unit. Its decoded payload must stay
 // bounded even when a tiny zstd frame expands dramatically during restart.
 const maxBufferedWALPayloadBytes = 64 << 20
 

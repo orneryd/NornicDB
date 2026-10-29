@@ -130,7 +130,7 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 	if err := t.runtime.initializeStorageUsage(trackBytes, owner.boundary); err != nil {
 		return nil, nil, err
 	}
-	prepared, err = tx.PrepareEntityCommit(ctx, tx.ID)
+	prepared, err = tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: tx.ID})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -213,7 +213,7 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}()
 	ordinary := func(afterPublication func()) error {
 		ordinaryAttempted = true
-		err := tx.CommitContextWithPublication(ctx, afterPublication)
+		err := tx.PublishCommit(ctx, storage.CommitPublication{AfterPublication: afterPublication})
 		accepted = err == nil
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nornicerrors.MarkCommitRolledBack(err)

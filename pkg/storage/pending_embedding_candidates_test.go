@@ -271,12 +271,30 @@ func TestPendingCandidatesConcurrentEnqueue(t *testing.T) {
 }
 
 func TestPendingCandidatesWALReplay(t *testing.T) {
-	e := newTestBadgerEngineForPending(t)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
-	payload, err := json.Marshal(WALNodeData{Node: pendingCandidateNode(0)})
-	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpCreateNode, Database: "test", Data: payload}))
-	require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
+	t.Run("entity replay", func(t *testing.T) {
+		e := newTestBadgerEngineForPending(t)
+		require.Nil(t, e.FindNodeNeedingEmbedding())
+		payload, err := json.Marshal(WALNodeData{Node: pendingCandidateNode(0)})
+		require.NoError(t, err)
+		require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpCreateNode, Database: "test", Data: payload}))
+		require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
+
+	})
+	t.Run("buffered replay", func(t *testing.T) {
+		e := newTestBadgerEngineForPending(t)
+		_, err := e.CreateNode(pendingCandidateNode(0))
+		require.NoError(t, err)
+		e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
+		require.Nil(t, e.FindNodeNeedingEmbedding())
+		payload, err := json.Marshal(WALBufferedCommitData{Namespace: "test", NumericBindings: []byte{1}, Writes: map[string][]byte{string(pendingEmbedKey(pendingCandidateNode(0).ID)): {}}})
+		require.NoError(t, err)
+		require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpBufferedCommit, Database: "test", Data: payload}))
+		require.Equal(t, 1, e.PendingEmbeddingsCount())
+		node := e.FindNodeNeedingEmbedding()
+		require.NotNil(t, node, "buffered replay must publish into the loaded candidate cache")
+		require.Equal(t, pendingCandidateNode(0).ID, node.ID)
+
+	})
 }
 
 func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {

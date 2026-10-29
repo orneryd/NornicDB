@@ -1,11 +1,14 @@
 package linkpredict
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -215,6 +218,17 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 
 	// Create temp directory for cache
 	cacheDir := t.TempDir()
+	legacyPath := filepath.Join(cacheDir, "graph_cache.gob")
+	var oldCache bytes.Buffer
+	if err := gob.NewEncoder(&oldCache).Encode(struct {
+		Graph     map[string][]string
+		Timestamp time.Time
+	}{Graph: map[string][]string{"stale": {"edge"}}, Timestamp: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, oldCache.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	config := DefaultBuildConfig()
 	config.CachePath = cacheDir
@@ -236,7 +250,7 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 	}
 
 	// Verify cache file exists
-	cachePath := filepath.Join(cacheDir, "graph_cache.gob")
+	cachePath := filepath.Join(cacheDir, "graph_cache.msgpack")
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
 		t.Error("Cache file not created")
 	}
@@ -253,87 +267,51 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 	}
 
 	// Verify graphs are equivalent
-	if len(graph1) != len(graph2) {
-		t.Errorf("Graph sizes differ: %d vs %d", len(graph1), len(graph2))
+	if !reflect.DeepEqual(graph1, graph2) {
+		t.Errorf("cached graph differs from the rebuilt graph")
+	}
+	legacy, err := os.ReadFile(legacyPath)
+	if err != nil || !bytes.Equal(legacy, oldCache.Bytes()) {
+		t.Errorf("legacy cache must remain untouched: %v", err)
 	}
 
 	t.Logf("Cache test: hits=%d, misses=%d", stats.CacheHits, stats.CacheMisses)
 }
 
-func TestGraphBuilder_CacheInvalidation(t *testing.T) {
-	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	setupTestGraphForBuilder(t, engine)
-
-	cacheDir := t.TempDir()
-
-	config := DefaultBuildConfig()
-	config.CachePath = cacheDir
-	builder := NewGraphBuilder(engine, config)
-
-	// Build and cache
-	_, err := builder.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
-
-	// Invalidate cache
-	err = builder.InvalidateCache()
-	if err != nil {
-		t.Fatalf("InvalidateCache failed: %v", err)
-	}
-
-	// Verify cache file is gone
-	cachePath := filepath.Join(cacheDir, "graph_cache.gob")
-	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
-		t.Error("Cache file should be deleted")
-	}
-
-	// Next build should miss cache
-	_, err = builder.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Rebuild failed: %v", err)
-	}
-
-	stats := builder.Stats()
-	if stats.CacheMisses != 2 {
-		t.Errorf("Expected 2 cache misses, got %d", stats.CacheMisses)
-	}
-}
-
-func TestGraphBuilder_CacheExpiration(t *testing.T) {
-	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	setupTestGraphForBuilder(t, engine)
-
-	cacheDir := t.TempDir()
-
-	config := DefaultBuildConfig()
-	config.CachePath = cacheDir
-	config.CacheTTL = 1 * time.Millisecond // Very short TTL
-	builder := NewGraphBuilder(engine, config)
-
-	// Build and cache
-	_, err := builder.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Build failed: %v", err)
-	}
-
-	// Wait for cache to expire
-	time.Sleep(10 * time.Millisecond)
-
-	// Build again - should miss due to expiration
-	_, err = builder.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Second build failed: %v", err)
-	}
-
-	stats := builder.Stats()
-	// Should have 2 misses (first + expired)
-	if stats.CacheMisses != 2 {
-		t.Errorf("Expected 2 cache misses (expired), got %d", stats.CacheMisses)
+func TestGraphBuilder_CacheLifecycle(t *testing.T) {
+	for _, mode := range []string{"invalidation", "expiration"} {
+		t.Run(mode, func(t *testing.T) {
+			baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			engine := storage.NewNamespacedEngine(baseEngine, "test")
+			setupTestGraphForBuilder(t, engine)
+			cacheDir := t.TempDir()
+			cachePath := filepath.Join(cacheDir, "graph_cache.msgpack")
+			config := DefaultBuildConfig()
+			config.CachePath = cacheDir
+			if mode == "expiration" {
+				config.CacheTTL = time.Millisecond
+			}
+			builder := NewGraphBuilder(engine, config)
+			if _, err := builder.Build(context.Background()); err != nil {
+				t.Fatalf("Build failed: %v", err)
+			}
+			if mode == "invalidation" {
+				if err := builder.InvalidateCache(); err != nil {
+					t.Fatalf("InvalidateCache failed: %v", err)
+				}
+				if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+					t.Error("Cache file should be deleted")
+				}
+			} else {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if _, err := builder.Build(context.Background()); err != nil {
+				t.Fatalf("Rebuild failed: %v", err)
+			}
+			if stats := builder.Stats(); stats.CacheMisses != 2 {
+				t.Errorf("Expected 2 cache misses, got %d", stats.CacheMisses)
+			}
+		})
 	}
 }
 

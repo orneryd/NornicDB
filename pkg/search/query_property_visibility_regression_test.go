@@ -45,7 +45,7 @@ func policySearchFixture(t *testing.T) (*storage.BadgerEngine, storage.Engine, *
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: props, CreatedAt: old, UpdatedAt: old}))
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { svc.Close() })
 	svc.SetFulltextProperties([]string{"public", "body", "title", "description", "content", "type"})
 	svc.SetSearchResultCachePolicy(10, time.Hour)

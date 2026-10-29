@@ -32,7 +32,7 @@ func TestSol1482R2OrphanObservationCannotRemoveNewerIndex(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &sol1482OrphanReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := NewServiceWithDimensions(barrier, 2)
+	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	old := &storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(old)

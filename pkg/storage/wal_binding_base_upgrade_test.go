@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,11 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These are actual closed Badger files and pending WAL records emitted by the
-// unchanged release/develop bases. No current writer or field-stripping shim
-// creates this upgrade population. See testdata/wal-pre-identity/README.md.
+// Standalone readers and foreign import reject unconverted historical WALs.
+// The startup migration separately converts the database's own WAL directory.
 func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
-	// Run with the production WAL switch; earlier package tests may leave it off.
 	t.Cleanup(config.WithWALEnabled())
 	for _, fixture := range []string{"release", "develop"} {
 		t.Run(fixture, func(t *testing.T) {
@@ -25,47 +24,41 @@ func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, old.View(func(tx *badger.Txn) error {
 				_, err := tx.Get(walPropertyIdentityKey)
-				require.ErrorIs(t, err, badger.ErrKeyNotFound, "the base could not stamp a future identity")
+				require.ErrorIs(t, err, badger.ErrKeyNotFound)
 				return nil
 			}))
 			require.NoError(t, old.Close())
+			path := filepath.Join(walDir, "wal.log")
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
 			entries, err := ReadWALEntriesFromDir(walDir)
-			require.NoError(t, err)
-			require.Len(t, entries, 20)
-			for _, entry := range entries {
-				data, err := decodeBufferedWALRecord(entry)
-				require.NoError(t, err)
-				require.Empty(t, data.PropertyDictionaryID)
-				require.Empty(t, data.PropertyBindings)
-				require.Empty(t, data.PropKeys)
-			}
-			b := reviewBindingEngine(t, dataDir)
-			identity := b.walPropertySource.identity
-			require.NotEmpty(t, identity)
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			require.Empty(t, entries)
 			w, err := NewWAL(walDir, DefaultWALConfig())
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			require.Nil(t, w)
+			b := reviewBindingEngine(t, dataDir)
+			before, err := b.GetNode("upgrade:a")
 			require.NoError(t, err)
-			defer w.Close()
-			n, err := RecoverBufferedCommitsAtOpen(b, w)
+			require.Contains(t, before.Properties, "value")
+			stamp, ok := before.Properties["stamp"].(time.Time)
+			require.True(t, ok)
+			require.True(t, time.Date(2026, 10, 23, 1, 2, 3, 4000, time.UTC).Equal(stamp))
+			_, _, err = RecoverIntoEngine(b, walDir, "")
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+			after, err := b.GetNode("upgrade:a")
 			require.NoError(t, err)
-			require.Equal(t, 20, n)
-			check := func() {
-				node, err := b.GetNode("upgrade:a")
-				require.NoError(t, err)
-				require.Equal(t, int64(20), node.Properties["value"])
-				stamp, ok := node.Properties["stamp"].(time.Time)
-				require.True(t, ok, "the stored temporal type must survive the upgrade")
-				require.True(t, time.Date(2026, 10, 23, 1, 2, 3, 4000, time.UTC).Equal(stamp))
-				assertPropertyDictionaryBijection(t, b)
-				require.False(t, b.walPropertySource.foreign)
-				require.Equal(t, identity, b.walPropertySource.identity)
-			}
-			check()
+			require.Equal(t, before.Properties, after.Properties)
+			assertPropertyDictionaryBijection(t, b)
 			require.NoError(t, b.Close())
-			b = reviewBindingEngine(t, dataDir)
-			n, err = RecoverBufferedCommitsAtOpen(b, w)
+			reopened := reviewBindingEngine(t, dataDir)
+			defer reopened.Close()
+			persisted, err := reopened.GetNode("upgrade:a")
 			require.NoError(t, err)
-			require.Zero(t, n)
-			check()
+			require.Equal(t, before.Properties, persisted.Properties)
+			afterWAL, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, raw, afterWAL, "refusal must not repair or rewrite the prior WAL")
 		})
 	}
 }

@@ -20,7 +20,7 @@ func TestGetOrCreateSearchServiceUsesConfiguredGPUManager(t *testing.T) {
 	db.gpuManager = manager
 	db.gpuManagerMu.Unlock()
 
-	svc, err := db.getOrCreateSearchService("gpu_db", nil)
+	svc, err := db.GetOrCreateSearchService("gpu_db", nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 }

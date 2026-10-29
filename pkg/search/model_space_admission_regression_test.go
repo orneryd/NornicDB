@@ -14,7 +14,7 @@ func TestModelSpaceExclusionPrecedesDimensionValidation(t *testing.T) {
 	old := &storage.Node{ID: "old", Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}, EmbedMeta: map[string]any{"embedding_space": "old:2"}, NamedEmbeddings: map[string][]float32{"default": {0, 1, 0, 0}}}
 	_, err := engine.CreateNode(old)
 	require.NoError(t, err)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	defer svc.Close()
 	svc.FixVectorDimensions()
 	svc.SetEmbeddingSpace("new:4")
@@ -36,7 +36,7 @@ func TestPersistedExactQueriesRespectAdmittedModelSpace(t *testing.T) {
 				_, err := engine.CreateNode(node)
 				require.NoError(t, err)
 			}
-			svc := NewServiceWithDimensions(engine, 4)
+			svc := NewService(engine, 4, nil)
 			defer svc.Close()
 			svc.SetEmbeddingSpace("new:4")
 			if persist {

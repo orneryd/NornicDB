@@ -324,7 +324,7 @@ func TestCrossEncoderAdditionalAPIResponseBranches(t *testing.T) {
 		out, err := ce.Rerank(context.Background(), "query", candidates)
 		require.ErrorContains(t, err, "rerank response contains no valid results")
 		assert.Nil(t, out)
-		svc := NewService(nil)
+		svc := NewService(nil, DefaultVectorDimensions, nil)
 		svc.SetReranker(ce)
 		out, err = svc.RerankCandidates(context.Background(), "query", candidates, nil)
 		require.ErrorContains(t, err, "rerank failed")
@@ -365,7 +365,7 @@ func TestCrossEncoder_NameEnabledConfigAndAvailability(t *testing.T) {
 }
 
 func TestRerankCandidatesCompletesValidPartialProviderOrder(t *testing.T) {
-	svc := NewService(nil)
+	svc := NewService(nil, DefaultVectorDimensions, nil)
 	svc.SetReranker(&testReranker{
 		enabled: true,
 		results: []RerankResult{{
@@ -512,7 +512,7 @@ func TestLLMReranker_RerankScoredFilteredAndFallbacks(t *testing.T) {
 	out, err = rBad.Rerank(context.Background(), "q", cands[:2])
 	require.ErrorContains(t, err, "rerank response contains no valid results")
 	require.Nil(t, out)
-	svc := NewService(nil)
+	svc := NewService(nil, DefaultVectorDimensions, nil)
 	svc.SetReranker(rBad)
 	out, err = svc.RerankCandidates(context.Background(), "q", cands[:2], nil)
 	require.ErrorContains(t, err, "rerank failed")

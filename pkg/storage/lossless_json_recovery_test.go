@@ -63,9 +63,10 @@ func TestLosslessWALHeaderAndPropertyNames(t *testing.T) {
 	for _, name := range []string{"ordinary_café", `literal\ud800`, "db_" + high} {
 		entry := &WALEntry{Sequence: 17, Database: name, Data: []byte{0, 1, 255}, Operation: OpCreateNode}
 		var buffer bytes.Buffer
-		payload, err := encodeWALEntryV3(&buffer, entry)
+		payload, err := processWALEntryPayload(walPayloadEncode, &buffer, entry, nil, 0)
 		require.NoError(t, err)
-		restored, err := decodeWALEntry(payload, walFormatVersionV3)
+		restored, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &restored, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		require.Equal(t, name, restored.Database)
 		require.Equal(t, entry.Data, restored.Data)

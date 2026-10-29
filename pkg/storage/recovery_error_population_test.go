@@ -60,19 +60,8 @@ func TestRecoveryErrorStorePopulation(t *testing.T) {
 					case "transactions":
 						engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(wal, snapshot))
 					}
-					// The transaction reader enumerates regular WAL files. A
-					// directory with the active filename is an empty-log control,
-					// whereas the repairing reader reports an inspection error.
-					if failure == "wal_directory" && api == "transactions" {
-						if err != nil || engine == nil {
-							t.Fatalf("empty WAL directory recovery: engine=%v err=%v", engine, err)
-						}
-						count, countErr := engine.NodeCount()
-						if countErr != nil || count != 0 {
-							t.Fatalf("empty WAL directory nodes=%d err=%v", count, countErr)
-						}
-						return
-					}
+					// A directory named wal.log is not an empty WAL. All recovery
+					// APIs must reject it without returning a usable store.
 					if err == nil || engine != nil {
 						t.Fatalf("failed recovery must return its error and no engine: engine=%v err=%v", engine, err)
 					}

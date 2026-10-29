@@ -9,7 +9,7 @@ import (
 // The status names every strategy a pipeline can run, IVF-PQ and k-means
 // routing included, rather than "unknown".
 func TestCurrentStrategyNamesEveryStrategy(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t))
+	svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 
