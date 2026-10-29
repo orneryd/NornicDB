@@ -700,15 +700,15 @@ func (tx *BadgerTransaction) bufferDelete(key []byte) {
 // Allocates numeric IDs for endpoints + edge via the engine's id
 // dictionary. Any allocation failure propagates as a returned error.
 func (tx *BadgerTransaction) bufferSetEdgeBetweenIndexes(edge *Edge) error {
-	startNum, err := tx.engine.idDict.resolveOrAllocateNodeNumIDInTxn(tx.staged(), edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), NodeID(edge.StartNode))
 	if err != nil {
 		return err
 	}
-	endNum, err := tx.engine.idDict.resolveOrAllocateNodeNumIDInTxn(tx.staged(), edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), NodeID(edge.EndNode))
 	if err != nil {
 		return err
 	}
-	edgeNum, err := tx.engine.idDict.resolveOrAllocateEdgeNumIDInTxn(tx.staged(), edge.ID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), EdgeID(edge.ID))
 	if err != nil {
 		return err
 	}

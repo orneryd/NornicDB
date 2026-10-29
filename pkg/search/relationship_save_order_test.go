@@ -107,7 +107,7 @@ func TestRelationshipEmbeddingSaveRetryKeepsGeneratedVectors(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	dir := filepath.Join(t.TempDir(), "not-created")
 	embed := &countingEmbed{}
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
@@ -134,7 +134,7 @@ func TestRelationshipEmbeddingSaveDoesNotPublishSupersededVectors(t *testing.T) 
 		t.Run(map[bool]string{false: "update", true: "delete"}[remove], func(t *testing.T) {
 			engine := relationshipTestEngine(t)
 			embed := &countingEmbed{}
-			svc := NewServiceWithDimensions(engine, 3)
+			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			svc.SetPersistenceEnabled(true)
 			svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
@@ -160,7 +160,7 @@ func TestRelationshipEmbeddingSaveDoesNotPublishSupersededVectors(t *testing.T) 
 
 func TestRelationshipEmbeddingSavesWhileWritesContinue(t *testing.T) {
 	engine := relationshipTestEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))

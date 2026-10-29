@@ -22,7 +22,7 @@ func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1})
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func newPageDeliverySession(t *testing.T, capacity int) (*Session, *errorConn, *
 		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "transport boundary"}})
 		require.NoError(t, err)
 	}
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: int64(capacity)})
 	require.NoError(t, err)

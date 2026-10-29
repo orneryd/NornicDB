@@ -15,7 +15,7 @@ import (
 // TestSetIndexFlags — defaults are (true, true); SetIndexFlags reports change
 // when at least one value differs from the previous.
 func TestSetIndexFlags(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	require.True(t, svc.BM25Enabled())
 	require.True(t, svc.VectorEnabled())
 
@@ -38,7 +38,7 @@ func TestSetIndexFlags(t *testing.T) {
 // non-nil so the dozens of GetDimensions/Count call sites elsewhere in
 // the build pipeline don't panic; the flag is what disables behaviour.)
 func TestBuildIndexes_BothDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.SetIndexFlags(false, false)
 
 	require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -57,7 +57,7 @@ func TestBuildIndexes_BothDisabled(t *testing.T) {
 // returns and the addVectorLocked guard refuses writes, so the in-memory
 // vector store stays empty.
 func TestBuildIndexes_VectorDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.SetIndexFlags(true, false)
 
 	require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -70,7 +70,7 @@ func TestBuildIndexes_VectorDisabled(t *testing.T) {
 // real fulltext index so existing code paths that call .Count() / .Search()
 // don't panic.
 func TestBuildIndexes_BM25Disabled(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.SetIndexFlags(false, true)
 
 	require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -83,7 +83,7 @@ func TestBuildIndexes_BM25Disabled(t *testing.T) {
 
 // TestIndexNode_BothDisabled — IndexNode is a no-op when both flags are off.
 func TestIndexNode_BothDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.SetIndexFlags(false, false)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
@@ -105,7 +105,7 @@ func TestVectorQueryNodes_PassiveWhenLiveIndexEmpty(t *testing.T) {
 	_, err := engine.CreateNode(node)
 	require.NoError(t, err)
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
 		Label:    "Entity",
 		Property: "embedding",
@@ -125,7 +125,7 @@ func TestVectorQueryNodes_PassiveWhenLiveIndexEmpty(t *testing.T) {
 // gRPC, Cypher procedures): they all funnel through Service.Search →
 // EnsureWarm so the trigger doesn't have to be replicated in each handler.
 func TestEnsureWarm_TriggersOnceAndWaiters(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 
 	var triggers atomic.Int32
 	startBuild := make(chan struct{})
@@ -181,7 +181,7 @@ func TestEnsureWarm_TriggersOnceAndWaiters(t *testing.T) {
 // ctx.Err(), but a subsequent reader finds the service warm because the
 // build runs in the owner's long-lived ctx.
 func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 
 	buildStarted := make(chan struct{})
 	buildFinished := make(chan struct{})
@@ -222,7 +222,7 @@ func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
 // TestEnsureWarm_NoOp_WhenNotLazy — when the service is not configured for
 // lazy warming, EnsureWarm returns nil without firing the trigger.
 func TestEnsureWarm_NoOp_WhenNotLazy(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 
 	var triggers atomic.Int32
 	svc.SetLazyWarming(false, WarmFunc(func() {
@@ -236,7 +236,7 @@ func TestEnsureWarm_NoOp_WhenNotLazy(t *testing.T) {
 // TestMarkReadyDisabled — explicit short-circuit for the boot-orchestrator
 // "both disabled" path.
 func TestMarkReadyDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.SetIndexFlags(false, false)
 	svc.MarkReadyDisabled()
 

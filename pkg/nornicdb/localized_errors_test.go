@@ -36,7 +36,7 @@ func TestNornicDBLocalizedErrorsPreserveIdentityAndArguments(t *testing.T) {
 
 	t.Run("dimension wrapper preserves sentinel and named arguments", func(t *testing.T) {
 		db := &DB{}
-		db.SetDbConfigResolver(func(string) (int, float64, string) { return 3, 0, "" })
+		db.SetDbConfigResolver(func(string) (int, float64) { return 3, 0 })
 
 		err := db.validateQueryEmbeddingDimensions("tenant-a", []float32{1, 2})
 		localizedErr := requireNornicDBLocalizedError(t, err, localization.MessageNornicDBCoreQueryDimensionMismatchForDatabase, "database \"tenant-a\": query embedding dimension mismatch (index dims 3, query dims 2)")

@@ -189,7 +189,7 @@ type DB struct {
 	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
-	// searchServiceCreationMu serializes the "create and insert" path in getOrCreateSearchService
+	// searchServiceCreationMu serializes the "create and insert" path in GetOrCreateSearchService
 	// so only one goroutine creates a service per dbName at a time, avoiding RWMutex contention deadlock.
 	searchServiceCreationMu sync.Mutex
 	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
@@ -232,7 +232,7 @@ type DB struct {
 
 	// Optional: when set, per-database config overrides are applied for search/embed (dims, minSimilarity).
 	// Server wires this when system DB and DbConfigStore are available.
-	// Use dbConfigResolverMu (not db.mu) so getOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
+	// Use dbConfigResolverMu (not db.mu) so GetOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
 	dbConfigResolverMu      sync.RWMutex
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
@@ -278,7 +278,7 @@ type DB struct {
 	// embedConfigForDB returns resolved embed config for a database; when set, EmbedQueryForDB uses the registry.
 	embedConfigForDB func(dbName string) (*embed.Config, error)
 
-	// Optional: when set, getOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
+	// Optional: when set, GetOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
 	rerankerResolver func(dbName string) search.Reranker
 
 	lifecycleManager  *lifecycle.MVCCLifecycleManager
@@ -286,10 +286,10 @@ type DB struct {
 	onRetentionAction func(action, recordID, category string)
 }
 
-// DbConfigResolver returns effective embedding dimensions, search min similarity, and BM25 engine for a database.
-// When set, getOrCreateSearchService uses these instead of the global db.config values.
-// Return ("", 0, 0) values to use global defaults for that DB.
-type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string)
+// DbConfigResolver returns effective embedding dimensions and search min similarity for a database.
+// When set, GetOrCreateSearchService uses these instead of the global db.config values.
+// A non-positive dimension uses the global dimension; similarity is used as returned.
+type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64)
 
 // DbSearchOptionsResolver returns resource options for a database search service.
 type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
@@ -298,7 +298,7 @@ type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
 // and warming triggers. Defaults reproduce today's behaviour: bm25Enabled=true,
 // vectorEnabled=true, both warming="startup".
 //
-// When set, getOrCreateSearchService and the boot orchestrator consult it to
+// When set, GetOrCreateSearchService and the boot orchestrator consult it to
 // decide whether to build, lazy-defer, or skip each index per database.
 //
 // Returning an empty `bm25Warming` or `vectorWarming` is treated as "startup".
@@ -599,6 +599,19 @@ type DatabaseAndStorage struct {
 func Open(dataDir string, config *Config) (*DB, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	// Refuse an unsupported WAL before opening or migrating the Badger store.
+	// Otherwise a failed startup can advance the storage version while leaving
+	// the old WAL unreadable by the new binary.
+	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
+		walDir := filepath.Join(dataDir, "wal")
+		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
+		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
+			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+		}
+		if err != nil {
+			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
+		}
 	}
 	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
 	// Literal embedded configurations predate these fields. The all-zero pair
@@ -1259,12 +1272,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
 			NodeCreated: db.indexNodeFromEvent,
 			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: db.removeNodeFromEvent,
+			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
 			// Relationship vectors are indexed whether or not relationship
 			// search (#1065) is on.
 			EdgeCreated:    db.indexRelationshipFromEvent,
 			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    db.removeRelationshipFromEvent,
+			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
 			NamespaceReset: db.dropSearchForPrefix,
 		})
 		if err != nil {
@@ -1379,7 +1392,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				default:
 					log.Printf("🔍 Building BM25 + vector indexes for database %s (bm25=%v vector=%v)...", dbName, bm25On, vectorOn)
 				}
-				_, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
+				_, err := db.EnsureSearchIndexes(ctx, dbName, storageEngine, SearchIndexBuildWait)
 				results <- searchBuildResult{dbName: dbName, err: err, outcome: outcome}
 			}(dbName)
 		}
@@ -2134,8 +2147,8 @@ func (db *DB) SetAllDatabasesProvider(provider func() []DatabaseAndStorage) {
 }
 
 // SetDbConfigResolver sets an optional resolver for per-database config
-// (embedding dims, search min similarity, BM25 engine).
-// When set, getOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
+// (embedding dimensions and search min similarity).
+// When set, GetOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
 // Call with nil to use global config only.
 func (db *DB) SetDbConfigResolver(resolver DbConfigResolver) {
 	db.dbConfigResolverMu.Lock()
@@ -2152,7 +2165,7 @@ func (db *DB) SetDbSearchOptionsResolver(resolver DbSearchOptionsResolver) {
 
 // SetDbSearchFlagsResolver sets an optional resolver for per-database search
 // index master switches and warming triggers. When set, the boot orchestrator
-// and getOrCreateSearchService consult it to decide whether to build, lazy-
+// and GetOrCreateSearchService consult it to decide whether to build, lazy-
 // defer, or skip each index per database. Call with nil to use global defaults
 // (today's behaviour).
 func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
@@ -2261,7 +2274,7 @@ func (db *DB) ResetEmbedWorker() error {
 func (db *DB) ClearAllEmbeddings() (int, error) {
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
+	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
 		if err := svc.ClearVectorIndex(); err != nil {
 			return 0, err
 		}

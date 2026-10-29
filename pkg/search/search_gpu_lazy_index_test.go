@@ -32,7 +32,7 @@ func TestGPUBruteForceIndexBuiltOnlyWhenChosen(t *testing.T) {
 	}
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc := NewService(newNamespacedEngine(t), 4, nil)
 	for i := 0; i < 50; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("n-%d", i), testVec4(i))
 	}
@@ -77,7 +77,7 @@ func TestGPUFirstPipelineUploadOwnsMutationAdmission(t *testing.T) {
 	}
 	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", "1")
 	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", "1000")
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc := NewService(newNamespacedEngine(t), 4, nil)
 	defer svc.Close()
 	indexTestNode(t, svc, "a", []float32{1, 0, 0, 0})
 	svc.SetGPUManager(manager)
@@ -134,7 +134,7 @@ func newGPUCompressedPipelineService(t *testing.T) *Service {
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n-%d", i)), ChunkEmbeddings: [][]float32{testVec4(i)}})
 		require.NoError(t, err)
 	}
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetPersistenceEnabled(true)

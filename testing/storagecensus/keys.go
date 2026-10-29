@@ -89,6 +89,9 @@ var spaceClasses = map[string]string{
 	`prefixMVCCMeta+"wal-property-identity"`: "store-metadata",
 	`prefixMVCCMeta+"wal-property-foreign"`:  "store-metadata",
 	`prefixMVCCMeta+"wal-property-clean"`:    "store-metadata",
+	// This startup-only marker records an admitted V4 WAL replay; it is
+	// deleted atomically with the V4 catalog and schema transaction.
+	`prefixMVCCMeta+"wal-v4-upgrade-pending"`: "store-metadata",
 	// Retired first bytes (retiredPrefixes).
 	"retired 0x17": "retired",
 }

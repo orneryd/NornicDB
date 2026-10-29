@@ -166,6 +166,9 @@
 - id: nornicdbcore.search_database_not_initialized
   description: Expanded pseudo-locale unavailable per-database search state.
   other: '[!! search service not initialized for database {{printf "%q" .Database}} !!]'
+- id: nornicdbcore.search_index_build_mode_invalid
+  description: Expanded pseudo-locale unsupported search index build mode.
+  other: '[!! unsupported search index build mode {{.Mode}} !!]'
 - id: nornicdbcore.inference_base_storage_unavailable
   description: Expanded pseudo-locale unavailable inference base storage.
   other: "[!! inference unavailable: base storage is nil !!]"

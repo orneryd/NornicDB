@@ -35,7 +35,7 @@ func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
 	// Create service
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create test data with embeddings (1024 dimensions to match default)
 	embedding := make([]float32, 1024)
@@ -73,7 +73,7 @@ func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
 func TestRRFHybridSearch_FallsBackToVectorOnClusterError(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create and index nodes (1024 dimensions to match default)
 	embedding := make([]float32, 1024)
@@ -105,7 +105,7 @@ func TestRRFHybridSearch_FallsBackToVectorOnClusterError(t *testing.T) {
 func TestSearchService_ClusteringEnabledFlag(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Initially clustering should be disabled
 	assert.False(t, svc.IsClusteringEnabled(), "Clustering should be disabled by default")
@@ -122,7 +122,7 @@ func TestSearchService_ClusteringEnabledFlag(t *testing.T) {
 func TestSearchService_ConfigurableMinEmbeddingsThreshold(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Default should be 1000
 	assert.Equal(t, DefaultMinEmbeddingsForClustering, svc.GetMinEmbeddingsForClustering(),
@@ -152,7 +152,7 @@ func TestSearchService_ConfigurableMinEmbeddingsThreshold(t *testing.T) {
 func TestSearchService_ClusterStats(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Without cluster index, stats should be nil
 	stats := svc.ClusterStats()
@@ -190,7 +190,7 @@ func TestRRFHybridSearch_SearchMethodIndicatesClusteredSearch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newNamespacedMemoryEngine(t)
 
-			svc := NewService(engine)
+			svc := NewService(engine, DefaultVectorDimensions, nil)
 
 			// Create and index nodes (1024 dimensions to match default)
 			embedding := make([]float32, 1024)
@@ -239,7 +239,7 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Enable clustering with minimal config
 	svc.EnableClustering(gpuManager, 2) // 2 clusters for small test
@@ -316,7 +316,7 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create and index nodes (1024 dimensions to match default)
 	embedding := make([]float32, 1024)
@@ -355,7 +355,7 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 func TestIndexNode_AddsToClusterIndex(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Initially no embedding count
 	assert.Equal(t, 0, svc.EmbeddingCount())
@@ -385,7 +385,7 @@ func TestIndexNode_AddsToClusterIndex(t *testing.T) {
 func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create just 5 nodes (below MinEmbeddingsForClustering threshold)
 	// Use 1024 dimensions to match default
@@ -439,7 +439,7 @@ func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
 func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create sufficient nodes for clustering (1024 dimensions to match default)
 	dim := 1024
@@ -495,7 +495,7 @@ func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
 func TestSearchPathIntegrity(t *testing.T) {
 	engine := newNamespacedMemoryEngine(t)
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 
 	// Create test node (1024 dimensions to match default)
 	embedding := make([]float32, 1024)

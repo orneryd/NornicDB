@@ -208,8 +208,8 @@ func TestDB_EmbedQueryForDB_ResolverMatchesDims_Success(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 8}
 	db := &DB{
 		cypherExecutor: queryEmbeddingTestExecutor(t, emb),
-		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
-			return 8, 0.5, ""
+		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64) {
+			return 8, 0.5
 		},
 	}
 
@@ -222,8 +222,8 @@ func TestDB_EmbedQueryForDB_ResolverMismatchDims_ReturnsErrQueryEmbeddingDimensi
 	emb := &chunkingTestEmbedder{dims: 8}
 	db := &DB{
 		cypherExecutor: queryEmbeddingTestExecutor(t, emb),
-		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
-			return 768, 0.5, "" // index is 768-d, query will be 8-d from global embedder
+		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64) {
+			return 768, 0.5 // index is 768-d, query will be 8-d from global embedder
 		},
 	}
 
@@ -290,8 +290,8 @@ func TestDB_EmbedQueryForDB_ResolverUnsetDimsOrNoVector(t *testing.T) {
 		emb := &chunkingTestEmbedder{dims: 5}
 		db := &DB{
 			cypherExecutor: queryEmbeddingTestExecutor(t, emb),
-			dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
-				return 0, 0.5, ""
+			dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64) {
+				return 0, 0.5
 			},
 		}
 		vec, err := db.EmbedQueryForDB(context.Background(), "dbx", "hello")
@@ -301,8 +301,8 @@ func TestDB_EmbedQueryForDB_ResolverUnsetDimsOrNoVector(t *testing.T) {
 
 	t.Run("no embedder returns nil even when resolver exists", func(t *testing.T) {
 		db := &DB{
-			dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
-				return 10, 0.5, ""
+			dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64) {
+				return 10, 0.5
 			},
 		}
 		vec, err := db.EmbedQueryForDB(context.Background(), "dbx", "hello")

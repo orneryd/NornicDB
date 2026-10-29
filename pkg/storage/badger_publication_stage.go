@@ -220,8 +220,6 @@ type publicationUniqueKey struct {
 	value     uniqueConstraintLockKey
 }
 
-// publicationRelationshipLabel is the label a relationship-uniqueness
-// dependency carries: the relationship scope prefix and the edge type.
 // appendNodePublicationKeys appends the keys a publication of a node write
 // is ordered on: the node, and the unique values old (the pre-write node)
 // and written hold, the ones the write frees and takes.
@@ -234,46 +232,38 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 	if view == nil || view.nodeRules == 0 {
 		return keys
 	}
+	namespace := namespaceForNodeID(id)
 	// The rules are walked here, not in a callback: a rule is then addressed
 	// through its index and its strings are never copied into a closure.
-	if !view.first.empty() {
-		keys = appendNodeRulePublicationKeys(keys, &view.first, id, old, written)
-	}
-	for i := range view.rest {
-		keys = appendNodeRulePublicationKeys(keys, &view.rest[i], id, old, written)
-	}
-	return keys
-}
-
-// appendNodeRulePublicationKeys appends one captured node rule's unique-value
-// dependencies for a node write.
-func appendNodeRulePublicationKeys(keys []any, rule *publicationConstraintRule, id NodeID, old, written *Node) []any {
-	if rule.kind != ConstraintEntityNode {
-		return keys
-	}
-	namespace := namespaceForNodeID(id)
-	// An unchanged UNIQUE value is one dependency, not two queue entries.
-	// Keep the comparison local to this rule so no per-node set allocation
-	// or search through earlier nodes is needed.
-	var previous uniqueConstraintLockKey
-	var havePrevious bool
-	for _, node := range [2]*Node{old, written} {
-		if node == nil || !hasLabel(node.Labels, rule.label) {
+	for i := -1; i < len(view.rest); i++ {
+		rule := &view.first
+		if i >= 0 {
+			rule = &view.rest[i]
+		}
+		if rule.empty() || rule.kind != ConstraintEntityNode {
 			continue
 		}
-		value, ok := node.Properties[rule.property]
-		if !ok {
-			continue
+		// An unchanged UNIQUE value is one dependency, not two queue entries.
+		var previous uniqueConstraintLockKey
+		var havePrevious bool
+		for _, node := range [2]*Node{old, written} {
+			if node == nil || !hasLabel(node.Labels, rule.label) {
+				continue
+			}
+			value, ok := node.Properties[rule.property]
+			if !ok {
+				continue
+			}
+			key, keyed := indexValueKey(value)
+			if !keyed {
+				continue
+			}
+			dependency := uniqueConstraintLockKey{label: rule.label, property: rule.property, value: key}
+			if !havePrevious || dependency != previous {
+				keys = append(keys, publicationUniqueKey{namespace, dependency})
+			}
+			previous, havePrevious = dependency, true
 		}
-		key, keyed := indexValueKey(value)
-		if !keyed {
-			continue
-		}
-		dependency := uniqueConstraintLockKey{label: rule.label, property: rule.property, value: key}
-		if !havePrevious || dependency != previous {
-			keys = append(keys, publicationUniqueKey{namespace, dependency})
-		}
-		previous, havePrevious = dependency, true
 	}
 	return keys
 }
@@ -286,41 +276,35 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 	if view == nil {
 		return keys
 	}
-	if !view.first.empty() {
-		keys = appendEdgeRulePublicationKeys(keys, &view.first, id, old, written)
-	}
-	for i := range view.rest {
-		keys = appendEdgeRulePublicationKeys(keys, &view.rest[i], id, old, written)
-	}
-	return keys
-}
-
-// appendEdgeRulePublicationKeys appends one captured relationship rule's
-// unique-value dependencies for an edge write.
-func appendEdgeRulePublicationKeys(keys []any, rule *publicationConstraintRule, id EdgeID, old, written *Edge) []any {
-	if rule.kind != ConstraintEntityRelationship {
-		return keys
-	}
 	namespace := namespaceForEdgeID(id)
-	label := "\x00relationship:" + rule.label
-	for _, edge := range [2]*Edge{old, written} {
-		if edge == nil || len(edge.Properties) == 0 || edge.Type != rule.label {
+	for i := -1; i < len(view.rest); i++ {
+		rule := &view.first
+		if i >= 0 {
+			rule = &view.rest[i]
+		}
+		if rule.empty() || rule.kind != ConstraintEntityRelationship {
 			continue
 		}
-		properties := rule.properties
-		if len(properties) == 0 {
-			single := [1]string{rule.property}
-			properties = single[:]
+		label := "\x00relationship:" + rule.label
+		for _, edge := range [2]*Edge{old, written} {
+			if edge == nil || len(edge.Properties) == 0 || edge.Type != rule.label {
+				continue
+			}
+			properties := rule.properties
+			if len(properties) == 0 {
+				single := [1]string{rule.property}
+				properties = single[:]
+			}
+			values, ok := relationshipConstraintValueKeys(properties, edge.Properties, true)
+			if !ok || len(values) == 0 {
+				continue
+			}
+			var key interface{} = values[0]
+			if len(values) > 1 {
+				key = NewCompositeKey(values...).Hash
+			}
+			keys = append(keys, publicationUniqueKey{namespace, uniqueConstraintLockKey{label: label, property: rule.propertyKey, value: key}})
 		}
-		values, ok := relationshipConstraintValueKeys(properties, edge.Properties, true)
-		if !ok || len(values) == 0 {
-			continue
-		}
-		var key interface{} = values[0]
-		if len(values) > 1 {
-			key = NewCompositeKey(values...).Hash
-		}
-		keys = append(keys, publicationUniqueKey{namespace, uniqueConstraintLockKey{label: label, property: rule.propertyKey, value: key}})
 	}
 	return keys
 }

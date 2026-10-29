@@ -954,15 +954,15 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 		// Allocate num IDs for the stale entry so we can construct a
 		// compact key for it (test simulates an orphan written under the
 		// current numID scheme).
-		n1Num, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, n1.ID)
+		n1Num, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID(n1.ID))
 		if err != nil {
 			return err
 		}
-		n3Num, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, n3.ID)
+		n3Num, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID(n3.ID))
 		if err != nil {
 			return err
 		}
-		staleEdgeNum, err := engine.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, staleEdgeID)
+		staleEdgeNum, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, EdgeID(staleEdgeID))
 		if err != nil {
 			return err
 		}

@@ -22,7 +22,7 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()
@@ -111,7 +111,7 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 	}
 
 	plain := NewStorageExecutor(store)
-	plainService := search.NewServiceWithDimensions(store, 3)
+	plainService := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = plainService.Close() })
 	require.NoError(t, plainService.BuildIndexes(ctx))
 	plain.SetSearchService(plainService)

@@ -66,7 +66,7 @@ func TestRetrieveContinuationReportsQueryChunksWithoutHits(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
@@ -115,7 +115,7 @@ func TestRetrieveRowsReportQueryChunks(t *testing.T) {
 	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
 	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	service.SetReranker(failingQueryChunkReranker{})
 	exec.SetSearchService(service)
@@ -168,7 +168,7 @@ func TestRetrieveUnusableQueryEmbeddingFails(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	for name, embedder := range map[string]sizedVectorEmbedder{
 		"empty":           {vector: []float32{}, dims: 2},

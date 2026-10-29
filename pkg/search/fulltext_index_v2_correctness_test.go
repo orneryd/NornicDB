@@ -14,9 +14,9 @@ import (
 
 func TestFulltextIndexV2DefaultSearchUsesExactTerms(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "")
-	idx := NewFulltextIndexV2()
-	idx.Index("exact", "kinase")
-	idx.Index("prefix-only", "kinases kinases kinases")
+	idx := NewFulltextIndex(nil)
+	idx.Index("exact", "kinase", nil, nil, false)
+	idx.Index("prefix-only", "kinases kinases kinases", nil, nil, false)
 
 	results := idx.Search("kinase", 10)
 
@@ -25,8 +25,8 @@ func TestFulltextIndexV2DefaultSearchUsesExactTerms(t *testing.T) {
 
 func TestFulltextIndexV2PrefixSearchRemainsExplicitlyAvailable(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "4")
-	idx := NewFulltextIndexV2()
-	idx.Index("prefix-only", "kinases")
+	idx := NewFulltextIndex(nil)
+	idx.Index("prefix-only", "kinases", nil, nil, false)
 
 	results := idx.Search("kinase", 10)
 
@@ -37,13 +37,13 @@ func TestFulltextIndexV2OptimizedSearchMatchesExhaustiveScoring(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
 	random := rand.New(rand.NewSource(20260828))
 	vocabulary := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "theta"}
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	for document := 0; document < 200; document++ {
 		terms := make([]string, 1+random.Intn(30))
 		for position := range terms {
 			terms[position] = vocabulary[random.Intn(len(vocabulary))]
 		}
-		idx.Index(documentID(document), strings.Join(terms, " "))
+		idx.Index(documentID(document), strings.Join(terms, " "), nil, nil, false)
 	}
 
 	for _, query := range []string{"alpha beta", "gamma delta epsilon", "zeta alpha theta"} {
@@ -62,17 +62,17 @@ func TestFulltextIndexV2OptimizedSearchMatchesExhaustiveScoring(t *testing.T) {
 
 func TestFulltextIndexV2EqualScoresUseDocumentIDOrder(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
-	lexical := NewFulltextIndexV2()
-	lexical.Index("doc-a", "shared term")
-	lexical.Index("doc-b", "shared term")
-	lexical.Index("doc-c", "shared term")
+	lexical := NewFulltextIndex(nil)
+	lexical.Index("doc-a", "shared term", nil, nil, false)
+	lexical.Index("doc-b", "shared term", nil, nil, false)
+	lexical.Index("doc-c", "shared term", nil, nil, false)
 	require.True(t, lexical.docIDsLexicalByNum)
 	require.Equal(t, []string{"doc-a"}, resultIDs(lexical.Search("shared", 1)))
 
-	idx := NewFulltextIndexV2()
-	idx.Index("doc-c", "shared term")
-	idx.Index("doc-a", "shared term")
-	idx.Index("doc-b", "shared term")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc-c", "shared term", nil, nil, false)
+	idx.Index("doc-a", "shared term", nil, nil, false)
+	idx.Index("doc-b", "shared term", nil, nil, false)
 	require.False(t, idx.docIDsLexicalByNum)
 
 	for iteration := 0; iteration < 100; iteration++ {
@@ -92,19 +92,19 @@ func TestDocIDsAreLexicalByNumber(t *testing.T) {
 
 func TestFulltextIndexV2LoadDerivesDocumentIDOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25")
-	idx := NewFulltextIndexV2()
-	idx.Index("doc-c", "shared")
-	idx.Index("doc-a", "shared")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc-c", "shared", nil, nil, false)
+	idx.Index("doc-a", "shared", nil, nil, false)
 	require.NoError(t, idx.Save(path))
 
-	loaded := NewFulltextIndexV2()
+	loaded := NewFulltextIndex(nil)
 	require.NoError(t, loaded.Load(path))
 	require.False(t, loaded.docIDsLexicalByNum)
 	require.Equal(t, []string{"doc-a"}, resultIDs(loaded.Search("shared", 1)))
 }
 
 func TestFulltextIndexV2RareQueryUsesSparseScratch(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	idx.docCount = 100_000
 	idx.avgDocLength = 1
 	idx.docLengths = make([]uint32, idx.docCount)
@@ -129,7 +129,7 @@ func TestFulltextIndexV2AdaptiveScratchPolicy(t *testing.T) {
 	require.False(t, shouldUseDenseBM25Scores(100_000, bm25DenseMinPostingVisits-1))
 	require.True(t, shouldUseDenseBM25Scores(100_000, 12_500))
 
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	idx.docLengths = make([]uint32, bm25MaxPooledDenseDocSlots+1)
 	scratch := idx.getScoreScratch(true, len(idx.docLengths))
 	require.Len(t, scratch.scores, len(idx.docLengths))
@@ -140,9 +140,9 @@ func TestFulltextIndexV2AdaptiveScratchPolicy(t *testing.T) {
 }
 
 func TestFulltextIndexV2PooledScoresDoNotLeakAcrossQueries(t *testing.T) {
-	idx := NewFulltextIndexV2()
-	idx.Index("alpha", "alpha alpha")
-	idx.Index("beta", "beta beta")
+	idx := NewFulltextIndex(nil)
+	idx.Index("alpha", "alpha alpha", nil, nil, false)
+	idx.Index("beta", "beta beta", nil, nil, false)
 
 	require.Equal(t, []string{"alpha"}, resultIDs(idx.Search("alpha", 1)))
 	require.Equal(t, []string{"beta"}, resultIDs(idx.Search("beta", 1)))
@@ -151,8 +151,8 @@ func TestFulltextIndexV2PooledScoresDoNotLeakAcrossQueries(t *testing.T) {
 
 func TestFulltextIndexV2MatchesCanonicallyEquivalentUnicode(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
-	idx := NewFulltextIndexV2()
-	idx.Index("accented", "cafe\u0301")
+	idx := NewFulltextIndex(nil)
+	idx.Index("accented", "cafe\u0301", nil, nil, false)
 
 	require.Equal(t, []string{"accented"}, resultIDs(idx.Search("CAFÉ", 10)))
 }
@@ -180,8 +180,8 @@ func TestTokenizePreservesLanguageNeutralUnicodeTerms(t *testing.T) {
 
 func TestFulltextIndexV2ConcurrentColdQueries(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "0")
-	idx := NewFulltextIndexV2()
-	idx.Index("document", "common retrieval term")
+	idx := NewFulltextIndex(nil)
+	idx.Index("document", "common retrieval term", nil, nil, false)
 
 	const workers = 32
 	start := make(chan struct{})
@@ -201,7 +201,7 @@ func TestFulltextIndexV2ConcurrentColdQueries(t *testing.T) {
 }
 
 func TestServiceFulltextPropertyProjection(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t))
+	service := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title", "text", "title", ""})
 	node := &storage.Node{
 		ID:     "physical-id",
@@ -217,12 +217,12 @@ func TestServiceFulltextPropertyProjection(t *testing.T) {
 	require.Equal(t, []string{"title", "text"}, service.FulltextProperties())
 	require.Contains(t, service.composeBM25BuildSettings(), "props=title,text")
 
-	defaultService := NewService(newTestMemoryEngine(t))
+	defaultService := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	require.Contains(t, defaultService.composeBM25BuildSettings(), "props=*")
 	require.NotEqual(t, defaultService.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }
 
-func exhaustiveBM25V2Search(idx *FulltextIndexV2, query string, limit int) []indexResult {
+func exhaustiveBM25V2Search(idx *FulltextIndex, query string, limit int) []indexResult {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 

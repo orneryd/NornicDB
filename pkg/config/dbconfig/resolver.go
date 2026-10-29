@@ -11,14 +11,12 @@ import (
 )
 
 // ResolvedDbConfig holds effective per-DB config for search and embedding.
-// Used by getOrCreateSearchService and by the admin API "effective" response.
+// Used by GetOrCreateSearchService and by the admin API "effective" response.
 type ResolvedDbConfig struct {
 	// EmbeddingDimensions is the vector size (e.g. 1024).
 	EmbeddingDimensions int
 	// SearchMinSimilarity is the min cosine similarity for vector search (0.0–1.0).
 	SearchMinSimilarity float64
-	// BM25Engine selects fulltext engine implementation ("v1" or "v2").
-	BM25Engine string
 	// BM25Enabled controls whether BM25 fulltext search is built and queryable
 	// for this database. Per-DB override wins over the global default.
 	BM25Enabled bool
@@ -68,7 +66,6 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 	r := &ResolvedDbConfig{
 		EmbeddingDimensions:         global.Memory.EmbeddingDimensions,
 		SearchMinSimilarity:         global.Memory.SearchMinSimilarity,
-		BM25Engine:                  normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")),
 		BM25Enabled:                 global.Memory.SearchBM25Enabled,
 		BM25Warming:                 normalizeWarming(global.Memory.SearchBM25Warming),
 		BM25Stemmer:                 normalizeStemmerSelection(global.Memory.SearchBM25Stemmer),
@@ -224,7 +221,6 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_EMBEDDING_WARMUP_INTERVAL", c.Memory.EmbeddingWarmupInterval.String())
 	// Search
 	setEffective("NORNICDB_SEARCH_MIN_SIMILARITY", strconv.FormatFloat(c.Memory.SearchMinSimilarity, 'f', -1, 64))
-	setEffective("NORNICDB_SEARCH_BM25_ENGINE", normalizeBM25Engine(os.Getenv("NORNICDB_SEARCH_BM25_ENGINE")))
 	setEffective("NORNICDB_SEARCH_BM25_ENABLED", boolStr(c.Memory.SearchBM25Enabled))
 	setEffective("NORNICDB_SEARCH_BM25_WARMING", normalizeWarming(c.Memory.SearchBM25Warming))
 	setEffective("NORNICDB_SEARCH_BM25_STEMMER", normalizeStemmerSelection(c.Memory.SearchBM25Stemmer))
@@ -323,9 +319,6 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 			r.SearchMinSimilarity = f
 		}
 	}
-	if behaviorKey == "NORNICDB_SEARCH_BM25_ENGINE" {
-		r.BM25Engine = normalizeBM25Engine(value)
-	}
 	if behaviorKey == "NORNICDB_SEARCH_BM25_STEMMER" {
 		r.BM25Stemmer = normalizeStemmerSelection(value)
 	}
@@ -387,13 +380,4 @@ func normalizeStemmerSelection(raw string) string {
 		return "none"
 	}
 	return selected
-}
-
-func normalizeBM25Engine(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "v1":
-		return "v1"
-	default:
-		return "v2"
-	}
 }

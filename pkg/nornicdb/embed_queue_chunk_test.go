@@ -223,7 +223,7 @@ func TestChunkEmbeddingSearch(t *testing.T) {
 	embedder := newMockEmbedder()
 
 	// Create a search service
-	searchService := search.NewService(engine)
+	searchService := search.NewService(engine, search.DefaultVectorDimensions, nil)
 
 	// Create a node with large content (will be chunked)
 	largeContent := strings.Repeat("Machine learning algorithms are fascinating. ", 500)
@@ -314,7 +314,7 @@ func TestChunkEmbeddingRemoval(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	embedder := newMockEmbedder()
-	searchService := search.NewService(engine)
+	searchService := search.NewService(engine, search.DefaultVectorDimensions, nil)
 
 	// Create a node with large content
 	largeContent := strings.Repeat("Test content. ", 500)

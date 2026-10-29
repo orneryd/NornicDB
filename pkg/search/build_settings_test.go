@@ -1,11 +1,13 @@
 package search
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +30,7 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "build_settings")
 
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 384)
+	svc := NewService(engine, 384, nil)
 	snap := svc.currentSearchBuildSettings()
 
 	require.NoError(t, saveSearchBuildSettings(path, snap))
@@ -42,12 +44,36 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	require.Equal(t, snap.Routing, got.Routing)
 }
 
+// An index built with different format settings must be rebuilt from storage.
+func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	_, err := engine.CreateNode(&storage.Node{ID: "nornic:current", Properties: map[string]any{"text": "freshlyindexed"}})
+	require.NoError(t, err)
+	svc := NewService(engine, 3, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.SetIndexFlags(true, false)
+	path := filepath.Join(t.TempDir(), "bm25.v2")
+	svc.SetFulltextIndexPath(path)
+	svc.SetPersistenceEnabled(true)
+
+	stale := NewFulltextIndex(nil)
+	stale.Index("nornic:stale", "obsoleteonly", nil, nil, false)
+	require.NoError(t, stale.Save(path))
+	settings := svc.currentSearchBuildSettings()
+	settings.BM25 = strings.Replace(settings.BM25, "format="+bm25V2FormatVersion, "format=other", 1)
+	require.NoError(t, saveSearchBuildSettings(searchBuildSettingsPath(path, "", ""), settings))
+
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.Len(t, svc.fulltext().Search("freshlyindexed", 10), 1)
+	require.Empty(t, svc.fulltext().Search("obsoleteonly", 10))
+}
+
 func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "hybrid")
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9")
 	t.Setenv("NORNICDB_KMEANS_SEED_MODE", "none")
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	routing := svc.composeRoutingBuildSettings()
 
 	require.NotEmpty(t, routing)
@@ -56,7 +82,7 @@ func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
 }
 
 func TestComposeHNSWBuildSettingsTracksGraphConfiguration(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=true")
 
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
@@ -70,7 +96,7 @@ func TestComposeStrategyBuildSettings_CompressedIncludesFingerprint(t *testing.T
 	t.Setenv("NORNICDB_VECTOR_PQ_SEGMENTS", "8")
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 64)
+	svc := NewService(newTestMemoryEngine(t), 64, nil)
 	strategy := svc.composeStrategyBuildSettings()
 	require.True(t, strings.Contains(strategy, "quality=compressed"))
 	require.True(t, strings.Contains(strategy, "lists=64"))
@@ -135,7 +161,7 @@ func TestLoadAndSaveSearchBuildSettings_EdgeBranches(t *testing.T) {
 }
 
 func TestComposeRoutingBuildSettings_ClampsAndDefaults(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
 	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "")
@@ -150,17 +176,12 @@ func TestComposeRoutingBuildSettings_ClampsAndDefaults(t *testing.T) {
 	require.Contains(t, routing, "kmeans_max_iter=500")
 }
 
-func TestBuildSettings_CurrentBM25AndPersistBranches(t *testing.T) {
+func TestBuildSettings_BM25FormatAndPersistBranches(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 384)
+	svc := NewService(engine, 384, nil)
 
-	// Explicit v1 engine should use v1 format marker.
-	svc.bm25Engine = BM25EngineV1
-	require.Equal(t, fulltextIndexFormatVersion, svc.currentBM25FormatVersion())
-
-	// Explicit v2 engine should use v2 marker.
-	svc.bm25Engine = BM25EngineV2
-	require.Equal(t, bm25V2FormatVersion, svc.currentBM25FormatVersion())
+	// The single fulltext implementation stamps its own format marker.
+	require.Contains(t, svc.composeBM25BuildSettings(), "format="+bm25V2FormatVersion)
 
 	// Empty paths return early.
 	svc.persistSearchBuildSettings("", "", "")

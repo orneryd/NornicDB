@@ -19,7 +19,7 @@ func TestContinuationExecutionGeneratedDepthMatrix(t *testing.T) {
 	for _, population := range []int{cap - 1, cap, cap + 1} {
 		t.Run(fmt.Sprintf("population_%d", population), func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "matrix")
-			service := NewService(engine)
+			service := NewService(engine, DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for i := 0; i < population; i++ {
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%02d", i)), Properties: map[string]any{"content": "matrix corpus"}}

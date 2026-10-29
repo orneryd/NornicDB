@@ -164,7 +164,7 @@ func TestHitRate(t *testing.T) {
 func TestHarnessBasic(t *testing.T) {
 	// Create a search service with test data
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 
 	// Add test nodes
 	for i := 0; i < 10; i++ {
@@ -202,7 +202,7 @@ func TestHarnessBasic(t *testing.T) {
 
 func TestHarnessMultipleTests(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 
 	// Add diverse test nodes
 	nodes := []struct {
@@ -255,7 +255,7 @@ func TestHarnessMultipleTests(t *testing.T) {
 
 func TestHarnessNoTestCases(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	harness := NewHarness(service)
 
 	ctx := context.Background()
@@ -357,7 +357,7 @@ func TestLoadSuiteJSON(t *testing.T) {
 
 func TestGradedRelevance(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 
 	// Add nodes
 	for _, id := range []string{"best", "good", "ok", "bad"} {

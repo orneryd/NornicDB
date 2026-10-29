@@ -13,9 +13,9 @@ type countingBM25Index struct {
 	indexed, removed int
 }
 
-func (c *countingBM25Index) Index(id, text string) {
+func (c *countingBM25Index) Index(id, text string, terms []string, frequency map[string]int, prepared bool) {
 	c.indexed++
-	c.bm25Index.Index(id, text)
+	c.bm25Index.Index(id, text, terms, frequency, prepared)
 }
 
 func (c *countingBM25Index) Remove(id string) {
@@ -25,7 +25,7 @@ func (c *countingBM25Index) Remove(id string) {
 
 func newCountingFulltextService(t *testing.T) (*Service, *countingBM25Index) {
 	t.Helper()
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
 	counting := &countingBM25Index{bm25Index: svc.fulltext()}
 	svc.setFulltext(counting)
 	return svc, counting
@@ -33,7 +33,7 @@ func newCountingFulltextService(t *testing.T) (*Service, *countingBM25Index) {
 
 // A node's default searchable text lists its other properties in key order.
 func TestExtractSearchableTextOrdersPropertiesByKey(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t))
+	svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	node := &storage.Node{Labels: []string{"V"}, Properties: map[string]any{"zeta": "z", "alpha": int64(1), "mid": true, "content": "body"}}
 	for i := 0; i < 20; i++ {
 		require.Equal(t, "V body alpha 1 mid true zeta z", svc.extractSearchableText(node))

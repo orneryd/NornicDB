@@ -28,7 +28,7 @@ func TestRelationshipPersistenceRejectsTraversal(t *testing.T) {
 			target := filepath.Join(root, "outside", "bm25") + relationshipVectorsFileSuffix
 			const sentinel = "existing sibling index must remain untouched"
 			require.NoError(t, os.WriteFile(target, []byte(sentinel), 0o600))
-			svc := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+			svc := NewService(relationshipTestEngine(t), 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			svc.SetPersistenceEnabled(true)
 			svc.SetFulltextIndexPath(tc.path)

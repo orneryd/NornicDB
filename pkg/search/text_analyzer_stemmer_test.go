@@ -35,7 +35,7 @@ func TestTextAnalyzerUsesCapturedBatchStemmer(t *testing.T) {
 	require.Zero(t, singleCalls.Load())
 }
 
-func TestStemmedAnalyzerAppliesMultilingualFixturesToBM25V1AndV2(t *testing.T) {
+func TestStemmedAnalyzerAppliesMultilingualFixturesToBM25(t *testing.T) {
 	tests := []struct {
 		name    string
 		id      string
@@ -95,19 +95,12 @@ func TestStemmedAnalyzerAppliesMultilingualFixturesToBM25V1AndV2(t *testing.T) {
 				},
 			})
 
-			v1 := NewFulltextIndexWithAnalyzer(analyzer)
-			v1.Index("doc", test.indexed)
-			require.Len(t, v1.Search(test.query, 10), 1)
-			defaultV1 := NewFulltextIndex()
-			defaultV1.Index("doc", test.indexed)
-			require.Empty(t, defaultV1.Search(test.query, 10))
-
-			v2 := NewFulltextIndexV2WithAnalyzer(analyzer)
-			v2.Index("doc", test.indexed)
-			require.Len(t, v2.Search(test.query, 10), 1)
-			defaultV2 := NewFulltextIndexV2()
-			defaultV2.Index("doc", test.indexed)
-			require.Empty(t, defaultV2.Search(test.query, 10))
+			index := NewFulltextIndex(analyzer)
+			index.Index("doc", test.indexed, nil, nil, false)
+			require.Len(t, index.Search(test.query, 10), 1)
+			defaultIndex := NewFulltextIndex(nil)
+			defaultIndex.Index("doc", test.indexed, nil, nil, false)
+			require.Empty(t, defaultIndex.Search(test.query, 10))
 		})
 	}
 }

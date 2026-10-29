@@ -30,7 +30,7 @@ import (
 func newTestSearchService(t *testing.T) (*Service, *prometheus.Registry, *observability.SearchMetrics) {
 	t.Helper()
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()
 	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
 	svc.AttachMetrics(bag)
@@ -80,7 +80,7 @@ func TestSearch_VectorOnlyMode(t *testing.T) {
 // still functions — the observation chokepoints no-op when metrics is nil.
 func TestSearch_NilMetricsTolerated(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.ready.Store(true)
 	// NO AttachMetrics call.
 
@@ -93,7 +93,7 @@ func TestSearch_NilMetricsTolerated(t *testing.T) {
 // re-bind the cached observers (subsequent bag overrides the previous).
 func TestSearch_AttachMetricsIdempotent(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 
 	reg1 := prometheus.NewRegistry()
 	bag1 := observability.NewSearchMetrics(reg1, false, &nilSearchProbe{})
@@ -119,7 +119,7 @@ func TestSearch_AttachMetricsIdempotent(t *testing.T) {
 // AttachMetrics(nil) cleanly detaches without leaving stale observers.
 func TestSearch_AttachMetricsNilClearsBindings(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 
 	reg := prometheus.NewRegistry()
 	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
@@ -141,7 +141,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	t.Cleanup(registry.Close)
 
-	primary := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	primary := NewService(newTestMemoryEngine(t), 4, nil)
 	t.Cleanup(func() { require.NoError(t, primary.Close()) })
 	primary.SetContinuationRegistry(registry)
 	bag := observability.NewSearchMetrics(prometheus.NewRegistry(), false, &nilSearchProbe{})
@@ -154,7 +154,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, gaugeValue(t, bag.CursorsActive))
 
-	secondary := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	secondary := NewService(newTestMemoryEngine(t), 4, nil)
 	t.Cleanup(func() { require.NoError(t, secondary.Close()) })
 	secondary.SetContinuationRegistry(registry)
 	secondaryStream, err := resultstream.NewProgressive([][]any{{"three"}, {"four"}}, true, 2, nil)

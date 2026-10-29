@@ -37,7 +37,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	tb.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	const count, dims = 2000, 16
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "nornic")
-	svc := NewServiceWithDimensions(engine, dims)
+	svc := NewService(engine, dims, nil)
 	tb.Cleanup(func() { closeAfterBuilds(tb, svc) })
 	if strategy != "ivfpq" {
 		svc.EnableClustering(nil, 8)
@@ -153,7 +153,7 @@ func BenchmarkChunkedCorpusVectorSearch(b *testing.B) {
 			b.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			b.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
 			engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-			svc := NewServiceWithDimensions(engine, dims)
+			svc := NewService(engine, dims, nil)
 			b.Cleanup(func() { closeAfterBuilds(b, svc) })
 			rng := rand.New(rand.NewSource(1))
 			next := func() []float32 {

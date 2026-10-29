@@ -139,7 +139,7 @@ func buildWriteNode(id, text string, vec []float32) *storage.Node {
 
 func buildWriteService(t *testing.T, engine storage.Engine, dir, backend string, options *ServiceOptions) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, backend, options)
+	svc := NewService(engine, 3, options)
 	svc.FixVectorDimensions()
 	if dir != "" {
 		svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
@@ -458,7 +458,7 @@ func BenchmarkQueuedNodeCopy(b *testing.B) {
 func TestBuildFirstVectorChoosesTheDimensionInOrder(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := newNodeSnapshotGateEngine(t)
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
 	_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))

@@ -1015,7 +1015,7 @@ func (a *authServerStream) Context() context.Context {
 // Example:
 //
 //	storage := badger.NewEngine("./data")
-//	searchSvc := search.NewService(storage)
+//	searchSvc := search.NewService(storage, search.DefaultVectorDimensions, nil)
 //	authenticator := auth.NewAuthenticator(auth.DefaultAuthConfig())
 //	srv, registry, err := qdrantgrpc.NewServerWithPersistentRegistry(nil, storage, searchSvc, authenticator)
 //	if err != nil {

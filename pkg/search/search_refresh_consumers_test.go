@@ -39,7 +39,7 @@ func consumerOrphanObservationRace(t *testing.T, read func(context.Context, *Ser
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &consumerNotFoundBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := NewServiceWithDimensions(barrier, 2)
+	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	old := &storage.Node{ID: "source", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(old)

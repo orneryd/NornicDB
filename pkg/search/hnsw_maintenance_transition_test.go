@@ -29,7 +29,7 @@ func (h *maintenanceTransitionLog) Handle(_ context.Context, r slog.Record) erro
 
 func TestHNSWMaintenanceOverlaySurvivesSharedGraphTransition(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "3")
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+	svc := NewService(newNamespacedEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	for _, id := range []string{"anchor", "delete", "trigger"} {
 		sourceRetirementNode(t, svc, id, []float32{1, 0, 0})

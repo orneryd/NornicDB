@@ -19,7 +19,7 @@ func TestSearchTextChunksCancellationDuringLexicalSearch(t *testing.T) {
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 			require.NoError(t, err)
-			service := NewService(store)
+			service := NewService(store, DefaultVectorDimensions, nil)
 			require.NoError(t, service.BuildIndexes(t.Context()))
 			t.Cleanup(func() { _ = service.Close() })
 			ctx, cancel := context.WithCancel(t.Context())
@@ -61,7 +61,7 @@ func TestSearchTextChunksProviderDeadlineKeepsLexicalFallback(t *testing.T) {
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 			require.NoError(t, err)
-			service := NewService(store)
+			service := NewService(store, DefaultVectorDimensions, nil)
 			require.NoError(t, service.BuildIndexes(t.Context()))
 			t.Cleanup(func() { _ = service.Close() })
 			response, err := SearchTextChunks(t.Context(), "needle", DefaultSearchOptions(),

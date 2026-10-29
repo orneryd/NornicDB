@@ -35,7 +35,7 @@ func TestReviewerR4RequestCancellationDoesNotRestartHNSW(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "fast")
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	svc.SetRuntimeStrategyTransitionsEnabled(false)
 	gate := &reviewerR4BuildLog{started: make(chan struct{}), release: make(chan struct{})}
 	svc.SetLogger(slog.New(gate))

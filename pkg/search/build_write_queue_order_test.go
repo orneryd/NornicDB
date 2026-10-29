@@ -88,7 +88,7 @@ func TestBuildStoredVectorChoosesTheDimensionBeforeQueuedVectors(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			run := func(gated bool) string {
 				engine := newNodeSnapshotGateEngine(t)
-				svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 4, "v2", nil)
+				svc := NewService(engine, 4, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				t.Cleanup(engine.open)
 				buildWriteEdgeEndpoints(t, engine)
@@ -136,7 +136,7 @@ func TestBuildFirstWriteVectorThenMismatchReportsLikeTheSerialOrder(t *testing.T
 		engine := newNodeSnapshotGateEngine(t)
 		_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
 		require.NoError(t, err)
-		svc := NewServiceWithDimensions(engine, 3)
+		svc := NewService(engine, 3, nil)
 		t.Cleanup(func() { _ = svc.Close() })
 		t.Cleanup(engine.open)
 		var built chan error
@@ -541,7 +541,7 @@ func TestBuildSequenceReplaysAsTheSerialOrder(t *testing.T) {
 				// waits for the build (vectorNeedsOrderedDecision).
 				var svc *Service
 				if seed%2 == 0 {
-					svc = NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+					svc = NewService(engine, 3, nil)
 				} else {
 					svc = buildWriteService(t, engine, filepath.Join(t.TempDir(), "idx"), "v2", nil)
 				}
@@ -638,7 +638,7 @@ func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
 	removed := &storage.Edge{ID: "nornic:del", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "gonerelterm"}}
 	require.NoError(t, engine.CreateEdge(storage.CopyEdge(updated)))
 	require.NoError(t, engine.CreateEdge(storage.CopyEdge(removed)))
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { engine.open(); _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
 	svc.StartRelationshipIndex()

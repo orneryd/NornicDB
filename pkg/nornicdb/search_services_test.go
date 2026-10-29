@@ -17,6 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// seedReservedSearchRefresh supplies already-reserved work to tests of the
+// pending queue and drain, without scheduling a separate event flush.
+func seedReservedSearchRefresh(entry *dbSearchService, id string, work search.RefreshRetry) {
+	entry.pendingMu.Lock()
+	defer entry.pendingMu.Unlock()
+	entry.queueReservedRefreshLocked(id, work)
+}
+
 func TestMissingStemmerDisablesOnlyBM25(t *testing.T) {
 	db, err := Open(t.TempDir(), DefaultConfig())
 	require.NoError(t, err)
@@ -140,13 +148,14 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.Nil(t, nodes)
 		require.Nil(t, edges)
 
-		entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3)}
+		entry := &dbSearchService{svc: search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3, nil)}
 		nodes, edges = entry.drainPending()
 		require.Nil(t, nodes)
 		require.Nil(t, edges)
 
-		entry.queueRefresh("a")
-		newest := entry.queueRefresh("a")
+		seedReservedSearchRefresh(entry, "a", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("a")})
+		newest := entry.svc.ReserveNodeMutation("a")
+		seedReservedSearchRefresh(entry, "a", search.RefreshRetry{Node: newest})
 		nodes, _ = entry.drainPending()
 		require.Equal(t, map[string]search.NodeMutation{"a": newest}, nodes)
 	})
@@ -190,7 +199,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		t.Cleanup(func() { _ = engine.Close() })
 		store := storage.NewNamespacedEngine(engine, "nornic")
 		db := &DB{buildCtx: context.Background()}
-		svc := search.NewServiceWithDimensionsAndBM25Engine(store, 3, search.DefaultBM25Engine())
+		svc := search.NewService(store, 3, nil)
 		entry := &dbSearchService{
 			dbName:            "nornic",
 			svc:               svc,
@@ -201,7 +210,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 
 		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		require.NoError(t, err)
-		entry.queueRefresh("debounced")
+		seedReservedSearchRefresh(entry, "debounced", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("debounced")})
 		db.ensurePendingFlush(entry)
 
 		time.Sleep(5 * time.Millisecond)
@@ -429,7 +438,9 @@ func TestSearchServices_ClusteringFlagUpgradesCachedService(t *testing.T) {
 	require.True(t, svc.IsClusteringEnabled())
 }
 
-func TestSearchServices_RunClusteringOnceAllDatabases_Guards(t *testing.T) {
+func openClusteringTestCache(t *testing.T) *DB {
+	t.Helper()
+
 	cleanup := featureflags.WithGPUClusteringEnabled()
 	t.Cleanup(cleanup)
 
@@ -438,148 +449,142 @@ func TestSearchServices_RunClusteringOnceAllDatabases_Guards(t *testing.T) {
 	db, err := Open("", cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-
-	// Default DB with one embedding and completed build.
-	defaultStorage := db.storage
-	_, err = defaultStorage.CreateNode(&storage.Node{
-		ID:              storage.NodeID("alpha"),
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		Properties: map[string]any{
-			"content":   "alpha",
-			"embedding": []float32{0.1, 0.2, 0.3},
-		},
-	})
-	require.NoError(t, err)
-
-	buildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	defaultSvc, err := db.EnsureSearchIndexesBuilt(buildCtx, db.defaultDatabaseName(), defaultStorage)
-	require.NoError(t, err)
-	require.NotNil(t, defaultSvc)
-	require.Eventually(t, func() bool { return defaultSvc.EmbeddingCount() >= 1 }, 3*time.Second, 25*time.Millisecond)
-
-	// db2 service exists but intentionally remains unbuilt (not ready).
-	db2Svc, err := db.GetOrCreateSearchService("db2", nil)
-	require.NoError(t, err)
-	require.NotNil(t, db2Svc)
-	require.False(t, db2Svc.GetBuildProgress().Ready)
-
-	db.searchServicesMu.RLock()
-	defaultEntry := db.searchServices[db.defaultDatabaseName()]
-	db2Entry := db.searchServices["db2"]
-	db.searchServicesMu.RUnlock()
-	require.NotNil(t, defaultEntry)
-	require.NotNil(t, db2Entry)
-
-	// Seed non-zero state and ensure the function updates only the built/ready service.
-	defaultEntry.clusterMu.Lock()
-	defaultEntry.lastClusteredEmbedCount = 0
-	defaultEntry.clusterMu.Unlock()
-	db2Entry.clusterMu.Lock()
-	db2Entry.lastClusteredEmbedCount = 123
-	db2Entry.clusterMu.Unlock()
-
-	db.runClusteringOnceAllDatabases(context.Background())
-	expectedCount := defaultSvc.EmbeddingCount()
-
-	defaultEntry.clusterMu.Lock()
-	defaultAfter := defaultEntry.lastClusteredEmbedCount
-	defaultEntry.clusterMu.Unlock()
-	db2Entry.clusterMu.Lock()
-	db2After := db2Entry.lastClusteredEmbedCount
-	db2Entry.clusterMu.Unlock()
-
-	require.Equal(t, expectedCount, defaultAfter, "ready service should update clustered count")
-	require.Equal(t, 123, db2After, "not-ready service should be skipped")
-
-	// Canceled context should return immediately without mutating counters.
-	defaultEntry.clusterMu.Lock()
-	defaultEntry.lastClusteredEmbedCount = 77
-	defaultEntry.clusterMu.Unlock()
-	canceledCtx, cancelNow := context.WithCancel(context.Background())
-	cancelNow()
-	db.runClusteringOnceAllDatabases(canceledCtx)
-	defaultEntry.clusterMu.Lock()
-	defer defaultEntry.clusterMu.Unlock()
-	require.Equal(t, 77, defaultEntry.lastClusteredEmbedCount)
+	return db
 }
 
-func TestSearchServices_RunClusteringOnceAllDatabases_BranchMatrix(t *testing.T) {
-	cleanup := featureflags.WithGPUClusteringEnabled()
-	t.Cleanup(cleanup)
+func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
+	t.Run("guards", func(t *testing.T) {
+		db := openClusteringTestCache(t)
 
-	cfg := DefaultConfig()
-	cfg.Memory.EmbeddingDimensions = 3
-	db, err := Open("", cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	if db.buildCancel != nil {
-		db.buildCancel()
-	}
-	db.bgWg.Wait()
+		// Default DB with one embedding and completed build.
+		defaultStorage := db.storage
+		_, err := defaultStorage.CreateNode(&storage.Node{
+			ID:              storage.NodeID("alpha"),
+			Labels:          []string{"Doc"},
+			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+			Properties: map[string]any{
+				"content":   "alpha",
+				"embedding": []float32{0.1, 0.2, 0.3},
+			},
+		})
+		require.NoError(t, err)
 
-	// Add namespace lister branch coverage (skips empty/system namespaces).
-	db.baseStorage = &namespaceListEngine{
-		Engine:     db.baseStorage,
-		namespaces: []string{"", "system", "tenant_from_lister"},
-	}
+		buildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		defaultSvc, err := db.EnsureSearchIndexes(buildCtx, db.defaultDatabaseName(), defaultStorage, SearchIndexBuildWait)
+		require.NoError(t, err)
+		require.NotNil(t, defaultSvc)
+		require.Eventually(t, func() bool { return defaultSvc.EmbeddingCount() >= 1 }, 3*time.Second, 25*time.Millisecond)
 
-	readyEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ready_cov")
-	readySvc := search.NewServiceWithDimensions(readyEngine, 3)
-	readySvc.EnableClustering(nil, 2)
-	_, err = readyEngine.CreateNode(&storage.Node{
-		ID:              "r1",
-		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		Properties:      map[string]any{"content": "ready"},
+		// db2 service exists but intentionally remains unbuilt (not ready).
+		db2Svc, err := db.GetOrCreateSearchService("db2", nil)
+		require.NoError(t, err)
+		require.NotNil(t, db2Svc)
+		require.False(t, db2Svc.GetBuildProgress().Ready)
+
+		db.searchServicesMu.RLock()
+		defaultEntry := db.searchServices[db.defaultDatabaseName()]
+		db2Entry := db.searchServices["db2"]
+		db.searchServicesMu.RUnlock()
+		require.NotNil(t, defaultEntry)
+		require.NotNil(t, db2Entry)
+
+		// Seed non-zero state and ensure the function updates only the built/ready service.
+		defaultEntry.clusterMu.Lock()
+		defaultEntry.lastClusteredEmbedCount = 0
+		defaultEntry.clusterMu.Unlock()
+		db2Entry.clusterMu.Lock()
+		db2Entry.lastClusteredEmbedCount = 123
+		db2Entry.clusterMu.Unlock()
+
+		db.runClusteringOnceAllDatabases(context.Background())
+		expectedCount := defaultSvc.EmbeddingCount()
+
+		defaultEntry.clusterMu.Lock()
+		defaultAfter := defaultEntry.lastClusteredEmbedCount
+		defaultEntry.clusterMu.Unlock()
+		db2Entry.clusterMu.Lock()
+		db2After := db2Entry.lastClusteredEmbedCount
+		db2Entry.clusterMu.Unlock()
+
+		require.Equal(t, expectedCount, defaultAfter, "ready service should update clustered count")
+		require.Equal(t, 123, db2After, "not-ready service should be skipped")
+
+		// Canceled context should return immediately without mutating counters.
+		defaultEntry.clusterMu.Lock()
+		defaultEntry.lastClusteredEmbedCount = 77
+		defaultEntry.clusterMu.Unlock()
+		canceledCtx, cancelNow := context.WithCancel(context.Background())
+		cancelNow()
+		db.runClusteringOnceAllDatabases(canceledCtx)
+		defaultEntry.clusterMu.Lock()
+		defer defaultEntry.clusterMu.Unlock()
+		require.Equal(t, 77, defaultEntry.lastClusteredEmbedCount)
 	})
-	require.NoError(t, err)
-	require.NoError(t, readySvc.BuildIndexes(context.Background()))
+	t.Run("branch matrix", func(t *testing.T) {
+		db := openClusteringTestCache(t)
+		if db.buildCancel != nil {
+			db.buildCancel()
+		}
+		db.bgWg.Wait()
 
-	disabledSvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "disabled_cov"), 3)
+		// Add namespace lister branch coverage (skips empty/system namespaces).
+		db.baseStorage = &namespaceListEngine{
+			Engine:     db.baseStorage,
+			namespaces: []string{"", "system", "tenant_from_lister"},
+		}
 
-	notReadySvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "not_ready_cov"), 3)
-	notReadySvc.EnableClustering(nil, 2)
+		readyEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ready_cov")
+		readySvc := search.NewService(readyEngine, 3, nil)
+		readySvc.EnableClustering(nil, 2)
+		_, err := readyEngine.CreateNode(&storage.Node{
+			ID:              "r1",
+			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+			Properties:      map[string]any{"content": "ready"},
+		})
+		require.NoError(t, err)
+		require.NoError(t, readySvc.BuildIndexes(context.Background()))
 
-	db.searchServicesMu.Lock()
-	db.searchServices["nil_entry_cov"] = nil
-	db.searchServices["nil_svc_cov"] = &dbSearchService{dbName: "nil_svc_cov"}
-	db.searchServices["system"] = &dbSearchService{dbName: "system", svc: disabledSvc}
-	db.searchServices["disabled_cov"] = &dbSearchService{dbName: "disabled_cov", svc: disabledSvc}
-	db.searchServices["not_ready_cov"] = &dbSearchService{dbName: "not_ready_cov", svc: notReadySvc, lastClusteredEmbedCount: 11}
-	db.searchServices["ready_cov"] = &dbSearchService{
-		dbName:                  "ready_cov",
-		svc:                     readySvc,
-		lastClusteredEmbedCount: readySvc.EmbeddingCount(), // shouldRun=false branch
-	}
-	db.searchServicesMu.Unlock()
+		disabledSvc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "disabled_cov"), 3, nil)
 
-	db.runClusteringOnceAllDatabases(context.Background())
+		notReadySvc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "not_ready_cov"), 3, nil)
+		notReadySvc.EnableClustering(nil, 2)
 
-	// not_ready entry should be unchanged because clustering is deferred before ready.
-	db.searchServicesMu.RLock()
-	notReadyEntry := db.searchServices["not_ready_cov"]
-	_, listerCreated := db.searchServices["tenant_from_lister"]
-	_, systemCreated := db.searchServices["system"]
-	db.searchServicesMu.RUnlock()
-	require.NotNil(t, notReadyEntry)
-	require.Equal(t, 11, notReadyEntry.lastClusteredEmbedCount)
-	require.True(t, listerCreated)
-	require.True(t, systemCreated)
-}
+		db.searchServicesMu.Lock()
+		db.searchServices["nil_entry_cov"] = nil
+		db.searchServices["nil_svc_cov"] = &dbSearchService{dbName: "nil_svc_cov"}
+		db.searchServices["system"] = &dbSearchService{dbName: "system", svc: disabledSvc}
+		db.searchServices["disabled_cov"] = &dbSearchService{dbName: "disabled_cov", svc: disabledSvc}
+		db.searchServices["not_ready_cov"] = &dbSearchService{dbName: "not_ready_cov", svc: notReadySvc, lastClusteredEmbedCount: 11}
+		db.searchServices["ready_cov"] = &dbSearchService{
+			dbName:                  "ready_cov",
+			svc:                     readySvc,
+			lastClusteredEmbedCount: readySvc.EmbeddingCount(), // shouldRun=false branch
+		}
+		db.searchServicesMu.Unlock()
 
-func TestSearchServices_RunClusteringOnceAllDatabases_NilContext(t *testing.T) {
-	cleanup := featureflags.WithGPUClusteringEnabled()
-	t.Cleanup(cleanup)
+		db.runClusteringOnceAllDatabases(context.Background())
 
-	cfg := DefaultConfig()
-	cfg.Memory.EmbeddingDimensions = 3
-	db, err := Open("", cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
+		// not_ready entry should be unchanged because clustering is deferred before ready.
+		db.searchServicesMu.RLock()
+		notReadyEntry := db.searchServices["not_ready_cov"]
+		_, listerCreated := db.searchServices["tenant_from_lister"]
+		_, systemCreated := db.searchServices["system"]
+		db.searchServicesMu.RUnlock()
+		require.NotNil(t, notReadyEntry)
+		require.Equal(t, 11, notReadyEntry.lastClusteredEmbedCount)
+		require.True(t, listerCreated)
+		require.True(t, systemCreated)
+	})
+	t.Run("nil and TODO context", func(t *testing.T) {
+		db := openClusteringTestCache(t)
 
-	require.NotPanics(t, func() {
-		db.runClusteringOnceAllDatabases(context.TODO())
+		require.NotPanics(t, func() {
+			db.runClusteringOnceAllDatabases(nil)
+		})
+		require.NotPanics(t, func() {
+			db.runClusteringOnceAllDatabases(context.TODO())
+		})
 	})
 }
 
@@ -616,7 +621,7 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		// A write during the startup build is applied by the build; this
 		// case counts entries right after the write.
-		_, err = db.EnsureSearchIndexesBuilt(context.Background(), db.defaultDatabaseName(), nil)
+		_, err = db.EnsureSearchIndexes(context.Background(), db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 		require.NoError(t, err)
 
 		node := &storage.Node{
@@ -627,14 +632,14 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 		require.NoError(t, svc.IndexNode(node))
 		require.Equal(t, 1, svc.EmbeddingCount())
 
-		db.removeNodeFromEvent("n-local")
+		db.queueSearchRefreshEvent(searchNodeDelete, "n-local")
 		require.Eventually(t, func() bool {
 			return svc.EmbeddingCount() == 0
 		}, 2*time.Second, 10*time.Millisecond)
 	})
 
 	t.Run("system database creation is rejected", func(t *testing.T) {
-		_, err := db.getOrCreateSearchService("system", nil)
+		_, err := db.GetOrCreateSearchService("system", nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "system database")
 	})
@@ -672,7 +677,7 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 			searchServices:      make(map[string]*dbSearchService),
 			searchMinSimilarity: 0.1,
 		}
-		_, err := minimal.getOrCreateSearchService("tenant_cov", nil)
+		_, err := minimal.GetOrCreateSearchService("tenant_cov", nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "base storage is nil")
 	})
@@ -790,7 +795,7 @@ func TestSearchServices_RerankerStatusAndBuildStartHelpers(t *testing.T) {
 	require.Equal(t, "not_initialized", nilSvc.Phase)
 
 	// Start build without waiting; helper should return service and initialize status.
-	startedSvc, err := db.EnsureSearchIndexesBuildStarted("tenant_cov", nil)
+	startedSvc, err := db.EnsureSearchIndexes(nil, "tenant_cov", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.Same(t, svc, startedSvc)
 
@@ -811,7 +816,7 @@ func TestSearchServices_StartBuildDefaultAndClosedBranches(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	// Empty dbName should resolve to default database.
-	svc, err := db.EnsureSearchIndexesBuildStarted("", db.storage)
+	svc, err := db.EnsureSearchIndexes(nil, "", db.storage, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
@@ -825,6 +830,40 @@ func TestSearchServices_StartBuildDefaultAndClosedBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrClosed)
 }
 
+// TestSearchServices_ClosedDBCannotCreateService pins the public creation
+// fence: once Close has begun, GetOrCreateSearchService rejects creation of
+// both the default database's service and a tenant database's service instead
+// of building a new service against closing storage.
+func TestSearchServices_ClosedDBCannotCreateService(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Memory.EmbeddingDimensions = 3
+	cfg.Memory.EmbeddingEnabled = false
+	db, err := Open("", cfg)
+	require.NoError(t, err)
+
+	defaultName := db.defaultDatabaseName()
+	if db.buildCancel != nil {
+		db.buildCancel()
+	}
+	db.bgWg.Wait()
+	db.ResetSearchService(defaultName)
+	db.ResetSearchService("tenant_closed")
+	require.NoError(t, db.Close())
+
+	_, err = db.GetOrCreateSearchService(defaultName, db.storage)
+	require.ErrorIs(t, err, ErrClosed, "a closed database must not create the default search service")
+
+	_, err = db.GetOrCreateSearchService("tenant_closed", nil)
+	require.ErrorIs(t, err, ErrClosed, "a closed database must not create a tenant search service")
+
+	db.searchServicesMu.RLock()
+	_, defaultEntry := db.searchServices[defaultName]
+	_, tenantEntry := db.searchServices["tenant_closed"]
+	db.searchServicesMu.RUnlock()
+	require.False(t, defaultEntry, "the rejected default lookup must not cache a service")
+	require.False(t, tenantEntry, "the rejected tenant lookup must not cache a service")
+}
+
 func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 	db := &DB{
 		storage:             storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"),
@@ -833,7 +872,7 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 		searchMinSimilarity: 0.1,
 	}
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_timeout")
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
 		dbName:    "tenant_timeout",
@@ -862,16 +901,116 @@ func TestSearchServices_EnsureBuiltAndStart_ErrorBranches(t *testing.T) {
 		require.Contains(t, err.Error(), "search service not initialized")
 	})
 
-	t.Run("EnsureSearchIndexesBuildStarted rejects system database", func(t *testing.T) {
+	t.Run("EnsureSearchIndexes rejects system database", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Memory.EmbeddingDimensions = 3
 		db, err := Open("", cfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
-		_, err = db.EnsureSearchIndexesBuildStarted("system", nil)
+		_, err = db.EnsureSearchIndexes(nil, "system", nil, SearchIndexBuildStart)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "system database")
+	})
+}
+
+// TestSearchServices_EnsureIndexesModes pins the typed build mode shared by
+// every search-index build entry point: SearchIndexBuildStart returns once the
+// build has started, and SearchIndexBuildWait waits for the build that the same
+// service completes and reports its error.
+func TestSearchServices_EnsureIndexesModes(t *testing.T) {
+	start := func(t *testing.T) (*DB, *dbSearchService, string) {
+		t.Helper()
+		db := &DB{
+			storage:             storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"),
+			searchServices:      make(map[string]*dbSearchService),
+			embeddingDims:       3,
+			searchMinSimilarity: 0.1,
+			buildCtx:            context.Background(),
+			config:              DefaultConfig(),
+		}
+		db.SetDbSearchFlagsResolver(func(string) (bool, bool, string, string) {
+			return true, false, "startup", "startup"
+		})
+		const dbName = "tenant_modes"
+		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dbName)
+		entry := &dbSearchService{
+			dbName:    dbName,
+			svc:       search.NewService(engine, 3, nil),
+			buildDone: make(chan struct{}),
+		}
+		db.searchServices[dbName] = entry
+		return db, entry, dbName
+	}
+
+	t.Run("start returns without waiting for the build", func(t *testing.T) {
+		db, entry, dbName := start(t)
+		// A pre-consumed Once keeps the build from running, so the buildDone
+		// signal stays open: only a mode that does not wait can return.
+		entry.buildOnce.Do(func() {})
+		svc, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
+		require.NoError(t, err)
+		require.Same(t, entry.svc, svc)
+		require.False(t, svc.GetBuildProgress().Ready)
+	})
+
+	t.Run("wait reports the build that a prior start initiated", func(t *testing.T) {
+		db, entry, dbName := start(t)
+		_, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		svc, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait)
+		require.NoError(t, err)
+		require.Same(t, entry.svc, svc)
+		require.True(t, svc.GetBuildProgress().Ready)
+
+		entry.buildErrMu.RLock()
+		buildErr := entry.buildErr
+		entry.buildErrMu.RUnlock()
+		require.NoError(t, buildErr)
+	})
+
+	t.Run("wait reports the failed build's error", func(t *testing.T) {
+		db, entry, dbName := start(t)
+		buildErr := errors.New("index build failed")
+		entry.buildOnce.Do(func() {
+			entry.buildErrMu.Lock()
+			entry.buildErr = buildErr
+			entry.buildErrMu.Unlock()
+			entry.closeBuildDone()
+		})
+
+		svc, err := db.EnsureSearchIndexes(context.Background(), dbName, nil, SearchIndexBuildWait)
+		require.ErrorIs(t, err, buildErr)
+		require.Same(t, entry.svc, svc)
+	})
+
+	t.Run("wait returns the caller context error while the build runs", func(t *testing.T) {
+		db, entry, dbName := start(t)
+		entry.buildOnce.Do(func() {})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		svc, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Same(t, entry.svc, svc)
+	})
+
+	t.Run("unknown mode is rejected without starting a build", func(t *testing.T) {
+		for _, state := range []string{"startup", "disabled", "lazy"} {
+			t.Run(state, func(t *testing.T) {
+				db, entry, dbName := start(t)
+				db.SetDbSearchFlagsResolver(func(string) (bool, bool, string, string) {
+					return state != "disabled", false, state, "startup"
+				})
+				svc, err := db.EnsureSearchIndexes(context.Background(), dbName, nil, SearchIndexBuildMode(99))
+				require.ErrorContains(t, err, "unsupported search index build mode 99")
+				require.Nil(t, svc)
+				require.False(t, entry.svc.GetBuildProgress().Ready)
+				require.False(t, entry.svc.GetBuildProgress().Building)
+			})
+		}
 	})
 }
 
@@ -895,7 +1034,7 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 		return true, true, "lazy", "lazy"
 	})
 
-	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), "off_cov", nil)
+	svc, err := db.EnsureSearchIndexes(context.Background(), "off_cov", nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.True(t, svc.GetBuildProgress().Ready)
 	status := db.GetDatabaseSearchStatus("off_cov")
@@ -904,7 +1043,7 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.False(t, status.VectorEnabled)
 	require.False(t, status.LazyTriggerNeeded)
 
-	lazySvc, err := db.EnsureSearchIndexesBuilt(context.Background(), "lazy_cov", nil)
+	lazySvc, err := db.EnsureSearchIndexes(context.Background(), "lazy_cov", nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.NotNil(t, lazySvc)
 	lazyStatus := db.GetDatabaseSearchStatus("lazy_cov")
@@ -912,13 +1051,13 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.False(t, lazyStatus.Ready)
 	require.True(t, lazyStatus.LazyTriggerNeeded)
 
-	startedLazy, err := db.EnsureSearchIndexesBuildStarted("lazy_started_cov", nil)
+	startedLazy, err := db.EnsureSearchIndexes(nil, "lazy_started_cov", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, startedLazy)
 	require.False(t, startedLazy.GetBuildProgress().Ready)
 
-	require.NoError(t, db.refreshNodeInSearchIndexes(context.Background(), "lazy_cov", nil, ""))
-	err = db.refreshNodeInSearchIndexes(context.Background(), "system", nil, "node")
+	require.NoError(t, search.RefreshIndexes(context.Background(), dbRefreshScope{db: db, dbName: "lazy_cov"}, search.RefreshRequest{}))
+	err = search.RefreshIndexes(context.Background(), dbRefreshScope{db: db, dbName: "system"}, search.RefreshRequest{Node: "node"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "system database")
 
@@ -949,7 +1088,7 @@ func TestSearchServices_CloseBuildDone_IsIdempotent(t *testing.T) {
 func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	db := &DB{}
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_flush")
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
 		dbName:    "tenant_flush",
@@ -961,8 +1100,8 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	// missing (tolerated) and one for a stored node (applied).
 	_, err := engine.CreateNode(&storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
 	require.NoError(t, err)
-	entry.queueRefresh("missing")
-	entry.queueRefresh("n1")
+	seedReservedSearchRefresh(entry, "missing", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("missing")})
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
 
 	db.ensurePendingFlush(entry)
 	close(entry.buildDone)
@@ -1068,24 +1207,24 @@ func TestSearchServices_GetOrCreate_ResolverAndPersistPaths(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	// Resolver should override dimensions and BM25 engine selection.
-	db.SetDbConfigResolver(func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
+	// Resolver should override dimensions and minimum similarity.
+	db.SetDbConfigResolver(func(dbName string) (embeddingDims int, searchMinSimilarity float64) {
 		if dbName == "tenant_cfg" {
-			return 7, 0.42, search.BM25EngineV1
+			return 7, 0.42
 		}
-		return 0, 0, ""
+		return 0, 0
 	})
 
-	svc, err := db.getOrCreateSearchService("", db.storage) // empty name -> default db branch
+	svc, err := db.GetOrCreateSearchService("", db.storage) // empty name -> default db branch
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
-	tenantSvc, err := db.getOrCreateSearchService("tenant_cfg", nil)
+	tenantSvc, err := db.GetOrCreateSearchService("tenant_cfg", nil)
 	require.NoError(t, err)
 	require.NotNil(t, tenantSvc)
 	require.Equal(t, 7, tenantSvc.VectorIndexDimensions())
 
-	// Persist path branch: BM25 v1 should use "bm25" filename.
+	// The full-text index persists under its current filename.
 	tenantStorage := storage.NewNamespacedEngine(db.baseStorage, "tenant_cfg")
 	_, err = tenantStorage.CreateNode(&storage.Node{
 		ID:              "persist-1",
@@ -1093,122 +1232,132 @@ func TestSearchServices_GetOrCreate_ResolverAndPersistPaths(t *testing.T) {
 		ChunkEmbeddings: [][]float32{{1, 0, 0, 0, 0, 0, 0}},
 	})
 	require.NoError(t, err)
-	_, err = db.EnsureSearchIndexesBuilt(context.Background(), "tenant_cfg", tenantStorage)
+	_, err = db.EnsureSearchIndexes(context.Background(), "tenant_cfg", tenantStorage, SearchIndexBuildWait)
 	require.NoError(t, err)
 
 	// The current generation persists under the directory CURRENT names.
 	base := filepath.Join(cfg.Database.DataDir, "search", "tenant_cfg")
 	token, err := readSearchStateToken(filepath.Join(base, searchStateCurrentFile))
 	require.NoError(t, err)
-	bm25v1Path := filepath.Join(base, token, "bm25")
-	_, err = os.Stat(bm25v1Path)
+	fulltextPath := filepath.Join(base, token, "bm25.v2")
+	_, err = os.Stat(fulltextPath)
 	require.NoError(t, err)
 }
 
-func TestSearchServices_EventDuringBuild_IsDeterministicallyReplayed(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Memory.EmbeddingDimensions = 3
-	db, err := Open("", cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	// Use isolated storage for deterministic replay assertions. Using db.baseStorage
-	// can introduce unrelated async mutation callbacks that race this test.
-	tenantStorage := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_race")
-	blocking := &blockingIterEngine{
-		Engine:  tenantStorage,
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
+// TestSearchServices_EventDuringBuild_IsDeterministicallyReplay drives one
+// isolated build-blocked replay per event kind through a single harness, so the
+// deterministic start/hold/release protocol is written once while each kind
+// keeps its own seeding, event, and post-replay assertion.
+func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T) {
+	testCases := []struct {
+		name                string
+		dbName              string
+		seed                bool
+		mutateBeforeService bool
+		mutate              func(t *testing.T, db *DB, tenantStorage storage.Engine)
+		check               func(t *testing.T, svc *search.Service)
+	}{
+		{
+			name:                "index event is deferred then replayed",
+			dbName:              "tenant_race",
+			mutateBeforeService: true,
+			mutate: func(t *testing.T, db *DB, tenantStorage storage.Engine) {
+				// Create node while build is still blocked and emit event.
+				_, err := tenantStorage.CreateNode(&storage.Node{
+					ID:              "late",
+					Labels:          []string{"Doc"},
+					Properties:      map[string]any{"content": "late"},
+					ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
+				})
+				require.NoError(t, err)
+				db.indexNodeFromEvent(&storage.Node{
+					ID:              "tenant_race:late",
+					Labels:          []string{"Doc"},
+					Properties:      map[string]any{"content": "late"},
+					ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
+				})
+			},
+			check: func(t *testing.T, svc *search.Service) {
+				// Deferred event mutation must be replayed after build completion.
+				require.Eventually(t, func() bool {
+					return svc.EmbeddingCount() >= 1
+				}, 5*time.Second, 10*time.Millisecond)
+			},
+		},
+		{
+			name:   "remove event is deferred then replayed",
+			dbName: "tenant_remove_race",
+			seed:   true,
+			mutate: func(t *testing.T, db *DB, tenantStorage storage.Engine) {
+				// Delete and queue its remove event while build is blocked.
+				require.NoError(t, tenantStorage.DeleteNode("gone"))
+				db.queueSearchRefreshEvent(searchNodeDelete, "tenant_remove_race:gone")
+			},
+			check: func(t *testing.T, svc *search.Service) {
+				// Deferred remove must be replayed after build completion.
+				require.Eventually(t, func() bool {
+					return svc.EmbeddingCount() == 0
+				}, 5*time.Second, 10*time.Millisecond)
+			},
+		},
 	}
 
-	_, err = db.EnsureSearchIndexesBuildStarted("tenant_race", blocking)
-	require.NoError(t, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc := tc
+			cfg := DefaultConfig()
+			cfg.Memory.EmbeddingDimensions = 3
+			db, err := Open("", cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
 
-	select {
-	case <-blocking.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("build did not enter iterator in time")
+			// Use isolated storage for deterministic replay assertions. Using db.baseStorage
+			// can introduce unrelated async mutation callbacks that race this test.
+			tenantStorage := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), tc.dbName)
+			blocking := &blockingIterEngine{
+				Engine:  tenantStorage,
+				entered: make(chan struct{}),
+				release: make(chan struct{}),
+			}
+
+			if tc.seed {
+				// Seed a node and start a blocked build so remove event is queued.
+				_, err = tenantStorage.CreateNode(&storage.Node{
+					ID:              "gone",
+					Labels:          []string{"Doc"},
+					Properties:      map[string]any{"content": "gone"},
+					ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
+				})
+				require.NoError(t, err)
+			}
+			_, err = db.EnsureSearchIndexes(nil, tc.dbName, blocking, SearchIndexBuildStart)
+			require.NoError(t, err)
+
+			select {
+			case <-blocking.entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("build did not enter iterator in time")
+			}
+
+			if tc.mutateBeforeService {
+				tc.mutate(t, db, tenantStorage)
+			}
+			svc, err := db.GetOrCreateSearchService(tc.dbName, blocking)
+			require.NoError(t, err)
+
+			if !tc.mutateBeforeService {
+				tc.mutate(t, db, tenantStorage)
+			}
+
+			// Build still blocked, event should be deferred.
+			require.Equal(t, 0, svc.EmbeddingCount())
+
+			close(blocking.release)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, db.ensureSearchIndexesBuilt(ctx, tc.dbName))
+
+			tc.check(t, svc)
+		})
 	}
-
-	// Create node while build is still blocked and emit event.
-	_, err = tenantStorage.CreateNode(&storage.Node{
-		ID:              "late",
-		Labels:          []string{"Doc"},
-		Properties:      map[string]any{"content": "late"},
-		ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
-	})
-	require.NoError(t, err)
-	db.indexNodeFromEvent(&storage.Node{
-		ID:              "tenant_race:late",
-		Labels:          []string{"Doc"},
-		Properties:      map[string]any{"content": "late"},
-		ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
-	})
-
-	// Build still blocked, event should be deferred.
-	svc, err := db.GetOrCreateSearchService("tenant_race", blocking)
-	require.NoError(t, err)
-	require.Equal(t, 0, svc.EmbeddingCount())
-
-	close(blocking.release)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, "tenant_race"))
-
-	// Deferred event mutation must be replayed after build completion.
-	require.Eventually(t, func() bool {
-		return svc.EmbeddingCount() >= 1
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
-func TestSearchServices_RemoveEventDuringBuild_IsDeterministicallyReplayed(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Memory.EmbeddingDimensions = 3
-	db, err := Open("", cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	// Use isolated storage for deterministic replay assertions. Using db.baseStorage
-	// can introduce unrelated async mutation callbacks that race this test.
-	tenantStorage := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_remove_race")
-	blocking := &blockingIterEngine{
-		Engine:  tenantStorage,
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-
-	// Seed a node and start a blocked build so remove event is queued.
-	_, err = tenantStorage.CreateNode(&storage.Node{
-		ID:              "gone",
-		Labels:          []string{"Doc"},
-		Properties:      map[string]any{"content": "gone"},
-		ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
-	})
-	require.NoError(t, err)
-	_, err = db.EnsureSearchIndexesBuildStarted("tenant_remove_race", blocking)
-	require.NoError(t, err)
-
-	select {
-	case <-blocking.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("build did not enter iterator in time")
-	}
-
-	svc, err := db.GetOrCreateSearchService("tenant_remove_race", blocking)
-	require.NoError(t, err)
-
-	// Delete and queue its remove event while build is blocked.
-	require.NoError(t, tenantStorage.DeleteNode("gone"))
-	db.removeNodeFromEvent("tenant_remove_race:gone")
-	require.Equal(t, 0, svc.EmbeddingCount())
-
-	close(blocking.release)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, "tenant_remove_race"))
-
-	// Deferred remove must be replayed after build completion.
-	require.Eventually(t, func() bool {
-		return svc.EmbeddingCount() == 0
-	}, 5*time.Second, 10*time.Millisecond)
 }

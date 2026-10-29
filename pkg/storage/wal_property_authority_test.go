@@ -84,6 +84,8 @@ func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
 		return err
 	}))
 	data := WALBufferedCommitData{TxID: "named-edge", Namespace: "named", Writes: map[string][]byte{string(edgeKey(edge.ID)): body}, Ops: []Operation{{Type: OpCreateEdge, Edge: edge}}}
+	data.NumericBindings, err = captureWALNumericBindings(source.idDict, data.Writes, nil, nil)
+	require.NoError(t, err)
 	transformRecoveryEntities(&data, prepareRecoveryNode, prepareRecoveryEdge)
 	typed, err := encodeValue(&data)
 	require.NoError(t, err)

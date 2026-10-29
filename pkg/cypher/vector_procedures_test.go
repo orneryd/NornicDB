@@ -238,7 +238,7 @@ func TestVectorIndexQueryNodes_WithUnifiedSearchService_PreservesCypherSemantics
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	exec := NewStorageExecutor(store)
-	exec.SetSearchService(search.NewService(store))
+	exec.SetSearchService(search.NewService(store, search.DefaultVectorDimensions, nil))
 	ctx := context.Background()
 
 	makeID := func(raw string) storage.NodeID {
@@ -519,7 +519,7 @@ func TestCallDbIndexVectorQueryNodes_LazyWiredServiceWarmsBeforeQuery(t *testing
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(engine, 4)
+	searchSvc := search.NewService(engine, 4, nil)
 	var warmCalls int32
 	var warmErr atomic.Value
 	searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
@@ -1580,7 +1580,7 @@ func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVector
 		},
 	}))
 
-	searchSvc := search.NewServiceWithDimensions(engine, 3)
+	searchSvc := search.NewService(engine, 3, nil)
 	require.NoError(t, searchSvc.BuildIndexes(ctx))
 	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 	exec.SetSearchService(searchSvc)

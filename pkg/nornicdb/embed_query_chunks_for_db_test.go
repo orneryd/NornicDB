@@ -11,9 +11,9 @@ import (
 
 func TestDB_ValidateQueryEmbeddingBatchDimensions(t *testing.T) {
 	db := &DB{
-		dbConfigResolver: func(dbName string) (int, float64, string) {
+		dbConfigResolver: func(dbName string) (int, float64) {
 			require.Equal(t, "tenant", dbName)
-			return 3, 0.5, ""
+			return 3, 0.5
 		},
 	}
 
@@ -40,7 +40,7 @@ func TestDB_EmbedQueryChunksForDBWithEmbedder(t *testing.T) {
 
 	t.Run("returns mismatch error from batch validation", func(t *testing.T) {
 		db := &DB{
-			dbConfigResolver: func(dbName string) (int, float64, string) { return 3, 0, "" },
+			dbConfigResolver: func(dbName string) (int, float64) { return 3, 0 },
 		}
 		emb := &coverageQueryEmbedder{
 			chunks: []string{"c1", "c2"},
@@ -55,7 +55,7 @@ func TestDB_EmbedQueryChunksForDBWithEmbedder(t *testing.T) {
 
 	t.Run("returns chunks and embeddings when valid", func(t *testing.T) {
 		db := &DB{
-			dbConfigResolver: func(dbName string) (int, float64, string) { return 2, 0, "" },
+			dbConfigResolver: func(dbName string) (int, float64) { return 2, 0 },
 		}
 		emb := &coverageQueryEmbedder{
 			chunks: []string{"c1", "c2"},
@@ -87,7 +87,7 @@ func TestDB_EmbedQueryChunksForDB_UsesRegistryEmbedderWhenConfigured(t *testing.
 			return cfg, nil
 		},
 		embedderRegistry: map[string]embed.Embedder{embedConfigKey(cfg): specialEmb},
-		dbConfigResolver: func(dbName string) (int, float64, string) { return 2, 0, "" },
+		dbConfigResolver: func(dbName string) (int, float64) { return 2, 0 },
 	}
 
 	chunks, embs, err := db.EmbedQueryChunksForDB(context.Background(), "tenant", "query")
@@ -116,7 +116,7 @@ func TestDB_EmbedQueryChunksForDB_FallbackPaths(t *testing.T) {
 				chunks: []string{"g1", "g2"},
 				batch:  [][]float32{{1, 2, 3}, {4, 5, 6}},
 			}),
-			dbConfigResolver: func(dbName string) (int, float64, string) { return 2, 0, "" },
+			dbConfigResolver: func(dbName string) (int, float64) { return 2, 0 },
 		}
 
 		chunks, embs, err := db.EmbedQueryChunksForDB(context.Background(), "tenant", "query")

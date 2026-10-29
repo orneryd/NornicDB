@@ -314,7 +314,7 @@ func TestBadgerHelpers_MVCCIncomingAdjacencyKeyString_EdgeAllocationErrors(t *te
 		require.NoError(t, err)
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.mvccIncomingAdjacencyKeyString(readTxn, "test:node-only", "test:missing-edge", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
+		_, err = engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, readTxn, "test:node-only", "test:missing-edge", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
 		require.Error(t, err)
 		return nil
 	}))

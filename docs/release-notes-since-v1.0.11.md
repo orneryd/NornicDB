@@ -39,7 +39,7 @@ The full round-trip time includes query string embedding, RRF-fused vector + BM2
 
 ### 1.1 BM25 v2 — Compact Postings for Million-Scale Datasets
 
-A completely new fulltext index (`FulltextIndexV2`) replaces the previous in-memory token map for large corpora. It is now the **default engine**.
+A compact full-text index replaces the previous in-memory token map for large corpora. It is the supported implementation.
 
 **What changed internally:**
 - Stores per-document term frequency as compact `uint32` doc-numbers and `uint16` TF values rather than full string IDs per posting — a 4–8× memory reduction per index entry.
@@ -47,15 +47,6 @@ A completely new fulltext index (`FulltextIndexV2`) replaces the previous in-mem
 - Query plans (term expansion, IDF weights, suffix upper-bounds) are cached per-query so repeated queries return immediately with zero recomputation.
 - Batch index mutations (`IndexBatch`) allow the embedding queue to feed hundreds of nodes in a single lock acquisition, dramatically reducing contention.
 - A sorted `lexicon` slice enables O(log n) prefix expansion for partial-word queries.
-
-**How to select the engine:**
-```bash
-# Default (v2, recommended for all datasets)
-NORNICDB_SEARCH_BM25_ENGINE=v2   # now the default
-
-# Legacy v1 for compatibility
-NORNICDB_SEARCH_BM25_ENGINE=v1
-```
 
 **Benefit:** A 1M-node dataset that previously required ~2 GB of BM25 index RAM now fits in ~200–400 MB. Indexing throughput also improves 3–5× thanks to batch operations.
 
@@ -570,7 +561,6 @@ Content-Type: application/json
 {
   "NORNICDB_EMBEDDING_MODEL": "bge-m3",
   "NORNICDB_EMBEDDING_DIMENSIONS": "1024",
-  "NORNICDB_SEARCH_BM25_ENGINE": "v2",
   "NORNICDB_SEARCH_RERANK_ENABLED": "true"
 }
 
@@ -859,7 +849,7 @@ To run 40M × 1024-dim embeddings with flat HNSW (the recommended path), you nee
 ## 12. Upgrade Notes
 
 - **Per-database config** is opt-in and additive — existing deployments are unaffected. The global config remains authoritative unless a database-level override is set.
-- **BM25 v2** is the new default. If you have issues with large text corpora, this should help. To revert: `NORNICDB_SEARCH_BM25_ENGINE=v1`.
+- **BM25** uses compact postings to reduce index memory for large text corpora.
 - **Legacy loader removed** — if you are importing legacy-format data, switch to `scripts/migrate_neo4j_to_nornic.go`.
 - **Index persistence** is off by default. Enable with `NORNICDB_PERSIST_SEARCH_INDEXES=true` to avoid rebuild on restart. Read §11 before enabling.
 - **K-means and IVF-HNSW** are off by default and should remain off unless you have 40M+ embeddings. See §11.4 for the scale guidance and memory table.

@@ -26,7 +26,7 @@ func TestDbRetrieveFiltersReachPastNearerRejectedVectors(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("e%d", j)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "current"}, ChunkEmbeddings: [][]float32{{1, 0.45 + float32(j)*0.01, 0, 0}}})
 		require.NoError(t, err)
 	}
-	service := search.NewServiceWithDimensions(store, 4)
+	service := search.NewService(store, 4, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 	for _, procedure := range []string{"db.retrieve", "db.rretrieve"} {

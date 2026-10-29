@@ -42,7 +42,7 @@ func (r kalmanFailingReranker) Rerank(context.Context, string, []RerankCandidate
 
 func TestKalmanSearchAdapterPreservesCanonicalRerankOrder(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(newNamespacedEngine(t))
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = service.Close() })
 
 	query := "canonical order"
@@ -98,7 +98,7 @@ func TestKalmanSearchAdapterPreservesCanonicalRerankOrder(t *testing.T) {
 
 func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderAfterStabilityHistory(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(newNamespacedEngine(t))
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	calls := 0
 
@@ -173,7 +173,7 @@ func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderAfterStabilityHistory
 func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderThroughPublicSearch(t *testing.T) {
 	ctx := context.Background()
 	engine := newNamespacedEngine(t)
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	for index, spec := range []struct {
 		id     string
@@ -247,7 +247,7 @@ func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderThroughPublicSearch(t
 func TestConcurrentCachedKalmanReadersOwnTheirResponses(t *testing.T) {
 	ctx := context.Background()
 	engine := newNamespacedEngine(t)
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []string{"a", "b", "c"} {
 		node := &storage.Node{
@@ -333,7 +333,7 @@ func TestNewKalmanSearchAdapter(t *testing.T) {
 	engine := newNamespacedEngine(t)
 
 	// Create search service
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
@@ -360,7 +360,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	result := SearchResult{
@@ -384,7 +384,7 @@ func TestKalmanSearchAdapter_EnhanceResult(t *testing.T) {
 
 func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some ranking history
@@ -416,7 +416,7 @@ func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 
 func TestKalmanSearchAdapter_RecordRanking(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 
 	cfg := DefaultKalmanSearchConfig()
 	cfg.StabilityWindow = 3
@@ -468,7 +468,7 @@ func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Simulate some latency measurements
@@ -490,7 +490,7 @@ func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Simulate increasing latency (positive trend)
@@ -513,7 +513,7 @@ func TestKalmanSearchAdapter_GetDocumentRelevanceTrend(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Process some results to create document filters
@@ -543,7 +543,7 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some document filters with different trends
@@ -562,7 +562,7 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetStats(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	stats := adapter.GetStats()
@@ -577,7 +577,7 @@ func TestKalmanSearchAdapter_GetStats(t *testing.T) {
 
 func TestKalmanSearchAdapter_GetService(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	if adapter.GetService() != service {
@@ -591,7 +591,7 @@ func TestKalmanSearchAdapter_Reset(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	// Create some state
@@ -622,7 +622,7 @@ func TestKalmanSearchAdapter_DisabledSmoothing(t *testing.T) {
 	defer cleanup()
 
 	engine := newNamespacedEngine(t)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 
 	cfg := DefaultKalmanSearchConfig()
 	cfg.EnableScoreSmoothing = false
@@ -662,7 +662,7 @@ func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 		})
 	}
 
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	_ = service.BuildIndexes(ctx)
 
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
@@ -710,7 +710,7 @@ func BenchmarkKalmanSearchAdapter_EnhanceResult(b *testing.B) {
 	defer config.DisableKalmanFiltering()
 
 	engine := newNamespacedEngine(b)
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
 
 	result := SearchResult{

@@ -81,7 +81,7 @@ func TestSharedIndexDeleteOrdersStorageBeforePopulationBoundary(t *testing.T) {
 		defer providerMu.Unlock()
 		if svc == nil {
 			population = &heldPointPopulation{Engine: store, captured: make(chan struct{}), resume: make(chan struct{})}
-			svc = search.NewServiceWithDimensions(population, 4)
+			svc = search.NewService(population, 4, nil)
 			if err := svc.BuildIndexes(ctx); err != nil {
 				return nil, err
 			}

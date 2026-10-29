@@ -11,12 +11,12 @@ Owner: Tim Sweet; Urgent ticket reassigned from iBurn/mm0nst3r. No PR size limit
 - [ ] Port required behavior into current scannerless recursive-descent and grammar/command/credential owners; preserve current Go APIs, typed source stages and approved storage contract. Regenerate ANTLR output with the pinned generator; never patch the ANTLR runtime.
 - [ ] Verify the complete integrated public-path matrix, EXPLAIN metadata/effects, malformed/trailing input, quoted names and credential role boundaries, with original failing evidence retained.
 - [ ] Profile and compare focused native parsing/command workloads with the current immutable baseline; correct regressions without sacrificing correctness. ANTLR correctness cost is accepted, but report measured limits.
-- [ ] Resolve every unchanged duplicate-checker finding against the refreshed release graph. No analyzer/hook/rule changes or ignored findings.
+- [ ] Resolve every duplicate-checker finding against the refreshed release graph. Ask before any further analyzer, hook, or rule changes; do not ignore findings.
 - [ ] Refresh derived source inventories/census from actual current source without weakening guards; independent DeepSeek review of defensive security changes.
 - [ ] Run fresh make test on the final integrated source and focused acceptance checks; fix all regressions. Another full make verify sweep is explicitly deferred by the maintainer to the next PR; report it as deferred.
 - [ ] Commit and push to existing PR, publish exact head/base command/results/evidence, update Linear and mark ready for review.
 
-No existing Badger key or payload layout changes, storage-version bump or migration arm. No Dot notifications. Preserve user CONTRIBUTORS.md in primary. Private security triage stays unstaged. Future-source architecture and final acceptance remain root-owned; mechanical work delegates to DeepSeek, tiny exact tasks to local Qwen. Remote Qwen is unused.
+No existing Badger key or payload layout changes, storage-version bump, or new migration arm. The existing V4 arm also converts historical WAL framing. No Dot notifications. Preserve user CONTRIBUTORS.md in primary. Private security triage stays unstaged. Future-source architecture and final acceptance remain root-owned; mechanical work delegates to DeepSeek, tiny exact tasks to local Qwen. Remote Qwen is unused.
 
 ## Integrated correction evidence
 
@@ -51,15 +51,14 @@ No existing Badger key or payload layout changes, storage-version bump or migrat
 
 ## Maintainer verification and delivery direction
 
-The maintainer explicitly deferred another full `make verify` sweep to the next PR. This PR still requires the performance regressions and remaining AC to be resolved, a passing `make test`, focused AC evidence, and all unchanged duplicate-checker findings addressed. After that, push and merge this PR into `release/v1.4.4`. Report the deferred sweep as deferred, not passed. Benchmark configuration uses the existing script controls `GRAPH_ONLY=1` and `GRAPH_ONLY=0`; temporary harness aliases have been removed. Retain verified work/allocation reductions even when wall time is unchanged.
+The maintainer explicitly deferred another full `make verify` sweep to the next PR. This PR still requires the performance regressions and remaining AC to be resolved, a passing `make test`, focused AC evidence, and all duplicate-checker findings addressed. After that, push and merge this PR into `release/v1.4.4`. Report the deferred sweep as deferred, not passed. Benchmark configuration uses the existing script controls `GRAPH_ONLY=1` and `GRAPH_ONLY=0`; temporary harness aliases have been removed. Retain verified work/allocation reductions even when wall time is unchanged.
 
 
 ## Current focused follow-up evidence
 
-- Fresh standard graph-mode seed/count checks: GRAPH_ONLY=1 ingest 12,379.364 ms;
-  GRAPH_ONLY=0 ingest 15,274.694 ms; both verified 97,440 nodes and 312,050
-  relationships. Five-second target remains unmet. These seed-only runs do not
-  establish the subsequent read-query suite.
+- Earlier fixed4 seed/count checks took 12,379.364 ms with GRAPH_ONLY=1 and
+  15,274.694 ms with GRAPH_ONLY=0. Later work reduced these timings; they are
+  historical results, not the latest measurements.
 - Fresh internal/jsontext and pkg/config/dbconfig tests passed. Their work and
   allocation reductions remain integrated; no new production switches.
 - Quoted-target/backtick-URI redaction reproduced in an in-tree regression test.
@@ -68,6 +67,109 @@ The maintainer explicitly deferred another full `make verify` sweep to the next 
 - Buffered prepared publication reproduced a repeated stored-image read (two
   instead of one). Private prepared-image reuse is under focused race validation;
   public image access remains defensive and closed transactions clear retention.
-- No merge-ready claim, push or merge yet. Performance and GH530 diagnostic
-  contract reconciliation remain open, followed by make test and the unchanged
-  duplicate checker on the final staged tree.
+- Checkpoints `4a7fbc03e` and `31bfb2bdd` were pushed to the draft PR. They are
+  not a merge-ready claim: performance, acceptance evidence, final `make test`,
+  and the duplicate checker on the final staged tree remain open.
+
+## Northwind and recovery follow-up
+
+- [ ] Reach the approximately five-second Northwind seed target using the
+  existing graph-only and search-enabled configurations; compare repeatable
+  runs with the same payload and verify all node and relationship counts.
+- [ ] Complete integrated review and validation of the search-index and
+  endpoint-read allocation reductions; retain only correct, non-degrading work.
+- [ ] Preserve arbitrary bytes in buffered WAL keys and verify recovery,
+  compression, foreign numeric-identity replay, and V4 conversion of supported
+  older WAL formats without changing existing Badger keys or snapshot compatibility.
+- [ ] Verify recycled numeric IDs remain distinct across aborted and concurrent
+  transactions, pending-name adoption, write-behind rejection and reopening.
+- [ ] Verify database startup rejects corrupt, unknown, or unauthorized WALs
+  without losing existing data; exercise interrupted upgrade and retry.
+- [ ] Profile Badger and first-party encoding under the same isolated Northwind
+  workload; keep compression enabled and document offline WAL inspection.
+- [ ] Resolve the prepared-authority test failure and the WAL ownership guard
+  timeout without weakening either test or its assertions.
+- [ ] Re-run the plugin tests on frozen, integrated source after the observed
+  package-version mismatch from concurrent compilation.
+
+The earlier frozen `make test` run failed and is retained as diagnostic
+evidence, not a pass. It exposed missing fixture ownership, stale source and
+storage censuses, current-format WAL fixture gaps, and a 30-minute storage
+ownership-analysis timeout; that snapshot also lacked ignored UI build inputs.
+The focused recycled-ID tests now cover both orders of winner/adopter
+commit and rejection, and pass under the race detector. The public historical
+WAL fixture exposed a storage-version change before rejection; a fail-first
+regression now verifies all persisted Badger entries and WAL bytes are
+unchanged after a rejected open. Final integrated suite and performance runs
+remain outstanding.
+
+The V4 migration now converts supported historical WAL framing before replay,
+preserves the original files in a durable archive, and keeps historical payload
+bytes and existing Badger keys intact. Focused checks cover interrupted
+publication and retry, original headerless checksums, property-epoch bounds,
+corrupt records, and torn active tails. A public-open regression exposed an
+empty-store authorization issue and a collision between logical receipts and
+the old deindex queue; both now pass focused direct and buffered recovery
+tests. Final staged checker and full `make test` evidence are still pending.
+
+The checker changes were reviewed with the maintainer: nonblocking
+classifications for related code were removed. The remaining narrow wrapper
+detection only adds blocking findings; tests also verify that related semantic
+matches continue to be reported.
+
+The conservative checker on staged tree `3e2aef2a80807e70f21d8c8ac6c17fe6379876a4`
+reported 11 findings, down from 28 on the prior staged tree. This was not a
+pass; the integrated source subsequently changed and requires a fresh run.
+Focused MVCC adjacency checks and the consolidated search consumer tests passed.
+The formerly skipped unsuppress/delete case now waits for both writes and checks
+the resulting storage and search state; the observed run did not force an
+out-of-order interleaving. A fail-first malformed logical-receipt regression was
+fixed and passed with the race detector, including preservation of the raw key.
+
+The BM25 V1 implementation, selector, and V1 snapshot conversion have been
+removed at the maintainer's direction. The current full-text format remains
+the single index owner; vector and HNSW conversion paths are retained. Focused
+full-text, configuration, persisted-generation, and GraphQL tests passed,
+including race runs for the affected search and database paths. An initial
+full-text test run exposed obsolete V1 prefix and snapshot assumptions; the
+current implementation's explicit prefix setting and snapshot shape now have
+passing coverage. A storage-census run encountered WAL source edits in flight
+and failed to type-check; the subsequent census regeneration passed on the
+integrated source. Its mutation checks remain part of the final full suite.
+
+Subsequent focused WAL payload, V4 migration, snapshot-management and search
+transaction-refresh checks passed under the race detector. WAL payload codec
+benchmarks retained the previous allocation counts on 32, 4,096 and 65,536-byte
+fixtures; the measured timing differences were small. Search refresh A/B/B/A
+samples also retained the same allocation counts. These focused results do not
+substitute for the final full suite or duplicate check.
+
+A later paired Northwind seed comparison used the same 2,000-row batches, four
+sessions, and verified 97,440 nodes and 312,050 relationships. The current tree
+seeded in 7,079 and 8,049 ms with GRAPH_ONLY=1, versus 8,026 and 7,227 ms for
+the preserved earlier binary; with GRAPH_ONLY=0 it took 10,619 and 10,898 ms,
+versus 10,605 and 9,778 ms. The local Qwen service was loaded but idle during
+those samples. Two later current-tree samples with Qwen stopped and no Docker
+containers running took 7,664 and 7,206 ms with GRAPH_ONLY=1, and 9,975 and
+11,376 ms with GRAPH_ONLY=0, again with exact graph counts. These are seed-only
+measurements; the approximately five-second target, read-query suite, and
+larger-payload profiling remain open.
+
+The checker on staged tree `270b2341200f51809ffc962f24cca61b028c12e1`
+completed without candidate-cap skips and reported 83 reuse candidates and two
+refactor targets. All 85 are recorded in [checker-followup.md](checker-followup.md).
+The maintainer authorized pushing a fully tested checkpoint before resolving
+that inventory; the checker has not passed and later source changes are not
+covered by that report.
+
+The uncached `make test` on that tree failed five ownership/inventory checks.
+The storage census completed successfully. Focused checks now pass for the
+fixture, search-lifetime, serving-state, security-inventory, and storage-mutator
+corrections. A fail-first cycle test also exposed and corrected an order-
+dependent reachability error in the mutator guard. The complete suite must pass
+again on the resulting tree before the checkpoint is pushed.
+
+Focused public admin-config tests reproduced credential-bearing invalid values
+being echoed to the authenticated submitting administrator. Both normalization
+and unregistered-stemmer diagnostics now use the existing text redactor; the
+focused race tests pass. Cross-user disclosure was not established.

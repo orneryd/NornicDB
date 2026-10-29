@@ -58,7 +58,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	}
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	svc := NewServiceWithDimensions(engine, exactStageDims)
+	svc := NewService(engine, exactStageDims, nil)
 	t.Cleanup(func() { closeAfterBuilds(t, svc) })
 	if generator == "kmeans" || generator == "ivf_hnsw" {
 		svc.EnableClustering(nil, 4)
@@ -289,7 +289,7 @@ func TestMultiChunkNodeKeepsItsBestChunkUnderCompression(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { closeAfterBuilds(t, svc) })
 			node := &storage.Node{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.6, 0.8}, {0.9, 0.4358899}}}
 			_, err := engine.CreateNode(node)

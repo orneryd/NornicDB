@@ -102,11 +102,11 @@ func TestDBWrapperHelpers_QueueAndExecutorAccess(t *testing.T) {
 	})
 	require.NotNil(t, db.allDatabasesProvider)
 
-	db.SetDbConfigResolver(func(dbName string) (int, float64, string) {
+	db.SetDbConfigResolver(func(dbName string) (int, float64) {
 		if dbName == "tenant_a" {
-			return 768, 0.42, "v2"
+			return 768, 0.42
 		}
-		return 0, 0, ""
+		return 0, 0
 	})
 	require.NotNil(t, db.dbConfigResolver)
 
@@ -442,7 +442,7 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	tenantStorage := storage.NewNamespacedEngine(base, "tenant_count")
 	_, err = tenantStorage.CreateNode(&storage.Node{ID: "tenant", Properties: map[string]any{"content": "tenant"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}})
 	require.NoError(t, err)
-	tenantSvc, err := db.EnsureSearchIndexesBuilt(context.Background(), "tenant_count", tenantStorage)
+	tenantSvc, err := db.EnsureSearchIndexes(context.Background(), "tenant_count", tenantStorage, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.Equal(t, 1, tenantSvc.EmbeddingCount())
 

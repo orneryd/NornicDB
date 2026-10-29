@@ -144,7 +144,7 @@ func TestMatchVectorCosineFastPath_DoesNotReplaceMismatchedSearchService(t *test
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
-	attached := search.NewServiceWithDimensions(ns, 3)
+	attached := search.NewService(ns, 3, nil)
 	exec.SetSearchService(attached)
 
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
@@ -200,7 +200,7 @@ func TestMatchWithVectorCosineProjection_PreWhereFilterUsesExactCandidateSet(t *
 		require.NoError(t, err)
 	}
 
-	searchService := search.NewServiceWithDimensions(ns, 3)
+	searchService := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(t, searchService.BuildIndexes(ctx))
 
@@ -243,7 +243,7 @@ func TestMatchVectorCosineFastPath_FilteredDirectAndInlinePatternsApplyTopK(t *t
 		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:LimitProbe {id:'p%d', group:'selected', embedding:[%.1f,%.1f]})", index, float64(index)/10, 1-float64(index)/10), nil)
 		require.NoError(t, err)
 	}
-	searchService := search.NewServiceWithDimensions(ns, 2)
+	searchService := search.NewService(ns, 2, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(t, searchService.BuildIndexes(ctx))
 
@@ -281,7 +281,7 @@ func BenchmarkMatchWithVectorCosineProjection_PreWhereFilterExactCandidates(b *t
 		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Evidence {id:'wanted-%03d', asset_id:'wanted', embedding:[%.2f,1.0,0.0]})", index, score), nil)
 		require.NoError(b, err)
 	}
-	searchService := search.NewServiceWithDimensions(ns, 3)
+	searchService := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchService)
 	require.NoError(b, searchService.BuildIndexes(ctx))
 
@@ -351,7 +351,7 @@ func TestMatchVectorCosineFastPath_WriteThenSearchLoop_NoScanRegression(t *testi
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX item_emb_idx FOR (n:Item) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 3)
+	searchSvc := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'seed', emb:[1.0,0.0,0.0]})", nil)
@@ -397,7 +397,7 @@ func TestMatchVectorCosineFastPath_LazyWiredServiceUsesLiveIndexWithoutWarmup(t 
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	var warmCalls int32
 	searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
 		atomic.AddInt32(&warmCalls, 1)
@@ -456,7 +456,7 @@ func TestMatchVectorCosineFastPath_FileBackedPropertyVectors(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name:'NornicDB', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	searchSvc.SetPersistenceEnabled(true)
 	searchSvc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
@@ -502,7 +502,7 @@ func TestMatchVectorCosineFastPath_ProjectedNodeReadSkipsVectorProperty(t *testi
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(projected, 4)
+	searchSvc := search.NewService(projected, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
@@ -580,7 +580,7 @@ func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testin
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(blocking, 4)
+	searchSvc := search.NewService(blocking, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
@@ -652,7 +652,7 @@ func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX entity_name_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 4)
+	searchSvc := search.NewService(ns, 4, nil)
 	exec.SetSearchService(searchSvc)
 
 	for i := 0; i < 16; i++ {
@@ -842,7 +842,7 @@ func TestMatchVectorCosineFastPath_WithProjection_WriteThenSearchLoop_NoScanRegr
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX chunk_emb_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, 3)
+	searchSvc := search.NewService(ns, 3, nil)
 	exec.SetSearchService(searchSvc)
 
 	_, err = exec.Execute(ctx, "CREATE (:Chunk {uuid:'seed', emb:[1.0,0.0,0.0], group_id:'g'})", nil)

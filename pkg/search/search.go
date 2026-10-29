@@ -14,7 +14,7 @@
 // Example Usage:
 //
 //	// Create search service
-//	svc := search.NewService(storageEngine)
+//	svc := search.NewService(storageEngine, search.DefaultVectorDimensions, nil)
 //
 //	// Build indexes from existing nodes
 //	if err := svc.BuildIndexes(ctx); err != nil {
@@ -141,21 +141,16 @@ var SearchableProperties = []string{
 }
 
 const (
-	// EnvSearchBM25Engine selects the BM25 engine implementation.
-	// Supported values: "v1", "v2". Default: "v2".
-	EnvSearchBM25Engine = "NORNICDB_SEARCH_BM25_ENGINE"
 	// EnvSearchLogTimings enables per-query timing logs for search stages.
 	// When true, logs vector/BM25/fusion/total timing to help identify bottlenecks.
 	EnvSearchLogTimings = "NORNICDB_SEARCH_LOG_TIMINGS"
 	// EnvSearchResultCacheEnabled controls caching of complete Search responses.
 	// Disable it when callers require every request to execute the retrieval pipeline.
 	EnvSearchResultCacheEnabled = "NORNICDB_SEARCH_RESULT_CACHE_ENABLED"
-	BM25EngineV1                = "v1"
-	BM25EngineV2                = "v2"
 )
 
 type bm25Index interface {
-	Index(id, text string)
+	Index(id, text string, terms []string, frequency map[string]int, prepared bool)
 	Remove(id string)
 	Search(query string, limit int) []indexResult
 	// SearchAllowed is Search over the documents allowed accepts; a
@@ -174,36 +169,6 @@ type bm25Index interface {
 	IndexBatch(entries []FulltextBatchEntry)
 }
 
-func normalizeBM25Engine(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case BM25EngineV1:
-		return BM25EngineV1
-	case BM25EngineV2:
-		return BM25EngineV2
-	default:
-		return BM25EngineV2
-	}
-}
-
-// DefaultBM25Engine returns the configured BM25 engine from environment.
-// Valid values: "v1", "v2". Invalid/empty values fall back to "v2".
-func DefaultBM25Engine() string {
-	return normalizeBM25Engine(os.Getenv(EnvSearchBM25Engine))
-}
-
-func newBM25Index(engine string) (bm25Index, string) {
-	return newBM25IndexWithAnalyzer(engine, nil)
-}
-
-func newBM25IndexWithAnalyzer(engine string, analyzer Analyzer) (bm25Index, string) {
-	switch normalizeBM25Engine(engine) {
-	case BM25EngineV2:
-		return NewFulltextIndexV2WithAnalyzer(analyzer), BM25EngineV2
-	default:
-		return NewFulltextIndexWithAnalyzer(analyzer), BM25EngineV1
-	}
-}
-
 // disabledBM25Index is a zero-cost no-op bm25Index used when BM25 is disabled
 // for a database. Every method is safe to call from the existing BuildIndexes
 // and IndexNode code paths; reads return empty, writes are dropped, Count()
@@ -211,9 +176,9 @@ func newBM25IndexWithAnalyzer(engine string, analyzer Analyzer) (bm25Index, stri
 // Save/Load are no-ops so persistence checkpointing doesn't blow up.
 type disabledBM25Index struct{}
 
-func (disabledBM25Index) Index(string, string)             {}
-func (disabledBM25Index) Remove(string)                    {}
-func (disabledBM25Index) Search(string, int) []indexResult { return nil }
+func (disabledBM25Index) Index(string, string, []string, map[string]int, bool) {}
+func (disabledBM25Index) Remove(string)                                        {}
+func (disabledBM25Index) Search(string, int) []indexResult                     { return nil }
 func (disabledBM25Index) SearchAllowed(string, int, func(string) bool) []indexResult {
 	return nil
 }
@@ -847,7 +812,7 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //
 // Example:
 //
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //	defer svc.Close()
 //
 //	// Index existing data
@@ -883,7 +848,6 @@ type Service struct {
 	// concurrently. Read it with fulltext(), replace it with setFulltext().
 	fulltextRef  atomic.Pointer[bm25IndexRef]
 	bm25Analyzer Analyzer
-	bm25Engine   string
 	// embedTextOptions is how the embedding worker builds a node's embedding
 	// text, to place the chunks of an embedding that didn't record their
 	// places (#1060); nil is the worker's default.
@@ -1159,7 +1123,7 @@ type BuildProgress struct {
 // Example:
 //
 //	engine, _ := storage.NewMemoryEngine()
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //
 //	// Build indexes from all nodes
 //	if err := svc.BuildIndexes(context.Background()); err != nil {
@@ -1171,7 +1135,7 @@ type BuildProgress struct {
 // Example 1 - Basic Setup:
 //
 //	engine := storage.NewMemoryEngine()
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //	defer svc.Close()
 //
 //	// Build indexes from existing nodes
@@ -1185,7 +1149,7 @@ type BuildProgress struct {
 // Example 2 - With Embedder Integration:
 //
 //	engine := storage.NewBadgerEngine("./data")
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //
 //	// Create embedder
 //	embedder := embed.NewOllama(embed.DefaultOllamaConfig())
@@ -1207,7 +1171,7 @@ type BuildProgress struct {
 //
 // Example 3 - Real-time Indexing:
 //
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //
 //	// Index as nodes are created
 //	onCreate := func(node *storage.Node) {
@@ -1238,32 +1202,8 @@ type BuildProgress struct {
 //	Safe for concurrent searches from multiple goroutines.
 
 // DefaultVectorDimensions is the embedding size used by NewService (e.g. bge-m3).
-// Use NewServiceWithDimensions or schema/query-derived dimensions when your model differs.
+// Pass schema/query-derived dimensions to NewService when your model differs.
 const DefaultVectorDimensions = 1024
-
-func NewService(engine storage.Engine) *Service {
-	return NewServiceWithDimensions(engine, DefaultVectorDimensions)
-}
-
-// NewServiceWithDimensions creates a search Service with the specified embedding dimensions.
-// Use this when your embedding model produces vectors of a different size than the default 1024.
-//
-// Example:
-//
-//	// For Apple Intelligence embeddings (512 dimensions)
-//	svc := search.NewServiceWithDimensions(engine, 512)
-//
-//	// For OpenAI text-embedding-3-small (1536 dimensions)
-//	svc := search.NewServiceWithDimensions(engine, 1536)
-func NewServiceWithDimensions(engine storage.Engine, dimensions int) *Service {
-	return NewServiceWithDimensionsAndBM25Engine(engine, dimensions, DefaultBM25Engine())
-}
-
-// NewServiceWithDimensionsAndBM25Engine creates a search Service with explicit BM25 engine selection.
-// bm25Engine values: "v1", "v2" (invalid values default to "v1").
-func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int, bm25Engine string) *Service {
-	return NewServiceWithDimensionsAndBM25EngineAndOptions(engine, dimensions, bm25Engine, nil)
-}
 
 // ServiceOptions configures database-specific search service resources.
 type ServiceOptions struct {
@@ -1295,14 +1235,14 @@ func DefaultServiceOptions(databaseID string) ServiceOptions {
 	}
 }
 
-// NewServiceWithDimensionsAndBM25EngineAndOptions creates a search service with explicit resource policy.
-// Nil options preserve the historical 1000-entry, five-minute result cache.
-func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dimensions int, bm25Engine string, options *ServiceOptions) *Service {
+// NewService creates a search service for the specified embedding dimensions
+// and resource policy. Nil options use the default service policy.
+func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) *Service {
 	analyzer := DefaultTextAnalyzer()
 	if options != nil && options.BM25Stemmer != nil {
 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
 	}
-	fulltextIndex, selectedBM25Engine := newBM25IndexWithAnalyzer(bm25Engine, analyzer)
+	fulltextIndex := NewFulltextIndex(analyzer)
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
 	defaults := DefaultServiceOptions("")
@@ -1331,7 +1271,6 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		indexCapacityByNode:        make(map[string]indexCapacityUsage),
 		indexCapacityByEdge:        make(map[string]indexCapacityUsage),
 		bm25Analyzer:               analyzer,
-		bm25Engine:                 selectedBM25Engine,
 		minEmbeddingsForClustering: DefaultMinEmbeddingsForClustering,
 		defaultMinSimilarity:       -1, // -1 = not set, use SearchOptions default
 		nodeLabels:                 make(map[string][]string, 1024),
@@ -1368,7 +1307,6 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 	svc.vectorEnabled.Store(true)
 	svc.runtimeStrategyTransitions.Store(envutil.GetBoolStrict("NORNICDB_VECTOR_RUNTIME_STRATEGY_TRANSITIONS_ENABLED", false))
 	svc.warmDone = make(chan struct{})
-	svc.logEvent(context.Background(), slog.LevelInfo, localization.SearchBM25EngineSelectedEvent(selectedBM25Engine))
 	return svc
 }
 
@@ -1624,11 +1562,6 @@ func (s *Service) FulltextDocCount() int {
 // IsReady reports whether the search indexes are fully built and ready.
 func (s *Service) IsReady() bool {
 	return s.ready.Load()
-}
-
-// BM25Engine returns the configured BM25 engine for this service ("v1" or "v2").
-func (s *Service) BM25Engine() string {
-	return normalizeBM25Engine(s.bm25Engine)
 }
 
 // BuildInProgress reports whether BuildIndexes is currently running.
@@ -2218,7 +2151,7 @@ func (s *Service) IsClusteringEnabled() bool {
 //
 // Example:
 //
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //	svc.SetMinEmbeddingsForClustering(500) // Lower threshold for faster clustering
 //	svc.EnableClustering(gpuManager, 100)
 //	svc.BuildIndexes(ctx)
@@ -3345,6 +3278,16 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			stored, ok := index.GetDocument(nodeIDStr)
 			fulltext.unchanged = ok && stored == fulltext.text
 		}
+		_, recorded := s.indexCapacityByNode[nodeIDStr]
+		if fulltext.text != "" && (!fulltext.unchanged || (fulltext.index && !recorded)) {
+			fulltext.terms = normalizeAnalyzer(s.bm25Analyzer).Analyze(fulltext.text)
+			if len(fulltext.terms) != 0 {
+				fulltext.frequency = make(map[string]int, len(fulltext.terms))
+				for _, term := range fulltext.terms {
+					fulltext.frequency[term]++
+				}
+			}
+		}
 	}
 	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
 	if err != nil {
@@ -3446,7 +3389,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 
 	// Add to fulltext index (skipped when BuildIndexes batches fulltext via IndexBatch)
 	if !skipFulltext && !fulltext.unchanged && fulltext.text != "" {
-		s.fulltext().Index(string(node.ID), fulltext.text)
+		s.fulltext().Index(string(node.ID), fulltext.text, fulltext.terms, fulltext.frequency, true)
 	}
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
@@ -4133,7 +4076,6 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		interval := time.Duration(sec) * time.Second
 		ticker := time.NewTicker(interval)
 		stop := make(chan struct{})
-		bm25Engine := s.BM25Engine()
 		go func() {
 			for {
 				select {
@@ -4144,7 +4086,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					}
 					processed := s.buildProcessed.Load()
 					total := s.buildTotalNodes.Load()
-					s.logPrintf("📇 BuildIndexes progress: phase=%s processed=%d/%d bm25_engine=%s", phase, processed, total, bm25Engine)
+					s.logPrintf("📇 BuildIndexes progress: phase=%s processed=%d/%d", phase, processed, total)
 				case <-stop:
 					return
 				}
@@ -4195,7 +4137,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		s.logPrintf("⚠️ BuildIndexes: failed to load build settings metadata (%s): %v", settingsPath, err)
 	} else if savedSettings != nil {
 		forceFulltextRebuild = savedSettings.BM25 != currentSettings.BM25
-		if forceFulltextRebuild && bm25SettingsEquivalent(savedSettings.BM25, currentSettings.BM25, s.currentBM25FormatVersion()) {
+		if forceFulltextRebuild && bm25SettingsEquivalent(savedSettings.BM25, currentSettings.BM25, bm25V2FormatVersion) {
 			forceFulltextRebuild = false
 		}
 		forceVectorRebuild = savedSettings.Vector != currentSettings.Vector
@@ -4945,7 +4887,7 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Example:
 //
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //
 //	// Hybrid search (best results)
 //	query := "graph database memory"
@@ -5796,9 +5738,8 @@ func explicitCandidateCap(opts *SearchOptions) bool {
 
 // completeBM25Search fills a BM25 page the widening budget left short: it
 // ranks every matching document (at most documents) once and filters the list in batches of
-// batch documents until target results pass or the list ends. The prefix the
-// budget already filtered is filtered again, since an engine may order equal
-// scores differently between calls (v1).
+// batch documents until target results pass or the list ends. It filters the
+// whole ranked list from the beginning so the result is based on one search.
 func (s *Service) completeBM25Search(
 	ctx context.Context,
 	search func(query string, limit int) []indexResult,
@@ -6683,8 +6624,8 @@ func envFloat(key string, fallback float64) float64 {
 	return v
 }
 
-// bm25SettingsEquivalent treats V1 BM25 as migration-compatible only when its
-// schema, property projection, and analyzer match the current V2 settings.
+// bm25SettingsEquivalent permits the same index format when the schema,
+// property projection, and analyzer still match.
 func bm25SettingsEquivalent(saved, current, currentFormat string) bool {
 	if saved == current {
 		return true
@@ -6723,8 +6664,7 @@ func bm25SettingsEquivalent(saved, current, currentFormat string) bool {
 	if currentKV["format"] != currentFormat {
 		return false
 	}
-	return savedKV["format"] == currentFormat ||
-		(savedKV["format"] == fulltextIndexFormatVersion && currentFormat == bm25V2FormatVersion)
+	return savedKV["format"] == currentFormat
 }
 
 func envDurationMs(key string, fallbackMs int) time.Duration {
@@ -7194,7 +7134,7 @@ func effectiveRerankTopK(opts *SearchOptions) int {
 //
 // Example:
 //
-//	svc := search.NewService(engine)
+//	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 //	svc.SetCrossEncoder(search.NewCrossEncoder(&search.CrossEncoderConfig{
 //		Enabled: true,
 //		APIURL:  "http://localhost:8081/rerank",

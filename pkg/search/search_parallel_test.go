@@ -93,7 +93,7 @@ func (g *overlapCandidateGenerator) searchCandidatesWithExhaustion(ctx context.C
 }
 
 func TestRRFHybridSearch_ParallelRetrievalOverlaps(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	bm25Started := make(chan struct{})
 	vectorStarted := make(chan struct{})
 	release := make(chan struct{})
@@ -151,7 +151,7 @@ func TestRRFHybridSearch_ParallelRetrievalOverlaps(t *testing.T) {
 }
 
 func TestRRFHybridSearchUsesRankedBM25ResultsAsVectorEntryPoints(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	fulltext := &rankedBM25Index{
 		bm25Index: svc.fulltext(),
 		results: []indexResult{
@@ -248,7 +248,7 @@ func TestRRFHybridSearch_ParallelRetrievalJoinsBM25BeforeVectorError(t *testing.
 	bm25Started := make(chan struct{})
 	vectorStarted := make(chan struct{})
 	releaseBM25 := make(chan struct{})
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.setFulltext(&blockingBM25Index{
 		bm25Index: svc.fulltext(),
 		started:   bm25Started,
@@ -279,7 +279,7 @@ func TestRRFHybridSearch_ParallelRetrievalJoinsBM25AfterCancellation(t *testing.
 	bm25Started := make(chan struct{})
 	vectorStarted := make(chan struct{})
 	releaseBM25 := make(chan struct{})
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.setFulltext(&blockingBM25Index{
 		bm25Index: svc.fulltext(),
 		started:   bm25Started,

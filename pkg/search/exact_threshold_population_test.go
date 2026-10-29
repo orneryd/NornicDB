@@ -59,7 +59,7 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "threshold")
-		service := NewServiceWithDimensions(engine, 2)
+		service := NewService(engine, 2, nil)
 		t.Cleanup(func() { _ = service.Close() })
 		service.SetIndexFlags(false, true)
 		for i := range 9 {

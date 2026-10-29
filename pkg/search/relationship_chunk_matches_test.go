@@ -81,7 +81,7 @@ func TestRelationshipVectorFileOfAnEarlierFormatIsDropped(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: 1, Entries: map[string]*relationshipEntry{"r1": {Source: 1, Vectors: [][]float32{{1, 0, 0}}}}}))
 	require.NoError(t, file.Close())
-	svc := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	svc := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath(path)

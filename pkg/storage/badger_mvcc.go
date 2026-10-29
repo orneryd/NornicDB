@@ -318,50 +318,28 @@ func (b *BadgerEngine) writeEdgeMVCCTombstoneInTxn(txn kvWriter, id EdgeID, vers
 	return writeMVCCVersionInTxn[*Edge, edgeMVCCVersionKeyer](b, txn, string(id), (*Edge)(nil), true, version, encodeMVCCEdgeRecord)
 }
 
-func (b *BadgerEngine) writeOutgoingAdjacencyMVCCVersionInTxn(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
-	key, err := b.mvccOutgoingAdjacencyKeyString(txn, nodeID, edgeID, version)
+func (b *BadgerEngine) writeAdjacencyMVCCVersionInTxn(direction mvccAdjacencyKeyDirection, txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
+	key, err := b.mvccAdjacencyKeyString(direction, txn, nodeID, edgeID, version)
 	if err != nil {
 		return err
 	}
 	return txn.Set(key, encodeMVCCAdjacencyRecord(tombstoned))
-}
-
-func (b *BadgerEngine) writeIncomingAdjacencyMVCCVersionInTxn(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion, tombstoned bool) error {
-	key, err := b.mvccIncomingAdjacencyKeyString(txn, nodeID, edgeID, version)
-	if err != nil {
-		return err
-	}
-	return txn.Set(key, encodeMVCCAdjacencyRecord(tombstoned))
-}
-
-func (b *BadgerEngine) writeEdgeAdjacencyLiveInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {
-	if edge == nil {
-		return nil
-	}
-	if err := b.writeOutgoingAdjacencyMVCCVersionInTxn(txn, edge.StartNode, edge.ID, version, false); err != nil {
-		return err
-	}
-	return b.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, false)
-}
-
-func (b *BadgerEngine) writeEdgeAdjacencyTombstoneInTxn(txn *badger.Txn, edge *Edge, version MVCCVersion) error {
-	if edge == nil {
-		return nil
-	}
-	if err := b.writeOutgoingAdjacencyMVCCVersionInTxn(txn, edge.StartNode, edge.ID, version, true); err != nil {
-		return err
-	}
-	return b.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, true)
 }
 
 func (b *BadgerEngine) writeEdgeAdjacencyDeltaInTxn(txn *badger.Txn, oldEdge, newEdge *Edge, version MVCCVersion) error {
+	write := func(edge *Edge, tombstone bool) error {
+		if err := b.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyOutgoing, txn, edge.StartNode, edge.ID, version, tombstone); err != nil {
+			return err
+		}
+		return b.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, edge.EndNode, edge.ID, version, tombstone)
+	}
 	if oldEdge != nil {
-		if err := b.writeEdgeAdjacencyTombstoneInTxn(txn, oldEdge, version); err != nil {
+		if err := write(oldEdge, true); err != nil {
 			return err
 		}
 	}
 	if newEdge != nil {
-		if err := b.writeEdgeAdjacencyLiveInTxn(txn, newEdge, version); err != nil {
+		if err := write(newEdge, false); err != nil {
 			return err
 		}
 	}
@@ -2100,7 +2078,7 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 						if err := txn.Delete(mvccNodeHeadKey(numID)); err != nil {
 							return err
 						}
-						if err := b.idDict.deleteNodeEntryByNumInTxn(txn, numID); err != nil {
+						if err := deleteIDEntryInTxn(txn, &b.idDict.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, NodeID(""), numID, idPairByNumber); err != nil {
 							return err
 						}
 						if err := b.idDict.pushFreeNodeInTxn(txn, numID); err != nil {
@@ -2114,7 +2092,7 @@ func (b *BadgerEngine) pruneMVCCKeyspaceInTxn(ctx context.Context, txn *badger.T
 						if err := txn.Delete(mvccEdgeHeadKey(numID)); err != nil {
 							return err
 						}
-						if err := b.idDict.deleteEdgeEntryByNumInTxn(txn, numID); err != nil {
+						if err := deleteIDEntryInTxn(txn, &b.idDict.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, EdgeID(""), numID, idPairByNumber); err != nil {
 							return err
 						}
 						if err := b.idDict.pushFreeEdgeInTxn(txn, numID); err != nil {

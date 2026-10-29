@@ -21,18 +21,17 @@ type countingSearchServiceResolver struct {
 	calls    int
 	dims     int            // >0 overrides the embedding dimensions of every database
 	override map[string]int // per-database dims overrides (phase 2)
-	engine   string         // bm25 engine reported for every database
 	minSim   float64        // min similarity reported for every database
 }
 
-func (c *countingSearchServiceResolver) resolver(dbName string) (int, float64, string) {
+func (c *countingSearchServiceResolver) resolver(dbName string) (int, float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls++
 	if dims, ok := c.override[dbName]; ok {
-		return dims, c.minSim, c.engine
+		return dims, c.minSim
 	}
-	return c.dims, c.minSim, c.engine
+	return c.dims, c.minSim
 }
 
 func (c *countingSearchServiceResolver) setOverride(dbName string, dims int) {
@@ -72,8 +71,8 @@ func newCachedConfigSearchDB(t *testing.T) *DB {
 }
 
 // TestSearchServiceCachedLookupSkipsConfigResolution pins the creation contract
-// of getOrCreateSearchService: the per-database config resolution (dims,
-// minSimilarity, BM25 engine) and the per-database search options are inputs to
+// of GetOrCreateSearchService: the per-database config resolution (dims,
+// minSimilarity) and the per-database search options are inputs to
 // building a service, so they belong to the create path only. A service that is
 // already cached is returned exactly as built, without re-entering either
 // resolver, and a later resolution that reports different dimensions does not
@@ -82,7 +81,7 @@ func newCachedConfigSearchDB(t *testing.T) *DB {
 func TestSearchServiceCachedLookupSkipsConfigResolution(t *testing.T) {
 	db := newCachedConfigSearchDB(t)
 
-	dimsResolver := &countingSearchServiceResolver{dims: 5, minSim: 0.25, engine: search.BM25EngineV1}
+	dimsResolver := &countingSearchServiceResolver{dims: 5, minSim: 0.25}
 	db.SetDbConfigResolver(dimsResolver.resolver)
 
 	var optionsCalls int
@@ -93,7 +92,7 @@ func TestSearchServiceCachedLookupSkipsConfigResolution(t *testing.T) {
 
 	const dbName = "nornic"
 	t.Cleanup(func() { db.ResetSearchService(dbName) })
-	created, err := db.getOrCreateSearchService(dbName, nil)
+	created, err := db.GetOrCreateSearchService(dbName, nil)
 	require.NoError(t, err)
 	require.NotNil(t, created)
 	require.Equal(t, 5, created.VectorIndexDimensions(), "the create path resolves the per-DB dimensions")
@@ -108,7 +107,7 @@ func TestSearchServiceCachedLookupSkipsConfigResolution(t *testing.T) {
 		require.NoError(t, cachedErr)
 		require.Same(t, created, cached)
 
-		internal, internalErr := db.getOrCreateSearchService(dbName, nil)
+		internal, internalErr := db.GetOrCreateSearchService(dbName, nil)
 		require.NoError(t, internalErr)
 		require.Same(t, created, internal)
 	}
@@ -118,7 +117,7 @@ func TestSearchServiceCachedLookupSkipsConfigResolution(t *testing.T) {
 		"cached lookups must not re-enter the per-DB search options resolver")
 
 	// Changing what the resolver reports does not retune the cached service:
-	// dims/minSim/bm25Engine/options are creation inputs.
+	// dims/minSim/options are creation inputs.
 	dimsResolver.setOverride(dbName, 9)
 	cached, err := db.GetOrCreateSearchService(dbName, nil)
 	require.NoError(t, err)
@@ -148,11 +147,11 @@ func TestDisabledSearchEventsDoNotQueueAndRebuildAfterEnable(t *testing.T) {
 	require.NoError(t, err)
 	var resolutions atomic.Int64
 	db.SetRerankerResolver(func(string) search.Reranker { resolutions.Add(1); return nil })
-	db.queueSearchRefreshEvent("nornic:stored")
+	db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
 	require.True(t, db.GetDatabaseSearchStatus(name).Initialized, "disabled service still exists for readiness reporting")
 	require.EqualValues(t, 1, resolutions.Load(), "the first event creates one service")
 	for range 10 {
-		db.queueSearchRefreshEvent("nornic:stored")
+		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
 	}
 	require.EqualValues(t, 1, resolutions.Load(), "disabled cached events do not resolve or queue search work")
 	db.searchServicesMu.RLock()
@@ -171,7 +170,7 @@ func TestDisabledSearchEventsDoNotQueueAndRebuildAfterEnable(t *testing.T) {
 	require.Zero(t, entry.svc.FulltextDocCount())
 	db.config.Memory.SearchBM25Enabled = true
 	db.ResetSearchService(name)
-	rebuilt, err := db.EnsureSearchIndexesBuilt(context.Background(), name, nil)
+	rebuilt, err := db.EnsureSearchIndexes(context.Background(), name, nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.NotSame(t, entry.svc, rebuilt)
 	require.True(t, rebuilt.BM25Enabled())
@@ -186,13 +185,13 @@ func TestSearchEventUsesCachedServiceAndQueryRefreshesReranker(t *testing.T) {
 	db.config.Memory.SearchVectorEnabled = false
 	var resolutions atomic.Int64
 	db.SetRerankerResolver(func(string) search.Reranker { resolutions.Add(1); return nil })
-	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), name, nil)
+	svc, err := db.EnsureSearchIndexes(context.Background(), name, nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	before := resolutions.Load()
 	_, err = db.storage.CreateNode(&storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "indexed quartz"}})
 	require.NoError(t, err)
 	for range 5 {
-		db.queueSearchRefreshEvent("nornic:stored")
+		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")
 	}
 	require.Equal(t, before, resolutions.Load(), "indexing events must not resolve query-only reranker configuration")
 	require.Eventually(t, func() bool { return svc.FulltextDocCount() == 1 }, 3*time.Second, 10*time.Millisecond, "cached service still indexes the latest stored document")

@@ -1,6 +1,9 @@
 # Convert search index files from gob to msgpack
 
-Search index persistence now uses **msgpack** only and **extensionless** paths (`bm25`, `vectors`, `hnsw`, `hnsw_ivf/0`, `1`, …). This script converts existing `.gob` files to msgpack, writes to the new paths, and removes the old `.gob` files.
+This script converts vector and HNSW `.gob` files to msgpack at extensionless
+paths (`vectors`, `hnsw`, `hnsw_ivf/0`, `1`, …), then removes the converted
+files. It does not convert full-text indexes; those are built from graph storage
+when a current full-text snapshot is unavailable.
 
 ## Steps
 
@@ -10,13 +13,12 @@ Search index persistence now uses **msgpack** only and **extensionless** paths (
    ```bash
    go run ./scripts/convert_search_index_to_msgpack --dir data/test/search
    ```
-4. **Restart NornicDB.** It will load the msgpack files; no index rebuild needed.
+4. **Restart NornicDB.** It can load the converted vector and HNSW files.
 
 ## What gets converted
 
 | Old path       | New path   |
 |----------------|------------|
-| `bm25.gob`     | `bm25`     |
 | `vectors.gob`  | `vectors`  |
 | `hnsw.gob`     | `hnsw`     |
 | `hnsw_ivf/N.gob` | `hnsw_ivf/N` |

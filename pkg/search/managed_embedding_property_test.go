@@ -10,7 +10,7 @@ import (
 )
 
 func TestManagedEmbeddingContentIsExcludedFromDefaultSearchText(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t))
+	service := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title"})
 	node := &storage.Node{
 		ID:     "test:visual",
@@ -37,7 +37,7 @@ func TestManagedEmbeddingContentIsExcludedFromSearchResultProperties(t *testing.
 	_, err := engine.CreateNode(node)
 	require.NoError(t, err)
 
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	opts := &SearchOptions{Limit: 1, ExcludeProperties: []string{"_embedding_content"}}
 	results := service.enrichResults(context.Background(), []rrfResult{{ID: string(node.ID), RRFScore: 1}}, opts, nil, hitMatchQuery{})
 	require.Len(t, results, 1)
@@ -60,7 +60,7 @@ func TestSearchResultPropertyProjectionCombinesIncludeAndExclude(t *testing.T) {
 
 func TestBM25PropertyAllowlistDoesNotProjectSearchResponses(t *testing.T) {
 	properties := map[string]any{"title": "diagram", "structured_payload": "opaque-value"}
-	service := NewService(newTestMemoryEngine(t))
+	service := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title"})
 
 	require.NotContains(t, service.extractSearchableText(&storage.Node{Properties: properties}), "opaque-value")

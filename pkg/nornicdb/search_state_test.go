@@ -148,7 +148,7 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			vector[0] = 1
 			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
 
@@ -170,7 +170,7 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			require.Zero(t, consumerDBHits(t, svc, "bword"), "node delete")
 
 			apply(t, replication.CmdDeleteByPrefix, "tenant:")
-			fresh, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.NotSame(t, svc, fresh, "namespace reset kept the dropped database's service")
 			require.Zero(t, fresh.FulltextDocCount(), "namespace reset kept the dropped database's documents")
@@ -208,7 +208,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 			vector[0] = 1
 			_, err := tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			requireIndexed(t, svc, 1, "seed")
 			backup := filepath.Join(t.TempDir(), "backup.bin")
@@ -238,7 +238,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 				_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
 				require.NoError(t, err)
 			}
-			fresh, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			settleQueuedRefreshes()
 			require.Equal(t, 1, fresh.FulltextDocCount(), "the tenant's index is not what storage holds")
@@ -271,7 +271,7 @@ func TestRetiredSearchGenerationIsNeverLoaded(t *testing.T) {
 	require.True(t, errors.Is(err, fs.ErrNotExist), "reset left the persisted state")
 	// The retired service writes late into its own directory.
 	require.NoError(t, os.MkdirAll(filepath.Join(base, first), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25"), []byte("stale"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25.v2"), []byte("stale"), 0o600))
 
 	_, err = db.GetOrCreateSearchService("tenant", nil)
 	require.NoError(t, err)
@@ -283,7 +283,7 @@ func TestRetiredSearchGenerationIsNeverLoaded(t *testing.T) {
 	// A late write after the next generation exists is removed when that
 	// generation is next opened, and CURRENT keeps naming it.
 	require.NoError(t, os.MkdirAll(filepath.Join(base, first), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25"), []byte("stale"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25.v2"), []byte("stale"), 0o600))
 	require.NoError(t, db.Close())
 	reopened := openPersistedSearchDB(t, dataDir)
 	t.Cleanup(func() { _ = reopened.Close() })
@@ -302,18 +302,18 @@ func TestLegacySearchStateLayoutBecomesTheCurrentGeneration(t *testing.T) {
 	base, err := searchPersistenceBasePath(dataDir, "tenant")
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "hnsw_ivf"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, "bm25"), []byte("legacy"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, "bm25.v2"), []byte("legacy"), 0o600))
 	db := openPersistedSearchDB(t, dataDir)
 	t.Cleanup(func() { _ = db.Close() })
 	db.searchServiceCreationMu.Lock()
 	dir, err := db.activeSearchStateDir("tenant")
 	db.searchServiceCreationMu.Unlock()
 	require.NoError(t, err)
-	data, err := os.ReadFile(filepath.Join(dir, "bm25"))
+	data, err := os.ReadFile(filepath.Join(dir, "bm25.v2"))
 	require.NoError(t, err)
 	require.Equal(t, "legacy", string(data))
 	require.DirExists(t, filepath.Join(dir, "hnsw_ivf"))
-	require.NoFileExists(t, filepath.Join(base, "bm25"))
+	require.NoFileExists(t, filepath.Join(base, "bm25.v2"))
 }
 
 // failingReadEngine fails the next reads of one node or relationship.
@@ -350,7 +350,7 @@ func TestRefreshAfterTransientReadFailureIsRetried(t *testing.T) {
 			db, _ := openConsumerDB(t, false)
 			ctx := context.Background()
 			failing := &failingReadEngine{Engine: storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant"), node: "a", edge: "r"}
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", failing)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", failing, SearchIndexBuildWait)
 			require.NoError(t, err)
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}})

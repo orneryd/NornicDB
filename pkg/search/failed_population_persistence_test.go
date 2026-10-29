@@ -69,7 +69,7 @@ func (s *failedPopulationSnapshot) StreamEdges(ctx context.Context, fn func(*sto
 
 func populationPersistService(t *testing.T, engine storage.Engine, dir string) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	svc := NewService(engine, 3, nil)
 	svc.FixVectorDimensions()
 	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
 	svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))

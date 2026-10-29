@@ -129,7 +129,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 	if s == nil || s.relationships.Load() != nil {
 		return
 	}
-	fulltext, _ := newBM25IndexWithAnalyzer(s.bm25Engine, s.bm25Analyzer)
+	fulltext := NewFulltextIndex(s.bm25Analyzer)
 	s.relationships.Store(&relationshipSearch{
 		fulltext: fulltext,
 		entries:  make(map[string]*relationshipEntry),
@@ -259,7 +259,7 @@ func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, 
 	if text == "" {
 		rs.fulltext.Remove(id)
 	} else {
-		rs.fulltext.Index(id, text)
+		rs.fulltext.Index(id, text, nil, nil, false)
 	}
 	entry := rs.entries[id]
 	if entry == nil && persisted != nil && persisted.Source == source {

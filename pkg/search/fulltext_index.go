@@ -2,16 +2,13 @@
 package search
 
 import (
-	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"os"
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
-	"github.com/orneryd/nornicdb/pkg/security"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // BM25 parameters (standard values)
@@ -21,209 +18,121 @@ const (
 	bm25AnalyzerVersion = bm25TokenizerVersion
 )
 
+// bm25V2FormatVersion is the semver written into saved BM25 index files.
+// On load, a file whose version is not equal to this is not loaded (caller rebuilds).
+const bm25V2FormatVersion = "2.1.0"
+
+const (
+	bm25PrefixWeight           = 0.8
+	bm25SparseMinDocSlots      = 100_000
+	bm25DenseMinPostingVisits  = 4096
+	bm25DenseDensityDivisor    = 8
+	bm25MaxPooledDenseDocSlots = 1 << 20
+	bm25MaxPooledSparseScores  = 4096
+)
+
+type bm25Posting struct {
+	DocNum uint32 `msgpack:"d"`
+	TF     uint16 `msgpack:"t"`
+}
+
+type bm25TermState struct {
+	Postings []bm25Posting `msgpack:"p"`
+	IDF      float64       `msgpack:"i"`
+	// dead counts postings of removed documents still in Postings. Removing
+	// a document only counts its postings dead (its docLengths entry becomes
+	// 0, which scoring skips); a term's list is compacted once half of it is
+	// dead, so removing N documents that share a term costs O(N) instead of
+	// copying the list per removal (O(N²), #826). Not persisted: snapshots
+	// write live postings only.
+	dead int
+}
+
+// liveDocumentFrequency is the number of live documents holding the term.
+func (st *bm25TermState) liveDocumentFrequency() int {
+	return len(st.Postings) - st.dead
+}
+
+// compactLocked drops the postings of removed documents (docLengths 0, or no
+// docLengths entry).
+func (st *bm25TermState) compactLocked(docLengths []uint32) {
+	live := st.Postings[:0]
+	for _, posting := range st.Postings {
+		if int(posting.DocNum) < len(docLengths) && docLengths[posting.DocNum] != 0 {
+			live = append(live, posting)
+		}
+	}
+	clear(st.Postings[len(live):])
+	st.Postings = live
+	st.dead = 0
+}
+
 // FulltextIndex provides BM25-based full-text search.
-// It indexes documents and supports keyword search with TF-IDF scoring.
+// It stores compact postings (docNum/tf) and uses bounded prefix expansion + top-k scoring.
 type FulltextIndex struct {
 	mu sync.RWMutex
 
-	// Document storage: docID -> original text
 	documents map[string]string
 
-	// Inverted index: term -> docID -> term frequency
-	invertedIndex map[string]map[string]int
+	docIDToNum         map[string]uint32
+	docNumToID         []string
+	docLengths         []uint32
+	docIDsLexicalByNum bool
 
-	// Document lengths: docID -> word count
-	docLengths map[string]int
+	termIndex map[string]*bm25TermState
+	lexicon   []string
+	// lexicon is rebuilt lazily because maintaining a sorted slice on every new
+	// term makes vocabulary growth quadratic. Exact-term search uses termIndex;
+	// only prefix expansion and persistence require the sorted snapshot.
+	lexiconDirty bool
 
-	// Average document length (for BM25)
-	avgDocLength float64
-
-	// Total document count
-	docCount int
-
-	// Running sum of document lengths; avgDocLength = totalDocLength/docCount (O(1) update).
+	avgDocLength   float64
+	docCount       int
 	totalDocLength int64
 
-	// Versioning for dirty tracking (version != persistedVersion => needs save).
 	version          uint64
 	persistedVersion uint64
+	queryPlanCache   sync.Map
+	scoreScratchPool sync.Pool
 
-	analyzer Analyzer
+	maxPrefixExpansions int
+	minPrefixLength     int
+	analyzer            Analyzer
 }
 
-// NewFulltextIndex creates a new full-text search index.
-func NewFulltextIndex() *FulltextIndex {
-	return NewFulltextIndexWithAnalyzer(nil)
-}
-
-// NewFulltextIndexWithAnalyzer creates a new full-text search index using analyzer.
-func NewFulltextIndexWithAnalyzer(analyzer Analyzer) *FulltextIndex {
+// NewFulltextIndex creates a full-text search index with the supplied analyzer.
+// A nil analyzer selects the default analyzer.
+func NewFulltextIndex(analyzer Analyzer) *FulltextIndex {
+	maxPrefixExpansions := envutil.GetInt("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", 0)
+	if maxPrefixExpansions < 0 {
+		maxPrefixExpansions = 0
+	}
+	minPrefixLength := envutil.GetInt("NORNICDB_BM25_PREFIX_MIN_LEN", 3)
+	if minPrefixLength < 1 {
+		minPrefixLength = 1
+	}
 	return &FulltextIndex{
-		documents:     make(map[string]string),
-		invertedIndex: make(map[string]map[string]int),
-		docLengths:    make(map[string]int),
-		analyzer:      normalizeAnalyzer(analyzer),
+		documents:           make(map[string]string),
+		docIDToNum:          make(map[string]uint32),
+		termIndex:           make(map[string]*bm25TermState),
+		docIDsLexicalByNum:  true,
+		maxPrefixExpansions: maxPrefixExpansions,
+		minPrefixLength:     minPrefixLength,
+		analyzer:            normalizeAnalyzer(analyzer),
 	}
 }
 
-// fulltextIndexFormatVersion is the semver written into saved index files (Qdrant-style).
-// On load, if the file's version is not equal to this, the file is not loaded (caller rebuilds).
-// If the file was written by a newer version, we log and skip so the user can upgrade.
-const fulltextIndexFormatVersion = "1.1.0"
-
-// fulltextIndexSnapshot is the serializable form of the BM25 index (no mutex).
-type fulltextIndexSnapshot struct {
-	Version       string
-	Documents     map[string]string
-	InvertedIndex map[string]map[string]int
-	DocLengths    map[string]int
-	AvgDocLength  float64
-	DocCount      int
-}
-
-// Save writes the fulltext index to path (msgpack format). Dir is created if needed.
-// Copies index data under a short read lock so I/O does not block Search/IndexNode.
-func (f *FulltextIndex) Save(path string) error {
-	f.mu.RLock()
-	// Deep-copy so we can release the lock before slow I/O.
-	documents := make(map[string]string, len(f.documents))
-	for k, v := range f.documents {
-		documents[k] = v
-	}
-	invertedIndex := make(map[string]map[string]int, len(f.invertedIndex))
-	for term, docFreq := range f.invertedIndex {
-		inner := make(map[string]int, len(docFreq))
-		for d, cnt := range docFreq {
-			inner[d] = cnt
-		}
-		invertedIndex[term] = inner
-	}
-	docLengths := make(map[string]int, len(f.docLengths))
-	for k, v := range f.docLengths {
-		docLengths[k] = v
-	}
-	avgDocLength := f.avgDocLength
-	docCount := f.docCount
-	version := f.version
-	f.mu.RUnlock()
-
-	snap := fulltextIndexSnapshot{
-		Version:       fulltextIndexFormatVersion,
-		Documents:     documents,
-		InvertedIndex: invertedIndex,
-		DocLengths:    docLengths,
-		AvgDocLength:  avgDocLength,
-		DocCount:      docCount,
-	}
-	if err := writeMsgpackSnapshot(path, &snap); err != nil {
-		return err
-	}
-	f.markPersisted(version)
-	return nil
-}
-
-// SaveNoCopy writes the fulltext index to path without deep-copying the maps.
-// This avoids doubling memory during large builds, but holds the read lock during I/O.
-// Use during BuildIndexes when search is not serving live traffic.
-func (f *FulltextIndex) SaveNoCopy(path string) error {
-	f.mu.RLock()
-	version := f.version
-
-	snap := fulltextIndexSnapshot{
-		Version:       fulltextIndexFormatVersion,
-		Documents:     f.documents,
-		InvertedIndex: f.invertedIndex,
-		DocLengths:    f.docLengths,
-		AvgDocLength:  f.avgDocLength,
-		DocCount:      f.docCount,
-	}
-	err := writeMsgpackSnapshot(path, &snap)
-	f.mu.RUnlock()
-	if err != nil {
-		return err
-	}
-	f.markPersisted(version)
-	return nil
-}
-
-// Load replaces the fulltext index with the one stored at path (msgpack format).
-// If the file does not exist or decode fails, the index is left empty (or unchanged on
-// missing file) and no error is returned, so the caller can proceed with a full rebuild.
-// Returns an error only for unexpected I/O (e.g. permission denied).
-func (f *FulltextIndex) Load(path string) error {
-	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil // No saved index; caller will rebuild
-		}
-		return err
-	}
-	defer file.Close()
-
-	var snap fulltextIndexSnapshot
-	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
-		// Corrupt or wrong format; clear index so caller rebuilds
-		f.mu.Lock()
-		f.documents = make(map[string]string)
-		f.invertedIndex = make(map[string]map[string]int)
-		f.docLengths = make(map[string]int)
-		f.avgDocLength = 0
-		f.docCount = 0
-		f.totalDocLength = 0
-		f.mu.Unlock()
-		return nil
-	}
-	if !searchIndexVersionCompatible(snap.Version, fulltextIndexFormatVersion, "BM25") {
-		f.mu.Lock()
-		f.documents = make(map[string]string)
-		f.invertedIndex = make(map[string]map[string]int)
-		f.docLengths = make(map[string]int)
-		f.avgDocLength = 0
-		f.docCount = 0
-		f.totalDocLength = 0
-		f.mu.Unlock()
-		return nil
-	}
-	if snap.Documents == nil {
-		snap.Documents = make(map[string]string)
-	}
-	if snap.InvertedIndex == nil {
-		snap.InvertedIndex = make(map[string]map[string]int)
-	}
-	if snap.DocLengths == nil {
-		snap.DocLengths = make(map[string]int)
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.documents = snap.Documents
-	f.invertedIndex = snap.InvertedIndex
-	f.docLengths = snap.DocLengths
-	f.avgDocLength = snap.AvgDocLength
-	f.docCount = snap.DocCount
-	// totalDocLength is not persisted; recompute from docLengths (one-time O(N) on load).
-	f.totalDocLength = 0
-	for _, L := range f.docLengths {
-		f.totalDocLength += int64(L)
-	}
-	f.version = 1
-	f.persistedVersion = 1
-	return nil
-}
-
-// IsDirty reports whether the index has changes not yet persisted to disk.
 func (f *FulltextIndex) IsDirty() bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.version != f.persistedVersion
 }
 
-// markDirtyLocked increments the in-memory version; caller holds f.mu (write).
 func (f *FulltextIndex) markDirtyLocked() {
 	f.version++
+	f.queryPlanCache.Clear()
 }
 
-// markPersisted marks the index as persisted if no changes occurred since the snapshot.
 func (f *FulltextIndex) markPersisted(version uint64) {
 	f.mu.Lock()
 	if f.version == version {
@@ -232,61 +141,53 @@ func (f *FulltextIndex) markPersisted(version uint64) {
 	f.mu.Unlock()
 }
 
-// Clear removes all indexed documents and terms.
-// This is used to free RAM after persisting during bulk builds.
+func (f *FulltextIndex) Count() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.docCount
+}
+
+func (f *FulltextIndex) GetDocument(id string) (string, bool) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	text, ok := f.documents[id]
+	return text, ok
+}
+
 func (f *FulltextIndex) Clear() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.docCount == 0 && len(f.documents) == 0 && len(f.invertedIndex) == 0 && len(f.docLengths) == 0 {
+	if f.docCount == 0 && len(f.documents) == 0 && len(f.termIndex) == 0 {
 		return
 	}
 	f.documents = make(map[string]string)
-	f.invertedIndex = make(map[string]map[string]int)
-	f.docLengths = make(map[string]int)
-	f.avgDocLength = 0
+	f.docIDToNum = make(map[string]uint32)
+	f.docNumToID = nil
+	f.docLengths = nil
+	f.docIDsLexicalByNum = true
+	f.termIndex = make(map[string]*bm25TermState)
+	f.lexicon = nil
+	f.lexiconDirty = false
 	f.docCount = 0
 	f.totalDocLength = 0
+	f.avgDocLength = 0
 	f.markDirtyLocked()
 }
 
-// Index adds or updates a document in the index.
-func (f *FulltextIndex) Index(id string, text string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Remove old entry if exists
-	removed := f.removeInternal(id)
-
-	// Tokenize and normalize
-	tokens := f.analyze(text)
-	if len(tokens) == 0 {
-		if removed {
-			f.markDirtyLocked()
-		}
+// Index adds or updates a document. When prepared is false, it analyzes text
+// itself and ignores terms and frequency. When prepared is true, those inputs
+// must contain the analyzer's tokens and their frequencies for the text.
+func (f *FulltextIndex) Index(id, text string, terms []string, frequency map[string]int, prepared bool) {
+	if id == "" {
 		return
 	}
-
-	// Store document
-	f.documents[id] = text
-	f.docLengths[id] = len(tokens)
-	f.docCount++
-	f.totalDocLength += int64(len(tokens))
-
-	// Update inverted index
-	termFreq := make(map[string]int)
-	for _, token := range tokens {
-		termFreq[token]++
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dirty := f.applyDocumentLocked(id, text, terms, frequency, prepared)
+	f.updateAvgDocLengthLocked()
+	if dirty {
+		f.markDirtyLocked()
 	}
-
-	for term, freq := range termFreq {
-		if f.invertedIndex[term] == nil {
-			f.invertedIndex[term] = make(map[string]int)
-		}
-		f.invertedIndex[term][id] = freq
-	}
-
-	f.updateAvgDocLength()
-	f.markDirtyLocked()
 }
 
 // FulltextBatchEntry is one (id, text) pair for IndexBatch.
@@ -295,258 +196,316 @@ type FulltextBatchEntry struct {
 	Text string
 }
 
-// IndexBatch adds or updates many documents under one lock and updates avgDocLength once at the end.
-// Use this during bulk build to reduce lock contention and avoid O(N) avg updates.
+// IndexBatch adds or updates many documents under one lock and updates
+// avgDocLength once at the end. Use this during bulk build to reduce lock
+// contention and avoid O(N) avg updates.
 func (f *FulltextIndex) IndexBatch(entries []FulltextBatchEntry) {
 	if len(entries) == 0 {
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	dirty := false
 
-	for _, e := range entries {
-		if e.ID == "" {
-			continue
-		}
-		if f.removeInternal(e.ID) {
+	dirty := false
+	for _, entry := range entries {
+		if entry.ID != "" && f.applyDocumentLocked(entry.ID, entry.Text, nil, nil, false) {
 			dirty = true
 		}
-		tokens := f.analyze(e.Text)
-		if len(tokens) == 0 {
-			continue
-		}
-		f.documents[e.ID] = e.Text
-		f.docLengths[e.ID] = len(tokens)
-		f.docCount++
-		f.totalDocLength += int64(len(tokens))
-		termFreq := make(map[string]int)
-		for _, token := range tokens {
-			termFreq[token]++
-		}
-		for term, freq := range termFreq {
-			if f.invertedIndex[term] == nil {
-				f.invertedIndex[term] = make(map[string]int)
-			}
-			f.invertedIndex[term][e.ID] = freq
-		}
-		dirty = true
 	}
-	f.updateAvgDocLength()
+
+	f.updateAvgDocLengthLocked()
 	if dirty {
 		f.markDirtyLocked()
 	}
 }
 
-// Remove removes a document from the index.
+// applyDocumentLocked is the shared single-document mutation for live and
+// batched indexing. The caller updates aggregate metadata once per batch.
+func (f *FulltextIndex) applyDocumentLocked(id, text string, terms []string, frequency map[string]int, prepared bool) bool {
+	removed := f.removeInternalLocked(id)
+	if !prepared {
+		terms = f.analyze(text)
+	}
+	if len(terms) == 0 {
+		return removed
+	}
+	docNum, ok := f.docIDToNum[id]
+	if !ok {
+		docNum = uint32(len(f.docNumToID))
+		if f.docIDsLexicalByNum {
+			for previous := len(f.docNumToID) - 1; previous >= 0; previous-- {
+				if previousID := f.docNumToID[previous]; previousID != "" {
+					f.docIDsLexicalByNum = previousID < id
+					break
+				}
+			}
+		}
+		f.docIDToNum[id] = docNum
+		f.docNumToID = append(f.docNumToID, id)
+		f.docLengths = append(f.docLengths, 0)
+	} else {
+		f.docNumToID[docNum] = id
+	}
+	if !prepared {
+		frequency = make(map[string]int, len(terms))
+		for _, term := range terms {
+			frequency[term]++
+		}
+	}
+	f.documents[id] = text
+	f.docLengths[docNum] = uint32(len(terms))
+	f.docCount++
+	f.totalDocLength += int64(len(terms))
+	for term, tf := range frequency {
+		if tf <= 0 {
+			continue
+		}
+		st, exists := f.termIndex[term]
+		if !exists {
+			st = &bm25TermState{}
+			f.termIndex[term] = st
+			f.insertLexiconTermLocked(term)
+		}
+		st.Postings = append(st.Postings, bm25Posting{DocNum: docNum, TF: uint16(minInt(tf, math.MaxUint16))})
+	}
+	return true
+}
+
 func (f *FulltextIndex) Remove(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.removeInternal(id) {
+	if f.removeInternalLocked(id) {
 		f.markDirtyLocked()
 	}
 }
 
-// removeInternal removes a document without locking.
-// Returns true if a document was removed.
-func (f *FulltextIndex) removeInternal(id string) bool {
-	if _, exists := f.documents[id]; !exists {
+func (f *FulltextIndex) removeInternalLocked(id string) bool {
+	docNum, ok := f.docIDToNum[id]
+	if !ok {
 		return false
 	}
 
-	oldLen := f.docLengths[id]
-
-	// Get the document's terms
-	text := f.documents[id]
-	tokens := f.analyze(text)
-
-	// Count term frequencies
-	termFreq := make(map[string]int)
-	for _, token := range tokens {
-		termFreq[token]++
+	text, hasDoc := f.documents[id]
+	if !hasDoc {
+		delete(f.docIDToNum, id)
+		return false
 	}
 
-	// Remove from inverted index
-	for term := range termFreq {
-		if docs, ok := f.invertedIndex[term]; ok {
-			delete(docs, id)
-			if len(docs) == 0 {
-				delete(f.invertedIndex, term)
-			}
+	// The document is marked removed first (docLengths 0, docNumToID ""):
+	// its postings stay in place, counted dead, until their term is
+	// compacted (bm25TermState.dead).
+	oldLen := f.docLengths[docNum]
+	f.docNumToID[docNum] = ""
+	f.docLengths[docNum] = 0
+	tokens := f.analyze(text)
+	seen := make(map[string]struct{}, len(tokens))
+	for _, t := range tokens {
+		if _, exists := seen[t]; exists {
+			continue
+		}
+		seen[t] = struct{}{}
+		st := f.termIndex[t]
+		if st == nil {
+			continue
+		}
+		st.dead++
+		switch {
+		case st.liveDocumentFrequency() <= 0:
+			delete(f.termIndex, t)
+			f.removeLexiconTermLocked(t)
+		case st.dead*2 > len(st.Postings):
+			st.compactLocked(f.docLengths)
 		}
 	}
 
 	delete(f.documents, id)
-	delete(f.docLengths, id)
+	delete(f.docIDToNum, id)
 	f.docCount--
 	f.totalDocLength -= int64(oldLen)
-	f.updateAvgDocLength()
+	f.updateAvgDocLengthLocked()
 	return true
 }
 
-// Search performs BM25 keyword search.
-// Returns results sorted by BM25 score (highest first).
 func (f *FulltextIndex) Search(query string, limit int) []indexResult {
 	return f.SearchAllowed(query, limit, nil)
 }
 
 // SearchAllowed is Search over the documents allowed accepts: a document it
-// rejects is never scored or returned (#938). allowed is called at most once
-// per document, while the index's read lock is held; nil allows every
-// document.
+// rejects is never scored or returned, so the top limit are the best allowed
+// documents however many better ones it rejects (#938). allowed is called at
+// most once per document, while the index's read lock is held; nil allows
+// every document.
 func (f *FulltextIndex) SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult {
-	f.mu.RLock()
+	if limit <= 0 {
+		return nil
+	}
+
+	f.lockForSearch()
 	defer f.mu.RUnlock()
-
-	if f.docCount == 0 {
+	if f.docCount == 0 || f.avgDocLength <= 0 {
 		return nil
 	}
 
-	// Tokenize query
-	queryTerms := f.analyze(query)
-	if len(queryTerms) == 0 {
+	var weightedTerms []weightedTermPostings
+	if cached, ok := f.queryPlanCache.Load(query); ok && cached.(bm25QueryPlan).version == f.version {
+		plan := cached.(bm25QueryPlan)
+		weightedTerms = plan.terms
+	} else {
+		queryTerms := f.analyze(query)
+		if len(queryTerms) == 0 {
+			return nil
+		}
+		weightedTerms = f.expandAndWeightTermsLocked(queryTerms)
+		if len(weightedTerms) == 0 {
+			return nil
+		}
+		if len(query) <= 256 {
+			f.queryPlanCache.Store(query, bm25QueryPlan{
+				version: f.version,
+				terms:   weightedTerms,
+			})
+		}
+	}
+	if len(weightedTerms) == 0 {
 		return nil
 	}
 
-	// Calculate BM25 scores for all documents containing query terms
-	scores := make(map[string]float64)
-	var admitted map[string]bool
-	admit := func(docID string) bool {
-		if allowed == nil {
-			return true
-		}
-		if admitted == nil {
-			admitted = make(map[string]bool)
-		}
-		ok, seen := admitted[docID]
-		if !seen {
-			ok = allowed(docID)
-			admitted[docID] = ok
-		}
-		return ok
+	postingVisits := 0
+	for _, weightedTerm := range weightedTerms {
+		postingVisits += len(weightedTerm.postings)
 	}
-
-	for _, term := range queryTerms {
-		// First try exact match
-		docs, exists := f.invertedIndex[term]
-		if exists {
-			idf := f.calculateIDF(term)
-			for docID, termFreq := range docs {
-				if !admit(docID) {
+	useDenseScores := shouldUseDenseBM25Scores(len(f.docLengths), postingVisits)
+	scratch := f.getScoreScratch(useDenseScores, postingVisits)
+	lengthNormOffset := bm25K1 * (1 - bm25B)
+	lengthNormScale := bm25K1 * bm25B / f.avgDocLength
+	denseTouchedAfterFirstTerm := 0
+	// The unfiltered dense loop is kept free of the allowed check: with it,
+	// unfiltered searches measured about 8% slower (#938).
+	if useDenseScores && allowed == nil {
+		for termIndex, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
 					continue
 				}
-				docLen := float64(f.docLengths[docID])
-				tf := float64(termFreq)
-				numerator := tf * (bm25K1 + 1)
-				denominator := tf + bm25K1*(1-bm25B+bm25B*(docLen/f.avgDocLength))
-				scores[docID] += idf * (numerator / denominator)
+				if scratch.generations[p.DocNum] != scratch.generation {
+					scratch.generations[p.DocNum] = scratch.generation
+					scratch.scores[p.DocNum] = 0
+					scratch.touched = append(scratch.touched, p.DocNum)
+				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.scores[p.DocNum] += termScale * tf / denominator
+			}
+			if termIndex == 0 {
+				denseTouchedAfterFirstTerm = len(scratch.touched)
 			}
 		}
-
-		// Also try prefix matching for better search experience
-		// (matches "searchable" to "searchablealice")
-		for indexedTerm, termDocs := range f.invertedIndex {
-			if indexedTerm != term && strings.HasPrefix(indexedTerm, term) {
-				// Use reduced IDF for prefix matches (not as strong as exact)
-				idf := f.calculateIDF(indexedTerm) * 0.8
-				for docID, termFreq := range termDocs {
-					if !admit(docID) {
+	} else if useDenseScores {
+		for termIndex, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
+					continue
+				}
+				if scratch.generations[p.DocNum] != scratch.generation {
+					scratch.generations[p.DocNum] = scratch.generation
+					scratch.scores[p.DocNum] = 0
+					// A rejected document is never touched, so it is never
+					// ranked; later terms may add to its score, which nothing
+					// reads.
+					if allowed != nil && !allowed(f.docNumToID[p.DocNum]) {
 						continue
 					}
-					docLen := float64(f.docLengths[docID])
-					tf := float64(termFreq)
-					numerator := tf * (bm25K1 + 1)
-					denominator := tf + bm25K1*(1-bm25B+bm25B*(docLen/f.avgDocLength))
-					scores[docID] += idf * (numerator / denominator)
+					scratch.touched = append(scratch.touched, p.DocNum)
 				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.scores[p.DocNum] += termScale * tf / denominator
+			}
+			if termIndex == 0 {
+				denseTouchedAfterFirstTerm = len(scratch.touched)
+			}
+		}
+	} else {
+		var admitted map[uint32]bool
+		if allowed != nil {
+			admitted = make(map[uint32]bool)
+		}
+		for _, wt := range weightedTerms {
+			termScale := wt.weight * wt.idf * (bm25K1 + 1)
+			for _, p := range wt.postings {
+				docLen := f.docLengths[p.DocNum]
+				if docLen == 0 {
+					continue
+				}
+				if allowed != nil {
+					ok, seen := admitted[p.DocNum]
+					if !seen {
+						ok = allowed(f.docNumToID[p.DocNum])
+						admitted[p.DocNum] = ok
+					}
+					if !ok {
+						continue
+					}
+				}
+				tf := float64(p.TF)
+				denominator := tf + lengthNormOffset + lengthNormScale*float64(docLen)
+				scratch.sparseScores[p.DocNum] += termScale * tf / denominator
 			}
 		}
 	}
 
-	// Convert to sorted results
-	type scored struct {
-		id    string
-		score float64
+	var top []scoredDoc
+	var tieDocIDs []string
+	if !f.docIDsLexicalByNum {
+		tieDocIDs = f.docNumToID
 	}
-	var results []scored
-	for id, score := range scores {
-		results = append(results, scored{id: id, score: score})
+	if useDenseScores {
+		ascendingLexicalCandidates := tieDocIDs == nil && denseTouchedAfterFirstTerm == len(scratch.touched)
+		top = topKFromDenseScores(scratch.scores, scratch.touched, tieDocIDs, ascendingLexicalCandidates, limit, scratch.top)
+	} else {
+		top = topKFromSparseScores(scratch.sparseScores, tieDocIDs, limit, scratch.top)
+	}
+	scratch.top = top
+	out := make([]indexResult, 0, len(top))
+	for _, s := range top {
+		docID := f.docNumToID[s.docNum]
+		if docID == "" {
+			continue
+		}
+		out = append(out, indexResult{ID: docID, Score: s.score})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].score > results[j].score
-	})
+	f.putScoreScratch(scratch)
+	return out
+}
 
-	// Limit results
+func (f *FulltextIndex) PhraseSearch(phrase string, limit int) []indexResult {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if limit <= 0 {
+		return nil
+	}
+	phrase = strings.ToLower(phrase)
+	var results []indexResult
+	for id, text := range f.documents {
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, phrase) {
+			idx := strings.Index(lower, phrase)
+			score := 1.0 / (1.0 + float64(idx)/100.0)
+			results = append(results, indexResult{ID: id, Score: score})
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	if len(results) > limit {
 		results = results[:limit]
 	}
-
-	// Convert to indexResult
-	output := make([]indexResult, len(results))
-	for i, r := range results {
-		output[i] = indexResult{ID: r.id, Score: r.score}
-	}
-
-	return output
+	return results
 }
 
-// TermIDF is the BM25 IDF of an analyzed term, the weight a match on it
-// gets: higher for a rarer term, 0 for one no document holds.
-func (f *FulltextIndex) TermIDF(term string) float64 {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	if len(f.invertedIndex[term]) == 0 {
-		return 0
-	}
-	return f.calculateIDF(term)
-}
-
-// calculateIDF calculates the Inverse Document Frequency for a term.
-// Uses the BM25 IDF formula: log((N - df + 0.5) / (df + 0.5) + 1)
-// where N = total docs, df = docs containing term
-// The +1 inside the log ensures non-negative IDF for common terms.
-func (f *FulltextIndex) calculateIDF(term string) float64 {
-	df := float64(len(f.invertedIndex[term]))
-	n := float64(f.docCount)
-
-	// BM25 IDF formula with +1 smoothing to prevent negative values
-	// This is the Lucene/Elasticsearch variant that ensures non-negative IDF
-	idf := math.Log(1 + (n-df+0.5)/(df+0.5))
-	if idf < 0 {
-		idf = 0 // Safety floor
-	}
-	return idf
-}
-
-// updateAvgDocLength sets avgDocLength from totalDocLength and docCount (O(1)).
-// Caller must hold f.mu and ensure totalDocLength is correct.
-func (f *FulltextIndex) updateAvgDocLength() {
-	if f.docCount == 0 {
-		f.avgDocLength = 0
-		f.totalDocLength = 0
-		return
-	}
-	f.avgDocLength = float64(f.totalDocLength) / float64(f.docCount)
-}
-
-// Count returns the number of indexed documents.
-func (f *FulltextIndex) Count() int {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.docCount
-}
-
-// GetDocument retrieves the original text for a document.
-func (f *FulltextIndex) GetDocument(id string) (string, bool) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	text, exists := f.documents[id]
-	return text, exists
-}
-
-// LexicalSeedDocIDs returns document IDs selected from high-IDF terms to provide
-// lexical priors for clustering seed selection.
 func (f *FulltextIndex) LexicalSeedDocIDs(maxTerms, docsPerTerm int) []string {
 	hints := f.LexicalSeedHints(maxTerms, docsPerTerm)
 	if len(hints) == 0 {
@@ -566,18 +525,20 @@ func (f *FulltextIndex) LexicalSeedHints(maxTerms, docsPerTerm int) []LexicalSee
 		return nil
 	}
 	f.mu.RLock()
+	defer f.mu.RUnlock()
+
 	type termEntry struct {
 		term string
 		idf  float64
 		df   int
 	}
-	terms := make([]termEntry, 0, len(f.invertedIndex))
-	for term, postings := range f.invertedIndex {
-		df := len(postings)
+	terms := make([]termEntry, 0, len(f.termIndex))
+	for term, st := range f.termIndex {
+		df := st.liveDocumentFrequency()
 		if df < lexicalSeedMinDocumentFrequency() {
 			continue
 		}
-		idf := f.calculateIDF(term)
+		idf := f.calculateIDFLocked(df)
 		if idf > 0 {
 			terms = append(terms, termEntry{term: term, idf: idf, df: df})
 		}
@@ -594,16 +555,24 @@ func (f *FulltextIndex) LexicalSeedHints(maxTerms, docsPerTerm int) []LexicalSee
 	if len(terms) > maxTerms {
 		terms = terms[:maxTerms]
 	}
+
 	selectedTerms := make([]lexicalSeedTerm, 0, len(terms))
 	for _, t := range terms {
-		postings := f.invertedIndex[t.term]
+		st := f.termIndex[t.term]
+		if st == nil {
+			continue
+		}
 		type docTF struct {
 			id string
-			tf int
+			tf uint16
 		}
-		docs := make([]docTF, 0, len(postings))
-		for id, tf := range postings {
-			docs = append(docs, docTF{id: id, tf: tf})
+		docs := make([]docTF, 0, len(st.Postings))
+		for _, p := range st.Postings {
+			id := f.docNumToID[p.DocNum]
+			if id == "" {
+				continue
+			}
+			docs = append(docs, docTF{id: id, tf: p.TF})
 		}
 		sort.Slice(docs, func(i, j int) bool {
 			if docs[i].tf == docs[j].tf {
@@ -611,18 +580,225 @@ func (f *FulltextIndex) LexicalSeedHints(maxTerms, docsPerTerm int) []LexicalSee
 			}
 			return docs[i].tf > docs[j].tf
 		})
-		limit := docsPerTerm
-		if limit > len(docs) {
-			limit = len(docs)
+		lim := docsPerTerm
+		if lim > len(docs) {
+			lim = len(docs)
 		}
-		selected := lexicalSeedTerm{term: t.term, idf: t.idf, docs: make([]lexicalSeedDocument, limit)}
-		for i := 0; i < limit; i++ {
+		selected := lexicalSeedTerm{term: t.term, idf: t.idf, docs: make([]lexicalSeedDocument, lim)}
+		for i := 0; i < lim; i++ {
 			selected.docs[i] = lexicalSeedDocument{id: docs[i].id, tf: uint32(docs[i].tf)}
 		}
 		selectedTerms = append(selectedTerms, selected)
 	}
-	f.mu.RUnlock()
 	return lexicalSeedHints(selectedTerms)
+}
+
+func (f *FulltextIndex) updateAvgDocLengthLocked() {
+	if f.docCount <= 0 {
+		f.docCount = 0
+		f.totalDocLength = 0
+		f.avgDocLength = 0
+		return
+	}
+	f.avgDocLength = float64(f.totalDocLength) / float64(f.docCount)
+}
+
+// TermIDF is the BM25 IDF of an analyzed term, the weight a match on it
+// gets: higher for a rarer term, 0 for one no live document holds.
+func (f *FulltextIndex) TermIDF(term string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	st, ok := f.termIndex[term]
+	if !ok {
+		return 0
+	}
+	df := st.liveDocumentFrequency()
+	if df == 0 {
+		return 0
+	}
+	return f.calculateIDFLocked(df)
+}
+
+func (f *FulltextIndex) calculateIDFLocked(df int) float64 {
+	if df <= 0 || f.docCount <= 0 {
+		return 0
+	}
+	n := float64(f.docCount)
+	d := float64(df)
+	idf := math.Log(1 + (n-d+0.5)/(d+0.5))
+	if idf < 0 {
+		return 0
+	}
+	return idf
+}
+
+func (f *FulltextIndex) insertLexiconTermLocked(term string) {
+	f.lexiconDirty = true
+}
+
+func (f *FulltextIndex) removeLexiconTermLocked(term string) {
+	f.lexiconDirty = true
+}
+
+func (f *FulltextIndex) rebuildLexiconLocked() {
+	if !f.lexiconDirty {
+		return
+	}
+	lexicon := make([]string, 0, len(f.termIndex))
+	for term, state := range f.termIndex {
+		if state != nil && state.liveDocumentFrequency() > 0 {
+			lexicon = append(lexicon, term)
+		}
+	}
+	sort.Strings(lexicon)
+	f.lexicon = lexicon
+	f.lexiconDirty = false
+}
+
+// lockWithCurrentLexicon returns with the read lock held and guarantees that
+// no mutation can make the sorted lexicon stale between rebuilding and use.
+func (f *FulltextIndex) lockWithCurrentLexicon() {
+	for {
+		f.mu.RLock()
+		if !f.lexiconDirty {
+			return
+		}
+		f.mu.RUnlock()
+
+		f.mu.Lock()
+		f.rebuildLexiconLocked()
+		f.mu.Unlock()
+	}
+}
+
+func (f *FulltextIndex) lockForSearch() {
+	if f.maxPrefixExpansions == 0 {
+		f.mu.RLock()
+		return
+	}
+	f.lockWithCurrentLexicon()
+}
+
+type weightedTermPostings struct {
+	postings []bm25Posting
+	idf      float64
+	weight   float64
+}
+
+type bm25QueryPlan struct {
+	version uint64
+	terms   []weightedTermPostings
+}
+
+type bm25ScoreScratch struct {
+	scores       []float64
+	generations  []uint32
+	touched      []uint32
+	sparseScores map[uint32]float64
+	top          minScoreHeap
+	generation   uint32
+}
+
+func shouldUseDenseBM25Scores(docSlots, postingVisits int) bool {
+	return docSlots < bm25SparseMinDocSlots ||
+		postingVisits >= bm25DenseMinPostingVisits &&
+			postingVisits >= (docSlots+bm25DenseDensityDivisor-1)/bm25DenseDensityDivisor
+}
+
+func (f *FulltextIndex) getScoreScratch(dense bool, postingVisits int) *bm25ScoreScratch {
+	var scratch *bm25ScoreScratch
+	if pooled := f.scoreScratchPool.Get(); pooled != nil {
+		scratch = pooled.(*bm25ScoreScratch)
+	} else {
+		scratch = &bm25ScoreScratch{}
+	}
+	if dense {
+		if cap(scratch.scores) < len(f.docLengths) {
+			scratch.scores = make([]float64, len(f.docLengths))
+			scratch.generations = make([]uint32, len(f.docLengths))
+		} else {
+			scratch.scores = scratch.scores[:len(f.docLengths)]
+			scratch.generations = scratch.generations[:len(f.docLengths)]
+		}
+		scratch.generation++
+		if scratch.generation == 0 {
+			clear(scratch.generations)
+			scratch.generation = 1
+		}
+		scratch.touched = scratch.touched[:0]
+		scratch.sparseScores = nil
+	} else {
+		scratch.scores = nil
+		scratch.generations = nil
+		scratch.touched = nil
+		if scratch.sparseScores == nil {
+			scratch.sparseScores = make(map[uint32]float64, minInt(postingVisits, bm25MaxPooledSparseScores))
+		} else {
+			clear(scratch.sparseScores)
+		}
+	}
+	return scratch
+}
+
+func (f *FulltextIndex) putScoreScratch(scratch *bm25ScoreScratch) {
+	if cap(scratch.scores) > bm25MaxPooledDenseDocSlots {
+		scratch.scores = nil
+		scratch.generations = nil
+		scratch.touched = nil
+	}
+	if len(scratch.sparseScores) > bm25MaxPooledSparseScores {
+		scratch.sparseScores = nil
+	}
+	f.scoreScratchPool.Put(scratch)
+}
+
+func (f *FulltextIndex) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
+	termWeights := make(map[string]float64, len(queryTerms))
+	for _, term := range queryTerms {
+		termWeights[term] += 1.0
+		if utf8.RuneCountInString(term) < f.minPrefixLength || f.maxPrefixExpansions == 0 {
+			continue
+		}
+		start := sort.SearchStrings(f.lexicon, term)
+		added := 0
+		for i := start; i < len(f.lexicon); i++ {
+			candidate := f.lexicon[i]
+			if !strings.HasPrefix(candidate, term) {
+				break
+			}
+			if candidate == term {
+				continue
+			}
+			termWeights[candidate] += bm25PrefixWeight
+			added++
+			if added >= f.maxPrefixExpansions {
+				break
+			}
+		}
+	}
+
+	terms := make([]weightedTermPostings, 0, len(termWeights))
+	for term, weight := range termWeights {
+		st := f.termIndex[term]
+		if st == nil || st.liveDocumentFrequency() <= 0 {
+			continue
+		}
+		idf := f.calculateIDFLocked(st.liveDocumentFrequency())
+		upper := weight * idf * (bm25K1 + 1)
+		if upper <= 0 {
+			continue
+		}
+		terms = append(terms, weightedTermPostings{
+			postings: st.Postings,
+			idf:      idf,
+			weight:   weight,
+		})
+	}
+	return terms
+}
+
+func (f *FulltextIndex) analyze(text string) []string {
+	return normalizeAnalyzer(f.analyzer).Analyze(text)
 }
 
 func lexicalSeedMinDocumentFrequency() int {
@@ -638,35 +814,9 @@ func tokenize(text string) []string {
 	return DefaultTextAnalyzer().Analyze(text)
 }
 
-func (f *FulltextIndex) analyze(text string) []string {
-	return normalizeAnalyzer(f.analyzer).Analyze(text)
-}
-
-// PhraseSearch searches for an exact phrase match.
-// Returns documents containing the exact phrase.
-func (f *FulltextIndex) PhraseSearch(phrase string, limit int) []indexResult {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	phrase = strings.ToLower(phrase)
-	var results []indexResult
-
-	for id, text := range f.documents {
-		if strings.Contains(strings.ToLower(text), phrase) {
-			// Score based on how early the phrase appears
-			idx := strings.Index(strings.ToLower(text), phrase)
-			score := 1.0 / (1.0 + float64(idx)/100.0)
-			results = append(results, indexResult{ID: id, Score: score})
-		}
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
-	return results
+	return b
 }

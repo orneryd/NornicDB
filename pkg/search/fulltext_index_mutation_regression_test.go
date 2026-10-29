@@ -10,7 +10,7 @@ import (
 )
 
 func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	idx.IndexBatch([]FulltextBatchEntry{
 		{ID: "rare", Text: "needle unique"},
 		{ID: "common-a", Text: "needle common"},
@@ -30,43 +30,42 @@ func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
 	idx.Remove("common-b")
 	require.Equal(t, "rare", idx.Search("unique", 1)[0].ID)
 
-	idx.Index("rare", "replacement only")
+	idx.Index("rare", "replacement only", nil, nil, false)
 	require.Empty(t, idx.Search("unique", 10))
 	require.Equal(t, "rare", idx.Search("replacement", 1)[0].ID)
 
-	path := filepath.Join(t.TempDir(), "fulltext.gob")
+	path := filepath.Join(t.TempDir(), "bm25.v2")
 	require.NoError(t, idx.Save(path))
-	reloaded := NewFulltextIndexV2()
+	reloaded := NewFulltextIndex(nil)
 	require.NoError(t, reloaded.Load(path))
 	require.Equal(t, idx.Search("replacement", 10), reloaded.Search("replacement", 10))
 }
 
-func BenchmarkFulltextIndexGrowingVocabularyMutation(b *testing.B) {
-	for range b.N {
-		idx := NewFulltextIndexV2()
-		for i := 0; i < 1_000; i++ {
-			idx.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared unique-%04d", i))
+func BenchmarkFulltextIndexVocabularyMutation(b *testing.B) {
+	b.Run("growing", func(b *testing.B) {
+		for range b.N {
+			idx := NewFulltextIndex(nil)
+			for i := 0; i < 1_000; i++ {
+				idx.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared unique-%04d", i), nil, nil, false)
+			}
 		}
-	}
-}
-
-func BenchmarkFulltextIndexMutationWithLargeVocabulary(b *testing.B) {
-	idx := NewFulltextIndexV2()
-	idx.Index("mutable", "middlea")
-
-	idx.mu.Lock()
-	for i := 0; i < 100_000; i++ {
-		term := fmt.Sprintf("term%08x", i)
-		idx.termIndex[term] = &bm25TermState{Postings: []bm25Posting{{DocNum: 0, TF: 1}}}
-		idx.lexicon = append(idx.lexicon, term)
-	}
-	idx.lexicon = append(idx.lexicon, "middlea")
-	sort.Strings(idx.lexicon)
-	idx.lexiconDirty = false
-	idx.mu.Unlock()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		idx.Index("mutable", fmt.Sprintf("middle%c", 'a'+rune(i&1)))
-	}
+	})
+	b.Run("large existing", func(b *testing.B) {
+		idx := NewFulltextIndex(nil)
+		idx.Index("mutable", "middlea", nil, nil, false)
+		idx.mu.Lock()
+		for i := 0; i < 100_000; i++ {
+			term := fmt.Sprintf("term%08x", i)
+			idx.termIndex[term] = &bm25TermState{Postings: []bm25Posting{{DocNum: 0, TF: 1}}}
+			idx.lexicon = append(idx.lexicon, term)
+		}
+		idx.lexicon = append(idx.lexicon, "middlea")
+		sort.Strings(idx.lexicon)
+		idx.lexiconDirty = false
+		idx.mu.Unlock()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			idx.Index("mutable", fmt.Sprintf("middle%c", 'a'+rune(i&1)), nil, nil, false)
+		}
+	})
 }

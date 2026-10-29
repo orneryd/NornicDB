@@ -151,7 +151,7 @@ func TestRerankProviderRepresentationShapeMatrix(t *testing.T) {
 		for _, testCase := range cases {
 			t.Run(representation.name+"/"+testCase.shape, func(t *testing.T) {
 				reranker := makeProviderShapeReranker(t, representation, testCase.shape)
-				service := NewService(newNamespacedEngine(t))
+				service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 				t.Cleanup(func() { _ = service.Close() })
 				var logs bytes.Buffer
 				service.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -220,7 +220,7 @@ func TestRerankCandidatesRejectsAmbiguousProviderOutput(t *testing.T) {
 		for _, shape := range cases[representation.name] {
 			t.Run(representation.name+"/"+shape, func(t *testing.T) {
 				reranker := makeProviderShapeReranker(t, representation, shape)
-				service := NewService(newNamespacedEngine(t))
+				service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 				t.Cleanup(func() { _ = service.Close() })
 				service.SetReranker(reranker)
 				options := DefaultSearchOptions()
@@ -568,7 +568,7 @@ func TestLLMRerankerRejectsMalformedStructuredOutputPublicOutcome(t *testing.T) 
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			service := NewService(newNamespacedEngine(t))
+			service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			reranker := NewLLMReranker(&LLMRerankerConfig{
 				Enabled:       true,

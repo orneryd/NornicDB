@@ -128,12 +128,12 @@ func clusteredLexicalMetadata(vectorCount, queryCount int) ([]string, []search.L
 		chunksPerDocument = 50
 	)
 	ids := make([]string, vectorCount)
-	fulltext := search.NewFulltextIndexV2()
+	fulltext := search.NewFulltextIndex(nil)
 	for topic := 0; topic < topics; topic++ {
 		for document := 0; document < documentsPerTopic; document++ {
 			base := topic*documentsPerTopic*chunksPerDocument + document*chunksPerDocument
 			documentID := fmt.Sprintf("doc-%02d-%02d", topic, document)
-			fulltext.Index(documentID, fmt.Sprintf("topic_%02d document_%02d_%02d", topic, topic, document))
+			fulltext.Index(documentID, fmt.Sprintf("topic_%02d document_%02d_%02d", topic, topic, document), nil, nil, false)
 			for chunk := 0; chunk < chunksPerDocument && base+chunk < vectorCount; chunk++ {
 				ids[base+chunk] = search.NodeChunkVectorKey(documentID, chunk)
 			}

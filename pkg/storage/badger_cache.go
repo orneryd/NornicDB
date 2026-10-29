@@ -59,61 +59,76 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 		return
 	}
 	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
-	b.putNodeLocked(node)
+	b.putNodeLocked(copyNode(node), nodeReadCacheFull)
 	// Only the cache copy is modified; buffered ACK bodies remain immutable.
-	cached := b.nodeCache[node.ID]
-	cached.embeddingRevision = EmbeddingBodyRevision{}
-	cached.embeddingAttempt = nil
+	entry := b.nodeCache[node.ID]
+	entry.embeddingRevision = EmbeddingBodyRevision{}
+	entry.embeddingAttempt = nil
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
 
 // cacheFillNode caches node as read by a read that captured gen before it
 // read; a write since then means node may be stale, and it isn't cached.
+// The read owns node, so it can copy the image before taking nodeCacheMu.
+// The generation check under the lock still rejects an invalidated fill.
 func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheMode) {
 	if node == nil {
 		return
 	}
+	if mode == nodeReadCacheQuery {
+		// Same copy shape the entry is published with: a query entry shares
+		// its in-memory vectors with callers.
+		cached := copyNodeForCaller(node)
+		b.nodeCacheMu.Lock()
+		if b.nodeCacheGen.current() != gen {
+			b.nodeCacheMu.Unlock()
+			return
+		}
+		if _, full := b.nodeCache[node.ID]; !full {
+			b.putNodeLocked(cached, nodeReadCacheQuery)
+		}
+		b.nodeCacheMu.Unlock()
+		return
+	}
+	cached := copyNode(node)
 	b.nodeCacheMu.Lock()
 	if b.nodeCacheGen.current() != gen {
 		b.nodeCacheMu.Unlock()
 		return
 	}
-	if mode == nodeReadCacheQuery {
-		if _, full := b.nodeCache[node.ID]; !full {
-			if b.queryNodeCache == nil || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) > b.nodeCacheMaxEntries) {
-				b.queryNodeCache = make(map[NodeID]*Node)
-			}
-			b.queryNodeCache[node.ID] = copyNodeForCaller(node)
-		}
-		b.nodeCacheMu.Unlock()
-		return
-	}
-	b.putNodeLocked(node)
+	b.putNodeLocked(cached, nodeReadCacheFull)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
 
-// putNodeLocked stores a copy of node; the caller holds nodeCacheMu. node is
-// a body as storage returns it: decoded by a read, or a write's image
-// (writtenNodeImage), so the cache serves what an uncached read decodes.
-func (b *BadgerEngine) putNodeLocked(node *Node) {
+// putNodeLocked stores an already-copied body in the selected cache while the
+// caller holds nodeCacheMu. A full image supersedes its query-only image.
+func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
+	if mode == nodeReadCacheQuery {
+		if b.queryNodeCache == nil || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) > b.nodeCacheMaxEntries) {
+			b.queryNodeCache = make(map[NodeID]*Node)
+		}
+		b.queryNodeCache[copied.ID] = copied
+		return
+	}
 	// Simple eviction: if cache is too large, clear it.
 	// Keeps behavior consistent with existing code paths.
 	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache) > b.nodeCacheMaxEntries {
 		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	}
-	cached := copyNode(node)
-	b.nodeCache[node.ID] = cached
-	delete(b.queryNodeCache, node.ID)
+	b.nodeCache[copied.ID] = copied
+	delete(b.queryNodeCache, copied.ID)
 }
 
 // cacheLoadQueryNode returns a copy of id's GetQueryNode entry, sharing its
 // in-memory vectors.
+// Cached query images are immutable, so their copies can be made after the
+// map lookup releases its read lock.
 func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	b.nodeCacheMu.RLock()
-	defer b.nodeCacheMu.RUnlock()
 	cached, ok := b.queryNodeCache[id]
+	b.nodeCacheMu.RUnlock()
 	if !ok {
 		return nil, false
 	}

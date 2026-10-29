@@ -29,7 +29,7 @@ func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
 	vectorPath := filepath.Join(tmp, "vectors")
 	hnswPath := filepath.Join(tmp, "hnsw")
 
-	svc := NewService(engine)
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 	svc.SetFulltextIndexPath(bm25Path)
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetHNSWIndexPath(hnswPath)
@@ -64,7 +64,7 @@ func TestSetPersistenceEnabledFalse_DisablesExistingVectorFileStoreWrites(t *tes
 	tmp := t.TempDir()
 	vectorPath := filepath.Join(tmp, "vectors")
 
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetPersistenceEnabled(true)
 	require.NoError(t, svc.BuildIndexes(context.Background()))

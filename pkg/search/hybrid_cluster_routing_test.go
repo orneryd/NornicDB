@@ -45,7 +45,7 @@ func preferredSeedsForTest(t *testing.T, ci interface{}) []int {
 
 func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "")
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 	require.Equal(t, 5, svc.clusterIndex.Config().MaxIterations)
@@ -56,7 +56,7 @@ func TestSelectHybridClusters_UsesLexicalSignal(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "5")
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 
@@ -96,7 +96,7 @@ func setClusterProfilesForTest(t *testing.T, svc *Service, profiles map[int]map[
 }
 
 func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 
@@ -104,7 +104,7 @@ func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
 	require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
 
 	svc.setFulltext(&seedOverrideFulltext{
-		FulltextIndex: NewFulltextIndex(),
+		FulltextIndex: NewFulltextIndex(nil),
 		seedIDs:       []string{"doc-b", "missing-id"},
 	})
 
@@ -114,7 +114,7 @@ func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
 }
 
 func TestApplyBM25SeedHints_NoSeedsIsNoOp(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 
@@ -122,7 +122,7 @@ func TestApplyBM25SeedHints_NoSeedsIsNoOp(t *testing.T) {
 	require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
 
 	svc.setFulltext(&seedOverrideFulltext{
-		FulltextIndex: NewFulltextIndex(),
+		FulltextIndex: NewFulltextIndex(nil),
 		seedIDs:       nil,
 	})
 
@@ -162,7 +162,7 @@ func BenchmarkSelectHybridClusters(b *testing.B) {
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM")
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX")
 
-	svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
+	svc := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	svc.EnableClustering(nil, 8)
 	svc.SetMinEmbeddingsForClustering(1)
 	for i := 0; i < 256; i++ {

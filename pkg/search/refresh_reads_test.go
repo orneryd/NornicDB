@@ -25,7 +25,7 @@ func newCountingService(t *testing.T) (*Service, *countingReadEngine, storage.En
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	engine := &countingReadEngine{Engine: store}
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc, engine, store
 }

@@ -148,6 +148,67 @@ func TestSharedEndpointReentrancyUpgradeAndRecovery(t *testing.T) {
 	sm.uniqueConstraintCommitLocksMu.Unlock()
 }
 
+func TestSharedEndpointReleasesWakeEligibleUpgrades(t *testing.T) {
+	sm := NewSchemaManager()
+	read := uniqueConstraintLockKey{entityKind: 1, entityID: "test:hub", shared: true}
+	write := uniqueConstraintLockKey{entityKind: 1, entityID: "test:hub"}
+	first, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "first", []uniqueConstraintLockKey{read})
+	require.NoError(t, err)
+	defer first()
+	second, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "second", []uniqueConstraintLockKey{read})
+	require.NoError(t, err)
+	defer second()
+	type result struct {
+		release func()
+		err     error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan result, 1)
+	go func() {
+		release, err := sm.acquireUniqueConstraintCommitLocks(ctx, "first", []uniqueConstraintLockKey{write})
+		done <- result{release, err}
+	}()
+	require.Eventually(t, func() bool {
+		sm.uniqueConstraintCommitLocksMu.Lock()
+		defer sm.uniqueConstraintCommitLocksMu.Unlock()
+		return sm.uniqueConstraintLockWaits["first"] != nil
+	}, time.Second, time.Millisecond)
+	// The upgrader's own read remains; only the conflicting secondary read
+	// leaves. Its release must wake the writer even though one reader remains.
+	second()
+	got := <-done
+	require.NoError(t, got.err)
+	got.release()
+	first()
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, sm.uniqueConstraintCommitLocks)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+}
+
+func TestSharedEndpointBatchDeduplicationAcrossAcquisitions(t *testing.T) {
+	sm := NewSchemaManager()
+	keys := make([]uniqueConstraintLockKey, 0, 82)
+	for i := 0; i < 80; i++ {
+		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: fmt.Sprintf("test:n%d", i), shared: true})
+	}
+	// The later exclusive request must dominate the earlier shared one.
+	keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: "test:n0"})
+	for i := 0; i < 3; i++ {
+		release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "batch", keys)
+		require.NoError(t, err)
+		wait, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		_, err = sm.acquireUniqueConstraintCommitLocks(wait, "reader", []uniqueConstraintLockKey{keys[0]})
+		cancel()
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		release()
+	}
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, sm.uniqueConstraintCommitLocks)
+	require.Empty(t, sm.uniqueConstraintLockWaits)
+	sm.uniqueConstraintCommitLocksMu.Unlock()
+}
+
 func TestSharedEndpointDeadlockFollowsAllReaders(t *testing.T) {
 	sm := NewSchemaManager()
 	a := uniqueConstraintLockKey{entityKind: 1, entityID: "test:a", shared: true}

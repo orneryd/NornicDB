@@ -42,7 +42,7 @@ func TestPopulationCannotReplaceLiveMutation(t *testing.T) {
 			_, err := base.CreateNode(node)
 			require.NoError(t, err)
 			engine := &pausedPopulationEngine{Engine: base, captured: make(chan struct{}), resume: make(chan struct{})}
-			svc := NewServiceWithDimensions(engine, 4)
+			svc := NewService(engine, 4, nil)
 			buildDone := make(chan error, 1)
 			go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
 			<-engine.captured

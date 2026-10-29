@@ -38,7 +38,7 @@ func TestIVFHNSWPublicQueryPreservesConcentratedNeighbours(t *testing.T) {
 			}
 		}
 	}
-	svc := NewServiceWithDimensions(engine, dimensions)
+	svc := NewService(engine, dimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.EnableClustering(nil, clusters)
 	svc.SetMinEmbeddingsForClustering(1)
@@ -80,7 +80,7 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("point-%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text}, NamedEmbeddings: map[string][]float32{"default": vec}})
 		require.NoError(t, err)
 	}
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
@@ -142,7 +142,7 @@ func TestIVFHNSWBinaryTiesResolvedByOversampling(t *testing.T) {
 					}
 				}
 			}
-			svc := NewServiceWithDimensions(engine, dimensions)
+			svc := NewService(engine, dimensions, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			if ivf {
 				svc.EnableClustering(nil, clusters)

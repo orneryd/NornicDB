@@ -137,7 +137,7 @@ func TestE2E_VectorCosine_TinyChunkPropertyPatternPreservesExactResults(t *testi
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX tiny_chunk_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
+	searchSvc := search.NewService(ns, dim, nil)
 	exec.SetSearchService(searchSvc)
 
 	for i := 0; i < 21; i++ {
@@ -188,7 +188,7 @@ func BenchmarkE2E_VectorCosine_TinyChunkPropertyPattern(b *testing.B) {
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX tiny_chunk_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(b, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
+	searchSvc := search.NewService(ns, dim, nil)
 	exec.SetSearchService(searchSvc)
 
 	for i := 0; i < 21; i++ {

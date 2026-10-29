@@ -20,7 +20,7 @@ import (
 var errAlreadyMsgpack = errors.New("already msgpack")
 
 // ConvertSearchIndexDirFromGobToMsgpack converts search index .gob files under rootDir to msgpack
-// and removes the .gob extension (writes to bm25, vectors, hnsw, hnsw_ivf/0, 1, ...).
+// and removes the .gob extension (writes to vectors, hnsw, hnsw_ivf/0, 1, ...).
 // rootDir should be the search index root (e.g. data/test/search). Back up the directory before running.
 func ConvertSearchIndexDirFromGobToMsgpack(rootDir string) error {
 	entries, err := os.ReadDir(rootDir)
@@ -40,20 +40,6 @@ func ConvertSearchIndexDirFromGobToMsgpack(rootDir string) error {
 }
 
 func convertOneDbDir(dbDir string) error {
-	// bm25.gob -> bm25
-	if err := convertFileGobToMsgpack(
-		filepath.Join(dbDir, "bm25.gob"),
-		filepath.Join(dbDir, "bm25"),
-		"fulltext"); err != nil {
-		if errors.Is(err, errAlreadyMsgpack) {
-			logSearchPrintf("Skip (already msgpack) %s/bm25", dbDir)
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("bm25: %w", err)
-		}
-	} else {
-		logSearchPrintf("Converted %s/bm25.gob -> bm25", dbDir)
-	}
-
 	// vectors.gob -> vectors
 	if err := convertFileGobToMsgpack(
 		filepath.Join(dbDir, "vectors.gob"),
@@ -146,12 +132,6 @@ func convertFileGobToMsgpack(oldPath, newPath, format string) error {
 
 	var snap interface{}
 	switch format {
-	case "fulltext":
-		var s fulltextIndexSnapshot
-		if err := gob.NewDecoder(f).Decode(&s); err != nil {
-			return err
-		}
-		snap = &s
 	case "vector":
 		var s vectorIndexSnapshot
 		if err := gob.NewDecoder(f).Decode(&s); err != nil {
@@ -193,9 +173,6 @@ func tryDecodeMsgpack(f *os.File, format string) bool {
 		return false
 	}
 	switch format {
-	case "fulltext":
-		var s fulltextIndexSnapshot
-		return msgpack.NewDecoder(f).Decode(&s) == nil
 	case "vector":
 		var s vectorIndexSnapshot
 		return msgpack.NewDecoder(f).Decode(&s) == nil

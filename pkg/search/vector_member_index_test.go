@@ -16,7 +16,7 @@ func memberIndexService(t *testing.T) (*Service, *storage.Node) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	var candidates []Candidate
 	for n := 0; n < 2*stageBatch; n++ {
@@ -127,7 +127,7 @@ func TestMemberIndexWeakAliasStillExpandsCurrentMembers(t *testing.T) {
 				t.Setenv(EnvSearchResultCacheEnabled, "false")
 				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 				engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-				svc := NewServiceWithDimensions(engine, 2)
+				svc := NewService(engine, 2, nil)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				id := "winner"
 				node := &storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, 0}}}

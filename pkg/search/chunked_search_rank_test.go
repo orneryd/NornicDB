@@ -31,7 +31,7 @@ func TestSearchTextChunksKeepsRankProvenance(t *testing.T) {
 				}
 				_, err := store.CreateNode(node)
 				require.NoError(t, err)
-				svc := NewServiceWithDimensions(store, 2)
+				svc := NewService(store, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				require.NoError(t, svc.IndexNode(node))
 				opts := DefaultSearchOptions()

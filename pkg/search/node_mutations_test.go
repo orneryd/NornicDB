@@ -16,7 +16,7 @@ func TestNodeMutationReservationPreservesNewerLiveMutation(t *testing.T) {
 			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = base.Close() })
 			engine := storage.NewNamespacedEngine(base, "test")
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 			reservation := svc.ReserveNodeMutation(old.ID)
@@ -58,7 +58,7 @@ func TestNodeMutationConcurrentReservationsAndDirectWrites(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	var writers sync.WaitGroup
 	for writer := range 8 {
@@ -95,7 +95,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	older := svc.ReserveNodeMutation("source")
 	rejected := svc.ReserveNodeMutation("source")
@@ -110,7 +110,7 @@ func TestRefreshNodeFollowsStorage(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := engine.CreateNode(node)
@@ -160,7 +160,7 @@ func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	}
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
 	barrier := &edgeReadBarrier{Engine: engine, armed: true, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := NewServiceWithDimensions(barrier, 2)
+	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	older := svc.ReserveEdgeMutation("r")
 	done := make(chan error, 1)

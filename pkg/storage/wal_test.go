@@ -353,11 +353,12 @@ func (l *walCaptureLogger) Log(level, msg string, fields map[string]any) {
 func buildAtomicWALRecord(t *testing.T, entry WALEntry) []byte {
 	t.Helper()
 
-	payload, err := json.Marshal(entry)
+	var encoded bytes.Buffer
+	payload, err := processWALEntryPayload(walPayloadEncode, &encoded, &entry, nil, 0)
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
-	_, err = writeAtomicRecordV2(&buf, payload)
+	_, err = writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
 	require.NoError(t, err)
 
 	return buf.Bytes()
@@ -439,7 +440,7 @@ func TestNewWAL(t *testing.T) {
 		require.NoError(t, wal2.Sync())
 		require.NoError(t, wal2.Close())
 
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(walPath, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 2)
 		require.Equal(t, uint64(1), entries[0].Sequence)
@@ -485,11 +486,16 @@ func TestWALTailRepairHelpers(t *testing.T) {
 		assert.Nil(t, diag)
 
 		legacyPath := filepath.Join(t.TempDir(), "legacy.log")
-		require.NoError(t, os.WriteFile(legacyPath, []byte(`{"legacy":true}`), 0644))
+		legacyContent := []byte(`{"legacy":true}`)
+		require.NoError(t, os.WriteFile(legacyPath, legacyContent, 0644))
+		// Headerless legacy files are unsupported: they are rejected and never rewritten.
 		repaired, diag, err = repairWALTailIfNeeded(legacyPath, nil)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
 		assert.False(t, repaired)
 		assert.Nil(t, diag)
+		remaining, readErr := os.ReadFile(legacyPath)
+		require.NoError(t, readErr)
+		assert.Equal(t, legacyContent, remaining, "unsupported legacy WAL must be left unmodified")
 	})
 
 	t.Run("repair truncates incomplete header to zero", func(t *testing.T) {
@@ -545,7 +551,7 @@ func TestWALTailRepairHelpers(t *testing.T) {
 
 		invalidJSONSecond := func() []byte {
 			var buf bytes.Buffer
-			_, err := writeAtomicRecordV2(&buf, []byte(`{"broken"`))
+			_, err := writeAtomicRecord(&buf, []byte(`{"broken"`), walFormatVersionCurrent)
 			require.NoError(t, err)
 			return buf.Bytes()
 		}
@@ -572,7 +578,7 @@ func TestWALTailRepairHelpers(t *testing.T) {
 				record: func() []byte {
 					b := make([]byte, 9)
 					binary.LittleEndian.PutUint32(b[0:4], walMagic)
-					b[4] = walFormatVersion
+					b[4] = walFormatVersionCurrent
 					binary.LittleEndian.PutUint32(b[5:9], walMaxEntrySize+1)
 					return b
 				}(),
@@ -725,7 +731,17 @@ func TestWAL_InternalBranchErrors(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("loadLastSequence tolerates malformed manifest and returns zero sequence", func(t *testing.T) {
+	t.Run("loadLastSequence returns zero sequence for empty wal directory", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(walSegmentsDir(dir), 0755))
+
+		w := &WAL{config: &WALConfig{Dir: dir}}
+		seq, err := w.loadLastSequence()
+		require.NoError(t, err)
+		require.Zero(t, seq)
+	})
+
+	t.Run("loadLastSequence rejects malformed manifest segment path", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, writeWALManifest(dir, &WALManifest{
 			Version: walManifestVersion,
@@ -735,10 +751,20 @@ func TestWAL_InternalBranchErrors(t *testing.T) {
 		}))
 
 		w := &WAL{config: &WALConfig{Dir: dir}}
-		seq, err := w.loadLastSequence()
-		require.NoError(t, err)
-		require.Zero(t, seq)
+		_, err := w.loadLastSequence()
+		require.ErrorContains(t, err, "invalid segment path in manifest")
 	})
+}
+
+// newWALAppendFixture opens a WAL for sequential or concurrent append tests.
+// The caller enables the WAL feature flag and closes the returned WAL.
+func newWALAppendFixture(t *testing.T) *WAL {
+	t.Helper()
+
+	dir := t.TempDir()
+	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "none"})
+	require.NoError(t, err)
+	return wal
 }
 
 func TestWAL_Append(t *testing.T) {
@@ -746,13 +772,7 @@ func TestWAL_Append(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("appends_entries_when_enabled", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := &WALConfig{
-			Dir:      dir,
-			SyncMode: "none",
-		}
-		wal, err := NewWAL("", cfg)
-		require.NoError(t, err)
+		wal := newWALAppendFixture(t)
 		defer wal.Close()
 
 		node := &Node{
@@ -760,8 +780,7 @@ func TestWAL_Append(t *testing.T) {
 			Labels: []string{"Test"},
 		}
 
-		err = wal.Append(OpCreateNode, WALNodeData{Node: node})
-		require.NoError(t, err)
+		require.NoError(t, wal.Append(OpCreateNode, WALNodeData{Node: node}))
 
 		assert.Equal(t, uint64(1), wal.Sequence())
 		stats := wal.Stats()
@@ -792,18 +811,18 @@ func TestWAL_Append(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		beginSeq, err := wal.AppendTxBegin("testdb", "tx-1", map[string]string{"source": "test"})
+		beginSeq, err := wal.AppendWithDatabaseReturningSeq(OpTxBegin, WALTxData{TxID: "tx-1", Metadata: map[string]string{"source": "test"}}, "testdb")
 		require.NoError(t, err)
-		commitSeq, err := wal.AppendTxCommit("testdb", "tx-1", 2)
+		commitSeq, err := wal.AppendWithDatabaseReturningSeq(OpTxCommit, WALTxData{TxID: "tx-1", OpCount: 2}, "testdb")
 		require.NoError(t, err)
-		abortSeq, err := wal.AppendTxAbort("testdb", "tx-2", "test abort")
+		abortSeq, err := wal.AppendWithDatabaseReturningSeq(OpTxAbort, WALTxData{TxID: "tx-2", Reason: "test abort"}, "testdb")
 		require.NoError(t, err)
 
 		assert.Equal(t, uint64(1), beginSeq)
 		assert.Equal(t, uint64(2), commitSeq)
 		assert.Equal(t, uint64(3), abortSeq)
 
-		entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+		entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 3)
 		assert.Equal(t, OpTxBegin, entries[0].Operation)
@@ -856,6 +875,29 @@ func TestWAL_Append(t *testing.T) {
 		}
 
 		assert.Equal(t, uint64(100), wal.Sequence())
+	})
+
+	t.Run("concurrent_appends", func(t *testing.T) {
+		wal := newWALAppendFixture(t)
+		defer wal.Close()
+
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		entriesPerGoroutine := 100
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := 0; j < entriesPerGoroutine; j++ {
+					if err := wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID("n" + string(rune(id*1000+j)))}}); err != nil {
+						t.Errorf("concurrent append %d/%d: %v", id, j, err)
+					}
+				}
+			}(i)
+		}
+		wg.Wait()
+		expected := uint64(numGoroutines * entriesPerGoroutine)
+		assert.Equal(t, expected, wal.Sequence())
 	})
 }
 
@@ -999,7 +1041,7 @@ func TestWAL_ReadEntries(t *testing.T) {
 
 	// Read entries back
 	walPath := filepath.Join(dir, "wal.log")
-	entries, err := ReadWALEntries(walPath)
+	entries, err := ReadWALEntries(walPath, nil)
 	require.NoError(t, err)
 	assert.Len(t, entries, 3)
 	assert.Equal(t, OpCreateNode, entries[0].Operation)
@@ -1022,10 +1064,13 @@ func TestWAL_ReadEntriesAfter(t *testing.T) {
 
 	// Read only entries after sequence 5
 	walPath := filepath.Join(dir, "wal.log")
-	entries, err := ReadWALEntriesAfter(walPath, 5)
+	entries, err := ReadWALEntriesAfter(walPath, 5, WALReadFile)
 	require.NoError(t, err)
 	assert.Len(t, entries, 5) // Entries 6-10
 	assert.Equal(t, uint64(6), entries[0].Sequence)
+	entries, err = ReadWALEntriesAfter(walPath, 5, WALReadScope(255))
+	require.ErrorContains(t, err, "invalid read scope")
+	require.Nil(t, entries)
 }
 
 func TestCheckWALIntegrity(t *testing.T) {
@@ -1048,69 +1093,80 @@ func TestCheckWALIntegrity(t *testing.T) {
 		assert.Equal(t, int64(0), report.FileSize)
 	})
 
-	t.Run("corrupted legacy wal is unhealthy", func(t *testing.T) {
+	t.Run("corrupted current-format wal is unhealthy", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
-		entry := WALEntry{
+		record := buildAtomicWALRecord(t, WALEntry{
 			Sequence:  1,
+			Timestamp: time.Now(),
 			Operation: OpCreateNode,
 			Data:      mustMarshal(WALNodeData{Node: &Node{ID: "bad-crc"}}),
-			Checksum:  123, // Deliberately wrong
-		}
-		payload, err := json.Marshal(entry)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(path, append(payload, '\n'), 0644))
+			Checksum:  crc32Checksum(mustMarshal(WALNodeData{Node: &Node{ID: "bad-crc"}})),
+		})
+		payloadLen := int(binary.LittleEndian.Uint32(record[5:9]))
+		storedCRCOffset := 9 + payloadLen
+		record[storedCRCOffset] ^= 0xFF // Deliberately corrupt the stored record CRC
+		require.NoError(t, os.WriteFile(path, record, 0644))
 
 		report, err := CheckWALIntegrity(path)
 		require.NoError(t, err)
 		require.NotNil(t, report)
-		assert.Equal(t, "legacy", report.Format)
+		assert.Equal(t, "atomic", report.Format)
 		assert.False(t, report.Healthy)
 		assert.Equal(t, 1, report.CorruptedEntries)
+		assert.NotEmpty(t, report.CorruptionDetails)
 	})
 
-	t.Run("legacy embedding corruption is skipped but counted", func(t *testing.T) {
+	t.Run("corrupted current-format record counts each bad entry", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
-		entry := WALEntry{
+		badData := mustMarshal(WALNodeData{Node: &Node{ID: "embed-1"}})
+		first := buildAtomicWALRecord(t, WALEntry{
 			Sequence:  1,
+			Timestamp: time.Now(),
 			Operation: OpUpdateEmbedding,
-			Data:      mustMarshal(WALNodeData{Node: &Node{ID: "embed-1"}}),
-			Checksum:  0, // force mismatch
-		}
-		payload, err := json.Marshal(entry)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(path, append(payload, '\n'), 0644))
+			Data:      badData,
+			Checksum:  crc32Checksum(badData),
+		})
+		payloadLen := int(binary.LittleEndian.Uint32(first[5:9]))
+		first[9+payloadLen] ^= 0xFF // force CRC mismatch
+		second := buildAtomicWALRecord(t, WALEntry{
+			Sequence:  2,
+			Timestamp: time.Now(),
+			Operation: OpCreateNode,
+			Data:      mustMarshal(WALNodeData{Node: &Node{ID: "ok"}}),
+			Checksum:  crc32Checksum(mustMarshal(WALNodeData{Node: &Node{ID: "ok"}})),
+		})
+		require.NoError(t, os.WriteFile(path, append(append([]byte(nil), first...), second...), 0644))
 
 		report, err := CheckWALIntegrity(path)
 		require.NoError(t, err)
 		require.NotNil(t, report)
-		assert.Equal(t, "legacy", report.Format)
+		assert.Equal(t, "atomic", report.Format)
+		assert.False(t, report.Healthy)
 		assert.Equal(t, 1, report.CorruptedEntries)
-		assert.Equal(t, 1, report.SkippedEmbeddings)
+		assert.Equal(t, 1, report.ValidEntries)
+		assert.Equal(t, 2, report.TotalEntries)
+		assert.Equal(t, uint64(2), report.LastSeq)
 	})
 
-	t.Run("legacy decode error is recorded in report", func(t *testing.T) {
+	t.Run("unsupported legacy wal is rejected", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
-		entry := WALEntry{
+		content := append(mustMarshal(WALEntry{
 			Sequence:  1,
 			Operation: OpCreateNode,
 			Data:      mustMarshal(WALNodeData{Node: &Node{ID: "ok"}}),
-		}
-		entry.Checksum = crc32Checksum(entry.Data)
-		first, err := json.Marshal(entry)
-		require.NoError(t, err)
-		content := append(first, '\n')
-		content = append(content, []byte("{bad-json")...)
+		}), '\n')
 		require.NoError(t, os.WriteFile(path, content, 0644))
 
 		report, err := CheckWALIntegrity(path)
-		require.NoError(t, err)
-		require.NotNil(t, report)
-		assert.NotEmpty(t, report.Errors)
-		assert.Contains(t, strings.Join(report.Errors, " "), "JSON decode error")
+		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+		assert.Nil(t, report)
+		remaining, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		assert.Equal(t, content, remaining, "unsupported legacy WAL must be left unmodified")
 	})
 }
 
-func TestWAL_ApplyRetention(t *testing.T) {
+func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 	config.EnableWAL()
 	defer config.DisableWAL()
 
@@ -1118,7 +1174,7 @@ func TestWAL_ApplyRetention(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
-		assert.Equal(t, ErrWALClosed, wal.ApplyRetention(1))
+		assert.Equal(t, ErrWALClosed, wal.ManageSnapshot(1, WALSnapshotRetention))
 	})
 
 	t.Run("removes old segments after snapshot", func(t *testing.T) {
@@ -1155,7 +1211,7 @@ func TestWAL_ApplyRetention(t *testing.T) {
 			Segments: []WALSegment{oldSeg, newerSeg},
 		}))
 
-		require.NoError(t, wal.ApplyRetention(10))
+		require.NoError(t, wal.ManageSnapshot(10, WALSnapshotRetention))
 
 		_, err = os.Stat(filepath.Join(segDir, oldSeg.Path))
 		assert.True(t, os.IsNotExist(err), "oldest segment should be pruned")
@@ -1178,7 +1234,7 @@ func TestWAL_ApplyRetention(t *testing.T) {
 		defer wal.Close()
 
 		require.NoError(t, os.WriteFile(walManifestPath(dir), []byte("{bad-json"), 0644))
-		err = wal.ApplyRetention(10)
+		err = wal.ManageSnapshot(10, WALSnapshotRetention)
 		require.Error(t, err)
 	})
 
@@ -1189,7 +1245,7 @@ func TestWAL_ApplyRetention(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 		defer wal.Close()
-		require.NoError(t, wal.ApplyRetention(0))
+		require.NoError(t, wal.ManageSnapshot(0, WALSnapshotRetention))
 	})
 
 	t.Run("retention respects age and max-segment limits together", func(t *testing.T) {
@@ -1219,7 +1275,7 @@ func TestWAL_ApplyRetention(t *testing.T) {
 			Segments: segments,
 		}))
 
-		require.NoError(t, wal.ApplyRetention(6))
+		require.NoError(t, wal.ManageSnapshot(6, WALSnapshotRetention))
 
 		manifest, loadErr := loadWALManifest(dir)
 		require.NoError(t, loadErr)
@@ -1820,36 +1876,6 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 	assert.Equal(t, ErrNotFound, err) // Deleted
 }
 
-func TestWAL_ConcurrentAppends(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
-
-	dir := t.TempDir()
-	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
-	wal, err := NewWAL("", cfg)
-	require.NoError(t, err)
-	defer wal.Close()
-
-	var wg sync.WaitGroup
-	numGoroutines := 10
-	entriesPerGoroutine := 100
-
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < entriesPerGoroutine; j++ {
-				wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID("n" + string(rune(id*1000+j)))}})
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	expected := uint64(numGoroutines * entriesPerGoroutine)
-	assert.Equal(t, expected, wal.Sequence())
-}
-
 func TestWAL_SequenceRestoration(t *testing.T) {
 	config.EnableWAL()
 	defer config.DisableWAL()
@@ -2128,12 +2154,12 @@ func TestBatchWriter_CommitWithTxID(t *testing.T) {
 	err = batch.Commit()
 	require.NoError(t, err)
 
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
 	var data WALNodeData
-	require.NoError(t, json.Unmarshal(entries[0].Data, &data))
+	require.NoError(t, decodeRecoveryPayload(entries[0].Data, &data))
 	assert.Equal(t, "tx-batch-1", data.TxID)
 }
 
@@ -2184,7 +2210,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		sizeBefore := statBefore.Size()
 
 		// Truncate WAL to remove entries before snapshot
-		err = wal.TruncateAfterSnapshot(snapshotSeq)
+		err = wal.ManageSnapshot(snapshotSeq, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Get WAL size after truncation
@@ -2196,7 +2222,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		assert.Less(t, sizeAfter, sizeBefore, "WAL should shrink after truncation")
 
 		// Read WAL entries to verify only post-snapshot entries remain
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(walPath, nil)
 		require.NoError(t, err)
 
 		// All remaining entries should have sequence > snapshotSeq
@@ -2243,7 +2269,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		}
 
 		// Truncate
-		err = wal.TruncateAfterSnapshot(snapshot.Sequence)
+		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Verify we can still append after truncation
@@ -2303,7 +2329,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// NO new entries after snapshot
 
 		// Truncate should leave WAL nearly empty (just checkpoint possibly)
-		err = wal.TruncateAfterSnapshot(snapshot.Sequence)
+		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// WAL should be very small or empty
@@ -2326,7 +2352,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
 
-		err = wal.TruncateAfterSnapshot(1)
+		err = wal.ManageSnapshot(1, WALSnapshotTruncate)
 		require.ErrorIs(t, err, ErrWALClosed)
 	})
 
@@ -2364,10 +2390,10 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
 
-		err = wal.TruncateAfterSnapshot(snapshot.Sequence)
+		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(walPath, nil)
 		require.NoError(t, err)
 		for _, e := range entries {
 			require.Greater(t, e.Sequence, snapshot.Sequence)
@@ -2393,9 +2419,9 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, f.Close())
 
 		// Snapshot sequence beyond all valid entries -> salvage returns empty.
-		require.NoError(t, wal.TruncateAfterSnapshot(999))
+		require.NoError(t, wal.ManageSnapshot(999, WALSnapshotTruncate))
 
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(walPath, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 0)
 	})
@@ -2416,110 +2442,88 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 			writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
 		}
 
-		err = w.TruncateAfterSnapshot(0)
-		require.ErrorContains(t, err, "failed to create temp WAL")
+		err = w.ManageSnapshot(0, WALSnapshotTruncate)
+		require.ErrorContains(t, err, "cannot truncate unreadable active WAL")
 	})
 
-	t.Run("truncate_handles_read_entries_error_by_salvaging_or_fresh_start", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := &WALConfig{Dir: dir, SyncMode: "immediate"}
-		wal, err := NewWAL("", cfg)
-		require.NoError(t, err)
-		defer wal.Close()
+	t.Run("early error branches", func(t *testing.T) {
+		t.Run("missing WAL directory preserves active handle", func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Windows cannot rename a directory containing an open WAL file")
+			}
+			parent := t.TempDir()
+			dir := filepath.Join(parent, "wal")
+			wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
+			require.NoError(t, err)
+			defer wal.Close()
+			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"before": true}))
 
-		require.NoError(t, wal.Append(OpCreateNode, WALNodeData{
-			Node: &Node{ID: NodeID(prefixTestID("corrupt-manifest-node"))},
-		}))
-		require.NoError(t, wal.Sync())
+			moved := filepath.Join(parent, "moved")
+			require.NoError(t, os.Rename(dir, moved))
+			err = wal.ManageSnapshot(0, WALSnapshotTruncate)
+			require.ErrorContains(t, err, "cannot truncate unreadable active WAL")
+			require.NoError(t, os.Rename(moved, dir))
+			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"after": true}))
+		})
 
-		// Force ReadWALEntriesFromDir error in truncate path.
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version: walManifestVersion,
-			Segments: []WALSegment{
-				{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
-			},
-		}))
+		t.Run("returns flush error before truncate when syncLocked fails", func(t *testing.T) {
+			dir := t.TempDir()
+			walPath := walActivePath(dir)
+			f, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			require.NoError(t, err)
+			defer f.Close()
 
-		require.NoError(t, wal.TruncateAfterSnapshot(0))
+			w := &WAL{
+				config: &WALConfig{Dir: dir, SyncMode: "none"},
+				file:   f,
+				writer: bufio.NewWriterSize(&walErrWriter{err: fmt.Errorf("flush-fail")}, 16),
+			}
+			_, _ = w.writer.WriteString("pending")
+			err = w.ManageSnapshot(1, WALSnapshotTruncate)
+			require.ErrorContains(t, err, "failed to flush before truncate")
+		})
 
-		// Truncate should recover by creating a usable WAL file.
-		entries, readErr := ReadWALEntries(walActivePath(dir))
-		require.NoError(t, readErr)
-		assert.NotNil(t, entries)
-	})
-}
+		t.Run("returns close error when WAL file close fails", func(t *testing.T) {
+			dir := t.TempDir()
+			walPath := walActivePath(dir)
+			f, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			require.NoError(t, err)
+			require.NoError(t, f.Close()) // make subsequent close fail
 
-func TestWAL_TruncateAfterSnapshot_EarlyErrorBranches(t *testing.T) {
-	t.Run("missing WAL directory preserves active handle", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("Windows cannot rename a directory containing an open WAL file")
-		}
-		parent := t.TempDir()
-		dir := filepath.Join(parent, "wal")
-		wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
-		require.NoError(t, err)
-		defer wal.Close()
-		require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"before": true}))
+			w := &WAL{
+				config: &WALConfig{Dir: dir, SyncMode: "none"},
+				file:   f,
+				writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
+			}
+			err = w.ManageSnapshot(1, WALSnapshotTruncate)
+			require.ErrorContains(t, err, "failed to close for truncate")
+		})
 
-		moved := filepath.Join(parent, "moved")
-		require.NoError(t, os.Rename(dir, moved))
-		err = wal.TruncateAfterSnapshot(0)
-		require.ErrorContains(t, err, "failed to create temp WAL")
-		require.NoError(t, os.Rename(moved, dir))
-		require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"after": true}))
-	})
+		t.Run("rejects wal active path that is a directory before truncating", func(t *testing.T) {
+			dir := t.TempDir()
+			walPath := walActivePath(dir)
+			require.NoError(t, os.MkdirAll(walPath, 0755))
 
-	t.Run("returns flush error before truncate when syncLocked fails", func(t *testing.T) {
-		dir := t.TempDir()
-		walPath := walActivePath(dir)
-		f, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		require.NoError(t, err)
-		defer f.Close()
+			// Keep WAL object valid for sync/close path; active path intentionally points to a directory.
+			backingFile, err := os.OpenFile(filepath.Join(dir, "backing.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			require.NoError(t, err)
+			defer backingFile.Close()
 
-		w := &WAL{
-			config: &WALConfig{Dir: dir, SyncMode: "none"},
-			file:   f,
-			writer: bufio.NewWriterSize(&walErrWriter{err: fmt.Errorf("flush-fail")}, 16),
-		}
-		_, _ = w.writer.WriteString("pending")
-		err = w.TruncateAfterSnapshot(1)
-		require.ErrorContains(t, err, "failed to flush before truncate")
-	})
+			w := &WAL{
+				config: &WALConfig{Dir: dir, SyncMode: "none"},
+				file:   backingFile,
+				writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
+			}
 
-	t.Run("returns close error when WAL file close fails", func(t *testing.T) {
-		dir := t.TempDir()
-		walPath := walActivePath(dir)
-		f, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		require.NoError(t, err)
-		require.NoError(t, f.Close()) // make subsequent close fail
+			err = w.ManageSnapshot(0, WALSnapshotTruncate)
+			require.ErrorContains(t, err, "cannot truncate before validating WAL")
+			info, err := os.Stat(walPath)
+			require.NoError(t, err)
+			require.True(t, info.IsDir())
+			_, err = backingFile.Stat()
+			require.NoError(t, err, "the original handle remains open")
+		})
 
-		w := &WAL{
-			config: &WALConfig{Dir: dir, SyncMode: "none"},
-			file:   f,
-			writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
-		}
-		err = w.TruncateAfterSnapshot(1)
-		require.ErrorContains(t, err, "failed to close for truncate")
-	})
-
-	t.Run("returns rename error when wal active path is a directory", func(t *testing.T) {
-		dir := t.TempDir()
-		walPath := walActivePath(dir)
-		require.NoError(t, os.MkdirAll(walPath, 0755))
-
-		// Keep WAL object valid for sync/close path; active path intentionally points to a directory.
-		backingFile, err := os.OpenFile(filepath.Join(dir, "backing.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		require.NoError(t, err)
-		defer backingFile.Close()
-
-		w := &WAL{
-			config: &WALConfig{Dir: dir, SyncMode: "none"},
-			file:   backingFile,
-			writer: bufio.NewWriterSize(bytes.NewBuffer(nil), 16),
-		}
-
-		err = w.TruncateAfterSnapshot(0)
-		require.ErrorContains(t, err, "failed to rename truncated WAL")
 	})
 }
 

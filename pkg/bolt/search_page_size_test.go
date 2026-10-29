@@ -23,7 +23,7 @@ func TestSearchContinuationPageSizeBolt(t *testing.T) {
 				require.NoError(t, err)
 			}
 			server, port := startBoltIntegrationServer(t, store)
-			svc := search.NewService(store)
+			svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			maxPageSize := limit
 			if limit == 500 {

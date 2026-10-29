@@ -11,7 +11,7 @@ import (
 
 // TestIndexRevisionAdvancesOnEveryIndexChange (#945).
 func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	var nilService *Service
 	require.Zero(t, nilService.IndexRevision())
 	node := &storage.Node{ID: "nornic:n", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
@@ -42,7 +42,7 @@ func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
 // the next search (#945).
 func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	svc := NewService(store)
+	svc := NewService(store, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 	for _, id := range []string{"nornic:a", "nornic:b"} {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
@@ -56,7 +56,7 @@ func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 
 	// Index b without the cache invalidation IndexNode does, as a search
 	// that cached its result while b was being indexed would leave it.
-	svc.fulltext().Index("nornic:b", "alpha")
+	svc.fulltext().Index("nornic:b", "alpha", nil, nil, false)
 	svc.indexChanged()
 	second, err := svc.Search(ctx, "alpha", nil, opts)
 	require.NoError(t, err)

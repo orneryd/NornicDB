@@ -38,7 +38,7 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			}
 			apply(replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
-			svc, err := db.EnsureSearchIndexesBuilt(context.Background(), "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(context.Background(), "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
 			apply(replication.CmdUpdateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
@@ -46,7 +46,7 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			assert.Equal(t, 1, consumerDBHits(t, svc, "newword"), "replicated update did not reach search")
 			apply(replication.CmdDeleteByPrefix, struct{ Prefix string }{"tenant:"})
 			settleQueuedRefreshes()
-			fresh, err := db.EnsureSearchIndexesBuilt(context.Background(), "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(context.Background(), "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			assert.NotSame(t, svc, fresh, "replicated namespace reset did not drop search")
 			assert.Zero(t, fresh.FulltextDocCount(), "replicated prefix delete kept stale search documents")

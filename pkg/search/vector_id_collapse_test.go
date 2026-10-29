@@ -12,7 +12,7 @@ import (
 func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T) {
 	ctx := context.Background()
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
 		ID:     "nornic:doc1",
@@ -39,7 +39,7 @@ func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T)
 func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 	ctx := context.Background()
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
 		ID:     "nornic:n1",
@@ -65,7 +65,7 @@ func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 func TestSearch_VectorOnly_ResolvesNamedEmbeddingsToNode(t *testing.T) {
 	ctx := context.Background()
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
 		ID:     "nornic:named-only",

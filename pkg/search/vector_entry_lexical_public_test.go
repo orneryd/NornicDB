@@ -49,7 +49,7 @@ func TestVectorEntryPublicLexicalOwnership(t *testing.T) {
 				_, err := engine.CreateNode(node)
 				require.NoError(t, err)
 			}
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 			require.NotNil(t, svc.hnswIndex, "the public build must construct ANN")

@@ -21,7 +21,7 @@ func BenchmarkRelationshipEmbeddingBatch(b *testing.B) {
 			b.Run(fmt.Sprintf("persist=%t/chunks=%d", persist, chunks), func(b *testing.B) {
 				engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				defer engine.Close()
-				svc := NewServiceWithDimensions(engine, 128)
+				svc := NewService(engine, 128, nil)
 				defer svc.Close()
 				svc.SetPersistenceEnabled(persist)
 				if persist {

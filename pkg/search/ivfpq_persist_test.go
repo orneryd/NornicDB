@@ -91,7 +91,7 @@ func TestIVFPQPersist_ServiceBranches(t *testing.T) {
 		KMeansMaxIterations: 4,
 	}
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 8)
+	svc := NewService(newTestMemoryEngine(t), 8, nil)
 
 	// vfs nil branch when no compatible in-memory/persisted index exists.
 	_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
@@ -206,14 +206,14 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 	require.Equal(t, idx.overflow, loaded.overflow)
 	require.True(t, loaded.compatibleProfile(profile))
 
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.ivfpqIndex = idx
 	var nilCtx context.Context
 	cached, err := svc.getOrBuildIVFPQIndex(nilCtx, profile, nil, nil)
 	require.NoError(t, err)
 	require.Same(t, idx, cached)
 
-	svc = NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc = NewService(newTestMemoryEngine(t), 2, nil)
 	svc.hnswIndexPath = base
 	loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
 	require.NoError(t, err)

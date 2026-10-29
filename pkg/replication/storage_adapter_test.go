@@ -3,9 +3,11 @@ package replication
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -18,6 +20,10 @@ import (
 )
 
 // setupTestAdapter creates a StorageAdapter with a temporary WAL directory.
+// defaultWALDirProbeEnv marks the re-executed child process used to verify the
+// relative default WAL directory contract outside the package working directory.
+const defaultWALDirProbeEnv = "NORNICDB_REPLICATION_DEFAULT_WAL_DIR_PROBE"
+
 type adapterFixtureOptions struct {
 	backing    storage.Engine
 	standalone bool
@@ -60,14 +66,48 @@ func setupTestAdapter(t *testing.T, options ...adapterFixtureOptions) *adapterFi
 
 func TestNewStorageAdapter(t *testing.T) {
 	t.Run("default WAL directory", func(t *testing.T) {
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		if os.Getenv(defaultWALDirProbeEnv) == "1" {
+			// Child process: the working directory is a scratch dir, so the
+			// relative default WAL path is created there and never in the checkout.
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			engine := storage.NewNamespacedEngine(base, "test")
+			adapter, err := NewStorageAdapter(engine)
+			require.NoError(t, err)
+			require.NotNil(t, adapter)
+			require.Equal(t, "data/replication/wal", adapter.walDir)
+			require.Equal(t, engine, adapter.Engine())
 
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		adapter, err := NewStorageAdapter(engine)
-		require.NoError(t, err)
-		require.NotNil(t, adapter)
-		assert.Equal(t, engine, adapter.Engine())
-		defer adapter.Close()
+			info, statErr := os.Stat(filepath.Join("data", "replication", "wal", "wal.log"))
+			require.NoError(t, statErr, "default WAL file must be created under the working directory")
+			require.True(t, info.Mode().IsRegular())
+
+			node := &storage.Node{ID: storage.NodeID("default-dir"), Labels: []string{"Test"}}
+			require.NoError(t, adapter.ApplyCommand(&Command{
+				Type:      CmdCreateNode,
+				Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
+				Timestamp: time.Now(),
+			}))
+			require.NoError(t, adapter.FlushWAL())
+
+			pos, posErr := adapter.GetWALPosition()
+			require.NoError(t, posErr)
+			require.Equal(t, uint64(1), pos)
+			require.NoError(t, adapter.Close())
+			return
+		}
+
+		// The default WAL directory is the relative path "data/replication/wal",
+		// resolved against the process working directory. Running this contract in
+		// the package directory would open whatever checkout-local WAL already
+		// exists there (possibly written by an older release), so re-exec this
+		// subtest with a scratch working directory. The checkout is never opened,
+		// created in, or modified, and no pre-existing data is deleted.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestNewStorageAdapter$/^default_WAL_directory$", "-test.v")
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), defaultWALDirProbeEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "default WAL directory probe failed:\n%s", out)
+		require.Contains(t, string(out), "--- PASS: TestNewStorageAdapter/default_WAL_directory")
 	})
 
 	t.Run("custom WAL directory", func(t *testing.T) {
@@ -99,14 +139,31 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("empty WAL directory uses default", func(t *testing.T) {
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		if os.Getenv(defaultWALDirProbeEnv) == "1" {
+			// Child process: an empty walDir must resolve to the relative default
+			// path under the (scratch) working directory, never the checkout.
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			engine := storage.NewNamespacedEngine(base, "test")
+			adapter, err := NewStorageAdapterWithWAL(engine, "")
+			require.NoError(t, err)
+			require.NotNil(t, adapter)
+			require.Equal(t, "data/replication/wal", adapter.walDir)
+			walPath := filepath.Join("data", "replication", "wal", "wal.log")
+			info, statErr := os.Stat(walPath)
+			require.NoError(t, statErr)
+			require.True(t, info.Mode().IsRegular())
+			require.NoError(t, adapter.Close())
+			return
+		}
 
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		adapter, err := NewStorageAdapterWithWAL(engine, "")
-		require.NoError(t, err)
-		require.NotNil(t, adapter)
-		assert.Equal(t, "data/replication/wal", adapter.walDir)
-		defer adapter.Close()
+		// Same relative-default-path contract as the subtest above; run it in a
+		// scratch working directory so a checkout-local WAL is never opened.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestNewStorageAdapter$/^empty_WAL_directory_uses_default$", "-test.v")
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), defaultWALDirProbeEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "empty WAL directory probe failed:\n%s", out)
+		require.Contains(t, string(out), "--- PASS: TestNewStorageAdapter/empty_WAL_directory_uses_default")
 	})
 }
 
@@ -485,27 +542,115 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 	})
 
 	t.Run("handles corrupted WAL gracefully", func(t *testing.T) {
+		// The recovery/error contract under test:
+		//   * an active WAL whose tail is genuinely damaged in the *current*
+		//     format (v5 [magic][version][len][payload][crc][trailer]) is
+		//     repaired by truncating only the damaged tail, and
+		//   * the intact prefix survives, so the recovered position is the
+		//     last complete record rather than 0,
+		//   * while an unreadable file header is still rejected instead of
+		//     being silently discarded (old/unknown formats are never
+		//     reinterpreted).
+		// Records are produced by a real writer so the fixture is v5, not a
+		// hand-rolled imitation of it.
 		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "corrupted_wal")
 
-		// Create WAL directory
-		require.NoError(t, os.MkdirAll(walDir, 0755))
+		writer, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+		for i := 0; i < 2; i++ {
+			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("corrupt-n%d", i)), Labels: []string{"Test"}}
+			require.NoError(t, writer.ApplyCommand(&Command{
+				Type:      CmdCreateNode,
+				Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
+				Timestamp: time.Now(),
+			}))
+		}
+		require.NoError(t, writer.FlushWAL())
+		require.NoError(t, writer.Close())
 
-		// Write invalid data to WAL file
 		walPath := filepath.Join(walDir, "wal.log")
-		err := os.WriteFile(walPath, []byte("invalid json data"), 0644)
+		good, err := os.ReadFile(walPath)
+		require.NoError(t, err)
+		require.NotEmpty(t, good)
+		goodSize := int64(len(good))
+
+		// Damaged tail: the first 9 bytes of a third record are a valid v5
+		// header with a plausible payload length, but the payload/checksum/
+		// trailer never made it to disk (torn write). This is exactly what a
+		// crash mid-append leaves behind.
+		require.GreaterOrEqual(t, len(good), 9)
+		torn := append([]byte(nil), good[:9]...)
+		require.Positive(t, binary.LittleEndian.Uint32(torn[5:9]))
+		require.NoError(t, os.WriteFile(walPath, append(append([]byte{}, good...), torn...), 0600))
+
+		recovered, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err, "torn tail in the current format must be repaired, not rejected")
+
+		pos, err := recovered.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), pos, "repair must preserve every complete record")
+
+		// Appending after the repair must succeed: the damaged tail is gone,
+		// so the log stays readable.
+		node := &storage.Node{ID: storage.NodeID("post-repair"), Labels: []string{"Test"}}
+		require.NoError(t, recovered.ApplyCommand(&Command{
+			Type:      CmdCreateNode,
+			Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
+			Timestamp: time.Now(),
+		}))
+		require.NoError(t, recovered.FlushWAL())
+		require.NoError(t, recovered.Close())
+
+		reopened, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+		defer reopened.Close()
+		pos, err = reopened.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(3), pos)
+
+		// Damage inside the last record's payload (CRC mismatch): also a torn
+		// tail, and the prefix before it must still be recovered.
+		require.NoError(t, reopened.Close())
+		current, err := os.ReadFile(walPath)
+		require.NoError(t, err)
+		require.Greater(t, len(current), len(good))
+		damaged := append([]byte{}, current...)
+		lastHeader := int(goodSize)
+		require.Greater(t, len(damaged), lastHeader+9)
+		require.Positive(t, binary.LittleEndian.Uint32(damaged[lastHeader+5:lastHeader+9]))
+		damaged[lastHeader+9] ^= 0xFF // the third record's payload, never padding
+		require.NoError(t, os.WriteFile(walPath, damaged, 0600))
+
+		repaired, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+		pos, err = repaired.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), pos, "the record with the bad checksum is dropped, the prefix is kept")
+		require.NoError(t, repaired.Close())
+
+		// An unreadable header is not a torn tail: the file cannot be
+		// attributed to the current format at all, so startup must fail
+		// loudly and leave the bytes untouched. Old formats stay rejected.
+		require.NoError(t, os.WriteFile(walPath, []byte("invalid json data"), 0600))
+		before, err := os.ReadFile(walPath)
 		require.NoError(t, err)
 
-		// Should still create adapter (starts from position 0)
-		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
-		require.NoError(t, err)
-		defer adapter.Close()
+		unreadable, err := NewStorageAdapterWithWAL(engine, walDir)
+		if unreadable != nil {
+			_ = unreadable.Close()
+		}
+		require.Error(t, err)
+		require.ErrorContains(t, err, "unsupported WAL format")
+		after, readErr := os.ReadFile(walPath)
+		require.NoError(t, readErr)
+		require.Equal(t, before, after, "an unrecognized WAL must never be truncated")
 
-		pos, err := adapter.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(0), pos)
+		// Guard against accidental fixture regressions: the records the
+		// writer produced really are the current format.
+		require.Equal(t, []byte("WALE"), good[:4])
 	})
 }
 

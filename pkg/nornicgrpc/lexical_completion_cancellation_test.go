@@ -33,7 +33,7 @@ func TestSearchTextCancellationDuringLexicalSearch(t *testing.T) {
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 			require.NoError(t, err)
-			realSearch := search.NewService(store)
+			realSearch := search.NewService(store, search.DefaultVectorDimensions, nil)
 			require.NoError(t, realSearch.BuildIndexes(t.Context()))
 			t.Cleanup(func() { _ = realSearch.Close() })
 			ctx, cancel := context.WithCancel(t.Context())

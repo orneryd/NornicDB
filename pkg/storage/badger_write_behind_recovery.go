@@ -42,6 +42,9 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
+	if err := ValidateWALFormat(wal.config.Dir, WALValidateCurrent); err != nil {
+		return 0, err
+	}
 	// The batch reader retains engine state through import, physical apply
 	// and count repair. Close rejects later admissions and waits for this lease.
 	if _, err := b.beginHelperTxn(); err != nil {
@@ -56,6 +59,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
 
 	var pending []bufferedCommit
+	var historicalNumericAliases map[walNumericToken]string
 	var pendingBytes int64
 	replayed := 0
 	flush := func() error {
@@ -124,6 +128,12 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		}
 		if exists {
 			return nil // each remaining record supplies its own authority
+		}
+		if authority == walOwnDirectoryAtOpen && len(data.NumericBindings) == 0 {
+			if historicalNumericAliases == nil {
+				historicalNumericAliases = make(map[walNumericToken]string)
+			}
+			data.numericAliases = historicalNumericAliases
 		}
 		c, err := b.importBufferedWALRecord(&data, authority)
 		if err != nil {

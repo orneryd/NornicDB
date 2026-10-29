@@ -78,14 +78,14 @@ func TestQueryEmbeddingPublicationReclaimsTransientScopes(t *testing.T) {
 	for range 24 {
 		scope := NewStorageExecutor(store)
 		scope.ShareEmbedderFrom(base)
-		svc := search.NewServiceWithDimensions(store, 2)
+		svc := search.NewService(store, 2, nil)
 		scope.SetSearchService(svc)
 		services = append(services, weak.Make(svc))
 		require.NoError(t, svc.Close())
 	}
 	runtime.GC()
 	runtime.GC()
-	live := search.NewServiceWithDimensions(store, 2)
+	live := search.NewService(store, 2, nil)
 	defer live.Close()
 	base.SetSearchService(live)
 	for _, ref := range states {
@@ -110,7 +110,7 @@ func TestQueryEmbeddingFabricCacheProviderReplacement(t *testing.T) {
 	exec, manager := compositeTestFixture(t)
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())
 	require.NoError(t, err)
-	exec.SetSearchService(search.NewServiceWithDimensions(store, 2))
+	exec.SetSearchService(search.NewService(store, 2, nil))
 	ctx := context.Background()
 	const query = "CALL { USE comp.a CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding } RETURN embedding"
 	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0}})
@@ -129,7 +129,7 @@ func TestQueryEmbeddingFabricCachedStartupFallback(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	exec.SetSearchService(svc)
 	const query = "CALL { USE comp.a CALL db.rretrieve({query: 'alpha', limit: 5}) YIELD fallback_reason RETURN fallback_reason } RETURN fallback_reason"

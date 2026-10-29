@@ -12,7 +12,7 @@ import (
 
 func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.hnswMu.Lock()
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())
 	svc.hnswMu.Unlock()
@@ -71,7 +71,7 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 		dim       = 1024
 	)
 	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	svc := NewServiceWithDimensions(engine, dim)
+	svc := NewService(engine, dim, nil)
 	for i := 0; i < nodeCount; i++ {
 		node := &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("entity-%04d", i)),

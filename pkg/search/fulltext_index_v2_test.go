@@ -10,9 +10,9 @@ import (
 )
 
 func TestFulltextIndexV2_BasicLifecycle(t *testing.T) {
-	idx := NewFulltextIndexV2()
-	idx.Index("doc1", "hello world distributed systems")
-	idx.Index("doc2", "hello nornicdb graph database")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc1", "hello world distributed systems", nil, nil, false)
+	idx.Index("doc2", "hello nornicdb graph database", nil, nil, false)
 
 	results := idx.Search("hello graph", 10)
 	require.NotEmpty(t, results)
@@ -26,18 +26,18 @@ func TestFulltextIndexV2_PrefixBounded(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "2")
 	t.Setenv("NORNICDB_BM25_PREFIX_MIN_LEN", "3")
 
-	idx := NewFulltextIndexV2()
-	idx.Index("a", "prescription refill reminder")
-	idx.Index("b", "prescribe dosage reminder")
-	idx.Index("c", "prescribed medicine")
-	idx.Index("d", "pressure issue")
+	idx := NewFulltextIndex(nil)
+	idx.Index("a", "prescription refill reminder", nil, nil, false)
+	idx.Index("b", "prescribe dosage reminder", nil, nil, false)
+	idx.Index("c", "prescribed medicine", nil, nil, false)
+	idx.Index("d", "pressure issue", nil, nil, false)
 
 	results := idx.Search("pres", 10)
 	require.NotEmpty(t, results)
 }
 
 func TestFulltextIndexV2_StableTopK(t *testing.T) {
-	v2 := NewFulltextIndexV2()
+	v2 := NewFulltextIndex(nil)
 
 	docs := []FulltextBatchEntry{
 		{ID: "d1", Text: "graph database nornicdb embeddings"},
@@ -59,52 +59,30 @@ func TestFulltextIndexV2_StableTopK(t *testing.T) {
 	}
 }
 
-func TestFulltextIndexV2_SaveLoadAndMigrateV1(t *testing.T) {
+// TestFulltextIndexV2_SaveLoadRoundTrip keeps the persistence contract: the
+// index writes and reloads its own bm25V2Snapshot. The general Save/Load
+// round-trip is covered by TestBM25SaveLoadRoundTrip.
+func TestFulltextIndexV2_SaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25")
 
-	v2 := NewFulltextIndexV2()
-	v2.Index("doc1", "hello world")
-	v2.Index("doc2", "hello graph world")
-	require.NoError(t, v2.Save(path))
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc1", "hello world", nil, nil, false)
+	idx.Index("doc2", "hello graph world", nil, nil, false)
+	require.NoError(t, idx.Save(path))
 
-	loaded := NewFulltextIndexV2()
+	loaded := NewFulltextIndex(nil)
 	require.NoError(t, loaded.Load(path))
 	require.Equal(t, 2, loaded.Count())
 	require.NotEmpty(t, loaded.Search("hello", 10))
-
-	legacyPath := filepath.Join(t.TempDir(), "bm25_legacy")
-	legacySnap := bm25V1Snapshot{
-		Version:   "1.0.0",
-		Documents: map[string]string{"docA": "legacy migration path", "docB": "legacy bm25 test"},
-		InvertedIndex: map[string]map[string]int{
-			"legacy":    {"docA": 1, "docB": 1},
-			"migration": {"docA": 1},
-			"path":      {"docA": 1},
-			"bm25":      {"docB": 1},
-			"test":      {"docB": 1},
-		},
-		DocLengths:   map[string]int{"docA": 3, "docB": 3},
-		AvgDocLength: 3,
-		DocCount:     2,
-	}
-	f, err := os.Create(legacyPath)
-	require.NoError(t, err)
-	require.NoError(t, msgpack.NewEncoder(f).Encode(&legacySnap))
-	require.NoError(t, f.Close())
-
-	fromLegacy := NewFulltextIndexV2()
-	require.NoError(t, fromLegacy.Load(legacyPath))
-	require.Equal(t, 2, fromLegacy.Count())
-	require.NotEmpty(t, fromLegacy.Search("legacy", 10))
 }
 
 func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25-persisted-state")
 	const formerGlobalDecodeLimit = 256 * 1024 * 1024
 
-	original := NewFulltextIndexV2()
-	original.Index("doc-1", "graph search survives restart")
-	original.Index("doc-2", "persisted keyword index remains searchable")
+	original := NewFulltextIndex(nil)
+	original.Index("doc-1", "graph search survives restart", nil, nil, false)
+	original.Index("doc-2", "persisted keyword index remains searchable", nil, nil, false)
 	require.NoError(t, original.SaveNoCopy(path))
 	// A sparse tail reproduces the former size-policy failure without consuming
 	// hundreds of MiB in the test process. MessagePack decoding stops after the
@@ -115,7 +93,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, info.Size(), int64(formerGlobalDecodeLimit))
 
-	reloaded := NewFulltextIndexV2()
+	reloaded := NewFulltextIndex(nil)
 	require.NoError(t, reloaded.Load(path))
 	require.Equal(t, original.Count(), reloaded.Count())
 	results := reloaded.Search("survives restart", 10)
@@ -124,11 +102,11 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 }
 
 func TestFulltextIndexV2_DirtySaveNoCopyPhraseClear(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	require.False(t, idx.IsDirty())
 
-	idx.Index("doc1", "the quick brown fox jumps")
-	idx.Index("doc2", "quick brown is common phrase")
+	idx.Index("doc1", "the quick brown fox jumps", nil, nil, false)
+	idx.Index("doc2", "quick brown is common phrase", nil, nil, false)
 	require.True(t, idx.IsDirty())
 
 	phrase := idx.PhraseSearch("quick brown", 10)
@@ -151,14 +129,14 @@ func TestFulltextIndexV2_LoadDecodeFailureClears(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25v2_corrupt")
 	require.NoError(t, os.WriteFile(path, []byte("not-msgpack"), 0644))
 
-	idx := NewFulltextIndexV2()
-	idx.Index("doc1", "hello world")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc1", "hello world", nil, nil, false)
 	require.NoError(t, idx.Load(path))
 	require.Equal(t, 0, idx.Count())
 }
 
-func TestFulltextIndexV2_PersistenceErrorAndMigrationBranches(t *testing.T) {
-	idx := NewFulltextIndexV2()
+func TestFulltextIndexV2_PersistenceErrorAndSnapshotBranches(t *testing.T) {
+	idx := NewFulltextIndex(nil)
 	require.NoError(t, idx.Load(filepath.Join(t.TempDir(), "missing")))
 
 	badParent := filepath.Join(t.TempDir(), "not-a-dir")
@@ -166,43 +144,37 @@ func TestFulltextIndexV2_PersistenceErrorAndMigrationBranches(t *testing.T) {
 	require.Error(t, idx.Load(filepath.Join(badParent, "child")))
 	require.Error(t, idx.Save(filepath.Join(badParent, "child")))
 
-	legacyPath := filepath.Join(t.TempDir(), "legacy_bad_version")
-	file, err := os.Create(legacyPath)
+	// A snapshot written by a newer format is rejected and leaves the index empty.
+	newerPath := filepath.Join(t.TempDir(), "newer_version")
+	file, err := os.Create(newerPath)
 	require.NoError(t, err)
-	require.NoError(t, msgpack.NewEncoder(file).Encode(&bm25V1Snapshot{Version: "9.0.0"}))
+	require.NoError(t, msgpack.NewEncoder(file).Encode(&bm25V2Snapshot{Version: "9.0.0"}))
 	require.NoError(t, file.Close())
-	idx.Index("doc", "content")
-	require.NoError(t, idx.Load(legacyPath))
+	idx.Index("doc", "content", nil, nil, false)
+	require.NoError(t, idx.Load(newerPath))
 	require.Equal(t, 0, idx.Count())
 
-	nilMapsPath := filepath.Join(t.TempDir(), "legacy_nil_maps")
-	file, err = os.Create(nilMapsPath)
+	// A versionless snapshot is rejected too.
+	unversionedPath := filepath.Join(t.TempDir(), "unversioned")
+	file, err = os.Create(unversionedPath)
 	require.NoError(t, err)
-	require.NoError(t, msgpack.NewEncoder(file).Encode(&bm25V1Snapshot{Version: "1.0.0"}))
+	require.NoError(t, msgpack.NewEncoder(file).Encode(&bm25V2Snapshot{}))
 	require.NoError(t, file.Close())
-	require.NoError(t, idx.Load(nilMapsPath))
+	require.NoError(t, idx.Load(unversionedPath))
 	require.Equal(t, 0, idx.Count())
 
-	legacyEdgePath := filepath.Join(t.TempDir(), "legacy_edges")
-	file, err = os.Create(legacyEdgePath)
-	require.NoError(t, err)
-	require.NoError(t, msgpack.NewEncoder(file).Encode(&bm25V1Snapshot{
-		Version:   "1.0.0",
-		Documents: map[string]string{"good": "alpha", "neg": "beta"},
-		InvertedIndex: map[string]map[string]int{
-			"empty": {},
-			"bad":   {"missing": 1, "good": 0},
-			"good":  {"good": 70000},
-		},
-		DocLengths: map[string]int{"good": 1, "neg": -3},
-	}))
-	require.NoError(t, file.Close())
-	require.NoError(t, idx.Load(legacyEdgePath))
-	require.Equal(t, 2, idx.Count())
-	require.NotEmpty(t, idx.Search("good", 10))
-
-	idx.applyV2Snapshot(bm25V2Snapshot{Version: bm25V2FormatVersion, DocLengths: []uint32{2, 3}})
+	idx.applyV2Snapshot(bm25V2Snapshot{
+		Version:    bm25V2FormatVersion,
+		Documents:  map[string]string{"a": "one two", "b": "one two three"},
+		DocIDToNum: map[string]uint32{"a": 0, "b": 1},
+		DocNumToID: []string{"a", "b"},
+		DocLengths: []uint32{2, 3},
+	})
 	require.Equal(t, int64(5), idx.totalDocLength)
+	require.Equal(t, 2, idx.Count(), "a snapshot without a doc count counts its documents")
+	text, ok := idx.GetDocument("b")
+	require.True(t, ok)
+	require.Equal(t, "one two three", text)
 }
 
 func TestFulltextIndexV2_MinIntHelper(t *testing.T) {
@@ -216,7 +188,7 @@ func TestFulltextIndexV2_MinIntHelper(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_CalculateIDFLocked(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -241,13 +213,13 @@ func TestFulltextIndexV2_CalculateIDFLocked(t *testing.T) {
 }
 
 func TestFulltextIndexDefersLexiconMaintenanceUntilPrefixSearch(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 	idx.maxPrefixExpansions = 10
 	idx.minPrefixLength = 2
 
-	idx.Index("banana", "banana")
-	idx.Index("apple", "apple")
-	idx.Index("application", "application")
+	idx.Index("banana", "banana", nil, nil, false)
+	idx.Index("apple", "apple", nil, nil, false)
+	idx.Index("application", "application", nil, nil, false)
 	require.Empty(t, idx.lexicon, "write-heavy ingestion must not shift a sorted vocabulary slice")
 
 	results := idx.Search("app", 10)
@@ -312,10 +284,10 @@ func TestFulltextIndexV2_TopKFromScores(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_LexicalSeedDocIDs(t *testing.T) {
-	idx := NewFulltextIndexV2()
-	idx.Index("doc1", "graph database nornicdb")
-	idx.Index("doc2", "relational database postgres")
-	idx.Index("doc3", "graph embeddings neural")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc1", "graph database nornicdb", nil, nil, false)
+	idx.Index("doc2", "relational database postgres", nil, nil, false)
+	idx.Index("doc3", "graph embeddings neural", nil, nil, false)
 
 	seeds := idx.LexicalSeedDocIDs(10, 10)
 	require.NotEmpty(t, seeds)
@@ -328,41 +300,12 @@ func TestFulltextIndexV2_LexicalSeedDocIDs(t *testing.T) {
 	}
 }
 
-func TestFulltextIndexV2LexicalSeedMinimumDocumentFrequency(t *testing.T) {
-	t.Setenv("NORNICDB_BM25_IDF_MIN_DOC_FREQ", "3")
-	idx := NewFulltextIndexV2()
-	idx.Index("d1", "shared rareone")
-	idx.Index("d2", "shared raretwo")
-	idx.Index("d3", "shared rarethree")
-
-	require.Equal(t, []string{"d1", "d2", "d3"}, idx.LexicalSeedDocIDs(10, 10))
-}
-
-// ---------------------------------------------------------------------------
-// BM25 V2 – PhraseSearch determinism
-// ---------------------------------------------------------------------------
-
-func TestFulltextIndexV2_PhraseSearchDeterministic(t *testing.T) {
-	idx := NewFulltextIndexV2()
-	idx.Index("doc1", "the quick brown fox jumps over lazy dog")
-	idx.Index("doc2", "quick brown bread is delicious")
-	idx.Index("doc3", "the lazy brown cat sleeps")
-
-	// "quick brown" appears as exact phrase in doc1 and doc2
-	r1 := idx.PhraseSearch("quick brown", 10)
-	r2 := idx.PhraseSearch("quick brown", 10)
-	require.Equal(t, len(r1), len(r2))
-	for i := range r1 {
-		require.Equal(t, r1[i].ID, r2[i].ID)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // BM25 V2 – IndexBatch and Remove
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_IndexBatchAndRemove(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 
 	batch := []FulltextBatchEntry{
 		{ID: "b1", Text: "hello world"},
@@ -373,7 +316,7 @@ func TestFulltextIndexV2_IndexBatchAndRemove(t *testing.T) {
 	require.Equal(t, 3, idx.Count())
 
 	// Re-indexing same ID should update, not duplicate
-	idx.Index("b1", "hello updated world")
+	idx.Index("b1", "hello updated world", nil, nil, false)
 	require.Equal(t, 3, idx.Count())
 
 	// Remove should decrease count
@@ -394,8 +337,8 @@ func TestFulltextIndexV2_IndexBatchAndRemove(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_SearchNoMatch(t *testing.T) {
-	idx := NewFulltextIndexV2()
-	idx.Index("doc1", "graph database")
+	idx := NewFulltextIndex(nil)
+	idx.Index("doc1", "graph database", nil, nil, false)
 
 	results := idx.Search("zzzzunknownterm", 10)
 	require.Empty(t, results)
@@ -406,7 +349,7 @@ func TestFulltextIndexV2_SearchNoMatch(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_EmptyIndexOperations(t *testing.T) {
-	idx := NewFulltextIndexV2()
+	idx := NewFulltextIndex(nil)
 
 	require.Equal(t, 0, idx.Count())
 	require.Empty(t, idx.Search("anything", 10))

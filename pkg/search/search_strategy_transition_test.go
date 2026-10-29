@@ -54,7 +54,7 @@ func waitForStrategy(t *testing.T, svc *Service, want strategyMode, timeout time
 
 func TestRuntimeStrategy_DefaultsToHNSW(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.NotNil(t, svc)
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
@@ -65,7 +65,7 @@ func TestRuntimeStrategy_DefaultsToHNSW(t *testing.T) {
 func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.NotNil(t, svc)
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
@@ -74,7 +74,7 @@ func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
 }
 
 func TestSwitchBruteStrategyFromGPUToCPUWithoutHardware(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc := NewService(newNamespacedEngine(t), 4, nil)
 	svc.vectorPipeline = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(nil), &IdentityExactScorer{})
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())
 
@@ -93,7 +93,7 @@ func TestSwitchBruteStrategyFromGPUToCPUWithoutHardware(t *testing.T) {
 
 func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.False(t, svc.RuntimeStrategyTransitionsEnabled())
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
@@ -114,7 +114,7 @@ func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *test
 
 func TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.NotNil(t, svc)
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
@@ -153,7 +153,7 @@ func TestRuntimeStrategyTransition_CPUToGPUBruteNoRebuild(t *testing.T) {
 	}
 
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.SetRuntimeStrategyTransitionsEnabled(true)
 	svc.SetGPUManager(manager)
 
@@ -173,7 +173,7 @@ func TestRuntimeStrategyTransition_CPUToGPUBruteNoRebuild(t *testing.T) {
 
 func TestRuntimeStrategyTransition_ReplayAndClearDeltaLog(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 
 	vi := svc.vectorIndex
 	require.NotNil(t, vi)
@@ -228,7 +228,7 @@ func TestRuntimeStrategyTransition_ReplayAndClearDeltaLog(t *testing.T) {
 
 func TestRuntimeStrategyTransition_ReplayHelpers_BruteGPUAndClear(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	vi := svc.vectorIndex
 	require.NotNil(t, vi)
 	require.NoError(t, vi.Add("gpu-delta", []float32{0, 1, 0, 0}))

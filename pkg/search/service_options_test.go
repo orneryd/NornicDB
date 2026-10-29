@@ -20,12 +20,12 @@ func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
 	require.Equal(t, 1000, defaults.SearchResultCacheEntries)
 	require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
 
-	defaultService := NewServiceWithDimensionsAndBM25Engine(newTestMemoryEngine(t), 3, "v2")
+	defaultService := NewService(newTestMemoryEngine(t), 3, nil)
 	require.NotNil(t, defaultService.resultCache)
 	require.Equal(t, 1000, defaultService.resultCache.maxSize)
 	require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
 
-	disabled := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{
+	disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
 		DatabaseID:               "alpha",
 		SearchResultCacheEntries: 0,
 		SearchResultCacheTTL:     time.Minute,
@@ -33,7 +33,7 @@ func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
 	require.NotNil(t, disabled.resultCache)
 	require.Equal(t, 0, disabled.resultCache.maxSize)
 
-	configured := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{
+	configured := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
 		DatabaseID:               "beta",
 		SearchResultCacheEntries: 12,
 		SearchResultCacheTTL:     2 * time.Minute,
@@ -49,7 +49,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 	require.Zero(t, maxEntries)
 	require.Zero(t, ttl)
 
-	service := NewServiceWithDimensionsAndBM25Engine(newTestMemoryEngine(t), 3, "v2")
+	service := NewService(newTestMemoryEngine(t), 3, nil)
 	service.resultCache.Put("first", &SearchResponse{Query: "first"})
 	service.resultCache.Put("second", &SearchResponse{Query: "second"})
 
@@ -71,7 +71,7 @@ func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
 }
 
 func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{
+	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
 		DatabaseID:             "capacity",
 		BM25MemoryMaxBytes:     1 << 20,
 		VectorMemoryMaxBytes:   2 << 20,
@@ -89,7 +89,7 @@ func TestServiceOptionsIndexCapacityPolicy(t *testing.T) {
 }
 
 func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{
+	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
 		BM25Stemmer: &stemmer.Registration{
 			APIVersion: stemmer.APIVersion,
 			ID:         "test.fold",
@@ -105,7 +105,7 @@ func TestServiceOptionsBM25StemmerSelection(t *testing.T) {
 			},
 		},
 	})
-	service.fulltext().Index("doc", "children")
+	service.fulltext().Index("doc", "children", nil, nil, false)
 	require.Len(t, service.fulltext().Search("child", 10), 1)
 	require.Contains(t, service.composeBM25BuildSettings(), "stemmer=test.fold")
 	require.Contains(t, service.composeBM25BuildSettings(), "stemmer_api=1")
@@ -120,7 +120,7 @@ func TestVectorStorageModeControlsFileStore(t *testing.T) {
 		{mode: "disk", wantFileStore: true},
 	} {
 		t.Run(test.mode, func(t *testing.T) {
-			service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{VectorStorageMode: test.mode})
+			service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: test.mode})
 			service.SetPersistenceEnabled(true)
 			service.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 
@@ -159,7 +159,7 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &test.options)
+			service := NewService(newTestMemoryEngine(t), 3, &test.options)
 			err := service.IndexNode(test.node)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, ErrIndexMemoryBudgetExceeded))
@@ -173,25 +173,25 @@ func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
 	require.NoError(t, err)
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", &ServiceOptions{BM25MemoryMaxBytes: 4})
+	service := NewService(engine, 3, &ServiceOptions{BM25MemoryMaxBytes: 4})
 
 	err = service.BuildIndexes(context.Background())
 	require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
 }
 
 func TestDiskVectorStorageRequiresPersistencePath(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: "disk"})
 
 	err := service.BuildIndexes(context.Background())
 	require.ErrorContains(t, err, "vector disk storage requires")
 
-	disabled := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{VectorStorageMode: "disk"})
+	disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorStorageMode: "disk"})
 	disabled.SetIndexFlags(true, false)
 	require.NoError(t, disabled.BuildIndexes(context.Background()))
 }
 
 func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{VectorMemoryMaxBytes: 8})
+	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{VectorMemoryMaxBytes: 8})
 
 	err := service.IndexEdge(&storage.Edge{
 		ID:         "relationship",
@@ -203,7 +203,7 @@ func TestIndexCapacityBudgetsCoverRelationshipVectors(t *testing.T) {
 }
 
 func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
-	service := NewServiceWithDimensionsAndBM25EngineAndOptions(newTestMemoryEngine(t), 3, "v2", &ServiceOptions{
+	service := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
 		BM25StorageMode:        "memory",
 		VectorStorageMode:      "memory",
 		VectorMemoryMaxBytes:   1 << 20,
@@ -291,7 +291,7 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 }
 
 func TestSearchServiceDoesNotIndexManagedVectorsFromAnotherModelSpace(t *testing.T) {
-	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	service := NewService(newTestMemoryEngine(t), 2, nil)
 	service.SetEmbeddingSpace("provider:text:model:2")
 
 	require.NoError(t, service.IndexNode(&storage.Node{

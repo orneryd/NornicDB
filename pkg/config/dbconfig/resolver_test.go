@@ -10,7 +10,6 @@ import (
 )
 
 func TestResolve_GlobalOnly(t *testing.T) {
-	t.Setenv("NORNICDB_SEARCH_BM25_ENGINE", "v2")
 	global := config.LoadDefaults()
 	global.Memory.EmbeddingDimensions = 1536
 	global.Memory.SearchMinSimilarity = 0.6
@@ -18,7 +17,6 @@ func TestResolve_GlobalOnly(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, 1536, r.EmbeddingDimensions)
 	assert.Equal(t, 0.6, r.SearchMinSimilarity)
-	assert.Equal(t, "v2", r.BM25Engine)
 	assert.Equal(t, "none", r.BM25Stemmer)
 	assert.NotEmpty(t, r.Effective["db.nornic.embedding.dimensions"])
 }
@@ -41,25 +39,21 @@ func TestResolveEmbeddingLabelFilterOverrides(t *testing.T) {
 }
 
 func TestResolve_Overrides(t *testing.T) {
-	t.Setenv("NORNICDB_SEARCH_BM25_ENGINE", "v2")
 	global := config.LoadDefaults()
 	global.Memory.EmbeddingDimensions = 1024
 	global.Memory.SearchMinSimilarity = 0.5
 	overrides := map[string]string{
 		"NORNICDB_EMBEDDING_DIMENSIONS":  "768",
 		"NORNICDB_SEARCH_MIN_SIMILARITY": "0.8",
-		"NORNICDB_SEARCH_BM25_ENGINE":    "v2",
 		"NORNICDB_SEARCH_BM25_STEMMER":   "snowball.ukrainian",
 	}
 	r := Resolve(global, overrides)
 	require.NotNil(t, r)
 	assert.Equal(t, 768, r.EmbeddingDimensions)
 	assert.Equal(t, 0.8, r.SearchMinSimilarity)
-	assert.Equal(t, "v2", r.BM25Engine)
 	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
 	assert.Equal(t, "768", r.Effective["db.nornic.embedding.dimensions"])
 	assert.Equal(t, "0.8", r.Effective["db.nornic.search.min.similarity"])
-	assert.Equal(t, "v2", r.Effective["db.nornic.search.bm25.engine"])
 	assert.Equal(t, "snowball.ukrainian", r.Effective["db.nornic.search.bm25.stemmer"])
 }
 
@@ -85,6 +79,22 @@ func TestResolve_DocumentedStemmerSelectionExamples(t *testing.T) {
 	require.NotNil(t, exactTokenDB)
 	assert.Equal(t, "none", exactTokenDB.BM25Stemmer)
 	assert.Equal(t, "none", exactTokenDB.Effective["db.nornic.search.bm25.stemmer"])
+}
+
+func TestResolve_RemovedBM25EngineSetting(t *testing.T) {
+	for _, key := range []string{"db.nornic.search.bm25.engine", "NORNICDB_SEARCH_BM25_ENGINE"} {
+		t.Run(key, func(t *testing.T) {
+			overrides := map[string]string{key: "v1", "NORNICDB_SEARCH_BM25_ENABLED": "false"}
+			before := map[string]string{key: "v1", "NORNICDB_SEARCH_BM25_ENABLED": "false"}
+			resolved := Resolve(config.LoadDefaults(), overrides)
+			require.Equal(t, before, overrides)
+			require.NotContains(t, resolved.Effective, key)
+			require.False(t, resolved.BM25Enabled)
+			require.False(t, IsAllowedKey(key))
+			_, err := NormalizeSettingValue(key, "v1")
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestResolve_OrcaProviderOverrideUsesMatchingDefaults(t *testing.T) {
@@ -177,7 +187,6 @@ func TestResolve_QueryCacheTTLIsDatabaseScoped(t *testing.T) {
 }
 
 func TestResolve_DefaultDimensionsAndIgnoredOverrides(t *testing.T) {
-	t.Setenv("NORNICDB_SEARCH_BM25_ENGINE", "unexpected")
 	global := config.LoadDefaults()
 	global.Memory.EmbeddingDimensions = 0
 	global.Memory.SearchMinSimilarity = 0.55
@@ -185,13 +194,11 @@ func TestResolve_DefaultDimensionsAndIgnoredOverrides(t *testing.T) {
 	r := Resolve(global, map[string]string{
 		"NOT_ALLOWED":                    "ignored",
 		"NORNICDB_EMBEDDING_DIMENSIONS":  "-5",
-		"NORNICDB_SEARCH_BM25_ENGINE":    "v1",
 		"NORNICDB_SEARCH_MIN_SIMILARITY": "bad",
 	})
 	require.NotNil(t, r)
 	assert.Equal(t, 1024, r.EmbeddingDimensions)
 	assert.Equal(t, 0.55, r.SearchMinSimilarity)
-	assert.Equal(t, "v1", r.BM25Engine)
 	_, ok := r.Effective["NOT_ALLOWED"]
 	assert.False(t, ok)
 }
@@ -200,7 +207,6 @@ func TestApplyOverride(t *testing.T) {
 	r := &ResolvedDbConfig{
 		EmbeddingDimensions: 1024,
 		SearchMinSimilarity: 0.5,
-		BM25Engine:          "v2",
 		Effective:           map[string]string{},
 	}
 
@@ -216,14 +222,10 @@ func TestApplyOverride(t *testing.T) {
 	applyOverride(r, "NORNICDB_SEARCH_MIN_SIMILARITY", "0")
 	assert.Equal(t, 0.0, r.SearchMinSimilarity)
 
-	applyOverride(r, "NORNICDB_SEARCH_BM25_ENGINE", "V1")
-	assert.Equal(t, "v1", r.BM25Engine)
-
 	applyOverride(r, "NORNICDB_SEARCH_BM25_STEMMER", " Snowball.Ukrainian ")
 	assert.Equal(t, "snowball.ukrainian", r.BM25Stemmer)
 
 	applyOverride(r, "NORNICDB_EMBEDDING_ENABLED", "1")
-	assert.Equal(t, "v1", r.BM25Engine)
 
 	applyOverride(r, "UNKNOWN_KEY", "value")
 	assert.Equal(t, 1024, r.EmbeddingDimensions)

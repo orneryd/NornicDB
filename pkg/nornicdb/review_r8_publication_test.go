@@ -27,7 +27,7 @@ func TestReviewSourcePreservingAcceptancePublication(t *testing.T) {
 	require.NoError(t, err)
 	payload.ChunkEmbeddings = [][]float32{{1, 0}}
 	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	defer service.Close()
 	require.NoError(t, service.BuildIndexes(ctx))
 	var observed *storage.Node

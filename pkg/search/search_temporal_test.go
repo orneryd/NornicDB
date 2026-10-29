@@ -53,7 +53,7 @@ func TestSearchService_BuildIndexesSkipsHistoricalTemporalVersions(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	svc := NewServiceWithDimensions(ns, 3)
+	svc := NewService(ns, 3, nil)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, 1, svc.EmbeddingCount())
 }
@@ -86,7 +86,7 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 	_, err = ns.CreateNode(node)
 	require.NoError(t, err)
 
-	svc := NewServiceWithDimensions(ns, 3)
+	svc := NewService(ns, 3, nil)
 	require.NoError(t, svc.IndexNode(node))
 	require.Equal(t, 1, svc.EmbeddingCount())
 

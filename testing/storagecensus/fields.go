@@ -3,6 +3,7 @@ package storagecensus
 import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/internal/ssawalk"
 	"go/token"
 	"go/types"
 	"sort"
@@ -104,6 +105,10 @@ var fieldClasses = map[string]fieldRow{
 	// write owns this per-stream header/CRC scratch; it holds framing bytes,
 	// not stored entities, entity counts, quota or publication state.
 	"pkg/storage.snapshotFrameWriter.scratch": {class: "snapshot frame serialization scratch"},
+	// These are temporary representations: WAL inspection collects display
+	// bytes, and constraint acquisition clears and reuses its request map.
+	"pkg/storage.bufferedWALDisplayPayload.Deletes": {class: "WAL inspection serialization scratch"},
+	"pkg/storage.uniqueConstraintSeenTable.keys":    {class: "constraint lock request scratch"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
 
@@ -167,14 +172,14 @@ var typeClasses = map[string]string{
 	"pkg/storage.WALEngine":                    "WAL snapshot bookkeeping",
 	"pkg/storage.WALIntegrityReport":           "report",
 	"pkg/storage.WALManifest":                  "WAL file bookkeeping",
+	"pkg/storage.v4WALControlRewrite":          "WAL upgrade staging offsets",
 	"pkg/storage.RecoveryStreamStatus":         "report",
 	"pkg/storage.ReplayResult":                 "report",
 	"pkg/storage.changeCapture":                "configuration",
 	"pkg/storage.changeLog":                    "change capture sequence",
 	"pkg/storage.commitOracle":                 "commit timestamps and readers",
 	"pkg/storage.deleteCleanup":                "background cleanup scheduling",
-	"pkg/storage.edgeDictShard":                "id dictionary",
-	"pkg/storage.nodeDictShard":                "id dictionary",
+	"pkg/storage.idDictShard":                  "id dictionary",
 	"pkg/storage.idDictionary":                 "id dictionary",
 	"pkg/storage.propertyKeyDictionary":        "property key dictionary",
 	"pkg/storage.txnCounterState":              "id dictionary",
@@ -333,36 +338,34 @@ func (a *analysis) fieldWrites() []fieldWrite {
 			out = append(out, fieldWrite{field: f, fn: a.p.funcName(fn), pos: a.p.pos(ins.Pos())})
 		}
 	}
-	for _, fn := range a.p.funcs {
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				switch ins := ins.(type) {
-				case *ssa.Store:
-					add(a.rootFields(ins.Addr, map[ssa.Value]bool{}), fn, ins)
-				case *ssa.MapUpdate:
-					add(a.rootFields(ins.Map, map[ssa.Value]bool{}), fn, ins)
-				case ssa.CallInstruction:
-					c := ins.Common()
-					if b, ok := c.Value.(*ssa.Builtin); ok && b.Name() == "delete" && len(c.Args) > 0 {
-						add(a.rootFields(c.Args[0], map[ssa.Value]bool{}), fn, ins)
+	steps := ssawalk.Instructions(a.p.funcs)
+	for _, step := range steps {
+		fn, ins := step.Func, step.Ins
+		switch ins := ins.(type) {
+		case *ssa.Store:
+			add(a.rootFields(ins.Addr, map[ssa.Value]bool{}), fn, ins)
+		case *ssa.MapUpdate:
+			add(a.rootFields(ins.Map, map[ssa.Value]bool{}), fn, ins)
+		case ssa.CallInstruction:
+			c := ins.Common()
+			if b, ok := c.Value.(*ssa.Builtin); ok && b.Name() == "delete" && len(c.Args) > 0 {
+				add(a.rootFields(c.Args[0], map[ssa.Value]bool{}), fn, ins)
+				continue
+			}
+			callee := c.StaticCallee()
+			for i, arg := range c.Args {
+				fa, ok := arg.(*ssa.FieldAddr)
+				if !ok {
+					continue
+				}
+				if i == 0 && callee != nil && callee.Signature.Recv() != nil {
+					// A method of the field's own type changes it
+					// only through its own fields, except atomics.
+					if pkg := callee.Pkg; pkg == nil || pkg.Pkg.Path() != "sync/atomic" || !mutating(callee.Name()) {
 						continue
 					}
-					callee := c.StaticCallee()
-					for i, arg := range c.Args {
-						fa, ok := arg.(*ssa.FieldAddr)
-						if !ok {
-							continue
-						}
-						if i == 0 && callee != nil && callee.Signature.Recv() != nil {
-							// A method of the field's own type changes it
-							// only through its own fields, except atomics.
-							if pkg := callee.Pkg; pkg == nil || pkg.Pkg.Path() != "sync/atomic" || !mutating(callee.Name()) {
-								continue
-							}
-						}
-						add(a.rootFields(fa, map[ssa.Value]bool{}), fn, ins)
-					}
 				}
+				add(a.rootFields(fa, map[ssa.Value]bool{}), fn, ins)
 			}
 		}
 	}
@@ -386,25 +389,22 @@ func sortFieldWrites(out []fieldWrite) {
 // address and an atomic Load.
 func (a *analysis) fieldReads() []fieldWrite {
 	var out []fieldWrite
-	for _, fn := range a.p.funcs {
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				var fields []string
-				switch ins := ins.(type) {
-				case *ssa.UnOp:
-					if ins.Op == token.MUL {
-						fields = a.rootFields(ins.X, map[ssa.Value]bool{})
-					}
-				case *ssa.Call:
-					c := ins.Common()
-					if callee := c.StaticCallee(); callee != nil && callee.Pkg != nil && callee.Pkg.Pkg.Path() == "sync/atomic" && !mutating(callee.Name()) && len(c.Args) > 0 {
-						fields = a.rootFields(c.Args[0], map[ssa.Value]bool{})
-					}
-				}
-				for _, f := range fields {
-					out = append(out, fieldWrite{field: f, fn: a.p.funcName(fn), pos: a.p.pos(ins.Pos())})
-				}
+	for _, step := range ssawalk.Instructions(a.p.funcs) {
+		fn, ins := step.Func, step.Ins
+		var fields []string
+		switch ins := ins.(type) {
+		case *ssa.UnOp:
+			if ins.Op == token.MUL {
+				fields = a.rootFields(ins.X, map[ssa.Value]bool{})
 			}
+		case *ssa.Call:
+			c := ins.Common()
+			if callee := c.StaticCallee(); callee != nil && callee.Pkg != nil && callee.Pkg.Pkg.Path() == "sync/atomic" && !mutating(callee.Name()) && len(c.Args) > 0 {
+				fields = a.rootFields(c.Args[0], map[ssa.Value]bool{})
+			}
+		}
+		for _, f := range fields {
+			out = append(out, fieldWrite{field: f, fn: a.p.funcName(fn), pos: a.p.pos(ins.Pos())})
 		}
 	}
 	return out

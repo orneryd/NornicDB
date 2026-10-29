@@ -26,7 +26,7 @@ func TestQuantizedHNSWPublicServicePreservesLexicalSeedsAndExactResults(t *testi
 				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprint(i)), Properties: map[string]any{"text": "lexical alpha beta"}, NamedEmbeddings: map[string][]float32{"default": {float32(math.Cos(angle)), float32(math.Sin(angle))}}})
 				require.NoError(t, err)
 			}
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 			hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0}, VectorQuerySpec{Property: "default", Limit: 1, ScoreScale: VectorScoreSimilarity}, &SearchOptions{HNSWEf: 256, QuantizationOversampling: 256})
@@ -131,7 +131,7 @@ func TestQuantizationRescoreFalseReachesPropertySupplement(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	_, err := engine.CreateNode(&storage.Node{ID: "property", Properties: map[string]any{"features": []float32{1, .1}}})
 	require.NoError(t, err)
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	no := false
@@ -154,7 +154,7 @@ func TestConfigureHNSWQuantizationAppliesDatabasePolicyAndInvalidatesPipeline(t 
 	engine := newNamespacedEngine(t)
 	_, err := engine.CreateNode(&storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, .1}}})
 	require.NoError(t, err)
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	cfg := HNSWQuantizationConfig{Mode: HNSWQuantizationScalar}
 	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
@@ -193,7 +193,7 @@ func TestQuantizationPendingPQPropertyQueryUsesApproximateScoresOnActivation(t *
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 	}
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(ctx))
 	for _, node := range nodes[255:] {
@@ -273,7 +273,7 @@ func TestHNSWDefaultScalarPreservesQualityAndCollectionOverride(t *testing.T) {
 			require.Equal(t, presetDefaults(HNSWQualityPreset(quality)).EfSearch, cfg.EfSearch)
 		})
 	}
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
+	svc := NewService(newNamespacedEngine(t), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.Equal(t, HNSWQuantizationScalar, svc.hnswConfig().Quantization.Mode)
 	require.NoError(t, svc.ConfigureHNSWQuantization(context.Background(), HNSWQuantizationConfig{}))

@@ -26,7 +26,7 @@ func openProducerBenchDB(b *testing.B, decay bool) (*DB, *dbSearchService) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = db.Close() })
-	if _, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil); err != nil {
+	if _, err := db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait); err != nil {
 		b.Fatal(err)
 	}
 	db.searchServicesMu.RLock()

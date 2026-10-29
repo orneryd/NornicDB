@@ -89,7 +89,7 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 	for key := range props {
 		keys = append(keys, key)
 	}
-	visible := storage.NewQueryResultProjection(e.storage).SelectedNodeProperties(node, keys)
+	visible := storage.NewQueryResultProjection(e.storage).NodeProperties(node, keys)
 	return nodePropertiesMatch(&storage.Node{Properties: visible}, props)
 }
 

@@ -90,7 +90,7 @@ func TestDbVisibilitySuppressUpdatesSearch(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	_, err = exec.Execute(ctx, "CREATE (:Doc {name: 'quokkalicious'})", nil)
 	require.NoError(t, err)
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(ctx))
 	exec.SetSearchService(svc)
 	hits := func(t *testing.T) int {

@@ -75,7 +75,7 @@ func (h *triageSnapshotLog) Handle(_ context.Context, r slog.Record) error {
 
 func newTriageService(t *testing.T, engine storage.Engine) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	svc := NewService(engine, 3, nil)
 	svc.FixVectorDimensions()
 	dir := t.TempDir()
 	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))

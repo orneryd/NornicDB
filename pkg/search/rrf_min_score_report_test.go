@@ -12,7 +12,7 @@ import (
 // MinRRFScore's cut is counted: of 50 results from one ranking, the default
 // 0.01 keeps the first 40 (1/(60+40)) and drops 10 (#1092).
 func TestFuseRRFCountingReportsMinimumScoreDrops(t *testing.T) {
-	service := NewService(newNamespacedEngine(t))
+	service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 	vectorResults := make([]indexResult, 50)
 	for index := range vectorResults {
 		vectorResults[index] = indexResult{ID: fmt.Sprintf("node-%02d", index+1), Score: 1}
@@ -35,7 +35,7 @@ func TestFuseRRFCountingReportsMinimumScoreDrops(t *testing.T) {
 // report nothing.
 func TestSearchReportsAPageCutShortByMinRRFScore(t *testing.T) {
 	engine := newNamespacedEngine(t)
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	for index := 0; index < 60; index++ {
 		node := &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%02d", index)),

@@ -97,7 +97,7 @@ func TestRelationshipSearchEmbedAndEventEdges(t *testing.T) {
 	db.indexRelationshipFromEvent(nil)
 	db.indexRelationshipFromEvent(&storage.Edge{ID: "unprefixed"})
 	db.indexRelationshipFromEvent(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b"})
-	db.removeRelationshipFromEvent("unprefixed")
-	db.removeRelationshipFromEvent("nornic:r")
+	db.queueSearchRefreshEvent(searchRelationshipChange, "unprefixed")
+	db.queueSearchRefreshEvent(searchRelationshipChange, "nornic:r")
 	require.Nil(t, db.relationshipSearchService("nornic"))
 }

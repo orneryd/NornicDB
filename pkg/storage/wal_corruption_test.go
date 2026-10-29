@@ -164,7 +164,7 @@ func TestWALDetectsCorruptedChecksum(t *testing.T) {
 	file.Close()
 
 	// Read should fail on corrupted entry
-	_, err = ReadWALEntries(walPath)
+	_, err = ReadWALEntries(walPath, nil)
 	if err == nil {
 		t.Error("Expected error reading WAL with corrupted entry, got nil")
 	}
@@ -204,16 +204,17 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 		},
 	}
 
-	// Write entries
-	file, _ := os.Create(walPath)
-	encoder := json.NewEncoder(file)
+	// Write current-format frames while retaining the entry checksums above.
+	var frames []byte
 	for _, entry := range entries {
-		encoder.Encode(&entry)
+		frames = append(frames, buildAtomicWALRecord(t, entry)...)
 	}
-	file.Close()
+	if err := os.WriteFile(walPath, frames, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Read should skip corrupted embedding entry and return valid entries
-	result, err := ReadWALEntries(walPath)
+	result, err := ReadWALEntries(walPath, nil)
 	if err != nil {
 		t.Fatalf("Should skip corrupted embedding, got error: %v", err)
 	}
@@ -334,13 +335,14 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 		{Sequence: 2, Operation: OpCreateEdge, Data: edgeData, Checksum: crc32Checksum(edgeData), Database: "test"},
 	}
 
-	// Write entries
-	file, _ := os.Create(walPath)
-	encoder := json.NewEncoder(file)
+	// Write current-format frames while retaining the entry checksums above.
+	var frames []byte
 	for _, entry := range entries {
-		encoder.Encode(&entry)
+		frames = append(frames, buildAtomicWALRecord(t, entry)...)
 	}
-	file.Close()
+	if err := os.WriteFile(walPath, frames, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Recovery should track results
 	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
@@ -404,7 +406,7 @@ func TestWALEntryIntegrity(t *testing.T) {
 	wal.Close()
 
 	// Read back and verify
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -422,7 +424,7 @@ func TestWALEntryIntegrity(t *testing.T) {
 
 		// Verify data can be deserialized
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			t.Errorf("Entry %d: failed to unmarshal: %v", i, err)
 		}
 		if data.Node.ID != nodes[i].ID {
@@ -457,7 +459,7 @@ func TestWALRecoveryFromCorruptTail(t *testing.T) {
 	file.Close()
 
 	// Reading should fail on the corrupt JSON
-	_, err := ReadWALEntries(walPath)
+	_, err := ReadWALEntries(walPath, nil)
 	if err == nil {
 		t.Error("Expected error on corrupt tail, got nil")
 	}

@@ -65,7 +65,7 @@ func relationshipTestEngine(t *testing.T) storage.Engine {
 
 func startRelationshipService(t *testing.T, engine storage.Engine, embed RelationshipEmbedFunc, configure func(*Service)) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	if configure != nil {
 		configure(svc)
@@ -265,7 +265,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 // Off by default: a relationship search fails with a localized error, and
 // the relationship hooks are no-ops (#1065).
 func TestRelationshipSearchDisabled(t *testing.T) {
-	svc := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	svc := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.False(t, svc.RelationshipSearchEnabled())
 	require.Zero(t, svc.RelationshipEmbeddingCount())
@@ -287,7 +287,7 @@ func TestRelationshipSearchDisabled(t *testing.T) {
 	require.Zero(t, keyword.RelationshipEmbeddingCount())
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	pending := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	pending := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = pending.Close() })
 	pending.EnableRelationshipSearch(nil)
 	_, err = pending.SearchRelationships(cancelled, "zephyrine", nil, nil)
@@ -334,7 +334,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	}
 
 	// A build whose storage scan fails still opens, empty.
-	failing := NewServiceWithDimensions(failingEdgeStreamEngine{Engine: engine}, 3)
+	failing := NewService(failingEdgeStreamEngine{Engine: engine}, 3, nil)
 	t.Cleanup(func() { _ = failing.Close() })
 	failing.EnableRelationshipSearch(nil)
 	failing.StartRelationshipIndex()
@@ -348,7 +348,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bm25")
 	require.NoError(t, os.WriteFile(path+relationshipVectorsFileSuffix, []byte("not gob"), 0o600))
-	persisted := NewServiceWithDimensions(engine, 3)
+	persisted := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = persisted.Close() })
 	persisted.SetPersistenceEnabled(true)
 	persisted.SetFulltextIndexPath(path)
@@ -361,7 +361,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	persisted.saveRelationshipVectors(prs)
 	_, err = os.Stat(path + relationshipVectorsFileSuffix + ".tmp")
 	require.True(t, os.IsNotExist(err), "the temporary file is removed")
-	missingDir := NewServiceWithDimensions(engine, 3)
+	missingDir := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = missingDir.Close() })
 	missingDir.SetPersistenceEnabled(true)
 	missingDir.SetFulltextIndexPath(filepath.Join(dir, "missing", "bm25"))
@@ -431,7 +431,7 @@ func TestRelationshipSearchEmbedsReportedCopy(t *testing.T) {
 	svc.IndexRelationship(&storage.Edge{ID: "unread", StartNode: "a", EndNode: "c", Type: "CITES", Properties: map[string]any{"reason": "a bridge not yet stored"}})
 	waitRelationshipVectors(t, svc, 3)
 	svc.WakeRelationshipEmbedding() // no pending work: a no-op
-	NewServiceWithDimensions(engine, 3).WakeRelationshipEmbedding()
+	NewService(engine, 3, nil).WakeRelationshipEmbedding()
 }
 
 // A relationship hit carries matches as a node hit does: the query terms in

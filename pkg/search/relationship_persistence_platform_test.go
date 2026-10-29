@@ -17,7 +17,7 @@ import (
 func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 	t.Chdir(t.TempDir())
 	engine := relationshipTestEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath("bm25")
@@ -53,7 +53,7 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 // same test uses storage's Windows policy when built and run on Windows.
 func TestRelationshipEmbeddingDirectorySyncUsesPlatformHelper(t *testing.T) {
 	engine := relationshipTestEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	path := filepath.Join(t.TempDir(), "bm25")
 	svc.SetPersistenceEnabled(true)

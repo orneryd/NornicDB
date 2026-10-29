@@ -42,7 +42,7 @@ func BenchmarkBuildIndexesWithRelationships(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		b.StopTimer()
-		svc := NewServiceWithDimensions(engine, 1024)
+		svc := NewService(engine, 1024, nil)
 		b.StartTimer()
 		if err := svc.BuildIndexes(context.Background()); err != nil {
 			b.Fatal(err)

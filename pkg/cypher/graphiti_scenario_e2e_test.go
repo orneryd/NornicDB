@@ -235,7 +235,7 @@ func TestGraphitiScenarioE2E_VerbatimCopySkipsRedundantVectorPropertyUpdates(t *
 	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(counting, dim)
+	searchSvc := search.NewService(counting, dim, nil)
 	exec.SetSearchService(searchSvc)
 
 	payload := buildGraphitiScenarioPayload(12, 24, 0, dim)
@@ -435,7 +435,7 @@ func TestGraphitiScenarioE2E_ExternalVectorIngestDoesNotUseExactScanFallbackBefo
 	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
+	searchSvc := search.NewService(ns, dim, nil)
 	exec.SetSearchService(searchSvc)
 
 	for episode := 0; episode < episodes; episode++ {
@@ -1084,7 +1084,7 @@ func BenchmarkGraphitiVerbatimCopyNodeBatch(b *testing.B) {
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX ent_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(b, err)
 
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
+	searchSvc := search.NewService(ns, dim, nil)
 	exec.SetSearchService(searchSvc)
 	seed := buildGraphitiScenarioPayload(batchSize, 0, 0, dim)
 	_, err = exec.Execute(ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": seed.nodes})
@@ -1208,7 +1208,7 @@ func BenchmarkGraphitiRelationshipVectorFastPath(b *testing.B) {
 		require.NoError(b, err)
 
 		if attachSearch {
-			searchSvc := search.NewServiceWithDimensions(ns, dim)
+			searchSvc := search.NewService(ns, dim, nil)
 			require.NoError(b, searchSvc.BuildIndexes(ctx))
 			require.True(b, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 			exec.SetSearchService(searchSvc)

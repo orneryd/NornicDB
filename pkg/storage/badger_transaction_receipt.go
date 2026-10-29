@@ -2,6 +2,7 @@ package storage
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -79,4 +80,26 @@ func bufferedCommitMarkerKey(namespace, txID, logicalID string) []byte {
 	key := make([]byte, 0, 1+len(txID))
 	key = append(key, prefixBufferedFlush)
 	return append(key, txID...)
+}
+
+// isLogicalCommitReceipt identifies the nonempty receipt written during WAL
+// replay. The old deindex queue shares its first key byte, so migration must
+// check the complete length-prefixed key and marker value before retaining it.
+func isLogicalCommitReceipt(key, value []byte) bool {
+	if len(key) < 2 || key[0] != prefixBufferedFlush || len(value) != 1 || value[0] != 1 {
+		return false
+	}
+	rest, ok := strings.CutPrefix(string(key[1:]), "replication/")
+	if !ok {
+		return false
+	}
+	length, rest, ok := strings.Cut(rest, ":")
+	if !ok {
+		return false
+	}
+	n, err := strconv.Atoi(length)
+	if err != nil || n <= 0 || strconv.Itoa(n) != length || n >= len(rest) || rest[n] != '/' {
+		return false
+	}
+	return n+1 < len(rest)
 }

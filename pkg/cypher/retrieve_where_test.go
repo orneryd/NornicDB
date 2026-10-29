@@ -26,7 +26,7 @@ CREATE (open:Collection {id: 'open', archived: false}), (old:Collection {id: 'ol
        (v1)-[:HAS_SOURCE]->(:SearchSource {id: 's1old', content: 'late fee clause', current: false}),
        (v2)-[:HAS_SOURCE]->(:SearchSource {id: 's2', content: 'late fee clause'})`, nil)
 	require.NoError(t, err)
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -81,7 +81,7 @@ func TestDbRetrieveWhereFiltersVectorCandidates(t *testing.T) {
 		_, err := store.CreateNode(node)
 		require.NoError(t, err, index)
 	}
-	service := search.NewServiceWithDimensions(store, 3)
+	service := search.NewService(store, 3, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 	result, err := exec.Execute(ctx, "CALL db.retrieve($request) YIELD node RETURN node.name AS name", map[string]interface{}{"request": map[string]interface{}{
@@ -101,7 +101,7 @@ func TestDbRetrieveWherePagesCheckIt(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "late fee clause", "group": id[:1]}})
 		require.NoError(t, err)
 	}
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -134,7 +134,7 @@ func TestDbRetrieveWhereReachesPastNearerRejectedVectors(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("e%d", j)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "current"}, ChunkEmbeddings: [][]float32{{1, 0.45 + float32(j)*0.01, 0, 0}}})
 		require.NoError(t, err)
 	}
-	service := search.NewServiceWithDimensions(store, 4)
+	service := search.NewService(store, 4, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 	for _, procedure := range []string{"db.retrieve", "db.rretrieve"} {

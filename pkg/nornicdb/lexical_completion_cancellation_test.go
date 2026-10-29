@@ -23,7 +23,7 @@ func TestCloseCancelsLexicalSearchCompletion(t *testing.T) {
 	require.NoError(t, err)
 	// An independently constructed real service prevents the DB registry's
 	// asynchronous first-use warmup from rebuilding the fixture mid-request.
-	svc := search.NewService(engine)
+	svc := search.NewService(engine, search.DefaultVectorDimensions, nil)
 	defer svc.Close()
 	require.NoError(t, svc.BuildIndexes(t.Context()))
 	request := t.Context()

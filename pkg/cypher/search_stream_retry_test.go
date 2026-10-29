@@ -16,7 +16,7 @@ func TestSearchStreamRetryCypher(t *testing.T) {
 			streamretrytest.Run(t, func(t *testing.T) streamretrytest.Fixture {
 				ctx := context.Background()
 				engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "retry")
-				service := search.NewService(engine)
+				service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 				t.Cleanup(func() { require.NoError(t, service.Close()) })
 				executor := NewStorageExecutor(engine)
 				executor.SetSearchService(service)

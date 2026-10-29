@@ -29,7 +29,7 @@ func (r malformedGRPCReranker) Rerank(context.Context, string, []search.RerankCa
 
 func TestSearchTextMalformedRerankTrailerParity(t *testing.T) {
 	engine := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-	service := search.NewServiceWithDimensions(engine, 2)
+	service := search.NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index, id := range []string{"a", "b", "c"} {
 		node := &storage.Node{

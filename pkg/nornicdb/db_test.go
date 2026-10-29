@@ -344,7 +344,16 @@ func TestOpen(t *testing.T) {
 		// Make artifacts discoverable so auto-recover branch is eligible.
 		walDir := filepath.Join(dir, "wal")
 		require.NoError(t, os.MkdirAll(walDir, 0755))
-		require.NoError(t, os.WriteFile(filepath.Join(walDir, "wal.log"), []byte("not-a-valid-wal"), 0644))
+		wal, err := storage.NewWAL(walDir, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Append(storage.OpCreateNode, storage.WALNodeData{Node: &storage.Node{ID: "test:recovery"}}))
+		require.NoError(t, wal.Close())
+		walPath := filepath.Join(walDir, "wal.log")
+		frame, err := os.ReadFile(walPath)
+		require.NoError(t, err)
+		require.Greater(t, len(frame), 9)
+		frame[9] ^= 1 // Current frame header remains valid; payload CRC fails.
+		require.NoError(t, os.WriteFile(walPath, frame, 0644))
 
 		t.Setenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION", "1")
 		_, err = Open(dir, DefaultConfig())
@@ -404,7 +413,7 @@ func TestClose(t *testing.T) {
 		cfg.Database.DataDir = t.TempDir()
 
 		searchEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
-		svc := search.NewServiceWithDimensions(searchEngine, 3)
+		svc := search.NewService(searchEngine, 3, nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		db := &DB{
@@ -1650,7 +1659,7 @@ func TestSearchAndHybridSearch_RetryWhileIndexBuilding(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "nornic")
-	svc := search.NewService(ns) // Intentionally not pre-built.
+	svc := search.NewService(ns, search.DefaultVectorDimensions, nil) // Intentionally not pre-built.
 
 	db := &DB{
 		config:            DefaultConfig(),
@@ -1680,7 +1689,7 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "nornic")
-	svc := search.NewServiceWithDimensions(ns, 3)
+	svc := search.NewService(ns, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{
 		ID:              storage.NodeID("wait-delete"),
 		Labels:          []string{"Doc"},
@@ -1706,12 +1715,12 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- db.refreshNodeInSearchIndexes(context.Background(), "nornic", ns, storage.NodeID("wait-delete"))
+		errCh <- search.RefreshIndexes(context.Background(), dbRefreshScope{db: db, dbName: "nornic", storage: ns}, search.RefreshRequest{Node: "wait-delete"})
 	}()
 
 	select {
 	case err := <-errCh:
-		t.Fatalf("refreshNodeInSearchIndexes returned before build completion: %v", err)
+		t.Fatalf("search refresh returned before build completion: %v", err)
 	case <-time.After(25 * time.Millisecond):
 	}
 

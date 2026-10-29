@@ -193,6 +193,17 @@ type uniqueConstraintCommitLock struct {
 // only after the last holder or waiter drops its reference.
 var uniqueConstraintLockPool = sync.Pool{New: func() any { return new(uniqueConstraintCommitLock) }}
 
+// Batch lock acquisition discards its deduplication map as soon as requests
+// are assembled. Reuse bounded maps so large ingest batches do not allocate
+// the same table on every commit; clearing drops all retained key references.
+type uniqueConstraintSeenTable struct {
+	keys map[uniqueConstraintLockKey]int
+}
+
+var uniqueConstraintSeenPool = sync.Pool{New: func() any {
+	return &uniqueConstraintSeenTable{keys: make(map[uniqueConstraintLockKey]int)}
+}}
+
 type uniqueConstraintLockRequest struct {
 	key    uniqueConstraintLockKey
 	lock   *uniqueConstraintCommitLock
@@ -324,7 +335,16 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 		return func() {}, nil
 	}
 	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
-	seen := make(map[uniqueConstraintLockKey]int, len(keys))
+	const minPooledKeys, maxPooledKeys = 64, 16384
+	pooled := len(keys) >= minPooledKeys && len(keys) <= maxPooledKeys
+	var seen map[uniqueConstraintLockKey]int
+	var table *uniqueConstraintSeenTable
+	if pooled {
+		table = uniqueConstraintSeenPool.Get().(*uniqueConstraintSeenTable)
+		seen = table.keys
+	} else {
+		seen = make(map[uniqueConstraintLockKey]int, len(keys))
+	}
 	for _, k := range keys {
 		shared := k.shared
 		k.shared = false // mode is not part of the identity: writes conflict with reads.
@@ -338,6 +358,10 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 		}
 		seen[k] = len(requests)
 		requests = append(requests, uniqueConstraintLockRequest{key: k, shared: shared})
+	}
+	if pooled {
+		clear(table.keys)
+		uniqueConstraintSeenPool.Put(table)
 	}
 	if len(requests) == 0 {
 		return func() {}, nil

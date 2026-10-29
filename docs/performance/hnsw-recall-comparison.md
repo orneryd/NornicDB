@@ -26,7 +26,7 @@ highest clustered settings.
 ## BM25 metadata stages
 
 The clustered corpus also models its 2,000 source documents explicitly (50
-chunks per document). A real `FulltextIndexV2` indexes one topic term and one
+chunks per document). A real `FulltextIndex` indexes one topic term and one
 document term per source document. The same run then measures each lexical use
 independently: build metadata only, query entry points only, and both together.
 No extra BM25 query is executed by HNSW.
