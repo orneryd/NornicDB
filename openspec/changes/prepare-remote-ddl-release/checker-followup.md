@@ -103,6 +103,9 @@ not covered by this run.
 
 ## Work after this inventory
 
+Candidates 1 and 2 now use table-driven tests that share setup while preserving
+the original query fixtures, assertions, environment transitions and service
+lifetimes. The affected cases and neighboring tests passed focused race runs.
 Candidates 23 and 24 were consolidated into one table-driven compressed-vector
 rescore test, preserving both fixtures and their assertions; its focused race
 check passed. Candidates 10 and 11 now share a table-driven continuation test,
