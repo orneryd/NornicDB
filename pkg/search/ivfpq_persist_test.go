@@ -79,30 +79,6 @@ func TestIVFPQPersistHelpersAndErrorBranches(t *testing.T) {
 	require.Error(t, decodeMsgpackFile(bad, &dst))
 }
 
-func TestIVFPQPersist_ServiceBranches(t *testing.T) {
-	profile := IVFPQProfile{
-		Dimensions:          8,
-		IVFLists:            16,
-		PQSegments:          4,
-		PQBits:              4,
-		NProbe:              4,
-		RerankTopK:          20,
-		TrainingSampleMax:   128,
-		KMeansMaxIterations: 4,
-	}
-
-	svc := NewService(newTestMemoryEngine(t), 8, nil)
-
-	// vfs nil branch when no compatible in-memory/persisted index exists.
-	_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "vector file store unavailable")
-
-	// persistIVFPQBackground no-op branches: no base path and no index.
-	svc.persistIVFPQBackground("", "")
-	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
-}
-
 func tinyIVFPQIndexForTest(profile IVFPQProfile) *IVFPQIndex {
 	idx := &IVFPQIndex{
 		profile:         profile,
@@ -192,38 +168,68 @@ func TestIVFPQPersist_LoadErrorBranches(t *testing.T) {
 	}
 }
 
+// TestIVFPQPersist_ServiceSuccessAndCacheBranches owns the Service-level IVFPQ
+// persistence contract: the unavailable-store error, the no-op background
+// persist branches, bundle round-trip with the live mutation overlay, the
+// in-memory cache and on-disk load paths, and the background persist write.
 func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
-	profile := IVFPQProfile{Dimensions: 2, IVFLists: 2, PQSegments: 1, PQBits: 1, NProbe: 1, RerankTopK: 2}
-	idx := tinyIVFPQIndexForTest(profile)
-	idx.overflow = []ivfpqOverflowVector{{ID: "outlier", Vector: []float32{1, 0}}}
+	profile := IVFPQProfile{
+		Dimensions:          8,
+		IVFLists:            16,
+		PQSegments:          4,
+		PQBits:              4,
+		NProbe:              4,
+		RerankTopK:          20,
+		TrainingSampleMax:   128,
+		KMeansMaxIterations: 4,
+	}
 
-	base := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFPQBundle(base, idx))
-	loaded, err := LoadIVFPQBundle(base)
-	require.NoError(t, err)
-	require.NotNil(t, loaded)
-	require.Equal(t, 1, loaded.Count())
-	require.Equal(t, idx.overflow, loaded.overflow)
-	require.True(t, loaded.compatibleProfile(profile))
+	t.Run("unavailable vector store and no-op persist branches", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 8, nil)
 
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
-	svc.ivfpqIndex = idx
-	var nilCtx context.Context
-	cached, err := svc.getOrBuildIVFPQIndex(nilCtx, profile, nil, nil)
-	require.NoError(t, err)
-	require.Same(t, idx, cached)
+		// vfs nil branch when no compatible in-memory/persisted index exists.
+		_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "vector file store unavailable")
 
-	svc = NewService(newTestMemoryEngine(t), 2, nil)
-	svc.hnswIndexPath = base
-	loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, nil)
-	require.NoError(t, err)
-	require.NotNil(t, loadedFromDisk)
-	require.Equal(t, 1, loadedFromDisk.Count())
+		// persistIVFPQBackground no-op branches: no base path and no index.
+		svc.persistIVFPQBackground("", "")
+		svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
+	})
 
-	svc.persistIVFPQBackground("", base)
-	stat, err := os.Stat(ivfpqBundleDir(base))
-	require.NoError(t, err)
-	require.True(t, stat.IsDir())
+	t.Run("cache, disk load and background persist", func(t *testing.T) {
+		tinyProfile := IVFPQProfile{Dimensions: 2, IVFLists: 2, PQSegments: 1, PQBits: 1, NProbe: 1, RerankTopK: 2}
+		idx := tinyIVFPQIndexForTest(tinyProfile)
+		idx.overflow = []ivfpqOverflowVector{{ID: "outlier", Vector: []float32{1, 0}}}
+
+		base := filepath.Join(t.TempDir(), "hnsw")
+		require.NoError(t, SaveIVFPQBundle(base, idx))
+		loaded, err := LoadIVFPQBundle(base)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		require.Equal(t, 1, loaded.Count())
+		require.Equal(t, idx.overflow, loaded.overflow)
+		require.True(t, loaded.compatibleProfile(tinyProfile))
+
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.ivfpqIndex = idx
+		var nilCtx context.Context
+		cached, err := svc.getOrBuildIVFPQIndex(nilCtx, tinyProfile, nil, nil)
+		require.NoError(t, err)
+		require.Same(t, idx, cached)
+
+		svc = NewService(newTestMemoryEngine(t), 2, nil)
+		svc.hnswIndexPath = base
+		loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), tinyProfile, nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, loadedFromDisk)
+		require.Equal(t, 1, loadedFromDisk.Count())
+
+		svc.persistIVFPQBackground("", base)
+		stat, err := os.Stat(ivfpqBundleDir(base))
+		require.NoError(t, err)
+		require.True(t, stat.IsDir())
+	})
 }
 
 func TestIVFPQPersistRestoresLiveMutationOverlay(t *testing.T) {

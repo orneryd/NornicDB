@@ -161,28 +161,31 @@ func TestHitRate(t *testing.T) {
 // Harness Integration Tests
 // =============================================================================
 
-func TestHarnessBasic(t *testing.T) {
-	// Create a search service with test data
-	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store, search.DefaultVectorDimensions, nil)
-
-	// Add test nodes
-	for i := 0; i < 10; i++ {
-		node := &storage.Node{
-			ID:     storage.NodeID(string(rune('a' + i))),
-			Labels: []string{"Doc"},
-			Properties: map[string]interface{}{
-				"title":   "Document " + string(rune('a'+i)),
-				"content": "Test content for search",
-			},
-		}
-		store.CreateNode(node)
-		service.IndexNode(node)
-	}
-
-	harness := NewHarness(service)
-
+// TestHarnessSingleTestCaseEvaluation covers the single add_test_case/run_evaluation
+// path against the ten-document corpus and the multi-case batch registration path
+// against the four-document ML/database corpus. Each body keeps its own harness,
+// fixture store and indexed corpus; the subtests never share harness state.
+func TestHarnessSingleTestCaseEvaluation(t *testing.T) {
 	t.Run("add_test_case", func(t *testing.T) {
+		// Create a search service with test data
+		store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		service := search.NewService(store, search.DefaultVectorDimensions, nil)
+
+		// Add test nodes
+		for i := 0; i < 10; i++ {
+			node := &storage.Node{
+				ID:     storage.NodeID(string(rune('a' + i))),
+				Labels: []string{"Doc"},
+				Properties: map[string]interface{}{
+					"title":   "Document " + string(rune('a'+i)),
+					"content": "Test content for search",
+				},
+			}
+			store.CreateNode(node)
+			service.IndexNode(node)
+		}
+
+		harness := NewHarness(service)
 		harness.AddTestCase(TestCase{
 			Name:     "find docs",
 			Query:    "test content",
@@ -191,6 +194,31 @@ func TestHarnessBasic(t *testing.T) {
 	})
 
 	t.Run("run_evaluation", func(t *testing.T) {
+		// Create a search service with test data
+		store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		service := search.NewService(store, search.DefaultVectorDimensions, nil)
+
+		// Add test nodes
+		for i := 0; i < 10; i++ {
+			node := &storage.Node{
+				ID:     storage.NodeID(string(rune('a' + i))),
+				Labels: []string{"Doc"},
+				Properties: map[string]interface{}{
+					"title":   "Document " + string(rune('a'+i)),
+					"content": "Test content for search",
+				},
+			}
+			store.CreateNode(node)
+			service.IndexNode(node)
+		}
+
+		harness := NewHarness(service)
+		harness.AddTestCase(TestCase{
+			Name:     "find docs",
+			Query:    "test content",
+			Expected: []string{"a", "b", "c"},
+		})
+
 		ctx := context.Background()
 		result, err := harness.Run(ctx)
 		require.NoError(t, err)
@@ -198,59 +226,59 @@ func TestHarnessBasic(t *testing.T) {
 		assert.Equal(t, 1, result.TotalTests)
 		assert.NotNil(t, result.Aggregate)
 	})
-}
 
-func TestHarnessMultipleTests(t *testing.T) {
-	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	service := search.NewService(store, search.DefaultVectorDimensions, nil)
+	t.Run("multiple_test_cases", func(t *testing.T) {
+		store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		service := search.NewService(store, search.DefaultVectorDimensions, nil)
 
-	// Add diverse test nodes
-	nodes := []struct {
-		id      string
-		title   string
-		content string
-	}{
-		{"ml1", "Machine Learning", "neural networks and deep learning"},
-		{"ml2", "ML Algorithms", "supervised and unsupervised learning"},
-		{"db1", "Database Design", "SQL and NoSQL databases"},
-		{"db2", "Graph Databases", "nodes and relationships"},
-	}
-
-	for _, n := range nodes {
-		node := &storage.Node{
-			ID:     storage.NodeID(n.id),
-			Labels: []string{"Doc"},
-			Properties: map[string]interface{}{
-				"title":   n.title,
-				"content": n.content,
-			},
+		// Add diverse test nodes
+		nodes := []struct {
+			id      string
+			title   string
+			content string
+		}{
+			{"ml1", "Machine Learning", "neural networks and deep learning"},
+			{"ml2", "ML Algorithms", "supervised and unsupervised learning"},
+			{"db1", "Database Design", "SQL and NoSQL databases"},
+			{"db2", "Graph Databases", "nodes and relationships"},
 		}
-		store.CreateNode(node)
-		service.IndexNode(node)
-	}
 
-	harness := NewHarness(service)
+		for _, n := range nodes {
+			node := &storage.Node{
+				ID:     storage.NodeID(n.id),
+				Labels: []string{"Doc"},
+				Properties: map[string]interface{}{
+					"title":   n.title,
+					"content": n.content,
+				},
+			}
+			store.CreateNode(node)
+			service.IndexNode(node)
+		}
 
-	// Add test cases
-	harness.AddTestCases([]TestCase{
-		{
-			Name:     "ML search",
-			Query:    "machine learning neural",
-			Expected: []string{"ml1", "ml2"},
-		},
-		{
-			Name:     "Database search",
-			Query:    "database SQL",
-			Expected: []string{"db1", "db2"},
-		},
+		harness := NewHarness(service)
+
+		// Add test cases
+		harness.AddTestCases([]TestCase{
+			{
+				Name:     "ML search",
+				Query:    "machine learning neural",
+				Expected: []string{"ml1", "ml2"},
+			},
+			{
+				Name:     "Database search",
+				Query:    "database SQL",
+				Expected: []string{"db1", "db2"},
+			},
+		})
+
+		ctx := context.Background()
+		result, err := harness.Run(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, result.TotalTests)
+		assert.Len(t, result.Results, 2)
 	})
-
-	ctx := context.Background()
-	result, err := harness.Run(ctx)
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, result.TotalTests)
-	assert.Len(t, result.Results, 2)
 }
 
 func TestHarnessNoTestCases(t *testing.T) {

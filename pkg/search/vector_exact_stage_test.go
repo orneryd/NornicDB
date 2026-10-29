@@ -19,7 +19,12 @@ import (
 // cut: generators only select which nodes to score, whatever their scores,
 // routing or compression.
 
-const exactStageDims = 4
+const (
+	exactStageDims = 4
+	// exactStageFillers is how many fillers the population carries, all
+	// pointing away from every query below so the page never reaches them.
+	exactStageFillers = 300
+)
 
 // exactStageChunkA and exactStageChunkB are the two chunks of node "multi".
 // Every compressed code puts them close or tied for the queries below, while
@@ -43,9 +48,11 @@ func exactStageCosine(a, b []float32) float64 {
 
 // exactStageService indexes node "multi" (chunks A and B), node "single" and
 // 300 fillers pointing away from every query, then serves vector search with
-// the named generator. Generators the Service picks itself (HNSW, IVF-HNSW,
-// CPU k-means, CPU brute force) are its own pipelines; the others are built
-// over the same vectors and installed, as their strategies would be.
+// the named generator. The engine, scope, Service and indexing come from the
+// shared fixture (newVectorService, indexVectorNodes). Generators the Service
+// picks itself (HNSW, IVF-HNSW, CPU k-means, CPU brute force) are its own
+// pipelines; the others are built over the same vectors and installed, as
+// their strategies would be.
 func exactStageService(t *testing.T, generator, quantization string) *Service {
 	t.Helper()
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
@@ -57,30 +64,22 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 	if generator == "brute" {
 		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	}
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	svc := NewService(engine, exactStageDims, nil)
-	t.Cleanup(func() { closeAfterBuilds(t, svc) })
+	svc, engine := newVectorService(t, exactStageDims, "nornic")
 	if generator == "kmeans" || generator == "ivf_hnsw" {
-		svc.EnableClustering(nil, 4)
-		svc.SetMinEmbeddingsForClustering(1)
+		enableVectorClustering(t, svc, 4)
 	}
 	nodes := []*storage.Node{
 		{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{exactStageChunkA, exactStageChunkB}},
 		{ID: "single", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{exactStageSingle}},
 	}
-	for i := 0; i < 300; i++ {
+	for i := 0; i < exactStageFillers; i++ {
 		angle := (100 + 160*float64(i)/299) * math.Pi / 180
 		nodes = append(nodes, &storage.Node{
-			ID:              storage.NodeID(fmt.Sprintf("filler-%03d", i)),
-			Labels:          []string{"Doc"},
+			ID: storage.NodeID(fmt.Sprintf("filler-%03d", i)), Labels: []string{"Doc"},
 			ChunkEmbeddings: [][]float32{{float32(math.Cos(angle)), float32(math.Sin(angle)), 0, 0}},
 		})
 	}
-	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
-		require.NoError(t, err)
-		require.NoError(t, svc.IndexNode(node))
-	}
+	indexVectorNodes(t, svc, engine, nodes...)
 	ctx := context.Background()
 
 	// Every indexed vector, by its vector ID.
@@ -96,7 +95,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 	}
 	svc.mu.RUnlock()
 	svc.indexMu.RUnlock()
-	require.Len(t, vectors, 303)
+	require.Len(t, vectors, exactStageFillers+3)
 
 	var pipeline *VectorSearchPipeline
 	switch generator {
@@ -288,13 +287,9 @@ func TestMultiChunkNodeKeepsItsBestChunkUnderCompression(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			svc := NewService(engine, 2, nil)
-			t.Cleanup(func() { closeAfterBuilds(t, svc) })
-			node := &storage.Node{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.6, 0.8}, {0.9, 0.4358899}}}
-			_, err := engine.CreateNode(node)
-			require.NoError(t, err)
-			require.NoError(t, svc.IndexNode(node))
+			svc, engine := newVectorService(t, 2, "nornic")
+			indexVectorNodes(t, svc, engine,
+				&storage.Node{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.6, 0.8}, {0.9, 0.4358899}}})
 			requireHNSWReady(t, svc)
 			for _, query := range [][]float32{{1, 0}, {1, 0.1}} {
 				opts := DefaultSearchOptions()

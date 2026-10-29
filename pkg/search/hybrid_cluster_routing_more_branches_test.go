@@ -70,7 +70,7 @@ func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 		svc.applyBM25SeedHints() // nil cluster/fulltext
 
 		svc.EnableClustering(nil, 2)
-		svc.setFulltext(NewFulltextIndex(nil))
+		svc.setFulltext(NewFulltextIndexV2WithAnalyzer(nil))
 		svc.applyBM25SeedHints() // !IsClustered && Count==0
 	})
 
@@ -78,7 +78,7 @@ func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 		svc := NewService(newTestMemoryEngine(t), 2, nil)
 		svc.EnableClustering(nil, 2)
 		require.NoError(t, svc.clusterIndex.Add("existing", []float32{1, 0}))
-		svc.setFulltext(&seedOverrideFulltext{FulltextIndex: NewFulltextIndex(nil), seedIDs: []string{"missing"}})
+		svc.setFulltext(&seedOverrideFulltext{FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil), seedIDs: []string{"missing"}})
 		svc.applyBM25SeedHints()
 		require.Empty(t, preferredSeedsForTest(t, svc.clusterIndex))
 	})

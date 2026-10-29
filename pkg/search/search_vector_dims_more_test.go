@@ -79,90 +79,103 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestService_VectorQueryNodes_FileStorePropertyVectors covers file-store-only
+// property vectors and a stale HNSW pipeline that misses a high-frequency
+// entity the file store can still score exactly.
 func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
-	require.NoError(t, err)
-	defer func() { _ = vfs.Close() }()
-	svc.vectorFileStore = vfs
-
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "best",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "FalkorDB",
-			"name_embedding": []float64{1, 0, 0, 0},
+	for _, tc := range []struct {
+		name          string
+		bruteMaxN     string
+		staleHNSW     bool
+		wantEmbedding int
+		wantHits      []string
+	}{
+		{
+			name:          "property vectors live only in the file store",
+			bruteMaxN:     "1000",
+			wantEmbedding: 2,
+			wantHits:      []string{"best"},
 		},
-	}))
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "other",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "NornicDB",
-			"name_embedding": []float64{0, 1, 0, 0},
+		{
+			name:          "file store supplements a stale HNSW pipeline",
+			staleHNSW:     true,
+			wantEmbedding: 2,
+			wantHits:      []string{"joe-existing"},
 		},
-	}))
-	require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
-	require.Equal(t, 2, svc.EmbeddingCount())
-	require.Equal(t, 0, svc.vectorIndex.Count(), "regression requires vectors to live only in the file store")
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.bruteMaxN != "" {
+				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", tc.bruteMaxN)
+			}
+			svc := NewService(newTestMemoryEngine(t), 4, nil)
+			vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
+			require.NoError(t, err)
+			defer func() { _ = vfs.Close() }()
+			svc.vectorFileStore = vfs
 
-	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
-		Label:    "Entity",
-		Property: "name_embedding",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, "best", hits[0].ID)
-	require.InDelta(t, 1.0, hits[0].Score, 1e-5)
-}
+			if tc.staleHNSW {
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "joe-existing",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "Joe",
+						"name_embedding": []float64{1, 0, 0, 0},
+					},
+				}))
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "claude-existing",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "Claude",
+						"name_embedding": []float64{0, 1, 0, 0},
+					},
+				}))
+				require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
+				require.Equal(t, tc.wantEmbedding, svc.EmbeddingCount())
 
-func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
-	require.NoError(t, err)
-	defer func() { _ = vfs.Close() }()
-	svc.vectorFileStore = vfs
+				// Simulate a candidate-generation visibility/recall miss: the file-backed
+				// vector store can score Joe exactly, but the active HNSW pipeline only
+				// returns Claude. This mirrors high-frequency entities being present in the
+				// file store while candidate generation misses them during ingest.
+				staleHNSW := NewHNSWIndex(4, DefaultHNSWConfig())
+				require.NoError(t, staleHNSW.Add(nodePropertyVectorKey("claude-existing", "name_embedding"), []float32{0, 1, 0, 0}))
+				svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(staleHNSW), NewCPUExactScorer(vfs))
+				svc.hnswIndex = staleHNSW
+			} else {
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "best",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "FalkorDB",
+						"name_embedding": []float64{1, 0, 0, 0},
+					},
+				}))
+				require.NoError(t, svc.IndexNode(&storage.Node{
+					ID:     "other",
+					Labels: []string{"Entity"},
+					Properties: map[string]any{
+						"name":           "NornicDB",
+						"name_embedding": []float64{0, 1, 0, 0},
+					},
+				}))
+				require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
+				require.Equal(t, tc.wantEmbedding, svc.EmbeddingCount())
+				require.Equal(t, 0, svc.vectorIndex.Count(), "regression requires vectors to live only in the file store")
+			}
 
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "joe-existing",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "Joe",
-			"name_embedding": []float64{1, 0, 0, 0},
-		},
-	}))
-	require.NoError(t, svc.IndexNode(&storage.Node{
-		ID:     "claude-existing",
-		Labels: []string{"Entity"},
-		Properties: map[string]any{
-			"name":           "Claude",
-			"name_embedding": []float64{0, 1, 0, 0},
-		},
-	}))
-	require.Equal(t, 2, svc.CountPropertyVectorEntries("name_embedding"))
-	require.Equal(t, 2, svc.EmbeddingCount())
-
-	// Simulate a candidate-generation visibility/recall miss: the file-backed
-	// vector store can score Joe exactly, but the active HNSW pipeline only
-	// returns Claude. This mirrors high-frequency entities being present in the
-	// file store while candidate generation misses them during ingest.
-	staleHNSW := NewHNSWIndex(4, DefaultHNSWConfig())
-	require.NoError(t, staleHNSW.Add(nodePropertyVectorKey("claude-existing", "name_embedding"), []float32{0, 1, 0, 0}))
-	svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(staleHNSW), NewCPUExactScorer(vfs))
-	svc.hnswIndex = staleHNSW
-
-	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
-		Label:    "Entity",
-		Property: "name_embedding",
-		Limit:    1,
-	})
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	require.Equal(t, "joe-existing", hits[0].ID)
-	require.InDelta(t, 1.0, hits[0].Score, 1e-5)
+			hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{
+				Label:    "Entity",
+				Property: "name_embedding",
+				Limit:    1,
+			})
+			require.NoError(t, err)
+			require.Len(t, hits, len(tc.wantHits))
+			for index, want := range tc.wantHits {
+				require.Equal(t, want, hits[index].ID)
+				require.InDelta(t, 1.0, hits[index].Score, 1e-5)
+			}
+		})
+	}
 }
 
 func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {

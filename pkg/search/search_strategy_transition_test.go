@@ -52,16 +52,6 @@ func waitForStrategy(t *testing.T, svc *Service, want strategyMode, timeout time
 	require.Equal(t, want, svc.currentPipelineStrategy())
 }
 
-func TestRuntimeStrategy_DefaultsToHNSW(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	svc := NewService(engine, 4, nil)
-	require.NotNil(t, svc)
-
-	_, err := svc.getOrCreateVectorPipeline(context.Background())
-	require.NoError(t, err)
-	requireHNSWReady(t, svc)
-}
-
 func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	engine := newNamespacedEngine(t)
@@ -112,6 +102,9 @@ func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *test
 	require.False(t, svc.strategyTransitionInProgress)
 }
 
+// TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites owns the default runtime
+// strategy contract: a fresh service serves from HNSW, and writes made after
+// the pipeline exists are indexed and remain searchable.
 func TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	svc := NewService(engine, 4, nil)
@@ -171,100 +164,106 @@ func TestRuntimeStrategyTransition_CPUToGPUBruteNoRebuild(t *testing.T) {
 	require.Nil(t, svc.hnswIndex)
 }
 
-func TestRuntimeStrategyTransition_ReplayAndClearDeltaLog(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	svc := NewService(engine, 4, nil)
-
-	vi := svc.vectorIndex
-	require.NotNil(t, vi)
-	require.NoError(t, vi.Add("delta-a", []float32{1, 0, 0, 0}))
-	require.NoError(t, vi.Add("delta-b", []float32{0, 1, 0, 0}))
-
-	target := NewHNSWIndex(4, HNSWConfigFromEnv())
-	require.NotNil(t, target)
-
-	svc.strategyTransitionMu.Lock()
-	svc.strategyTransitionInProgress = true
-	svc.strategyTransitionMu.Unlock()
-
-	svc.appendStrategyDelta("delta-a", true)
-	svc.appendStrategyDelta("delta-b", true)
-
-	last := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, 0)
-	require.Greater(t, last, uint64(0))
-
-	results, err := target.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
-	require.NoError(t, err)
-	foundA := false
-	for _, r := range results {
-		if r.ID == "delta-a" {
-			foundA = true
-			break
-		}
-	}
-	require.True(t, foundA, "added delta should be replayed into HNSW target")
-
-	// Replay only deltas after the prior sequence and validate remove path.
-	svc.appendStrategyDelta("delta-a", false)
-	next := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, last)
-	require.Greater(t, next, last)
-
-	svc.clearTransitionDeltaLogLocked(next)
-	results, err = target.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
-	require.NoError(t, err)
-	foundA = false
-	for _, r := range results {
-		if r.ID == "delta-a" {
-			foundA = true
-			break
-		}
-	}
-	require.False(t, foundA, "remove delta should be replayed into HNSW target")
-
-	svc.strategyTransitionMu.Lock()
-	svc.strategyTransitionInProgress = false
-	svc.strategyTransitionMu.Unlock()
-}
-
+// TestRuntimeStrategyTransition_ReplayHelpers_BruteGPUAndClear owns the
+// strategy transition delta log contract: HNSW replay applies add and remove
+// deltas in sequence, the BruteGPU branch is a safe no-op without a GPU index,
+// and clearing keeps only the deltas after the applied sequence.
 func TestRuntimeStrategyTransition_ReplayHelpers_BruteGPUAndClear(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	svc := NewService(engine, 4, nil)
-	vi := svc.vectorIndex
-	require.NotNil(t, vi)
-	require.NoError(t, vi.Add("gpu-delta", []float32{0, 1, 0, 0}))
+	t.Run("hnsw replay and selective clear", func(t *testing.T) {
+		engine := newNamespacedEngine(t)
+		svc := NewService(engine, 4, nil)
 
-	svc.strategyTransitionMu.Lock()
-	svc.strategyTransitionInProgress = true
-	svc.strategyTransitionMu.Unlock()
+		vi := svc.vectorIndex
+		require.NotNil(t, vi)
+		require.NoError(t, vi.Add("delta-a", []float32{1, 0, 0, 0}))
+		require.NoError(t, vi.Add("delta-b", []float32{0, 1, 0, 0}))
 
-	svc.appendStrategyDelta("gpu-delta", true)
-	svc.appendStrategyDelta("gpu-delta", false)
+		target := NewHNSWIndex(4, HNSWConfigFromEnv())
+		require.NotNil(t, target)
 
-	// BruteGPU branch with nil gpuEmbeddingIndex should still be a no-op without panic.
-	last := svc.replayTransitionDeltas(nil, strategyModeBruteGPU, vi, nil, 0)
-	require.Greater(t, last, uint64(0))
+		svc.strategyTransitionMu.Lock()
+		svc.strategyTransitionInProgress = true
+		svc.strategyTransitionMu.Unlock()
 
-	// applied == 0 clears full log branch.
-	svc.clearTransitionDeltaLogLocked(0)
-	svc.strategyTransitionMu.Lock()
-	require.Len(t, svc.strategyTransitionDeltas, 0)
-	svc.strategyTransitionMu.Unlock()
+		svc.appendStrategyDelta("delta-a", true)
+		svc.appendStrategyDelta("delta-b", true)
 
-	// selective clear keeps only seq > applied branch.
-	svc.appendStrategyDelta("gpu-delta", true)
-	svc.appendStrategyDelta("gpu-delta", false)
-	svc.strategyTransitionMu.Lock()
-	require.Len(t, svc.strategyTransitionDeltas, 2)
-	firstSeq := svc.strategyTransitionDeltas[0].seq
-	secondSeq := svc.strategyTransitionDeltas[1].seq
-	svc.strategyTransitionMu.Unlock()
+		last := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, 0)
+		require.Greater(t, last, uint64(0))
 
-	svc.clearTransitionDeltaLogLocked(firstSeq)
-	svc.strategyTransitionMu.Lock()
-	require.Len(t, svc.strategyTransitionDeltas, 1)
-	require.Equal(t, secondSeq, svc.strategyTransitionDeltas[0].seq)
-	svc.strategyTransitionInProgress = false
-	svc.strategyTransitionMu.Unlock()
+		results, err := target.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
+		require.NoError(t, err)
+		foundA := false
+		for _, r := range results {
+			if r.ID == "delta-a" {
+				foundA = true
+				break
+			}
+		}
+		require.True(t, foundA, "added delta should be replayed into HNSW target")
+
+		// Replay only deltas after the prior sequence and validate remove path.
+		svc.appendStrategyDelta("delta-a", false)
+		next := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, last)
+		require.Greater(t, next, last)
+
+		svc.clearTransitionDeltaLogLocked(next)
+		results, err = target.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
+		require.NoError(t, err)
+		foundA = false
+		for _, r := range results {
+			if r.ID == "delta-a" {
+				foundA = true
+				break
+			}
+		}
+		require.False(t, foundA, "remove delta should be replayed into HNSW target")
+
+		svc.strategyTransitionMu.Lock()
+		svc.strategyTransitionInProgress = false
+		svc.strategyTransitionMu.Unlock()
+	})
+
+	t.Run("brute gpu branch and clear branches", func(t *testing.T) {
+		engine := newNamespacedEngine(t)
+		svc := NewService(engine, 4, nil)
+		vi := svc.vectorIndex
+		require.NotNil(t, vi)
+		require.NoError(t, vi.Add("gpu-delta", []float32{0, 1, 0, 0}))
+
+		svc.strategyTransitionMu.Lock()
+		svc.strategyTransitionInProgress = true
+		svc.strategyTransitionMu.Unlock()
+
+		svc.appendStrategyDelta("gpu-delta", true)
+		svc.appendStrategyDelta("gpu-delta", false)
+
+		// BruteGPU branch with nil gpuEmbeddingIndex should still be a no-op without panic.
+		last := svc.replayTransitionDeltas(nil, strategyModeBruteGPU, vi, nil, 0)
+		require.Greater(t, last, uint64(0))
+
+		// applied == 0 clears full log branch.
+		svc.clearTransitionDeltaLogLocked(0)
+		svc.strategyTransitionMu.Lock()
+		require.Len(t, svc.strategyTransitionDeltas, 0)
+		svc.strategyTransitionMu.Unlock()
+
+		// selective clear keeps only seq > applied branch.
+		svc.appendStrategyDelta("gpu-delta", true)
+		svc.appendStrategyDelta("gpu-delta", false)
+		svc.strategyTransitionMu.Lock()
+		require.Len(t, svc.strategyTransitionDeltas, 2)
+		firstSeq := svc.strategyTransitionDeltas[0].seq
+		secondSeq := svc.strategyTransitionDeltas[1].seq
+		svc.strategyTransitionMu.Unlock()
+
+		svc.clearTransitionDeltaLogLocked(firstSeq)
+		svc.strategyTransitionMu.Lock()
+		require.Len(t, svc.strategyTransitionDeltas, 1)
+		require.Equal(t, secondSeq, svc.strategyTransitionDeltas[0].seq)
+		svc.strategyTransitionInProgress = false
+		svc.strategyTransitionMu.Unlock()
+	})
 }
 
 func TestHNSWSearch_ExcludesDeletedEntryPointFromResults(t *testing.T) {

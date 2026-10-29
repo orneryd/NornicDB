@@ -21,6 +21,8 @@ var errAlreadyMsgpack = errors.New("already msgpack")
 
 // ConvertSearchIndexDirFromGobToMsgpack converts search index .gob files under rootDir to msgpack
 // and removes the .gob extension (writes to vectors, hnsw, hnsw_ivf/0, 1, ...).
+// It also converts each db directory's bm25.v2.relationships, and the same
+// file under its g- generation directories, from gob to msgpack in place.
 // rootDir should be the search index root (e.g. data/test/search). Back up the directory before running.
 func ConvertSearchIndexDirFromGobToMsgpack(rootDir string) error {
 	entries, err := os.ReadDir(rootDir)
@@ -75,37 +77,45 @@ func convertOneDbDir(dbDir string) error {
 		if os.IsNotExist(err) {
 			// Windows also classifies ReadDir on an existing regular file as
 			// not-exist. Only an absent entry is optional; an invalid entry
-			// must still fail conversion.
-			if _, statErr := os.Stat(ivfDir); os.IsNotExist(statErr) {
-				return nil
-			}
-		}
-		return err
-	}
-	for _, f := range ivfEntries {
-		if f.IsDir() {
-			continue
-		}
-		name := f.Name()
-		if !strings.HasSuffix(name, ".gob") {
-			// Already no extension (e.g. "0", "1") - skip or treat as already converted
-			continue
-		}
-		var cid int
-		if _, err := fmt.Sscanf(name, "%d.gob", &cid); err != nil {
-			continue
-		}
-		oldPath := filepath.Join(ivfDir, name)
-		newPath := filepath.Join(ivfDir, fmt.Sprintf("%d", cid))
-		if err := convertFileGobToMsgpack(oldPath, newPath, "hnsw"); err != nil {
-			if errors.Is(err, errAlreadyMsgpack) {
-				logSearchPrintf("Skip (already msgpack) %s", newPath)
-			} else {
-				return fmt.Errorf("hnsw_ivf/%s: %w", name, err)
+			// must still fail conversion. An absent directory has nothing to
+			// convert, but the rest of the db directory still must be.
+			if _, statErr := os.Stat(ivfDir); !os.IsNotExist(statErr) {
+				return err
 			}
 		} else {
-			logSearchPrintf("Converted %s -> %s", oldPath, newPath)
+			return err
 		}
+	} else {
+		for _, f := range ivfEntries {
+			if f.IsDir() {
+				continue
+			}
+			name := f.Name()
+			if !strings.HasSuffix(name, ".gob") {
+				// Already no extension (e.g. "0", "1") - skip or treat as already converted
+				continue
+			}
+			var cid int
+			if _, err := fmt.Sscanf(name, "%d.gob", &cid); err != nil {
+				continue
+			}
+			oldPath := filepath.Join(ivfDir, name)
+			newPath := filepath.Join(ivfDir, fmt.Sprintf("%d", cid))
+			if err := convertFileGobToMsgpack(oldPath, newPath, "hnsw"); err != nil {
+				if errors.Is(err, errAlreadyMsgpack) {
+					logSearchPrintf("Skip (already msgpack) %s", newPath)
+				} else {
+					return fmt.Errorf("hnsw_ivf/%s: %w", name, err)
+				}
+			} else {
+				logSearchPrintf("Converted %s -> %s", oldPath, newPath)
+			}
+		}
+	}
+
+	// bm25.v2.relationships -> msgpack: here, then in each g- generation dir.
+	if err := convertRelationshipSnapshotDir(dbDir); err != nil {
+		return err
 	}
 	return nil
 }

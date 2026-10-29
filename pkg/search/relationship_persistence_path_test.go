@@ -2,7 +2,6 @@ package search
 
 import (
 	"bytes"
-	"encoding/gob"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,17 +40,21 @@ func TestRelationshipPersistenceRejectsTraversal(t *testing.T) {
 			assert.Equal(t, sentinel, string(data), "rejected path must not overwrite sibling vectors")
 
 			// The shared path owner must also reject reads. Seed a valid file
-			// so a nil result cannot be explained by a failed gob decode.
+			// so a nil result cannot be explained by a failed MessagePack decode.
 			stored := relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: map[string]*relationshipEntry{
 				"sibling": {Source: 1, Vectors: [][]float32{{1, 0, 0}}},
 			}}
 			var encoded bytes.Buffer
-			require.NoError(t, gob.NewEncoder(&encoded).Encode(stored))
+			require.NoError(t, encodeRelationshipSnapshot(&encoded, &stored))
 			require.NoError(t, os.WriteFile(target, encoded.Bytes(), 0o600))
 			svc.SetFulltextIndexPath(filepath.Join(root, "outside", "bm25"))
-			require.Equal(t, stored.Entries, svc.loadRelationshipVectors())
+			sibling, err := svc.loadRelationshipVectors()
+			require.NoError(t, err)
+			require.Equal(t, stored.Entries, sibling)
 			svc.SetFulltextIndexPath(tc.path)
-			assert.Nil(t, svc.loadRelationshipVectors(), "rejected path must not reuse sibling vectors")
+			rejected, err := svc.loadRelationshipVectors()
+			assert.Error(t, err, "rejected path must not read sibling vectors")
+			assert.Nil(t, rejected, "rejected path must not reuse sibling vectors")
 		})
 	}
 }

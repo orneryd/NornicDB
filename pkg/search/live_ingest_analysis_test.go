@@ -40,8 +40,8 @@ func TestLiveIndexAnalyzesNewDocumentOnce(t *testing.T) {
 // including replacements, tokenless text and the empty-ID behavior.
 func TestPreparedFulltextMatchesPublicWrites(t *testing.T) {
 	t.Run("fulltext", func(t *testing.T) {
-		plain := NewFulltextIndex(DefaultTextAnalyzer())
-		prepared := NewFulltextIndex(DefaultTextAnalyzer())
+		plain := NewFulltextIndexV2WithAnalyzer(DefaultTextAnalyzer())
+		prepared := NewFulltextIndexV2WithAnalyzer(DefaultTextAnalyzer())
 		for _, entry := range []FulltextBatchEntry{
 			{ID: "one", Text: "Café café 42"},
 			{ID: "two", Text: "alpha beta"},

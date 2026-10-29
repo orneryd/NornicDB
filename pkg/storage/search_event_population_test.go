@@ -240,7 +240,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerEngine.ReconcileDecaySuppressionWithChanges": scenarioDecay,
 	"BadgerTransaction.Commit":                          scenarioPublishes + " (a transaction commit)",
 	"BadgerTransaction.CommitContext":                   "Commit's implementation; " + scenarioPublishes,
-	"BadgerTransaction.CommitContextWithPublication":    "Commit's implementation; " + scenarioPublishes,
+	"BadgerTransaction.PublishCommit":                   "Commit's implementation; " + scenarioPublishes,
 	"BadgerTransaction.CreateNode":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateEdge":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.UpdateGraphNode":                 "buffers in the transaction; published by its Commit",

@@ -19,7 +19,11 @@ func wireFixture(t *testing.T, buffered bool, dataDirs ...string) (*storage.Badg
 	if len(dataDirs) > 0 {
 		dir = dataDirs[0]
 	}
-	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
+	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		DataDir:             dir,
+		WriteBehind:         buffered,
+		WriteBehindInterval: time.Hour,
+	}))
 	require.NoError(t, err)
 	a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 	require.NoError(t, err)
@@ -29,13 +33,15 @@ func wireFixture(t *testing.T, buffered bool, dataDirs ...string) (*storage.Badg
 
 func wireCommand(t *testing.T, id string, ops ...storage.Operation) *Command {
 	t.Helper()
-	data, err := storage.EncodeEntityTransaction("wire", id, ops)
+	data, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "wire", LogicalID: id, Operations: ops})
 	require.NoError(t, err)
 	return &Command{Type: CmdCommitTransaction, Data: data, Timestamp: time.Now()}
 }
+
 func wireNode(id, value string) *storage.Node {
 	return &storage.Node{ID: storage.NodeID("wire:" + id), Labels: []string{"Wire"}, Properties: map[string]any{"value": value}, CreatedAt: time.Unix(1700000000, 4).UTC(), UpdatedAt: time.Unix(1700000000, 8).UTC()}
 }
+
 func wireEdge(id, start, end, value string) *storage.Edge {
 	return &storage.Edge{ID: storage.EdgeID("wire:" + id), StartNode: storage.NodeID("wire:" + start), EndNode: storage.NodeID("wire:" + end), Type: "LINK", Properties: map[string]any{"value": value}, CreatedAt: time.Unix(1700000000, 4).UTC()}
 }
@@ -128,7 +134,7 @@ func TestPrototypeTransactionWireRejectsVersionAndNamespace(t *testing.T) {
 				require.NoError(t, err)
 				command.Data = data
 			case "namespace":
-				data, err := storage.EncodeEntityTransaction("different", "invalid", ops)
+				data, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "different", LogicalID: "invalid", Operations: ops})
 				require.NoError(t, err)
 				command = &Command{Type: CmdCommitTransaction, Data: data}
 			case "endpoint":

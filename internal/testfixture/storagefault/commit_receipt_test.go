@@ -29,7 +29,7 @@ func TestFinishPreparedReceipt(t *testing.T) {
 			require.NoError(t, tx.SetNamespace("test"))
 			_, err = tx.CreateNode(&storage.Node{ID: "test:receipt"})
 			require.NoError(t, err)
-			prepared, err := tx.PrepareEntityCommit(t.Context(), tx.ID)
+			prepared, err := tx.PrepareEntityCommit(t.Context(), storage.EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
 			t.Cleanup(prepared.Abort)
 			if test.alreadyAborted {

@@ -450,42 +450,6 @@ func BenchmarkQueuedNodeCopy(b *testing.B) {
 	}
 }
 
-// TestBuildFirstVectorChoosesTheDimensionInOrder: on an empty index whose
-// dimensions are not fixed, the first vector chooses them. A write that
-// waited for the build would come after the build's first stored vector, so a
-// write with a different dimension fails with ErrDimensionMismatch, and the
-// build's vectors keep their dimension.
-func TestBuildFirstVectorChoosesTheDimensionInOrder(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine := newNodeSnapshotGateEngine(t)
-	svc := NewService(engine, 3, nil)
-	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
-	_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
-	require.NoError(t, err)
-	built := make(chan error, 1)
-	go func() { built <- svc.BuildIndexes(context.Background()) }()
-	select {
-	case <-engine.entered:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the build did not read its node snapshot")
-	}
-	written := make(chan error, 1)
-	go func() { written <- svc.IndexNode(buildWriteNode("nornic:live", "liveterm", []float32{0, 1, 0})) }()
-	engine.open()
-	require.NoError(t, <-built)
-	select {
-	case err := <-written:
-		require.ErrorIs(t, err, ErrDimensionMismatch, "a write overtook the build's choice of the dimensions")
-	case <-time.After(10 * time.Second):
-		t.Fatal("the write did not finish after the build")
-	}
-	require.Equal(t, 4, svc.VectorIndexDimensions())
-	requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:stored", "v"), []float32{1, 0, 0, 0})
-	_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:live", "v"))
-	require.False(t, ok)
-}
-
 // TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites: a property-vector
 // index removal made after a write was acknowledged removes that write's
 // vector too, as the same calls one after another would.

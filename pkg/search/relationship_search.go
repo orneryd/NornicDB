@@ -2,12 +2,11 @@ package search
 
 import (
 	"context"
-	"encoding/gob"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -97,6 +96,7 @@ type relationshipSearch struct {
 	mu       sync.RWMutex
 	fulltext bm25Index
 	entries  map[string]*relationshipEntry
+	loadErr  error
 	embed    RelationshipEmbedFunc
 	// pending holds the relationships to embed, each with the copy its
 	// write reported, read in place of the stored one when that isn't
@@ -129,7 +129,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 	if s == nil || s.relationships.Load() != nil {
 		return
 	}
-	fulltext := NewFulltextIndex(s.bm25Analyzer)
+	fulltext := NewFulltextIndexV2WithAnalyzer(s.bm25Analyzer)
 	s.relationships.Store(&relationshipSearch{
 		fulltext: fulltext,
 		entries:  make(map[string]*relationshipEntry),
@@ -177,7 +177,8 @@ func (s *Service) relationshipSearch() *relationshipSearch {
 // StartRelationshipIndex builds the relationship keyword index from storage,
 // keeping the persisted vectors of relationships that haven't changed, then
 // embeds the others in the background until the service closes. It returns
-// at once; searches wait for the build.
+// at once; searches wait for the build. An unreadable or unconverted snapshot
+// is left untouched and reported by SearchRelationships and Close.
 func (s *Service) StartRelationshipIndex() {
 	rs := s.relationshipSearch()
 	if rs == nil {
@@ -200,9 +201,18 @@ func (s *Service) StartRelationshipIndex() {
 func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	defer close(rs.done)
 	ctx := s.lifecycleCtx
-	persisted := s.loadRelationshipVectors()
+	persisted, err := s.loadRelationshipVectors()
+	if err != nil {
+		rs.mu.Lock()
+		rs.loading, rs.live = false, nil
+		rs.loadErr = err
+		rs.mu.Unlock()
+		rs.saveErr = err
+		close(rs.ready)
+		return
+	}
 	seen := make(map[string]bool)
-	err := storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
+	err = storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
 		seen[string(edge.ID)] = true
 		s.indexRelationship(rs, edge, persisted[string(edge.ID)], true)
 		return nil
@@ -521,21 +531,33 @@ func (s *Service) relationshipVectorsPath() (string, error) {
 	return security.AbsCanonicalFilePath(s.fulltextIndexPath + relationshipVectorsFileSuffix)
 }
 
-func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
+func (s *Service) loadRelationshipVectors() (map[string]*relationshipEntry, error) {
 	path, err := s.relationshipVectorsPath()
-	if err != nil || path == "" {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return nil, nil
 	}
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer file.Close()
-	var stored relationshipVectorsFile
-	if err := gob.NewDecoder(file).Decode(&stored); err != nil || stored.Format != relationshipVectorsFormat {
-		return nil
+	stored, already, err := decodeRelationshipSnapshot(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading relationship snapshot: %w", err)
 	}
-	return stored.Entries
+	if !already {
+		return nil, fmt.Errorf("%w: %s", ErrRelationshipSnapshotUpgradeRequired, path)
+	}
+	if stored.Format != relationshipVectorsFormat {
+		return nil, nil
+	}
+	return stored.Entries, nil
 }
 
 func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
@@ -563,29 +585,9 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
 	if rs.beforeSave != nil {
 		rs.beforeSave()
 	}
-	temp := path + ".tmp"
-	file, err := security.CreateRootedFile(temp, 0o600)
+	snapshot := relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: entries}
+	err = writeRelationshipSnapshot(path, &snapshot, 0o600, rs.syncDirectory)
 	if err != nil {
-		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
-		return err
-	}
-	err = gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: entries})
-	if err == nil {
-		err = file.Sync()
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = security.RenameRootedFile(temp, path)
-	}
-	if err == nil {
-		// The file sync orders its contents; the directory sync makes the
-		// replacement name durable before a reader is told it is complete.
-		err = rs.syncDirectory(filepath.Dir(path))
-	}
-	if err != nil {
-		_ = security.RemoveRootedPath(temp)
 		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
 	}
 	return err
@@ -631,6 +633,12 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	case <-rs.ready:
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	rs.mu.RLock()
+	loadErr := rs.loadErr
+	rs.mu.RUnlock()
+	if loadErr != nil {
+		return nil, loadErr
 	}
 	limit := opts.Limit
 	if limit <= 0 {

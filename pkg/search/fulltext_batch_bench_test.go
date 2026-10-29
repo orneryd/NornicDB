@@ -7,8 +7,8 @@ import (
 
 // buildFulltextBatchFixture creates the same fresh index used by the batch
 // correctness test and the ingest benchmark.
-func buildFulltextBatchFixture(entries []FulltextBatchEntry) *FulltextIndex {
-	index := NewFulltextIndex(nil)
+func buildFulltextBatchFixture(entries []FulltextBatchEntry) *FulltextIndexV2 {
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	index.IndexBatch(entries)
 	return index
 }

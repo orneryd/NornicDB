@@ -30,75 +30,77 @@ func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
 // =============================================================================
 
 // TestRRFHybridSearch_UsesClusteringWhenEnabled verifies that rrfHybridSearch
-// uses cluster-accelerated search when clustering is enabled and has been triggered.
+// uses cluster-accelerated search when clustering is enabled and has been
+// triggered, and that a cluster search failure still degrades gracefully to a
+// successful vector result.
 func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
-	engine := newNamespacedMemoryEngine(t)
+	t.Run("without clustering uses standard RRF hybrid", func(t *testing.T) {
+		engine := newNamespacedMemoryEngine(t)
 
-	// Create service
-	svc := NewService(engine, DefaultVectorDimensions, nil)
+		// Create service
+		svc := NewService(engine, DefaultVectorDimensions, nil)
 
-	// Create test data with embeddings (1024 dimensions to match default)
-	embedding := make([]float32, 1024)
-	embedding[0] = 1.0
+		// Create test data with embeddings (1024 dimensions to match default)
+		embedding := make([]float32, 1024)
+		embedding[0] = 1.0
 
-	nodes := []*storage.Node{
-		{ID: "doc1", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Machine Learning", "content": "ML algorithms"}},
-		{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Deep Learning", "content": "Neural networks"}},
-		{ID: "doc3", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Database Systems", "content": "SQL queries"}},
-	}
-	err := engine.BulkCreateNodes(nodes)
-	require.NoError(t, err)
-
-	// Index nodes
-	for _, node := range nodes {
-		err := svc.IndexNode(node)
+		nodes := []*storage.Node{
+			{ID: "doc1", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Machine Learning", "content": "ML algorithms"}},
+			{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Deep Learning", "content": "Neural networks"}},
+			{ID: "doc3", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Database Systems", "content": "SQL queries"}},
+		}
+		err := engine.BulkCreateNodes(nodes)
 		require.NoError(t, err)
-	}
 
-	// Without clustering enabled, search should use standard vector search
-	ctx := context.Background()
-	opts := DefaultSearchOptions()
-	opts.Limit = 10
+		// Index nodes
+		for _, node := range nodes {
+			err := svc.IndexNode(node)
+			require.NoError(t, err)
+		}
 
-	response, err := svc.Search(ctx, "machine learning", embedding, opts)
-	require.NoError(t, err)
+		// Without clustering enabled, search should use standard vector search
+		ctx := context.Background()
+		opts := DefaultSearchOptions()
+		opts.Limit = 10
 
-	// Should use standard RRF hybrid (not clustered)
-	assert.Equal(t, "rrf_hybrid", response.SearchMethod, "Without clustering, should use standard RRF hybrid")
-	assert.False(t, strings.Contains(response.SearchMethod, "clustered"), "Should NOT contain 'clustered' in search method")
-}
-
-// TestRRFHybridSearch_FallsBackToVectorOnClusterError verifies graceful fallback
-// when cluster search fails.
-func TestRRFHybridSearch_FallsBackToVectorOnClusterError(t *testing.T) {
-	engine := newNamespacedMemoryEngine(t)
-
-	svc := NewService(engine, DefaultVectorDimensions, nil)
-
-	// Create and index nodes (1024 dimensions to match default)
-	embedding := make([]float32, 1024)
-	embedding[0] = 1.0
-
-	nodes := []*storage.Node{
-		{ID: "doc1", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 1"}},
-		{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 2"}},
-	}
-	err := engine.BulkCreateNodes(nodes)
-	require.NoError(t, err)
-
-	for _, node := range nodes {
-		err := svc.IndexNode(node)
+		response, err := svc.Search(ctx, "machine learning", embedding, opts)
 		require.NoError(t, err)
-	}
 
-	// Search should work even without clustering
-	ctx := context.Background()
-	opts := DefaultSearchOptions()
+		// Should use standard RRF hybrid (not clustered)
+		assert.Equal(t, "rrf_hybrid", response.SearchMethod, "Without clustering, should use standard RRF hybrid")
+		assert.False(t, strings.Contains(response.SearchMethod, "clustered"), "Should NOT contain 'clustered' in search method")
+	})
 
-	response, err := svc.Search(ctx, "test", embedding, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, response)
-	assert.Equal(t, "success", response.Status)
+	t.Run("falls back to vector on cluster error", func(t *testing.T) {
+		engine := newNamespacedMemoryEngine(t)
+
+		svc := NewService(engine, DefaultVectorDimensions, nil)
+
+		// Create and index nodes (1024 dimensions to match default)
+		embedding := make([]float32, 1024)
+		embedding[0] = 1.0
+
+		nodes := []*storage.Node{
+			{ID: "doc1", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 1"}},
+			{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 2"}},
+		}
+		err := engine.BulkCreateNodes(nodes)
+		require.NoError(t, err)
+
+		for _, node := range nodes {
+			err := svc.IndexNode(node)
+			require.NoError(t, err)
+		}
+
+		// Search should work even without clustering
+		ctx := context.Background()
+		opts := DefaultSearchOptions()
+
+		response, err := svc.Search(ctx, "test", embedding, opts)
+		require.NoError(t, err)
+		assert.NotNil(t, response)
+		assert.Equal(t, "success", response.Status)
+	})
 }
 
 // TestSearchService_ClusteringEnabledFlag tests the IsClusteringEnabled method.

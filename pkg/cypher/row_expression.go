@@ -122,11 +122,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			value, ok := evaluateRowPropertyChain(base, chain, e, false)
-			if !ok {
-				return nil, false, rowPropertyChainTypeError(base, chain)
-			}
-			return value, true, nil
+			return evaluateRowPropertyResult(base, chain, e)
 		}
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
@@ -655,13 +651,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(base, chain, e, false)
-			if !ok {
-				if err := rowPropertyChainTypeError(base, chain); err != nil {
-					return nil, false, err
-				}
-			}
-			return value, ok, nil
+			return evaluateRowPropertyResult(base, chain, e)
 		}
 	}
 	return e.evaluateRowFallback(expr, values, rowFallbackValue)

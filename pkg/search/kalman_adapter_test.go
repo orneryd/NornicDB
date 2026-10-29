@@ -343,6 +343,16 @@ func TestNewKalmanSearchAdapter(t *testing.T) {
 	if adapter.service != service {
 		t.Error("Service not set correctly")
 	}
+	if got := adapter.GetService(); got != service {
+		t.Errorf("GetService returned %v, want the service the adapter was built with", got)
+	}
+	stats := adapter.GetStats()
+	if stats.TotalQueries != 0 {
+		t.Errorf("Initial TotalQueries should be 0")
+	}
+	if stats.ScoresSmoothed != 0 {
+		t.Errorf("Initial ScoresSmoothed should be 0")
+	}
 	if adapter.docFilters == nil {
 		t.Error("docFilters should be initialized")
 	}
@@ -412,30 +422,21 @@ func TestKalmanSearchAdapter_ApplyRankingStability(t *testing.T) {
 	if !doc1Boosted {
 		t.Error("Expected doc-1 to have stability boost")
 	}
-}
 
-func TestKalmanSearchAdapter_RecordRanking(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine, DefaultVectorDimensions, nil)
-
-	cfg := DefaultKalmanSearchConfig()
-	cfg.StabilityWindow = 3
-	adapter := NewKalmanSearchAdapter(service, cfg)
-
-	results := []SearchResult{
+	// Ranking history keeps at most StabilityWindow entries.
+	trimmedConfig := DefaultKalmanSearchConfig()
+	trimmedConfig.StabilityWindow = 3
+	trimmed := NewKalmanSearchAdapter(service, trimmedConfig)
+	trimmedResults := []SearchResult{
 		{ID: "doc-1", Score: 0.9},
 		{ID: "doc-2", Score: 0.8},
 		{ID: "doc-3", Score: 0.7},
 	}
-
-	// Record multiple rankings
 	for i := 0; i < 5; i++ {
-		adapter.recordRanking("query", results)
+		trimmed.recordRanking("query", trimmedResults)
 	}
-
-	// Should trim to window size
-	if len(adapter.recentRankings) != 3 {
-		t.Errorf("Expected 3 rankings (window size), got %d", len(adapter.recentRankings))
+	if len(trimmed.recentRankings) != 3 {
+		t.Errorf("Expected 3 rankings (window size), got %d", len(trimmed.recentRankings))
 	}
 }
 
@@ -543,31 +544,6 @@ func TestKalmanSearchAdapter_GetRisingDocuments(t *testing.T) {
 	// May or may not find documents depending on filter convergence
 	_ = rising
 	_ = falling
-}
-
-func TestKalmanSearchAdapter_GetStats(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine, DefaultVectorDimensions, nil)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	stats := adapter.GetStats()
-
-	if stats.TotalQueries != 0 {
-		t.Errorf("Initial TotalQueries should be 0")
-	}
-	if stats.ScoresSmoothed != 0 {
-		t.Errorf("Initial ScoresSmoothed should be 0")
-	}
-}
-
-func TestKalmanSearchAdapter_GetService(t *testing.T) {
-	engine := newNamespacedEngine(t)
-	service := NewService(engine, DefaultVectorDimensions, nil)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	if adapter.GetService() != service {
-		t.Error("GetService should return the underlying service")
-	}
 }
 
 func TestKalmanSearchAdapter_Reset(t *testing.T) {

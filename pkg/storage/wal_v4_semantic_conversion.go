@@ -9,7 +9,7 @@ func TranscodeV4EntityTransaction(payload []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode historical entity transaction: %w", err)
 	}
-	wire, err := EncodeEntityTransaction(envelope.Namespace, envelope.LogicalTxID, ops, envelope.Mode)
+	wire, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: envelope.Namespace, LogicalID: envelope.LogicalTxID, Operations: ops, Mode: envelope.Mode})
 	if err != nil {
 		return nil, fmt.Errorf("encode semantic transaction wire: %w", err)
 	}

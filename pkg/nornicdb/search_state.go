@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -46,6 +47,45 @@ func (db *DB) searchStateRoot() string {
 		return ""
 	}
 	return filepath.Join(db.config.Database.DataDir, "search")
+}
+
+// upgradeRelationshipSnapshots runs while the Badger owner has the data
+// directory locked, before any search service can load or overwrite a file.
+// Search snapshots live outside the Badger schema and can also be restored
+// independently, so an existing V4 store must be checked on every open.
+func (db *DB) upgradeRelationshipSnapshots(allowUpgrade bool, syncDirectory func(string) error) error {
+	root := db.searchStateRoot()
+	if root == "" {
+		return nil
+	}
+	entries, err := security.ReadRootedDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		base, err := searchPersistenceBasePath(db.config.Database.DataDir, entry.Name())
+		if err != nil {
+			return err
+		}
+		dir := base
+		token, err := readSearchStateToken(filepath.Join(base, searchStateCurrentFile))
+		if err == nil {
+			dir = filepath.Join(base, token)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		path := filepath.Join(dir, "bm25.v2.relationships")
+		if err := search.UpgradeRelationshipSnapshot(path, allowUpgrade, syncDirectory); err != nil {
+			return fmt.Errorf("database %s relationship snapshot: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 // activeSearchStateDir returns the directory the database's current generation

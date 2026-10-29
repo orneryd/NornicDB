@@ -10,7 +10,7 @@ import (
 )
 
 func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.IndexBatch([]FulltextBatchEntry{
 		{ID: "rare", Text: "needle unique"},
 		{ID: "common-a", Text: "needle common"},
@@ -36,7 +36,7 @@ func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "bm25.v2")
 	require.NoError(t, idx.Save(path))
-	reloaded := NewFulltextIndex(nil)
+	reloaded := NewFulltextIndexV2WithAnalyzer(nil)
 	require.NoError(t, reloaded.Load(path))
 	require.Equal(t, idx.Search("replacement", 10), reloaded.Search("replacement", 10))
 }
@@ -44,14 +44,14 @@ func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
 func BenchmarkFulltextIndexVocabularyMutation(b *testing.B) {
 	b.Run("growing", func(b *testing.B) {
 		for range b.N {
-			idx := NewFulltextIndex(nil)
+			idx := NewFulltextIndexV2WithAnalyzer(nil)
 			for i := 0; i < 1_000; i++ {
 				idx.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared unique-%04d", i), nil, nil, false)
 			}
 		}
 	})
 	b.Run("large existing", func(b *testing.B) {
-		idx := NewFulltextIndex(nil)
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
 		idx.Index("mutable", "middlea", nil, nil, false)
 		idx.mu.Lock()
 		for i := 0; i < 100_000; i++ {

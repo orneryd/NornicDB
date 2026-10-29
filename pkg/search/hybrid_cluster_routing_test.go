@@ -13,7 +13,7 @@ import (
 )
 
 type seedOverrideFulltext struct {
-	*FulltextIndex
+	*FulltextIndexV2
 	seedIDs []string
 }
 
@@ -43,12 +43,61 @@ func preferredSeedsForTest(t *testing.T, ci interface{}) []int {
 	return out
 }
 
+// TestEnableClustering_DefaultMaxIterationsIsFive is the canonical clustering
+// configuration table owner: the default iteration budget, the re-entrant CPU
+// mode, the environment overrides and the nil vector index guard.
 func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
-	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "")
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
-	svc.EnableClustering(nil, 2)
-	require.NotNil(t, svc.clusterIndex)
-	require.Equal(t, 5, svc.clusterIndex.Config().MaxIterations)
+	t.Run("default max iterations is five", func(t *testing.T) {
+		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "")
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 2)
+		require.NotNil(t, svc.clusterIndex)
+		require.Equal(t, 5, svc.clusterIndex.Config().MaxIterations)
+	})
+
+	t.Run("reentrant same mode keeps existing cluster index", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 2)
+		require.NotNil(t, svc.clusterIndex)
+		first := svc.clusterIndex
+
+		// Same CPU mode: second call should be a no-op and preserve pointer.
+		svc.EnableClustering(nil, 9)
+		require.Same(t, first, svc.clusterIndex)
+	})
+
+	t.Run("env overrides cluster count and clamps low max iterations", func(t *testing.T) {
+		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "11")
+		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
+
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 0)
+		require.NotNil(t, svc.clusterIndex)
+		cfg := svc.clusterIndex.Config()
+		require.Equal(t, 11, cfg.NumClusters)
+		require.False(t, cfg.AutoK)
+		require.Equal(t, 5, cfg.MaxIterations)
+	})
+
+	t.Run("auto cluster count and max iteration upper clamp", func(t *testing.T) {
+		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "")
+		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9999")
+
+		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc.EnableClustering(nil, 0)
+		require.NotNil(t, svc.clusterIndex)
+		cfg := svc.clusterIndex.Config()
+		require.Equal(t, 0, cfg.NumClusters)
+		require.True(t, cfg.AutoK)
+		require.Equal(t, 500, cfg.MaxIterations)
+	})
+
+	t.Run("nil vector index is ignored safely", func(t *testing.T) {
+		svc := &Service{}
+		svc.EnableClustering(nil, 3)
+		require.Nil(t, svc.clusterIndex)
+		require.False(t, svc.clusterEnabled)
+	})
 }
 
 func TestSelectHybridClusters_UsesLexicalSignal(t *testing.T) {
@@ -93,42 +142,6 @@ func setClusterProfilesForTest(t *testing.T, svc *Service, profiles map[int]map[
 	defer svc.clusterStateMu.Unlock()
 	require.NotNil(t, svc.clusterGen, "a published cluster generation")
 	svc.clusterGen.profiles = profiles
-}
-
-func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
-	svc.EnableClustering(nil, 2)
-	require.NotNil(t, svc.clusterIndex)
-
-	require.NoError(t, svc.clusterIndex.Add("doc-a", []float32{1, 0}))
-	require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
-
-	svc.setFulltext(&seedOverrideFulltext{
-		FulltextIndex: NewFulltextIndex(nil),
-		seedIDs:       []string{"doc-b", "missing-id"},
-	})
-
-	svc.applyBM25SeedHints()
-
-	require.Equal(t, []int{1}, preferredSeedsForTest(t, svc.clusterIndex))
-}
-
-func TestApplyBM25SeedHints_NoSeedsIsNoOp(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
-	svc.EnableClustering(nil, 2)
-	require.NotNil(t, svc.clusterIndex)
-
-	require.NoError(t, svc.clusterIndex.Add("doc-a", []float32{1, 0}))
-	require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
-
-	svc.setFulltext(&seedOverrideFulltext{
-		FulltextIndex: NewFulltextIndex(nil),
-		seedIDs:       nil,
-	})
-
-	svc.applyBM25SeedHints()
-
-	require.Empty(t, preferredSeedsForTest(t, svc.clusterIndex))
 }
 
 func TestTopNTokenWeights_Branches(t *testing.T) {
@@ -177,5 +190,42 @@ func BenchmarkSelectHybridClusters(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = svc.selectHybridClusters(ctx, query, 3)
+	}
+}
+
+func TestApplyBM25SeedHints_PreferredSeeds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seedIDs []string
+		want    []int
+	}{
+		{
+			name:    "resolvable seeds become preferred cluster seeds",
+			seedIDs: []string{"doc-b", "missing-id"},
+			want:    []int{1},
+		},
+		{
+			name:    "no seeds is a no-op",
+			seedIDs: nil,
+			want:    []int{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(newTestMemoryEngine(t), 2, nil)
+			svc.EnableClustering(nil, 2)
+			require.NotNil(t, svc.clusterIndex)
+
+			require.NoError(t, svc.clusterIndex.Add("doc-a", []float32{1, 0}))
+			require.NoError(t, svc.clusterIndex.Add("doc-b", []float32{0, 1}))
+
+			svc.setFulltext(&seedOverrideFulltext{
+				FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil),
+				seedIDs:         tc.seedIDs,
+			})
+
+			svc.applyBM25SeedHints()
+
+			require.Equal(t, tc.want, preferredSeedsForTest(t, svc.clusterIndex))
+		})
 	}
 }

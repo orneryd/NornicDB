@@ -169,28 +169,10 @@ func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelop
 	if err = tx.SetDeferredConstraintValidation(true); err != nil {
 		return nil, err
 	}
-	applied, err := tx.PrepareLogicalCommitReceipt(envelope.LogicalTxID)
-	if err != nil {
-		return nil, err
-	}
-	if applied {
-		prepared, err := tx.PrepareEntityCommit(ctx, envelope.LogicalTxID)
-		if err != nil {
-			return nil, err
-		}
-		route, found := EntityCommitSubmitterFor(engine)
-		if !found {
-			prepared.Abort()
-			return nil, ErrInvalidData
-		}
-		return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
-	}
-	for _, op := range ops {
-		if err = ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
-			return nil, err
-		}
-	}
-	prepared, err := tx.PrepareEntityCommit(ctx, envelope.LogicalTxID)
+	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
+		LogicalID:  envelope.LogicalTxID,
+		Operations: ops,
+	})
 	if err != nil {
 		return nil, err
 	}

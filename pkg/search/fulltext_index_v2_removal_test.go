@@ -12,7 +12,7 @@ import (
 // of copying the term's list per removal; results, document frequencies and
 // snapshots see live documents only (#826).
 func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
-	index := NewFulltextIndex(nil)
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	const n = 1000
 	for i := 0; i < n; i++ {
 		index.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared token%d", i), nil, nil, false)
@@ -50,7 +50,7 @@ func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
 	for _, save := range []func(string) error{index.Save, index.SaveNoCopy} {
 		path := filepath.Join(t.TempDir(), "bm25")
 		require.NoError(t, save(path))
-		loaded := NewFulltextIndex(nil)
+		loaded := NewFulltextIndexV2WithAnalyzer(nil)
 		require.NoError(t, loaded.Load(path))
 		require.Equal(t, index.Count(), loaded.Count())
 		loaded.mu.RLock()
@@ -66,7 +66,7 @@ func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				index := NewFulltextIndex(nil)
+				index := NewFulltextIndexV2WithAnalyzer(nil)
 				for doc := 0; doc < n; doc++ {
 					index.Index(fmt.Sprintf("doc-%d", doc), "shared value", nil, nil, false)
 				}
@@ -80,7 +80,7 @@ func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {
 }
 
 func TestFulltextIndexV2SnapshotDropsRemovedPostings(t *testing.T) {
-	index := NewFulltextIndex(nil)
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	index.applyV2Snapshot(bm25V2Snapshot{
 		Documents:  map[string]string{"live": "kept"},
 		DocIDToNum: map[string]uint32{"live": 1},

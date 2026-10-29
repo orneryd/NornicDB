@@ -19,19 +19,23 @@ func BenchmarkSemanticWALEncodingNorthwind(b *testing.B) {
 			Properties: map[string]any{"quantity": int64(i % 10), "price": float64(i) / 10},
 		}}
 	}
+	// The gob control keeps the historical tuple signature; this benchmark
+	// calls each encoder directly rather than forking the shared wire API.
 	for _, codec := range []struct {
 		name   string
-		encode func(string, string, []Operation, ...EntityCommitMode) ([]byte, error)
+		encode func() ([]byte, error)
 	}{
-		{"gob-transaction", encodeV4GobEntityTransaction},
-		{"msgpack-transaction", EncodeEntityTransaction},
+		{"gob-transaction", func() ([]byte, error) { return encodeV4GobEntityTransaction("test", "batch", ops, CommitModeImplicit) }},
+		{"msgpack-transaction", func() ([]byte, error) {
+			return EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "batch", Operations: ops, Mode: CommitModeImplicit})
+		}},
 	} {
 		b.Run(codec.name, func(b *testing.B) {
 			var buffer bytes.Buffer
 			var wireBytes int
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				payload, err := codec.encode("test", "batch", ops, CommitModeImplicit)
+				payload, err := codec.encode()
 				if err != nil {
 					b.Fatal(err)
 				}

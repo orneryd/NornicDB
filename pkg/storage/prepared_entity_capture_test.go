@@ -32,7 +32,7 @@ func TestPreparedBufferedCommitCapturesStoredImagesOnce(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
-	p, err := tx.PrepareEntityCommit(context.Background(), "capture-once")
+	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "capture-once"})
 	require.NoError(t, err)
 	defer p.Abort()
 	require.Equal(t, int64(1), reads.Load())

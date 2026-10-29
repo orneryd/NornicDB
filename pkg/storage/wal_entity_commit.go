@@ -41,7 +41,7 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if !found {
 		return nil, ErrInvalidData
 	}
-	payload, err := EncodeEntityTransaction(prepared.Namespace(), prepared.LogicalID(), ops, prepared.Mode())
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		return nil, err
 	}

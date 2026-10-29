@@ -413,7 +413,7 @@ Required call sites:
 Constructors:
 
 ```go
-func NewFulltextIndex(analyzer Analyzer) *FulltextIndex
+func NewFulltextIndexV2WithAnalyzer(analyzer Analyzer) *FulltextIndexV2
 ```
 
 Passing a nil analyzer uses the exact Unicode analyzer.

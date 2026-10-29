@@ -164,10 +164,10 @@ func TestBM25SearchAllowedNeverScoresRejectedDocuments(t *testing.T) {
 		require.Len(t, index.Search("alpha beta", 2), 2, "Search allows every document")
 	}
 	t.Run("dense scores", func(t *testing.T) {
-		check(t, NewFulltextIndex(nil))
+		check(t, NewFulltextIndexV2WithAnalyzer(nil))
 	})
 	t.Run("sparse scores", func(t *testing.T) {
-		index := NewFulltextIndex(nil)
+		index := NewFulltextIndexV2WithAnalyzer(nil)
 		entries := make([]FulltextBatchEntry, bm25SparseMinDocSlots)
 		for i := range entries {
 			entries[i] = FulltextBatchEntry{ID: fmt.Sprintf("filler-%d", i), Text: "filler"}

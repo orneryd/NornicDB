@@ -941,7 +941,7 @@ func TestStorageAdapter_TypedMixedTransactionReplacesLegacyBatch(t *testing.T) {
 	}
 	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredBatchWrite, Data: []byte("bad")}), ErrRetiredCommand)
 	ops := []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "test:n-batch", Labels: []string{"L"}}}, {Type: storage.OpCreateEdge, Edge: &storage.Edge{ID: "test:e-batch", StartNode: "test:a", EndNode: "test:b", Type: "REL"}}}
-	payload, err := storage.EncodeEntityTransaction("test", "mixed-replacement", ops)
+	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "test", LogicalID: "mixed-replacement", Operations: ops})
 	require.NoError(t, err)
 	require.NoError(t, storage.ApplyAcceptedEntityTransaction(adapter.engine, payload))
 	_, err = adapter.engine.GetNode("n-batch")

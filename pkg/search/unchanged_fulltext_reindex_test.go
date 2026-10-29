@@ -3,6 +3,7 @@ package search
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/indexing"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -24,12 +25,60 @@ func (c *countingBM25Index) Remove(id string) {
 }
 
 // A node's default searchable text lists its other properties in key order.
-func TestExtractSearchableTextOrdersPropertiesByKey(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
-	node := &storage.Node{Labels: []string{"V"}, Properties: map[string]any{"zeta": "z", "alpha": int64(1), "mid": true, "content": "body"}}
-	for i := 0; i < 20; i++ {
-		require.Equal(t, "V body alpha 1 mid true zeta z", svc.extractSearchableText(node))
-	}
+func TestSearchableTextPolicies(t *testing.T) {
+	t.Run("all-property search preserves stable key order", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+		node := &storage.Node{Labels: []string{"V"}, Properties: map[string]any{"zeta": "z", "alpha": int64(1), "mid": true, "content": "body"}}
+		for i := 0; i < 20; i++ {
+			require.Equal(t, "V body alpha 1 mid true zeta z", svc.extractSearchableText(node))
+		}
+	})
+	t.Run("priority-property extraction", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			properties map[string]interface{}
+			expected   string
+		}{
+			{
+				name: "all properties",
+				properties: map[string]interface{}{
+					"title":       "My Title",
+					"content":     "Some content here",
+					"description": "A description",
+				},
+				expected: "Some content here My Title A description",
+			},
+			{
+				name: "with non-string properties",
+				properties: map[string]interface{}{
+					"title":   "Title",
+					"count":   42, // Should be ignored
+					"content": "Content",
+				},
+				expected: "Content Title",
+			},
+			{
+				name: "empty properties",
+				properties: map[string]interface{}{
+					"title":   "",
+					"content": "Only content",
+				},
+				expected: "Only content",
+			},
+			{
+				name:       "no matching properties",
+				properties: map[string]interface{}{"other": "value"},
+				expected:   "",
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				result := indexing.ExtractSearchableText(tc.properties)
+				require.Equal(t, tc.expected, result)
+			})
+		}
+	})
 }
 
 // Re-indexing a node keeps its fulltext document when the text hasn't

@@ -27,7 +27,7 @@ func TestIndependentEdgeCommitsShareEndpointAuthority(t *testing.T) {
 	}
 	first := makeTxn("test:first", "test:a")
 	second := makeTxn("test:second", "test:b")
-	p1, err := first.PrepareEntityCommit(context.Background(), "shared-endpoint-first")
+	p1, err := first.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "shared-endpoint-first"})
 	require.NoError(t, err)
 	defer p1.Abort()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -37,7 +37,10 @@ func TestIndependentEdgeCommitsShareEndpointAuthority(t *testing.T) {
 		err error
 	}
 	done := make(chan result, 1)
-	go func() { p, e := second.PrepareEntityCommit(ctx, "shared-endpoint-second"); done <- result{p, e} }()
+	go func() {
+		p, e := second.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: "shared-endpoint-second"})
+		done <- result{p, e}
+	}()
 	got := <-done
 	if got.err != nil {
 		p1.Abort()
@@ -267,7 +270,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			} else {
 				require.NoError(t, nodeTx.UpdateGraphNode(&Node{ID: "test:hub", Labels: []string{"After"}}, ClientNodeEdits))
 			}
-			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), "edge-held")
+			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "edge-held"})
 			require.NoError(t, err)
 			defer prepared.Abort()
 			retain, err := prepared.RetainAcceptedAuthority()
@@ -277,7 +280,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				p, e := nodeTx.PrepareEntityCommit(ctx, "node-waiting")
+				p, e := nodeTx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: "node-waiting"})
 				if p != nil {
 					p.Abort()
 				}
@@ -324,7 +327,7 @@ func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
 			require.NoError(t, tx.SetImplicit(true))
 			edgeID := EdgeID(fmt.Sprintf("test:e-%d-%d", i, j))
 			require.NoError(t, tx.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hub", EndNode: end, Type: "LINK"}))
-			p, err := tx.PrepareEntityCommit(context.Background(), fmt.Sprintf("shared-commit-%d-%d", i, j))
+			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: fmt.Sprintf("shared-commit-%d-%d", i, j)})
 			require.NoError(t, err)
 			prepared = append(prepared, p)
 		}

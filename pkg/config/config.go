@@ -2411,8 +2411,8 @@ func applyEnvVars(config *Config) error {
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_MVCC_LIFECYCLE_ENABLED"); ok {
 		config.Database.MVCCLifecycleEnabled = v
 	}
-	if v := getEnvDuration("NORNICDB_MVCC_LIFECYCLE_INTERVAL", 0); v > 0 {
-		config.Database.MVCCLifecycleCycleInterval = v
+	if err := processDatabaseSetting(config, settingMVCCLifecycleInterval, nil); err != nil {
+		return err
 	}
 	if v := getEnvDuration("NORNICDB_MVCC_LIFECYCLE_MAX_SNAPSHOT_AGE", 0); v > 0 {
 		config.Database.MVCCLifecycleMaxSnapshotAge = v
@@ -2694,35 +2694,32 @@ func applyEnvVars(config *Config) error {
 		config.Memory.VisibilityThreshold = v
 	}
 	// Embedding enabled - check for explicit true/false
-	if v := getEnv("NORNICDB_EMBEDDING_ENABLED", ""); v != "" {
-		config.Memory.EmbeddingEnabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingEmbeddingEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_PROVIDER", ""); v != "" {
-		config.Memory.EmbeddingProvider = v
+	if err := processDatabaseSetting(config, settingEmbeddingProvider, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_MODEL", ""); v != "" {
-		config.Memory.EmbeddingModel = v
-		config.EmbeddingExplicit.Model = true
+	if err := processDatabaseSetting(config, settingEmbeddingModel, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_API_URL", ""); v != "" {
-		config.Memory.EmbeddingAPIURL = v
-		config.EmbeddingExplicit.APIURL = true
+	if err := processDatabaseSetting(config, settingEmbeddingAPIURL, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_API_KEY", ""); v != "" {
-		config.Memory.EmbeddingAPIKey = v
+	if err := processDatabaseSetting(config, settingEmbeddingAPIKey, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_MODE", ""); v != "" {
-		config.Memory.EmbeddingMode = strings.TrimSpace(v)
+	if err := processDatabaseSetting(config, settingEmbeddingMode, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_DIMENSIONS", 0); v > 0 {
-		config.Memory.EmbeddingDimensions = v
-		config.EmbeddingExplicit.Dimensions = true
+	if err := processDatabaseSetting(config, settingEmbeddingDimensions, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_CACHE_SIZE", 0); v > 0 {
-		config.Memory.EmbeddingCacheSize = v
+	if err := processDatabaseSetting(config, settingEmbeddingCacheSize, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_MIN_SIMILARITY", ""); v != "" {
-		config.Memory.SearchMinSimilarity = getEnvFloat("NORNICDB_SEARCH_MIN_SIMILARITY", 0.5)
+	if err := processDatabaseSetting(config, settingSearchMinSimilarity, nil); err != nil {
+		return err
 	}
 	// Per-database search index master switches and warming triggers (global
 	// defaults; per-DB overrides via dbconfig.Store always win). Apply env
@@ -2730,11 +2727,11 @@ func applyEnvVars(config *Config) error {
 	// from YAML (which runs before applyEnvVars) remain intact. The fallback
 	// to (enabled, startup) for callers that never went through LoadDefaults
 	// or LoadFromFile lives in nornicdb.Open()'s defensive defaults.
-	if v := getEnv("NORNICDB_SEARCH_BM25_ENABLED", ""); v != "" {
-		config.Memory.SearchBM25Enabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingSearchBM25Enabled, nil); err != nil {
+		return err
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_WARMING", ""))); v == "lazy" || v == "startup" {
-		config.Memory.SearchBM25Warming = v
+	if err := processDatabaseSetting(config, settingSearchBM25Warming, nil); err != nil {
+		return err
 	}
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_PROPERTIES", nil); len(v) > 0 {
 		config.Memory.SearchBM25Properties = v
@@ -2745,26 +2742,26 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_LABELS", nil); len(v) > 0 {
 		config.Memory.SearchBM25Labels = v
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_STEMMER", ""))); v != "" {
-		config.Memory.SearchBM25Stemmer = v
+	if err := processDatabaseSetting(config, settingSearchBM25Stemmer, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_SEARCH_RELATIONSHIPS_ENABLED", ""); v != "" {
 		config.Memory.SearchRelationshipsEnabled = v == "true" || v == "1"
 	}
-	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
-		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
+	if err := processDatabaseSetting(config, settingSearchVectorEnabled, nil); err != nil {
+		return err
 	}
-	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_VECTOR_WARMING", ""))); v == "lazy" || v == "startup" {
-		config.Memory.SearchVectorWarming = v
+	if err := processDatabaseSetting(config, settingSearchVectorWarming, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_MODELS_DIR", ""); v != "" {
 		config.Memory.ModelsDir = v
 	}
-	if v := getEnvInt("NORNICDB_EMBEDDING_GPU_LAYERS", -999); v != -999 {
-		config.Memory.EmbeddingGPULayers = v
+	if err := processDatabaseSetting(config, settingEmbeddingGPULayers, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBEDDING_WARMUP_INTERVAL", 0); v > 0 {
-		config.Memory.EmbeddingWarmupInterval = v
+	if err := processDatabaseSetting(config, settingEmbeddingWarmupInterval, nil); err != nil {
+		return err
 	}
 	// Embedding llama.cpp context features (per-model tuning via env)
 	if v := getEnvInt("NORNICDB_EMBEDDING_CTX_TYPE", 0); v != 0 {
@@ -2782,23 +2779,23 @@ func applyEnvVars(config *Config) error {
 	if v, ok := lookupEnvInt("NORNICDB_EMBEDDING_LAZY_MODE"); ok && v >= 0 && v <= 2 {
 		config.Memory.EmbeddingLazyMode = v
 	}
-	if v := getEnvInt("NORNICDB_KMEANS_MIN_EMBEDDINGS", 0); v > 0 {
-		config.Memory.KmeansMinEmbeddings = v
+	if err := processDatabaseSetting(config, settingKmeansMinEmbeddings, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_KMEANS_CLUSTER_INTERVAL", 0); v > 0 {
-		config.Memory.KmeansClusterInterval = v
+	if err := processDatabaseSetting(config, settingKmeansClusterInterval, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_KMEANS_NUM_CLUSTERS", 0); v >= 0 {
-		config.Memory.KmeansNumClusters = v
+	if err := processDatabaseSetting(config, settingKmeansNumClusters, nil); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_DEFAULT_NODE_LABEL", ""); v != "" {
 		config.Memory.DefaultNodeLabel = v
 	}
-	if getEnv("NORNICDB_AUTO_LINKS_ENABLED", "") == "false" {
-		config.Memory.AutoLinksEnabled = false
+	if err := processDatabaseSetting(config, settingAutoLinksEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnvFloat("NORNICDB_AUTO_LINKS_THRESHOLD", 0); v > 0 {
-		config.Memory.AutoLinksSimilarityThreshold = v
+	if err := processDatabaseSetting(config, settingAutoLinksThreshold, nil); err != nil {
+		return err
 	}
 	legacyRuntime, canonicalRuntime := getEnv("NORNICDB_MEMORY_LIMIT", ""), getEnv("NORNICDB_GO_MEMORY_LIMIT_BYTES", "")
 	if legacyRuntime != "" || canonicalRuntime != "" {
@@ -2838,19 +2835,11 @@ func applyEnvVars(config *Config) error {
 	if err := ValidateMemoryRecoveryTimings(config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS); err != nil {
 		return err
 	}
-	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_MAX", ""); v != "" {
-		limit, err := ParseByteSize(v)
-		if err != nil {
-			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_MAX value %q: %w", v, err)
-		}
-		config.Memory.TransactionMax = limit
+	if err := processDatabaseSetting(config, settingMemoryTransactionMax, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", ""); v != "" {
-		limit, err := ParseByteSize(v)
-		if err != nil {
-			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX value %q: %w", v, err)
-		}
-		config.Memory.TransactionTotalMax = limit
+	if err := processDatabaseSetting(config, settingMemoryTransactionTotalMax, nil); err != nil {
+		return err
 	}
 	if v := getEnvInt("NORNICDB_GC_PERCENT", 0); v != 0 {
 		config.Memory.GCPercent = v
@@ -2864,11 +2853,11 @@ func applyEnvVars(config *Config) error {
 	if getEnv("NORNICDB_QUERY_CACHE_ENABLED", "") == "false" {
 		config.Memory.QueryCacheEnabled = false
 	}
-	if v := getEnvInt("NORNICDB_QUERY_CACHE_SIZE", 0); v > 0 {
-		config.Memory.QueryCacheSize = v
+	if err := processDatabaseSetting(config, settingQueryCacheSize, nil); err != nil {
+		return err
 	}
-	if milliseconds := getEnvInt("NORNICDB_QUERY_CACHE_TTL", 0); milliseconds > 0 {
-		config.Memory.QueryCacheTTL = time.Duration(milliseconds) * time.Millisecond
+	if err := processDatabaseSetting(config, settingQueryCacheTTL, nil); err != nil {
+		return err
 	}
 	if raw := strings.TrimSpace(getEnv("NORNICDB_SEARCH_CURSOR_MAX", "")); raw != "" {
 		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value >= 0 {
@@ -2883,40 +2872,32 @@ func applyEnvVars(config *Config) error {
 	}
 
 	// Embedding worker settings
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_WORKER_NUM_WORKERS", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-			config.EmbeddingWorker.NumWorkers = v
-		}
+	if err := processDatabaseSetting(config, settingEmbedWorkerNumWorkers, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_SCAN_INTERVAL", 0); v > 0 {
-		config.EmbeddingWorker.ScanInterval = v
+	if err := processDatabaseSetting(config, settingEmbedScanInterval, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_BATCH_DELAY", 0); v > 0 {
-		config.EmbeddingWorker.BatchDelay = v
+	if err := processDatabaseSetting(config, settingEmbedBatchDelay, nil); err != nil {
+		return err
 	}
-	if v := getEnvDuration("NORNICDB_EMBED_TRIGGER_DEBOUNCE", -1); v >= 0 {
-		config.EmbeddingWorker.TriggerDebounceDelay = v
+	if err := processDatabaseSetting(config, settingEmbedTriggerDebounce, nil); err != nil {
+		return err
 	}
-	if v := getEnvInt("NORNICDB_EMBED_MAX_RETRIES", 0); v > 0 {
-		config.EmbeddingWorker.MaxRetries = v
+	if err := processDatabaseSetting(config, settingEmbedMaxRetries, nil); err != nil {
+		return err
 	}
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_SIZE", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
-			config.EmbeddingWorker.ChunkSize = v
-			config.EmbeddingWorker.ChunkSizeSet = true
-		}
+	if err := processDatabaseSetting(config, settingEmbedChunkSize, nil); err != nil {
+		return err
 	}
-	if raw := strings.TrimSpace(getEnv("NORNICDB_EMBED_CHUNK_OVERLAP", "")); raw != "" {
-		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
-			config.EmbeddingWorker.ChunkOverlap = v
-			config.EmbeddingWorker.ChunkOverlapSet = true
-		}
+	if err := processDatabaseSetting(config, settingEmbedChunkOverlap, nil); err != nil {
+		return err
 	}
-	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_INCLUDE", nil); len(v) > 0 {
-		config.EmbeddingWorker.PropertiesInclude = v
+	if err := processDatabaseSetting(config, settingEmbeddingPropertiesInclude, nil); err != nil {
+		return err
 	}
-	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
-		config.EmbeddingWorker.PropertiesExclude = v
+	if err := processDatabaseSetting(config, settingEmbeddingPropertiesExclude, nil); err != nil {
+		return err
 	}
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.RelationshipPropertiesInclude = v
@@ -2924,14 +2905,14 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.RelationshipPropertiesExclude = v
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_LABELS_INCLUDE", ""); v != "" {
-		config.EmbeddingWorker.EligibleLabels = getEnvStringSlice("NORNICDB_EMBEDDING_LABELS_INCLUDE", nil)
+	if err := processDatabaseSetting(config, settingEmbeddingLabelsInclude, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_LABELS_EXCLUDE", ""); v != "" {
-		config.EmbeddingWorker.ExcludedLabels = getEnvStringSlice("NORNICDB_EMBEDDING_LABELS_EXCLUDE", nil)
+	if err := processDatabaseSetting(config, settingEmbeddingLabelsExclude, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_EMBEDDING_INCLUDE_LABELS", ""); v != "" {
-		config.EmbeddingWorker.IncludeLabels = getEnvBool("NORNICDB_EMBEDDING_INCLUDE_LABELS", config.EmbeddingWorker.IncludeLabels)
+	if err := processDatabaseSetting(config, settingEmbeddingIncludeLabels, nil); err != nil {
+		return err
 	}
 
 	// Compliance settings
@@ -3115,8 +3096,8 @@ func applyEnvVars(config *Config) error {
 		config.Features.KalmanEnabled = true
 	}
 	// Auto-TLP (Topological Link prediction) - used by macOS menu bar app
-	if getEnv("NORNICDB_AUTO_TLP_ENABLED", "") == "true" {
-		config.Features.TopologyAutoIntegrationEnabled = true
+	if err := processDatabaseSetting(config, settingAutoTLPEnabled, nil); err != nil {
+		return err
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_HEIMDALL_ENABLED"); ok {
 		config.Features.HeimdallEnabled = v
@@ -3190,20 +3171,20 @@ func applyEnvVars(config *Config) error {
 			}
 		}
 	}
-	if getEnv("NORNICDB_SEARCH_RERANK_ENABLED", "") == "true" {
-		config.Features.SearchRerankEnabled = true
+	if err := processDatabaseSetting(config, settingSearchRerankEnabled, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_PROVIDER", ""); v != "" {
-		config.Features.SearchRerankProvider = strings.TrimSpace(strings.ToLower(v))
+	if err := processDatabaseSetting(config, settingSearchRerankProvider, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_MODEL", ""); v != "" {
-		config.Features.SearchRerankModel = v
+	if err := processDatabaseSetting(config, settingSearchRerankModel, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_API_URL", ""); v != "" {
-		config.Features.SearchRerankAPIURL = v
+	if err := processDatabaseSetting(config, settingSearchRerankAPIURL, nil); err != nil {
+		return err
 	}
-	if v := getEnv("NORNICDB_SEARCH_RERANK_API_KEY", ""); v != "" {
-		config.Features.SearchRerankAPIKey = v
+	if err := processDatabaseSetting(config, settingSearchRerankAPIKey, nil); err != nil {
+		return err
 	}
 	config.Features.SearchRerankDisableTruncation = !getEnvBool("NORNICDB_SEARCH_RERANK_TRUNCATION", !config.Features.SearchRerankDisableTruncation)
 	// Rerank llama.cpp context features

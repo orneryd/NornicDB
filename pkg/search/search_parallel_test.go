@@ -92,64 +92,6 @@ func (g *overlapCandidateGenerator) searchCandidatesWithExhaustion(ctx context.C
 	return candidates, true, err
 }
 
-func TestRRFHybridSearch_ParallelRetrievalOverlaps(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	bm25Started := make(chan struct{})
-	vectorStarted := make(chan struct{})
-	release := make(chan struct{})
-	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
-	})
-
-	svc.setFulltext(&overlapBM25Index{
-		bm25Index:     svc.fulltext(),
-		started:       bm25Started,
-		vectorStarted: vectorStarted,
-		release:       release,
-	})
-	svc.vectorPipeline = NewVectorSearchPipeline(
-		&overlapCandidateGenerator{
-			started:     vectorStarted,
-			bm25Started: bm25Started,
-			release:     release,
-		},
-		&IdentityExactScorer{},
-	)
-
-	done := make(chan error, 1)
-	go func() {
-		opts := DefaultSearchOptions()
-		opts.Limit = 10
-		_, err := svc.rrfHybridSearch(context.Background(), "parallel retrieval", []float32{1, 0, 0, 0}, opts)
-		done <- err
-	}()
-
-	select {
-	case <-bm25Started:
-		select {
-		case <-vectorStarted:
-		case <-time.After(500 * time.Millisecond):
-			close(release)
-			t.Fatal("vector retrieval did not overlap BM25 retrieval")
-		}
-	case <-time.After(500 * time.Millisecond):
-		close(release)
-		t.Fatal("BM25 retrieval did not overlap vector retrieval")
-	}
-
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		close(release)
-		t.Fatal("hybrid search did not return after both retrieval branches completed")
-	}
-}
-
 func TestRRFHybridSearchUsesRankedBM25ResultsAsVectorEntryPoints(t *testing.T) {
 	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	fulltext := &rankedBM25Index{
@@ -243,67 +185,133 @@ func sequentialHybridReference(
 	}, nil
 }
 
-func TestRRFHybridSearch_ParallelRetrievalJoinsBM25BeforeVectorError(t *testing.T) {
-	wantErr := errors.New("vector retrieval failed")
-	bm25Started := make(chan struct{})
-	vectorStarted := make(chan struct{})
-	releaseBM25 := make(chan struct{})
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	svc.setFulltext(&blockingBM25Index{
-		bm25Index: svc.fulltext(),
-		started:   bm25Started,
-		release:   releaseBM25,
+// TestRRFHybridSearch_ParallelRetrievalJoinsBM25 owns the join contract of the
+// parallel retrieval stage: however the vector branch settles, the search
+// returns only after the in-flight BM25 retrieval has joined, and then returns
+// that branch's outcome. Both cases keep their original generator, blocking
+// BM25 index and 50ms liveness window.
+func TestRRFHybridSearch_ParallelRetrievalJoinsBM25(t *testing.T) {
+	t.Run("vector error waits for BM25", func(t *testing.T) {
+		wantErr := errors.New("vector retrieval failed")
+		bm25Started := make(chan struct{})
+		vectorStarted := make(chan struct{})
+		releaseBM25 := make(chan struct{})
+		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc.setFulltext(&blockingBM25Index{
+			bm25Index: svc.fulltext(),
+			started:   bm25Started,
+			release:   releaseBM25,
+		})
+		svc.vectorPipeline = NewVectorSearchPipeline(
+			&immediateErrorCandidateGenerator{started: vectorStarted, err: wantErr},
+			&IdentityExactScorer{},
+		)
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := svc.rrfHybridSearch(context.Background(), "query", []float32{1, 0, 0, 0}, DefaultSearchOptions())
+			done <- err
+		}()
+		<-bm25Started
+		<-vectorStarted
+		select {
+		case err := <-done:
+			t.Fatalf("hybrid search returned %v before BM25 retrieval joined", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(releaseBM25)
+		require.ErrorIs(t, <-done, wantErr)
 	})
-	svc.vectorPipeline = NewVectorSearchPipeline(
-		&immediateErrorCandidateGenerator{started: vectorStarted, err: wantErr},
-		&IdentityExactScorer{},
-	)
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := svc.rrfHybridSearch(context.Background(), "query", []float32{1, 0, 0, 0}, DefaultSearchOptions())
-		done <- err
-	}()
-	<-bm25Started
-	<-vectorStarted
-	select {
-	case err := <-done:
-		t.Fatalf("hybrid search returned %v before BM25 retrieval joined", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(releaseBM25)
-	require.ErrorIs(t, <-done, wantErr)
-}
+	t.Run("vector cancellation waits for BM25", func(t *testing.T) {
+		bm25Started := make(chan struct{})
+		vectorStarted := make(chan struct{})
+		releaseBM25 := make(chan struct{})
+		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc.setFulltext(&blockingBM25Index{
+			bm25Index: svc.fulltext(),
+			started:   bm25Started,
+			release:   releaseBM25,
+		})
+		svc.vectorPipeline = NewVectorSearchPipeline(
+			&cancelableCandidateGenerator{started: vectorStarted},
+			&IdentityExactScorer{},
+		)
 
-func TestRRFHybridSearch_ParallelRetrievalJoinsBM25AfterCancellation(t *testing.T) {
-	bm25Started := make(chan struct{})
-	vectorStarted := make(chan struct{})
-	releaseBM25 := make(chan struct{})
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	svc.setFulltext(&blockingBM25Index{
-		bm25Index: svc.fulltext(),
-		started:   bm25Started,
-		release:   releaseBM25,
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := svc.rrfHybridSearch(ctx, "query", []float32{1, 0, 0, 0}, DefaultSearchOptions())
+			done <- err
+		}()
+		<-bm25Started
+		<-vectorStarted
+		cancel()
+		select {
+		case err := <-done:
+			t.Fatalf("hybrid search returned %v before BM25 retrieval joined", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(releaseBM25)
+		require.ErrorIs(t, <-done, context.Canceled)
 	})
-	svc.vectorPipeline = NewVectorSearchPipeline(
-		&cancelableCandidateGenerator{started: vectorStarted},
-		&IdentityExactScorer{},
-	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := svc.rrfHybridSearch(ctx, "query", []float32{1, 0, 0, 0}, DefaultSearchOptions())
-		done <- err
-	}()
-	<-bm25Started
-	<-vectorStarted
-	cancel()
-	select {
-	case err := <-done:
-		t.Fatalf("hybrid search returned %v before BM25 retrieval joined", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(releaseBM25)
-	require.ErrorIs(t, <-done, context.Canceled)
+	t.Run("retrieval branches overlap", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		bm25Started := make(chan struct{})
+		vectorStarted := make(chan struct{})
+		release := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		})
+
+		svc.setFulltext(&overlapBM25Index{
+			bm25Index:     svc.fulltext(),
+			started:       bm25Started,
+			vectorStarted: vectorStarted,
+			release:       release,
+		})
+		svc.vectorPipeline = NewVectorSearchPipeline(
+			&overlapCandidateGenerator{
+				started:     vectorStarted,
+				bm25Started: bm25Started,
+				release:     release,
+			},
+			&IdentityExactScorer{},
+		)
+
+		done := make(chan error, 1)
+		go func() {
+			opts := DefaultSearchOptions()
+			opts.Limit = 10
+			_, err := svc.rrfHybridSearch(context.Background(), "parallel retrieval", []float32{1, 0, 0, 0}, opts)
+			done <- err
+		}()
+
+		select {
+		case <-bm25Started:
+			select {
+			case <-vectorStarted:
+			case <-time.After(500 * time.Millisecond):
+				close(release)
+				t.Fatal("vector retrieval did not overlap BM25 retrieval")
+			}
+		case <-time.After(500 * time.Millisecond):
+			close(release)
+			t.Fatal("BM25 retrieval did not overlap vector retrieval")
+		}
+
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("hybrid search did not return after both retrieval branches completed")
+		}
+
+	})
 }

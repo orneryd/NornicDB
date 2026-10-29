@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"math"
 
 	"testing"
 
@@ -158,24 +159,48 @@ func TestHNSWRecallBudgetIsWideButBoundedForLargeResultSets(t *testing.T) {
 	require.Equal(t, 75, generator.preferredCandidateDepth(20, 75))
 }
 
-func TestAdaptiveVectorSearchStopsAtConfiguredCap(t *testing.T) {
-	generator := &recordingCandidateGenerator{candidates: []Candidate{
-		{ID: nodeChunkVectorKey("doc-1", 0), Score: 1.0},
-		{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
-		{ID: nodeChunkVectorKey("doc-1", 2), Score: 0.8},
-		{ID: "doc-2", Score: 0.7},
-	}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
-	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
-	opts := adaptiveOverfetchTestOptions(3)
-	opts.MaxCandidateLimit = 4
+// TestAdaptiveVectorSearchStopsAtItsBudget owns the two ways a widening search
+// ends before it fills its target: its context ends (no search starts, so
+// nothing is requested), and an explicit candidate cap is reached (the search
+// stops at the cap with the page the cap allowed).
+func TestAdaptiveVectorSearchStopsAtItsBudget(t *testing.T) {
+	t.Run("context ends", func(t *testing.T) {
+		service := NewService(newTestMemoryEngine(t), 2, nil)
+		// A population far wider than the budget keeps the widening running
+		// until its context ends, so cancellation, not exhaustion, stops it.
+		generator := &shortApproximateCandidateGenerator{candidates: []Candidate{{ID: "doc-1", Score: 1}}, population: 1 << 40}
+		pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
+		opts := adaptiveOverfetchTestOptions(3)
+		opts.MaxCandidateLimit = 0
+		opts.MaxOverfetchRatio = math.MaxFloat64
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-	results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1, 0}, opts, nil, nil)
+		_, _, err := service.adaptiveVectorSearch(ctx, pipeline, []float32{1, 0}, opts, nil, nil)
 
-	require.NoError(t, err)
-	require.Equal(t, []int{3, 4}, generator.limits)
-	require.Len(t, results, 2)
-	require.Equal(t, 1, stats.retries)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, generator.calls)
+	})
+
+	t.Run("configured cap", func(t *testing.T) {
+		generator := &recordingCandidateGenerator{candidates: []Candidate{
+			{ID: nodeChunkVectorKey("doc-1", 0), Score: 1.0},
+			{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
+			{ID: nodeChunkVectorKey("doc-1", 2), Score: 0.8},
+			{ID: "doc-2", Score: 0.7},
+		}}
+		service := NewService(newTestMemoryEngine(t), 2, nil)
+		pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
+		opts := adaptiveOverfetchTestOptions(3)
+		opts.MaxCandidateLimit = 4
+
+		results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1, 0}, opts, nil, nil)
+
+		require.NoError(t, err)
+		require.Equal(t, []int{3, 4}, generator.limits)
+		require.Len(t, results, 2)
+		require.Equal(t, 1, stats.retries)
+	})
 }
 
 func TestResolveAdaptiveOverfetchAllowsConfiguredBudgetAboveDefault(t *testing.T) {
@@ -251,37 +276,58 @@ func TestCompressedVectorSearchPlansRescoreFloorForSmallRequest(t *testing.T) {
 	require.Equal(t, 2_000, config.maxLimit)
 }
 
+// TestAdaptiveBM25SearchWidensAfterFiltering owns the adaptive BM25 overfetch
+// contract at its two boundaries: a filtered source keeps widening until the
+// page is filled, and an exhausted source stops without a retry.
 func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
-	index := &recordingBM25Index{results: []indexResult{
-		{ID: "skip", Score: 1.0},
-		{ID: "doc-1", Score: 0.9},
-		{ID: "doc-2", Score: 0.8},
-		{ID: "doc-3", Score: 0.7},
-	}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
-	opts := adaptiveOverfetchTestOptions(2)
+	for _, tc := range []struct {
+		name        string
+		results     []indexResult
+		postProcess func([]indexResult) []indexResult
+		wantLimits  []int
+		wantIDs     []string
+		wantRetries int
+	}{
+		{
+			name: "widens after filtering",
+			results: []indexResult{
+				{ID: "skip", Score: 1.0},
+				{ID: "doc-1", Score: 0.9},
+				{ID: "doc-2", Score: 0.8},
+				{ID: "doc-3", Score: 0.7},
+			},
+			postProcess: func(results []indexResult) []indexResult {
+				return results[1:]
+			},
+			wantLimits:  []int{2, 4},
+			wantIDs:     []string{"doc-1", "doc-2"},
+			wantRetries: 1,
+		},
+		{
+			name:        "stops when source is exhausted",
+			results:     []indexResult{{ID: "doc-1", Score: 1.0}},
+			postProcess: nil,
+			wantLimits:  []int{2},
+			wantIDs:     []string{"doc-1"},
+			wantRetries: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			index := &recordingBM25Index{results: tc.results}
+			service := NewService(newTestMemoryEngine(t), 2, nil)
+			opts := adaptiveOverfetchTestOptions(2)
 
-	results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, func(results []indexResult) []indexResult {
-		return results[1:]
-	})
+			results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, tc.postProcess)
 
-	require.NoError(t, err)
-	require.Equal(t, []int{2, 4}, index.limits)
-	require.Equal(t, []string{"doc-1", "doc-2"}, indexResultIDs(results))
-	require.Equal(t, 1, stats.retries)
-}
-
-func TestAdaptiveBM25SearchStopsWhenSourceIsExhausted(t *testing.T) {
-	index := &recordingBM25Index{results: []indexResult{{ID: "doc-1", Score: 1.0}}}
-	service := NewService(newTestMemoryEngine(t), 2, nil)
-	opts := adaptiveOverfetchTestOptions(2)
-
-	results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, nil)
-
-	require.NoError(t, err)
-	require.Equal(t, []int{2}, index.limits)
-	require.Len(t, results, 1)
-	require.Zero(t, stats.retries)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantLimits, index.limits)
+			require.Equal(t, tc.wantIDs, indexResultIDs(results))
+			if tc.wantRetries == 0 {
+				require.Len(t, results, 1)
+			}
+			require.Equal(t, tc.wantRetries, stats.retries)
+		})
+	}
 }
 
 func TestFullTextSearchOnlyUsesAdaptiveWidening(t *testing.T) {

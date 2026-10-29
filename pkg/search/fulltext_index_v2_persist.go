@@ -22,7 +22,7 @@ type bm25V2Snapshot struct {
 	TotalDocLength int64                     `msgpack:"total_doc_len"`
 }
 
-func (f *FulltextIndex) Save(path string) error {
+func (f *FulltextIndexV2) Save(path string) error {
 	f.lockWithCurrentLexicon()
 	docs := make(map[string]string, len(f.documents))
 	for k, v := range f.documents {
@@ -72,7 +72,7 @@ func (f *FulltextIndex) Save(path string) error {
 	})
 }
 
-func (f *FulltextIndex) SaveNoCopy(path string) error {
+func (f *FulltextIndexV2) SaveNoCopy(path string) error {
 	f.lockWithCurrentLexicon()
 	version := f.version
 	snap := bm25V2Snapshot{
@@ -106,7 +106,7 @@ func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) erro
 // that is not a compatible BM25 snapshot empties the index so the caller
 // rebuilds it from graph storage. Only
 // unexpected I/O (e.g. permission denied) returns an error.
-func (f *FulltextIndex) Load(path string) error {
+func (f *FulltextIndexV2) Load(path string) error {
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -130,7 +130,7 @@ func (f *FulltextIndex) Load(path string) error {
 	return nil
 }
 
-func (f *FulltextIndex) applyV2Snapshot(s bm25V2Snapshot) {
+func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	if s.Documents == nil {
 		s.Documents = make(map[string]string)
 	}

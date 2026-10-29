@@ -24,13 +24,13 @@ func bm25DiskPath(tb testing.TB) string {
 	return filepath.Join(base, "search", db, "bm25.v2")
 }
 
-func loadBM25FromDisk(tb *testing.B) *FulltextIndex {
+func loadBM25FromDisk(tb *testing.B) *FulltextIndexV2 {
 	tb.Helper()
 	path := bm25DiskPath(tb)
 	if _, err := os.Stat(path); err != nil {
 		tb.Skipf("bm25 disk fixture unavailable: %s (%v)", path, err)
 	}
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	if err := idx.Load(path); err != nil {
 		tb.Fatalf("failed to load bm25 from %s: %v", path, err)
 	}
@@ -47,13 +47,13 @@ func TestBM25DiskSnapshotSearchDeterministic(t *testing.T) {
 		"drug interactions warnings",
 		"medication dosage history",
 	}
-	index := NewFulltextIndex(nil)
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	for _, query := range queries {
 		index.Index(query, query, nil, nil, false)
 	}
 	path := filepath.Join(t.TempDir(), "bm25.v2")
 	require.NoError(t, index.Save(path))
-	loaded := NewFulltextIndex(nil)
+	loaded := NewFulltextIndexV2WithAnalyzer(nil)
 	require.NoError(t, loaded.Load(path))
 	for _, query := range queries {
 		results := loaded.Search(query, 20)
@@ -85,7 +85,7 @@ func BenchmarkBM25_LoadOnly_FromDisk(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		idx := NewFulltextIndex(nil)
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
 		if err := idx.Load(path); err != nil {
 			b.Fatalf("failed to load bm25 from %s: %v", path, err)
 		}

@@ -52,7 +52,7 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tx.CreateNode(&Node{ID: "review:outer"})
 	require.NoError(t, err)
-	require.NoError(t, tx.CommitContextWithPublication(context.Background(), func() { published = true }))
+	require.NoError(t, tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }}))
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
@@ -151,7 +151,7 @@ func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, tx.CommitContextWithPublication(ctx, func() { t.Error("failed commit published") }), context.Canceled)
+	require.ErrorIs(t, tx.PublishCommit(ctx, CommitPublication{AfterPublication: func() { t.Error("failed commit published") }}), context.Canceled)
 	require.NoError(t, tx.Rollback())
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
@@ -171,7 +171,9 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 	_, err = tx.CreateNode(&Node{ID: "review:panic"})
 	require.NoError(t, err)
 	published := false
-	require.PanicsWithValue(t, "listener failed", func() { _ = tx.CommitContextWithPublication(context.Background(), func() { published = true }) })
+	require.PanicsWithValue(t, "listener failed", func() {
+		_ = tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }})
+	})
 	require.True(t, published)
 	_, err = engine.GetNode("review:panic")
 	require.NoError(t, err, "listener failure cannot erase committed data")
@@ -180,4 +182,43 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 	_, err = next.CreateNode(&Node{ID: "review:after-panic"})
 	require.NoError(t, err)
 	require.NoError(t, next.Commit(), "the notification queue remains usable after a surfaced callback panic")
+}
+
+// publicationContextCheckpoint places an ownership handoff deterministically
+// after PublishCommit's initial client check and before its locked validation.
+type publicationContextCheckpoint struct {
+	context.Context
+	once    sync.Once
+	handoff func()
+}
+
+func (c *publicationContextCheckpoint) Err() error {
+	c.once.Do(c.handoff)
+	return c.Context.Err()
+}
+
+func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer func() {
+		// The accepted owner is simulated only at the lifecycle boundary. Restore
+		// client cleanup after the assertion so this isolated fixture always closes.
+		tx.clientDetached.Store(false)
+		_ = tx.Rollback()
+	}()
+	require.NoError(t, tx.SetNamespace("test"))
+	_, err = tx.CreateNode(&Node{ID: "test:detached-publication"})
+	require.NoError(t, err)
+	ctx := &publicationContextCheckpoint{Context: context.Background(), handoff: func() {
+		tx.mu.Lock()
+		tx.clientDetached.Store(true)
+		tx.mu.Unlock()
+	}}
+	published := false
+	err = tx.PublishCommit(ctx, CommitPublication{AfterPublication: func() { published = true }})
+	require.ErrorIs(t, err, ErrTransactionClosed)
+	require.False(t, published)
+	_, err = engine.GetNode("test:detached-publication")
+	require.ErrorIs(t, err, ErrNotFound)
 }

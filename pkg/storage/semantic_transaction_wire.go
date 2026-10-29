@@ -104,15 +104,27 @@ type semanticTransactionWire struct {
 	Changes     []semanticTransactionChange
 }
 
-// EncodeEntityTransaction serializes one atomic semantic transaction as
-// MessagePack without encoding nested entities a second time.
-func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes ...EntityCommitMode) ([]byte, error) {
-	if len(modes) > 1 {
-		return nil, ErrInvalidData
-	}
-	var mode EntityCommitMode
-	if len(modes) == 1 {
-		mode = modes[0]
+// EntityTransactionRequest selects raw decoded operations or one immutable
+// prepared transaction. Prepared must be used alone; combining both sources
+// is rejected instead of silently choosing metadata or images from one of them.
+type EntityTransactionRequest struct {
+	Namespace  string
+	LogicalID  string
+	Operations []Operation
+	Mode       EntityCommitMode
+	Prepared   *PreparedEntityCommit
+}
+
+// EncodeEntityTransaction encodes the current semantic transaction format.
+// Prepared input reads the accepted private snapshot without allocating the
+// detached public Operations view. Raw input retains its original validation.
+func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
+	namespace, logicalID, ops, mode := request.Namespace, request.LogicalID, request.Operations, request.Mode
+	if prepared := request.Prepared; prepared != nil {
+		if namespace != "" || logicalID != "" || ops != nil || mode != 0 {
+			return nil, ErrInvalidData
+		}
+		namespace, logicalID, ops, mode = prepared.namespace, prepared.logicalID, prepared.operations, prepared.mode
 	}
 	if !mode.valid() || namespace == "" || logicalID == "" || len(ops) == 0 {
 		return nil, ErrInvalidData

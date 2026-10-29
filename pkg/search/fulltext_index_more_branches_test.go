@@ -9,7 +9,7 @@ import (
 )
 
 func TestFulltextIndex_CalculateIDFAndPhraseLimitBranches(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 
 	// A document frequency above the document count has no IDF.
 	idx.docCount = 1
@@ -26,7 +26,7 @@ func TestFulltextIndex_CalculateIDFAndPhraseLimitBranches(t *testing.T) {
 }
 
 func TestFulltextIndex_SaveNoCopyErrorBranch(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc-1", "hello world", nil, nil, false)
 
 	parentFile := filepath.Join(t.TempDir(), "not-a-dir")
@@ -38,7 +38,7 @@ func TestFulltextIndex_SaveNoCopyErrorBranch(t *testing.T) {
 
 func TestFulltextIndex_SearchPrefixAndGuardBranches(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "3")
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 
 	// Empty index and empty-token query guards.
 	require.Nil(t, idx.Search("anything", 10))

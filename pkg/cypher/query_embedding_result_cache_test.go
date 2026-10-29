@@ -106,40 +106,90 @@ func TestQueryEmbeddingPublicationReclaimsTransientScopes(t *testing.T) {
 	runtime.KeepAlive(base)
 }
 
-func TestQueryEmbeddingFabricCacheProviderReplacement(t *testing.T) {
-	exec, manager := compositeTestFixture(t)
-	store, err := manager.GetStorage(manager.DefaultDatabaseName())
-	require.NoError(t, err)
-	exec.SetSearchService(search.NewService(store, 2, nil))
-	ctx := context.Background()
-	const query = "CALL { USE comp.a CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding } RETURN embedding"
-	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0}})
-	first, err := exec.Execute(ctx, query, nil)
-	require.NoError(t, err)
-	require.Equal(t, []float32{1, 0}, toFloat32Slice(first.Rows[0][0]))
-	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{0, 1}})
-	second, err := exec.Execute(ctx, query, nil)
-	require.NoError(t, err)
-	require.Equal(t, []float32{0, 1}, toFloat32Slice(second.Rows[0][0]), "Fabric's outer cache must expire when its shared provider changes")
-}
+// Both cases run one composite statement twice on one executor and require the
+// second execution's row to differ from the first's, so they share one contract:
+// the outer Fabric result cache must not serve the row the pre-change
+// execution wrote. They assert different rows and reach that cache through
+// different keys, so each case owns rows the other does not check.
+//
+//   - provider replacement: the statement caches its own embedding result, and
+//     its key carries the embedder publication generation, so replacing the
+//     provider already keeps the second execution out of the first's entry.
+//   - cached startup fallback: the statement caches db.rretrieve's page, whose
+//     key carries the search service instance and index revision and no
+//     embedder generation. Expiry here rests on the first, embedder-less search
+//     building the shard_a index (advancing its revision) before the ready,
+//     embedder-aware search runs without the fallback reason.
+func TestQueryEmbeddingFabricCacheAcrossProviderChange(t *testing.T) {
+	const (
+		embeddingQuery = "CALL { USE comp.a CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding } RETURN embedding"
+		retrievalQuery = "CALL { USE comp.a CALL db.rretrieve({query: 'alpha', limit: 5}) YIELD fallback_reason RETURN fallback_reason } RETURN fallback_reason"
+	)
+	for _, testCase := range []struct {
+		name       string
+		query      string
+		database   string
+		nextVector []float32
+		// prepare wires the statement's search service and, for a query that
+		// needs one before its first execution, publishes the pre-change
+		// provider.
+		prepare func(t *testing.T, exec *StorageExecutor, store storage.Engine)
+		// requireRow checks the row of the execution that follows the provider
+		// replacement.
+		requireRow func(t *testing.T, row interface{})
+	}{
+		{
+			name:       "provider replacement",
+			query:      embeddingQuery,
+			nextVector: []float32{0, 1},
+			prepare: func(t *testing.T, exec *StorageExecutor, store storage.Engine) {
+				exec.SetSearchService(search.NewService(store, 2, nil))
+				exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0}})
+				first, err := exec.Execute(context.Background(), embeddingQuery, nil)
+				require.NoError(t, err)
+				require.Equal(t, []float32{1, 0}, toFloat32Slice(first.Rows[0][0]))
+			},
+			requireRow: func(t *testing.T, row interface{}) {
+				require.Equal(t, []float32{0, 1}, toFloat32Slice(row),
+					"Fabric's outer cache must expire when its shared provider changes")
+			},
+		},
+		{
+			name:       "cached startup fallback",
+			query:      retrievalQuery,
+			database:   "shard_a",
+			nextVector: []float32{1, 0},
+			prepare: func(t *testing.T, exec *StorageExecutor, store storage.Engine) {
+				_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+				require.NoError(t, err)
+				svc := search.NewService(store, 2, nil)
+				require.NoError(t, svc.BuildIndexes(context.Background()))
+				exec.SetSearchService(svc)
+				first, err := exec.Execute(context.Background(), retrievalQuery, nil)
+				require.NoError(t, err)
+				require.NotEmpty(t, first.Rows)
+				require.Equal(t, "no_embedder", first.Rows[0][0])
+			},
+			requireRow: func(t *testing.T, row interface{}) {
+				require.Equal(t, "", row, "the cached pre-ready fallback must expire at readiness")
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			exec, manager := compositeTestFixture(t)
+			database := testCase.database
+			if database == "" {
+				database = manager.DefaultDatabaseName()
+			}
+			store, err := manager.GetStorage(database)
+			require.NoError(t, err)
+			testCase.prepare(t, exec, store)
 
-func TestQueryEmbeddingFabricCachedStartupFallback(t *testing.T) {
-	exec, manager := compositeTestFixture(t)
-	store, err := manager.GetStorage("shard_a")
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	svc := search.NewService(store, 2, nil)
-	require.NoError(t, svc.BuildIndexes(context.Background()))
-	exec.SetSearchService(svc)
-	const query = "CALL { USE comp.a CALL db.rretrieve({query: 'alpha', limit: 5}) YIELD fallback_reason RETURN fallback_reason } RETURN fallback_reason"
-	first, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, first.Rows)
-	require.Equal(t, "no_embedder", first.Rows[0][0])
-	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0}})
-	second, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, second.Rows)
-	require.Equal(t, "", second.Rows[0][0], "the cached pre-ready fallback must expire at readiness")
+			exec.SetEmbedder(&stubVectorEmbedder{vec: testCase.nextVector})
+			second, err := exec.Execute(context.Background(), testCase.query, nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, second.Rows)
+			testCase.requireRow(t, second.Rows[0][0])
+		})
+	}
 }

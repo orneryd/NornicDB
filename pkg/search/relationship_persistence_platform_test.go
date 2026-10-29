@@ -33,8 +33,10 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 	<-svc.relationshipSearch().done
 	require.NoError(t, svc.Close())
 	require.Equal(t, 2, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 2)
-	_, err := os.Stat("bm25" + relationshipVectorsFileSuffix)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 2)
+	_, err = os.Stat("bm25" + relationshipVectorsFileSuffix)
 	require.NoError(t, err)
 
 	reused := &countingEmbed{}
@@ -91,5 +93,7 @@ func TestRelationshipEmbeddingDirectorySyncUsesPlatformHelper(t *testing.T) {
 	require.False(t, failed)
 	require.EqualValues(t, 1, embed.calls.Load(), "sync retry must not repeat the provider request")
 	require.Equal(t, 1, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 1)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 1)
 }

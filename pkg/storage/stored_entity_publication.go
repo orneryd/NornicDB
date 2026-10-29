@@ -107,7 +107,25 @@ func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state b
 
 // captureStoredEntityChanges reads each typed touched entity once. Both views
 // belong to this commit, never the latest mutable storage after publication.
-func (b *BadgerEngine) captureStoredEntityChanges(keys []any, before, after storedEntityView) ([]StoredEntityChange, error) {
+type storedEntityCapture struct {
+	keys          []any
+	before, after storedEntityView
+	// staged is read while the caller holds the transaction mutex and entity
+	// authority. It supplies both cuts and reuses an already prepared delta.
+	staged *BadgerTransaction
+}
+
+func (b *BadgerEngine) captureStoredEntityChanges(request storedEntityCapture) ([]StoredEntityChange, error) {
+	keys, before, after := request.keys, request.before, request.after
+	if tx := request.staged; tx != nil {
+		if tx.preparedEntityCommit != nil {
+			return tx.preparedEntityCommit.changes, nil
+		}
+		var constraints publicationConstraintView
+		keys = appendOperationPublicationKeys(nil, &constraints, tx.physicalOperationsLocked())
+		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
+		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}}
+	}
 	seen := make(map[any]struct{}, len(keys))
 	changes := make([]StoredEntityChange, 0, len(keys))
 	for _, key := range keys {
@@ -152,22 +170,6 @@ func (b *BadgerEngine) captureStoredEntityChanges(keys []any, before, after stor
 		}
 	}
 	return changes, nil
-}
-
-// capturePreparedEntityChangesLocked uses the same stored-image reader as the
-// physical writer. Staged maps overlay only the final view; acknowledged writes
-// overlay the original committed view. Commit holds tx.mu and entity ownership.
-func (tx *BadgerTransaction) capturePreparedEntityChangesLocked() ([]StoredEntityChange, error) {
-	if tx.preparedEntityCommit != nil {
-		return tx.preparedEntityCommit.changes, nil
-	}
-	// Stored-entity accounting only needs the entity keys, so the prepare pass
-	// derives them without a schema: its view is the empty one.
-	var constraints publicationConstraintView
-	keys := appendOperationPublicationKeys(nil, &constraints, tx.physicalOperationsLocked())
-	return tx.engine.captureStoredEntityChanges(keys,
-		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: tx.engine.writeBehind, boundaries: tx.engine.storedEntityObservers.Load()},
-		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}})
 }
 
 // ManagedEntityPrepare is the authoritative managed leader's prepare/admit
@@ -346,7 +348,7 @@ func (cw *commitWriter) prepareStoredEntityPublication() error {
 	}
 	prior := cw.db.newTxnAt(readTs, false)
 	defer prior.Discard()
-	changes, err := cw.engine.captureStoredEntityChanges(keys, storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, storedEntityView{read: embeddingRecordReader{txn: cw.txn}})
+	changes, err := cw.engine.captureStoredEntityChanges(storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, after: storedEntityView{read: embeddingRecordReader{txn: cw.txn}}})
 	if err != nil {
 		return err
 	}
@@ -568,7 +570,7 @@ func (b *BadgerEngine) prepareDeletedEntityPublication(nodes, edges map[uint64]s
 	var changes []StoredEntityChange
 	err := b.db.View(func(txn *badger.Txn) error {
 		var err error
-		changes, err = b.captureStoredEntityChanges(keys, storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, storedEntityView{absent: true})
+		changes, err = b.captureStoredEntityChanges(storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, after: storedEntityView{absent: true}})
 		return err
 	})
 	if err != nil {

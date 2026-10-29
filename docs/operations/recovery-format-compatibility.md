@@ -48,6 +48,33 @@ from different database backups. Standalone current-version WAL readers accept
 current frames only, so use the matching old binary to inspect an unconverted
 archive.
 
+### Persisted relationship-search vectors
+
+Relationship-search snapshots are separate files under
+`<data>/search/<database>/`, either directly in that directory or in its
+`CURRENT` generation. In v1.4.4 they use MessagePack: vector values are binary
+arrays of little-endian IEEE-754 float32 bits, and source hashes and chunk spans
+are retained. The change does not rewrite Badger keys or node and relationship
+payloads and does not add another Badger storage version.
+
+Back up the data directory, including its search directory, before upgrading.
+When started with `--upgrade-storage`, the database converts each active gob
+relationship snapshot after acquiring the storage lock and before starting a
+search service. A snapshot is written to a separate file, synced and renamed;
+if the final directory sync fails, retry the authorized startup. A malformed
+snapshot or an old snapshot encountered without the flag stops startup instead
+of being silently replaced. Retired search generations remain subject to the
+existing generation cleanup policy. Format-1 snapshots lack chunk spans; as
+before, the service rebuilds their embeddings after conversion.
+
+Older binaries cannot read the converted relationship snapshots. For rollback,
+restore the pre-upgrade search files together with the matching database and
+WAL backup. A separately restored old search directory must be upgraded again.
+Standalone Go `search.Service` users can call
+`search.UpgradeRelationshipSnapshot(path, true, nil)` on the snapshot file
+while no service is using it; the service reports an upgrade-required error
+instead of overwriting a gob snapshot.
+
 ### v1.4.3 recovery records
 
 The v1.4.3 entity WAL payload used JSON fields plus a base64

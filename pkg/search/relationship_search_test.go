@@ -95,7 +95,10 @@ func waitRelationshipVectors(t *testing.T, svc *Service, want int, published ...
 // relationshipSnapshotPublished checks the complete durable image, independently
 // of vector visibility. Both boundaries must hold before read/reopen assertions.
 func relationshipSnapshotPublished(svc *Service) bool {
-	saved := svc.loadRelationshipVectors()
+	saved, err := svc.loadRelationshipVectors()
+	if err != nil {
+		return false
+	}
 	rs := svc.relationshipSearch()
 	rs.mu.RLock()
 	defer rs.mu.RUnlock()
@@ -344,7 +347,7 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	var nilService *Service
 	require.NoError(t, nilService.IndexEdge(&storage.Edge{ID: "x"}))
 
-	// An unreadable vector file is ignored; an unwritable one is logged.
+	// An unreadable vector file is reported and ignored; an unwritable one is logged.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bm25")
 	require.NoError(t, os.WriteFile(path+relationshipVectorsFileSuffix, []byte("not gob"), 0o600))
@@ -352,7 +355,9 @@ func TestRelationshipSearchEdges(t *testing.T) {
 	t.Cleanup(func() { _ = persisted.Close() })
 	persisted.SetPersistenceEnabled(true)
 	persisted.SetFulltextIndexPath(path)
-	require.Nil(t, persisted.loadRelationshipVectors())
+	unreadable, err := persisted.loadRelationshipVectors()
+	require.Error(t, err, "an unreadable vector file is reported")
+	require.Nil(t, unreadable)
 	require.NoError(t, os.Remove(path+relationshipVectorsFileSuffix))
 	require.NoError(t, os.MkdirAll(filepath.Join(path+relationshipVectorsFileSuffix, "occupied"), 0o700))
 	persisted.EnableRelationshipSearch(nil)

@@ -21,7 +21,7 @@ func BenchmarkEncodeEntityTransactionNorthwind(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var err error
-		entityEncodeSink, err = EncodeEntityTransaction("test", "batch", ops, CommitModeImplicit)
+		entityEncodeSink, err = EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "batch", Operations: ops, Mode: CommitModeImplicit})
 		if err != nil {
 			b.Fatal(err)
 		}

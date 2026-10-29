@@ -12,7 +12,7 @@ import (
 // input preparation. This does not measure total HNSW build or query latency.
 func BenchmarkVectorEntryLexicalConstructionInputs(b *testing.B) {
 	const documents, chunks = 256, 4
-	ft := NewFulltextIndex(nil)
+	ft := NewFulltextIndexV2WithAnalyzer(nil)
 	ids := make([]string, 0, documents*chunks)
 	vectors := make([][]float32, 0, documents*chunks)
 	for i := 0; i < documents; i++ {

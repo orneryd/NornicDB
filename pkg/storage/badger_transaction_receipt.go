@@ -7,49 +7,66 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// PrepareLogicalCommitReceipt uses the existing durable flush-marker family
-// for an entity replication receipt. Its existence read participates in the
-// native transaction conflict set; its marker is staged with the entity data.
-// Namespace must already be pinned. True means this logical commit is durable
-// and the caller must not stage or commit its entities again.
-func (tx *BadgerTransaction) PrepareLogicalCommitReceipt(logicalID string) (bool, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return false, err
-	}
-	if tx.namespace == "" || logicalID == "" {
-		return false, ErrInvalidData
-	}
-	key := bufferedCommitMarkerKey(tx.namespace, "", logicalID)
-	_, err := tx.badgerTx.Get(key)
-	if err == nil {
-		return true, nil
-	}
-	if err != badger.ErrKeyNotFound {
-		return false, err
-	}
-	// The initial native read remains in the conflict set. The buffer owner
-	// keeps retirement excluded until its durable fallback has completed.
-	var present bool
-	if w := tx.engine.writeBehind; w != nil {
-		present, err = w.logicalCommitReceiptPresent(tx.engine, tx.namespace, logicalID)
-	} else {
-		present, err = tx.engine.bufferedFlushMarkerExists(tx.namespace, "", logicalID)
-	}
-	if present || err != nil {
-		return present, err
-	}
-	tx.bufferSet(key, []byte{1})
-	return false, nil
+// bufferedReceiptRead identifies one buffered commit receipt a caller wants
+// observed: the physical generation marker of an accepted write-behind record
+// (txID, optionally carrying its logical lineage) or the namespace-scoped
+// logical entity receipt (logicalID). native is the caller's own read-write
+// Badger transaction; observing through it keeps the receipt read in that
+// transaction's conflict set.
+type bufferedReceiptRead struct {
+	namespace, txID, logicalID string
+	native                     *badger.Txn
 }
 
-// logicalCommitReceiptPresent owns acknowledged-generation observation and
-// retirement exclusion through the physical marker read. It reads metadata,
-// never entity bodies, and retains the native receipt conflict enrollment.
-func (w *WriteBehindBuffer) logicalCommitReceiptPresent(b *BadgerEngine, namespace, logicalID string) (bool, error) {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
+// bufferedReceiptObservation is the single answer to a bufferedReceiptRead.
+// key is the receipt key the observation read, so a native caller stages the
+// marker under the key the observation already constructed.
+type bufferedReceiptObservation struct {
+	key     []byte
+	present bool
+}
+
+// observeBufferedCommitReceipt owns native conflict enrollment, acknowledged
+// generation visibility and the physical marker read. A physical-only request
+// never observes pending generations. For native logical reads, retirement is
+// excluded from the generation lookup through its physical fallback. The caller
+// holds tx.mu before the buffer read lock, as with the previous receipt owner.
+func (b *BadgerEngine) observeBufferedCommitReceipt(request bufferedReceiptRead) (bufferedReceiptObservation, error) {
+	observation := bufferedReceiptObservation{}
+	if request.txID == "" && request.logicalID == "" {
+		return observation, nil
+	}
+	observation.key = bufferedCommitMarkerKey(request.namespace, request.txID, request.logicalID)
+	lookup := func(txn *badger.Txn) error {
+		_, err := txn.Get(observation.key)
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		observation.present = err == nil
+		return err
+	}
+	if request.native != nil {
+		if err := lookup(request.native); err != nil || observation.present {
+			return observation, err
+		}
+	}
+	if w := b.writeBehind; request.native != nil && w != nil && request.logicalID != "" {
+		w.mu.RLock()
+		defer w.mu.RUnlock()
+		if w.logicalReceiptPresentLocked(request.namespace, request.logicalID) {
+			observation.present = true
+			return observation, nil
+		}
+	}
+	err := b.withView(lookup)
+	return observation, err
+}
+
+// logicalReceiptPresentLocked observes receipt metadata in acknowledged
+// generations. The caller holds w.mu.RLock through the physical receipt read,
+// preventing retirement between the generation observation and its fallback.
+// Entity bodies remain owned by the canonical overlay visibility composition.
+func (w *WriteBehindBuffer) logicalReceiptPresentLocked(namespace, logicalID string) bool {
 	contains := func(buf *CommitBuffer) bool {
 		if buf != nil {
 			for _, commit := range buf.commits {
@@ -61,14 +78,14 @@ func (w *WriteBehindBuffer) logicalCommitReceiptPresent(b *BadgerEngine, namespa
 		return false
 	}
 	if contains(w.active) {
-		return true, nil
+		return true
 	}
 	for _, generation := range w.draining {
 		if contains(generation) {
-			return true, nil
+			return true
 		}
 	}
-	return b.bufferedFlushMarkerExists(namespace, "", logicalID)
+	return false
 }
 
 // bufferedCommitMarkerKey is the single writer/reader key owner for both

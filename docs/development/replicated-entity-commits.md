@@ -126,3 +126,33 @@ The next managed write reads actual restored usage before admission, preserving
 the namespace's configured limits and outstanding reservations. Size reporting
 retains its existing last-known-value contract until refreshed; it is not an
 admission snapshot.
+
+
+## Typed Go admission and publication
+
+`PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: id})` prepares changes
+already staged by the caller. Replay passes its existing decoded `Operations`
+slice in that request. Admission observes the durable or acknowledged receipt
+once before applying the operations; an existing receipt skips them entirely.
+The request does not copy the slice or allocate a staging callback.
+
+`PublishCommit(ctx, CommitPublication{AfterPublication: callback})` is the single
+native publication implementation. The callback runs once after successful
+publication, after locks are released and before synchronous listeners. A
+canceled or rejected commit does not invoke it. Accepted preparation uses its
+private continuation; public callers cannot publish a detached transaction.
+
+These replace `PrepareLogicalCommitReceipt`, `CommitContextWithPublication` and
+the separate private preparation/publication implementation. Migrate Go callers
+to the typed requests; no compatibility forwarding entry points remain. Standard
+transaction-interface `Commit` and `CommitContext` remain supported. HTTP/Bolt
+behavior and persisted Badger keys and payloads are unchanged.
+
+
+Encoding also uses one typed `EntityTransactionRequest`: pass only `Prepared`
+for an accepted commit, or supply `Namespace`, `LogicalID`, `Operations` and
+`Mode` for decoded operations. Combining the two sources is rejected. Replication
+and WAL callers use the immutable prepared source directly, avoiding the public
+`Operations()` diagnostic copy. That diagnostic view now detaches before-images
+and cascading-deletion IDs as well as after-images; changing a returned image
+cannot mutate the accepted commit. The semantic transaction wire is unchanged.

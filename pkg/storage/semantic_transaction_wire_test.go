@@ -24,7 +24,7 @@ func TestSemanticTransactionWireMatchesCurrentEntityContract(t *testing.T) {
 	require.NoError(t, err)
 	oldEnvelope, want, err := decodeV4GobEntityTransaction(current)
 	require.NoError(t, err)
-	payload, err := EncodeEntityTransaction("test", "tx", ops, CommitModeImplicit)
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "tx", Operations: ops, Mode: CommitModeImplicit})
 	require.NoError(t, err)
 	wire, got, err := DecodeEntityTransaction(payload)
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestSemanticTransactionWireMatchesCurrentEntityContract(t *testing.T) {
 
 func TestSemanticTransactionRejectsPathologicalPropertyNesting(t *testing.T) {
 	node := &Node{ID: "test:n", Properties: map[string]any{"x": "normal"}}
-	payload, err := EncodeEntityTransaction("test", "depth", []Operation{{Type: OpCreateNode, Node: node}})
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "depth", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, msgpack.Unmarshal(payload, &raw))
@@ -58,13 +58,13 @@ func TestSemanticTransactionEncoderRejectsPathologicalPropertyNesting(t *testing
 		value = []any{value}
 	}
 	node := &Node{ID: "test:n", Properties: map[string]any{"x": value}}
-	_, err := EncodeEntityTransaction("test", "depth", []Operation{{Type: OpCreateNode, Node: node}})
+	_, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "depth", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.ErrorContains(t, err, "nesting depth")
 }
 
 func TestSemanticTransactionPropertyDepthBoundary(t *testing.T) {
 	node := &Node{ID: "test:n", Properties: map[string]any{"x": "normal"}}
-	payload, err := EncodeEntityTransaction("test", "depth", []Operation{{Type: OpCreateNode, Node: node}})
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "depth", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		depth int
@@ -89,7 +89,7 @@ func TestSemanticTransactionPropertyDepthBoundary(t *testing.T) {
 		value = []any{value}
 	}
 	node.Properties["x"] = value
-	encoded, err := EncodeEntityTransaction("test", "depth", []Operation{{Type: OpCreateNode, Node: node}})
+	encoded, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "depth", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.NoError(t, err)
 	_, _, err = DecodeEntityTransaction(encoded)
 	require.NoError(t, err)

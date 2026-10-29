@@ -49,7 +49,8 @@ func TestRelationshipEmbeddingPersistsBeforePublication(t *testing.T) {
 			require.Empty(t, response.Results, "search must not expose unsaved vectors")
 			unblock()
 			waitRelationshipVectors(t, svc, 2)
-			saved := svc.loadRelationshipVectors()
+			saved, err := svc.loadRelationshipVectors()
+			require.NoError(t, err)
 			require.Len(t, saved, 2)
 			require.Len(t, saved["r1"].Vectors, chunks)
 			require.Len(t, saved["r1"].Spans, chunks)
@@ -98,7 +99,9 @@ func TestRelationshipEmbeddingCloseJoinsSave(t *testing.T) {
 	default:
 		t.Fatal("Close did not join the worker")
 	}
-	require.Len(t, svc.loadRelationshipVectors(), 2)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 2)
 	require.NoError(t, svc.Close())
 	svc.StartRelationshipIndex()
 }
@@ -126,7 +129,9 @@ func TestRelationshipEmbeddingSaveRetryKeepsGeneratedVectors(t *testing.T) {
 	require.False(t, failed)
 	require.EqualValues(t, 1, embed.calls.Load(), "a save retry must not call the provider again")
 	require.Equal(t, 1, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 1)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 1)
 }
 
 func TestRelationshipEmbeddingSaveDoesNotPublishSupersededVectors(t *testing.T) {
@@ -180,5 +185,7 @@ func TestRelationshipEmbeddingSavesWhileWritesContinue(t *testing.T) {
 	require.False(t, failed)
 	require.Equal(t, 1, calls, "new arrivals must not postpone this batch's save")
 	require.Equal(t, 1, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 1)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 1)
 }

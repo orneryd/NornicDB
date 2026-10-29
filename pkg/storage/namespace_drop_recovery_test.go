@@ -109,7 +109,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						_ = writer.Rollback()
 						require.ErrorIs(t, err, ErrConflict)
 					}
-					payload, err := EncodeEntityTransaction("victim", "pending-accepted", []Operation{{Type: OpCreateNode, Node: &Node{ID: "victim:accepted"}}}, CommitModeExplicit)
+					payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "victim", LogicalID: "pending-accepted", Operations: []Operation{{Type: OpCreateNode, Node: &Node{ID: "victim:accepted"}}}, Mode: CommitModeExplicit})
 					require.NoError(t, err)
 					envelope, operations, err := DecodeEntityTransaction(payload)
 					require.NoError(t, err)

@@ -95,10 +95,10 @@ func TestStemmedAnalyzerAppliesMultilingualFixturesToBM25(t *testing.T) {
 				},
 			})
 
-			index := NewFulltextIndex(analyzer)
+			index := NewFulltextIndexV2WithAnalyzer(analyzer)
 			index.Index("doc", test.indexed, nil, nil, false)
 			require.Len(t, index.Search(test.query, 10), 1)
-			defaultIndex := NewFulltextIndex(nil)
+			defaultIndex := NewFulltextIndexV2WithAnalyzer(nil)
 			defaultIndex.Index("doc", test.indexed, nil, nil, false)
 			require.Empty(t, defaultIndex.Search(test.query, 10))
 		})

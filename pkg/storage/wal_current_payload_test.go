@@ -68,7 +68,7 @@ func BenchmarkWALSemanticPayloadEncoding(b *testing.B) {
 			Properties: map[string]any{"quantity": int64(i + 1), "region": "North America"},
 		}}
 	}
-	semantic, err := EncodeEntityTransaction("nornic", "bench", ops)
+	semantic, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "nornic", LogicalID: "bench", Operations: ops})
 	if err != nil {
 		b.Fatal(err)
 	}

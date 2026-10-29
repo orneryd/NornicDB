@@ -97,28 +97,6 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 	b.bufferedCommitWAL = w
 }
 
-// bufferedFlushMarkerExists reports whether a buffered commit's data has
-// already been applied to Badger (marker present).
-func (b *BadgerEngine) bufferedFlushMarkerExists(namespace, txID, logicalID string) (bool, error) {
-	if txID == "" && logicalID == "" {
-		return false, nil
-	}
-	key := bufferedCommitMarkerKey(namespace, txID, logicalID)
-	exists := false
-	err := b.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		exists = true
-		return nil
-	})
-	return exists, err
-}
-
 // commitBufferedLocked captures the transaction's validated, materialized
 // commit state into the engine's write-behind buffer and closes the
 // transaction as committed without writing to Badger. The caller has already
@@ -213,7 +191,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	var accounting func()
 	if registry := tx.engine.storedEntityObservers.Load(); registry != nil {
 		if observer := (*registry)[tx.namespace].observer; observer != nil {
-			changes, err := tx.capturePreparedEntityChangesLocked()
+			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
 			if err != nil {
 				tx.closeLocked(TxStatusRolledBack, true, nil)
 				return err

@@ -21,7 +21,7 @@ func (i *metadataOnlySeedIndex) LexicalSeedHints(int, int) []LexicalSeedHint {
 }
 
 func TestLexicalSeedHintsPreserveRankAndTopicSignature(t *testing.T) {
-	index := NewFulltextIndex(nil)
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	index.Index("alpha-1", "alpha alpha shared", nil, nil, false)
 	index.Index("alpha-2", "alpha shared", nil, nil, false)
 	index.Index("beta-1", "beta beta shared", nil, nil, false)
@@ -44,8 +44,8 @@ func TestLexicalSeedHintsPreserveRankAndTopicSignature(t *testing.T) {
 }
 
 func TestLexicalSeedHintsSingleAndBatchParity(t *testing.T) {
-	single := NewFulltextIndex(nil)
-	batch := NewFulltextIndex(nil)
+	single := NewFulltextIndexV2WithAnalyzer(nil)
+	batch := NewFulltextIndexV2WithAnalyzer(nil)
 	var entries []FulltextBatchEntry
 	for _, document := range []struct{ id, content string }{
 		{"alpha-1", "alpha alpha shared"},
@@ -64,7 +64,7 @@ func TestLexicalSeedHintsSingleAndBatchParity(t *testing.T) {
 
 func TestHNSWBuildMetadataDoesNotExecuteBM25Queries(t *testing.T) {
 	service := NewService(newTestMemoryEngine(t), 2, nil)
-	index := &metadataOnlySeedIndex{bm25Index: NewFulltextIndex(nil)}
+	index := &metadataOnlySeedIndex{bm25Index: NewFulltextIndexV2WithAnalyzer(nil)}
 
 	hints := service.hnswLexicalSeedHints(index, 16)
 	require.Contains(t, hints, vectorNodeID("document"))

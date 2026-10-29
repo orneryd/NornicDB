@@ -52,10 +52,6 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 	}
 	return nodes, edges, endpoints
 }
-func (tx *BadgerTransaction) lockPendingEntityAuthorityLocked() (func(), error) {
-	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
-	return tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
-}
 
 // entityWriteContext transfers one outer entity write's authority and lifecycle
 // admission through native helper calls without recursive barrier acquisition.
@@ -81,66 +77,67 @@ type entityWritePlan struct {
 	batches map[string]writtenEntities
 }
 
-func (b *BadgerEngine) acquireEntityWriteKeys(id string, isEdge bool, owner string, plans []entityWritePlan) (func(), error) {
-	if len(plans) > 0 && len(plans[0].batches) > 0 {
-		batches := plans[0].batches
-		namespaces := make([]string, 0, len(batches))
-		for ns := range batches {
-			namespaces = append(namespaces, ns)
-		}
-		sort.Strings(namespaces)
-		releases := make([]func(), 0, len(namespaces))
-		releaseAll := func() {
-			for i := len(releases) - 1; i >= 0; i-- {
-				releases[i]()
-			}
-		}
-		for _, ns := range namespaces {
-			entities := batches[ns]
-			release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
-			if err != nil {
-				releaseAll()
-				return nil, err
-			}
-			releases = append(releases, release)
-		}
-		return releaseAll, nil
-	}
-	namespace, _, valid := ParseDatabasePrefix(id)
-	if !valid {
-		return func() {}, nil
-	}
-	var footprint writtenEntities
-	if len(plans) > 0 {
-		footprint = plans[0].known
-		if plans[0].read != nil {
-			extra, err := plans[0].read()
-			if err != nil {
-				return nil, err
-			}
-			if len(footprint.nodes) == 0 {
-				footprint.nodes = extra.nodes
-			} else {
-				footprint.nodes = append(footprint.nodes, extra.nodes...)
-			}
-			if len(footprint.edges) == 0 {
-				footprint.edges = extra.edges
-			} else {
-				footprint.edges = append(footprint.edges, extra.edges...)
-			}
-		}
-	}
-	nodes := append([]NodeID(nil), footprint.nodes...)
-	edges := append([]EdgeID(nil), footprint.edges...)
-	if isEdge {
-		edges = append(edges, EdgeID(id))
-	} else {
-		nodes = append(nodes, NodeID(id))
-	}
-	return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, nil))
-}
-
 func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entityWriteContext, plans ...entityWritePlan) (*entityWriteContext, func(), error) {
+	// Key admission belongs to this lifecycle owner; inherited and new writes
+	// use the same footprint acquisition without a separately callable entry.
+	acquireKeys := func(owner string) (func(), error) {
+		if len(plans) > 0 && len(plans[0].batches) > 0 {
+			batches := plans[0].batches
+			namespaces := make([]string, 0, len(batches))
+			for ns := range batches {
+				namespaces = append(namespaces, ns)
+			}
+			sort.Strings(namespaces)
+			releases := make([]func(), 0, len(namespaces))
+			releaseAll := func() {
+				for i := len(releases) - 1; i >= 0; i-- {
+					releases[i]()
+				}
+			}
+			for _, ns := range namespaces {
+				entities := batches[ns]
+				release, err := b.GetSchemaForNamespace(ns).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(entities.nodes, entities.edges, nil))
+				if err != nil {
+					releaseAll()
+					return nil, err
+				}
+				releases = append(releases, release)
+			}
+			return releaseAll, nil
+		}
+		namespace, _, valid := ParseDatabasePrefix(id)
+		if !valid {
+			return func() {}, nil
+		}
+		var footprint writtenEntities
+		if len(plans) > 0 {
+			footprint = plans[0].known
+			if plans[0].read != nil {
+				extra, err := plans[0].read()
+				if err != nil {
+					return nil, err
+				}
+				if len(footprint.nodes) == 0 {
+					footprint.nodes = extra.nodes
+				} else {
+					footprint.nodes = append(footprint.nodes, extra.nodes...)
+				}
+				if len(footprint.edges) == 0 {
+					footprint.edges = extra.edges
+				} else {
+					footprint.edges = append(footprint.edges, extra.edges...)
+				}
+			}
+		}
+		nodes := append([]NodeID(nil), footprint.nodes...)
+		edges := append([]EdgeID(nil), footprint.edges...)
+		if isEdge {
+			edges = append(edges, EdgeID(id))
+		} else {
+			nodes = append(nodes, NodeID(id))
+		}
+		return b.GetSchemaForNamespace(namespace).acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, nil))
+	}
 	if inherited != nil {
 		if inherited.engine != b {
 			return nil, nil, ErrInvalidData
@@ -150,7 +147,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 		// Close lends its existing lifecycle lease. Each batch still claims its
 		// complete footprint once, without normal admission or recursive RLock.
-		release, err := b.acquireEntityWriteKeys(id, isEdge, inherited.owner, plans)
+		release, err := acquireKeys(inherited.owner)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -195,7 +192,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		}
 	}
 	owner := newEngineWriteLockOwner()
-	release, err := b.acquireEntityWriteKeys(id, isEdge, owner, plans)
+	release, err := acquireKeys(owner)
 	if err != nil {
 		ordered.finish()
 		return nil, nil, err

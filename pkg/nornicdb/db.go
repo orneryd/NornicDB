@@ -813,6 +813,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				return nil, localizedError(localization.NornicDBCorePersistentStorageOpenFailed(err), err)
 			}
 		}
+		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
+			_ = badgerEngine.Close()
+			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
+		}
 		if config.Database.MVCCLifecycleEnabled {
 			lifecycleConfig := lifecycle.DefaultLifecycleConfig()
 			lifecycleConfig.Enabled = config.Database.MVCCRetentionMaxVersions > 1 || config.Database.MVCCRetentionTTL > 0
@@ -1617,49 +1621,14 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 	}
 	replCfg := replication.LoadFromEnv()
 	replCfg.DataDir = filepath.Dir(replicationWALDir)
-	adapter, err := replication.NewStorageAdapterWithWAL(base, replicationWALDir)
+	runtime, err := replication.StartRuntime(context.Background(), base, replCfg)
 	if err != nil {
-		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		return nil, err
 	}
-
-	replicator, err := replication.NewReplicator(replCfg, adapter)
-	if err != nil {
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
-	}
-
-	// The transport is built from the whole loaded config, so the
-	// replication secret and TLS settings apply. If they can't be applied
-	// (an unreadable certificate, say), replication doesn't start rather
-	// than run plaintext or unsigned.
-	transport, err := replication.NewDefaultTransportFromConfig(replCfg)
-	if err != nil {
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
-	}
-
-	// Wire transport into modes that support it.
-	if r, ok := replicator.(interface{ SetTransport(replication.Transport) }); ok {
-		r.SetTransport(transport)
-	}
-	// If we're using the default ClusterTransport, register message handlers for the replicator.
-	if ct, ok := transport.(*replication.ClusterTransport); ok {
-		replication.RegisterClusterHandlers(ct, replicator)
-	}
-
-	if err := replicator.Start(context.Background()); err != nil {
-		_ = transport.Close()
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
-	}
-
-	db.replicator = replicator
-	db.replicationAdapter = adapter
-	db.replicationTrans = transport
-
-	return replication.NewReplicatedEngine(base, replicator, 30*time.Second), nil
+	db.replicator = runtime.Replicator
+	db.replicationAdapter = runtime.Adapter
+	db.replicationTrans = runtime.Transport
+	return runtime.Engine, nil
 }
 
 // SetEmbedder configures the auto-embed queue with the given embedder.

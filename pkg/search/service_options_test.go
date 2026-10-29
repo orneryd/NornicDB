@@ -14,35 +14,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestServiceOptionsSearchResultCachePolicy(t *testing.T) {
-	defaults := DefaultServiceOptions("nornic")
-	require.Equal(t, "nornic", defaults.DatabaseID)
-	require.Equal(t, 1000, defaults.SearchResultCacheEntries)
-	require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
-
-	defaultService := NewService(newTestMemoryEngine(t), 3, nil)
-	require.NotNil(t, defaultService.resultCache)
-	require.Equal(t, 1000, defaultService.resultCache.maxSize)
-	require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
-
-	disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
-		DatabaseID:               "alpha",
-		SearchResultCacheEntries: 0,
-		SearchResultCacheTTL:     time.Minute,
-	})
-	require.NotNil(t, disabled.resultCache)
-	require.Equal(t, 0, disabled.resultCache.maxSize)
-
-	configured := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
-		DatabaseID:               "beta",
-		SearchResultCacheEntries: 12,
-		SearchResultCacheTTL:     2 * time.Minute,
-	})
-	require.Equal(t, 12, configured.resultCache.maxSize)
-	require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
-}
-
 func TestSearchResultCachePolicyAppliesToLiveService(t *testing.T) {
+	t.Run("service options seed the result cache", func(t *testing.T) {
+		defaults := DefaultServiceOptions("nornic")
+		require.Equal(t, "nornic", defaults.DatabaseID)
+		require.Equal(t, 1000, defaults.SearchResultCacheEntries)
+		require.Equal(t, 5*time.Minute, defaults.SearchResultCacheTTL)
+
+		defaultService := NewService(newTestMemoryEngine(t), 3, nil)
+		require.NotNil(t, defaultService.resultCache)
+		require.Equal(t, 1000, defaultService.resultCache.maxSize)
+		require.Equal(t, 5*time.Minute, defaultService.resultCache.ttl)
+
+		disabled := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+			DatabaseID:               "alpha",
+			SearchResultCacheEntries: 0,
+			SearchResultCacheTTL:     time.Minute,
+		})
+		require.NotNil(t, disabled.resultCache)
+		require.Equal(t, 0, disabled.resultCache.maxSize)
+
+		configured := NewService(newTestMemoryEngine(t), 3, &ServiceOptions{
+			DatabaseID:               "beta",
+			SearchResultCacheEntries: 12,
+			SearchResultCacheTTL:     2 * time.Minute,
+		})
+		require.Equal(t, 12, configured.resultCache.maxSize)
+		require.Equal(t, 2*time.Minute, configured.resultCache.ttl)
+	})
+
 	var nilService *Service
 	nilService.SetSearchResultCachePolicy(10, time.Minute)
 	maxEntries, ttl := nilService.SearchResultCachePolicy()
@@ -288,24 +288,4 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 		{ID: "node-b", Score: 0.8},
 		{ID: "node-c", Score: 0.6},
 	}, collapsed)
-}
-
-func TestSearchServiceDoesNotIndexManagedVectorsFromAnotherModelSpace(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 2, nil)
-	service.SetEmbeddingSpace("provider:text:model:2")
-
-	require.NoError(t, service.IndexNode(&storage.Node{
-		ID:              "text",
-		ChunkEmbeddings: [][]float32{{1, 0}},
-		EmbedMeta:       map[string]any{"embedding_space": "provider:text:model:2"},
-	}))
-	require.NoError(t, service.IndexNode(&storage.Node{
-		ID:              "visual",
-		ChunkEmbeddings: [][]float32{{0, 1}},
-		EmbedMeta:       map[string]any{"embedding_space": "provider:multimodal:model:2"},
-	}))
-
-	require.Equal(t, 1, service.EmbeddingCount())
-	_, found := service.vectorIndex.GetVector("visual")
-	require.False(t, found)
 }

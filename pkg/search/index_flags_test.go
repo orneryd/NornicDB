@@ -32,53 +32,69 @@ func TestSetIndexFlags(t *testing.T) {
 	assert.False(t, svc.VectorEnabled())
 }
 
-// TestBuildIndexes_BothDisabled — when both indexes are off, BuildIndexes
-// returns immediately, marks ready, swaps the BM25 stub in, and the
-// vector flag guard prevents any embedding work. (vectorIndex is left
-// non-nil so the dozens of GetDimensions/Count call sites elsewhere in
-// the build pipeline don't panic; the flag is what disables behaviour.)
-func TestBuildIndexes_BothDisabled(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	svc.SetIndexFlags(false, false)
+// TestBuildIndexes_FlagCombinations covers every index-flag combination that
+// BuildIndexes resolves: both disabled, vector off only, BM25 off only.
+//
+//   - both disabled: BuildIndexes returns immediately, marks ready, swaps the
+//     BM25 stub in, and the vector flag guard prevents any embedding work.
+//     (vectorIndex is left non-nil so the dozens of GetDimensions/Count call
+//     sites elsewhere in the build pipeline don't panic; the flag is what
+//     disables behaviour.)
+//   - vector off only: BM25 still builds. vectorIndex stays allocated
+//     (non-nil) but warmupVectorPipeline early-returns and the
+//     addVectorLocked guard refuses writes, so the in-memory vector store
+//     stays empty.
+//   - BM25 off only: the no-op stub replaces the real fulltext index so
+//     existing code paths that call .Count() / .Search() don't panic.
+func TestBuildIndexes_FlagCombinations(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		bm25, vector bool
+		assertions   func(t *testing.T, svc *Service)
+	}{
+		{
+			name:   "both disabled",
+			bm25:   false,
+			vector: false,
+			assertions: func(t *testing.T, svc *Service) {
+				assert.Equal(t, 0, svc.fulltext().Count(), "no-op stub returns 0")
+				// vectorIndex stays non-nil so existing GetDimensions/Count calls
+				// don't panic; the flag guards in IndexNode and Search are what
+				// disable behaviour.
+				assert.False(t, svc.VectorEnabled())
+				assert.Equal(t, 0, svc.EmbeddingCount())
+			},
+		},
+		{
+			name:   "vector disabled",
+			bm25:   true,
+			vector: false,
+			assertions: func(t *testing.T, svc *Service) {
+				assert.False(t, svc.VectorEnabled())
+				assert.Equal(t, 0, svc.EmbeddingCount(), "no embeddings should populate when vector is disabled")
+			},
+		},
+		{
+			name:   "BM25 disabled",
+			bm25:   false,
+			vector: true,
+			assertions: func(t *testing.T, svc *Service) {
+				// The no-op stub reports zero count and empty searches.
+				assert.Equal(t, 0, svc.fulltext().Count())
+				results := svc.fulltext().Search("anything", 10)
+				assert.Empty(t, results)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(newTestMemoryEngine(t), 4, nil)
+			svc.SetIndexFlags(tc.bm25, tc.vector)
 
-	require.NoError(t, svc.BuildIndexes(context.Background()))
-	assert.True(t, svc.IsReady())
-	assert.Equal(t, 0, svc.fulltext().Count(), "no-op stub returns 0")
-
-	// vectorIndex stays non-nil so existing GetDimensions/Count calls
-	// don't panic; the flag guards in IndexNode and Search are what
-	// disable behaviour.
-	assert.False(t, svc.VectorEnabled())
-	assert.Equal(t, 0, svc.EmbeddingCount())
-}
-
-// TestBuildIndexes_VectorDisabled — vector off only; BM25 still builds.
-// vectorIndex stays allocated (non-nil) but warmupVectorPipeline early-
-// returns and the addVectorLocked guard refuses writes, so the in-memory
-// vector store stays empty.
-func TestBuildIndexes_VectorDisabled(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	svc.SetIndexFlags(true, false)
-
-	require.NoError(t, svc.BuildIndexes(context.Background()))
-	assert.True(t, svc.IsReady())
-	assert.False(t, svc.VectorEnabled())
-	assert.Equal(t, 0, svc.EmbeddingCount(), "no embeddings should populate when vector is disabled")
-}
-
-// TestBuildIndexes_BM25Disabled — BM25 off only; the no-op stub replaces the
-// real fulltext index so existing code paths that call .Count() / .Search()
-// don't panic.
-func TestBuildIndexes_BM25Disabled(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-	svc.SetIndexFlags(false, true)
-
-	require.NoError(t, svc.BuildIndexes(context.Background()))
-	assert.True(t, svc.IsReady())
-	// The no-op stub reports zero count and empty searches.
-	assert.Equal(t, 0, svc.fulltext().Count())
-	results := svc.fulltext().Search("anything", 10)
-	assert.Empty(t, results)
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+			assert.True(t, svc.IsReady())
+			tc.assertions(t, svc)
+		})
+	}
 }
 
 // TestIndexNode_BothDisabled — IndexNode is a no-op when both flags are off.
@@ -118,62 +134,81 @@ func TestVectorQueryNodes_PassiveWhenLiveIndexEmpty(t *testing.T) {
 	assert.Equal(t, 0, svc.EmbeddingCount())
 }
 
-// TestEnsureWarm_TriggersOnceAndWaiters — proves that Service-level lazy
-// warming fires exactly once across concurrent first-readers and that all
-// readers block until the build completes. This is the contract that makes
-// lazy-warm uniform across every search entry point (HTTP, Bolt, GraphQL,
-// gRPC, Cypher procedures): they all funnel through Service.Search →
-// EnsureWarm so the trigger doesn't have to be replicated in each handler.
-func TestEnsureWarm_TriggersOnceAndWaiters(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
+// TestEnsureWarm owns Service-level lazy warming at its two configurations:
+// when the service is not configured for lazy warming EnsureWarm returns nil
+// without firing the trigger, and when it is, it fires exactly once across
+// concurrent first-readers while all readers block until the build completes.
+// This is the contract that makes lazy-warm uniform across every search entry
+// point (HTTP, Bolt, GraphQL, gRPC, Cypher procedures): they all funnel through
+// Service.Search → EnsureWarm so the trigger doesn't have to be replicated in
+// each handler.
+func TestEnsureWarm(t *testing.T) {
+	// when not lazy, EnsureWarm returns nil without firing the trigger.
+	t.Run("no-op when not lazy", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 4, nil)
 
-	var triggers atomic.Int32
-	startBuild := make(chan struct{})
-	finishBuild := make(chan struct{})
-	svc.SetLazyWarming(true, WarmFunc(func() {
-		triggers.Add(1)
-		close(startBuild)
-		<-finishBuild
-		// Simulate the build completing: mark ready so subsequent
-		// IsReady() probes report true (production code does this via
-		// BuildIndexes setting s.ready=true).
-		svc.MarkReadyDisabled()
-	}))
+		var triggers atomic.Int32
+		svc.SetLazyWarming(false, WarmFunc(func() {
+			triggers.Add(1)
+		}))
 
-	// Fire 8 concurrent first-readers. Exactly one trigger should run;
-	// all 8 should observe a successful return after the build "finishes".
-	const N = 8
-	results := make(chan error, N)
-	for i := 0; i < N; i++ {
-		go func() {
-			results <- svc.EnsureWarm(context.Background())
-		}()
-	}
+		require.NoError(t, svc.EnsureWarm(context.Background()))
+		assert.Equal(t, int32(0), triggers.Load(), "trigger must not fire when warmingLazy=false")
+	})
 
-	// Wait for the trigger to start running; only one goroutine should
-	// have entered the WarmFunc.
-	select {
-	case <-startBuild:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WarmFunc did not start within 2s")
-	}
-	assert.Equal(t, int32(1), triggers.Load(), "trigger must fire exactly once")
+	// when lazy, the trigger fires exactly once across concurrent
+	// first-readers and all readers block until the build completes.
+	t.Run("triggers once and waiters block", func(t *testing.T) {
+		svc := NewService(newTestMemoryEngine(t), 4, nil)
 
-	// Let the build finish.
-	close(finishBuild)
+		var triggers atomic.Int32
+		startBuild := make(chan struct{})
+		finishBuild := make(chan struct{})
+		svc.SetLazyWarming(true, WarmFunc(func() {
+			triggers.Add(1)
+			close(startBuild)
+			<-finishBuild
+			// Simulate the build completing: mark ready so subsequent
+			// IsReady() probes report true (production code does this via
+			// BuildIndexes setting s.ready=true).
+			svc.MarkReadyDisabled()
+		}))
 
-	// All N waiters return nil.
-	for i := 0; i < N; i++ {
-		select {
-		case err := <-results:
-			require.NoError(t, err)
-		case <-time.After(2 * time.Second):
-			t.Fatalf("waiter %d did not return within 2s", i)
+		// Fire 8 concurrent first-readers. Exactly one trigger should run;
+		// all 8 should observe a successful return after the build "finishes".
+		const N = 8
+		results := make(chan error, N)
+		for i := 0; i < N; i++ {
+			go func() {
+				results <- svc.EnsureWarm(context.Background())
+			}()
 		}
-	}
 
-	// trigger count is still exactly one.
-	assert.Equal(t, int32(1), triggers.Load(), "trigger must remain at 1 after concurrent waiters")
+		// Wait for the trigger to start running; only one goroutine should
+		// have entered the WarmFunc.
+		select {
+		case <-startBuild:
+		case <-time.After(2 * time.Second):
+			t.Fatal("WarmFunc did not start within 2s")
+		}
+		assert.Equal(t, int32(1), triggers.Load(), "trigger must fire exactly once")
+
+		// Let the build finish.
+		close(finishBuild)
+
+		// All N waiters return nil.
+		for i := 0; i < N; i++ {
+			select {
+			case err := <-results:
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatalf("waiter %d did not return within 2s", i)
+			}
+		}
+
+		// trigger count is still exactly one.
+		assert.Equal(t, int32(1), triggers.Load(), "trigger must remain at 1 after concurrent waiters")
+	})
 }
 
 // TestEnsureWarm_CallerCtxCancel_BuildContinues — caller's request ctx
@@ -217,20 +252,6 @@ func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return svc.EnsureWarm(context.Background()) == nil
 	}, 2*time.Second, 25*time.Millisecond, "service should be warm after the build completes")
-}
-
-// TestEnsureWarm_NoOp_WhenNotLazy — when the service is not configured for
-// lazy warming, EnsureWarm returns nil without firing the trigger.
-func TestEnsureWarm_NoOp_WhenNotLazy(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
-
-	var triggers atomic.Int32
-	svc.SetLazyWarming(false, WarmFunc(func() {
-		triggers.Add(1)
-	}))
-
-	require.NoError(t, svc.EnsureWarm(context.Background()))
-	assert.Equal(t, int32(0), triggers.Load(), "trigger must not fire when warmingLazy=false")
 }
 
 // TestMarkReadyDisabled — explicit short-circuit for the boot-orchestrator

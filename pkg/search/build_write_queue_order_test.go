@@ -78,93 +78,143 @@ func buildWriteEdgeEndpoints(t *testing.T, engine storage.Engine) {
 	}
 }
 
-// TestBuildStoredVectorChoosesTheDimensionBeforeQueuedVectors: on an index
-// whose dimensions are not fixed, the build's first stored vector (here a
-// stored edge's) chooses them before any vector written during the build: an
-// edge vector or a node's property vector.
-func TestBuildStoredVectorChoosesTheDimensionBeforeQueuedVectors(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	for _, kind := range []string{"edge", "property"} {
-		t.Run(kind, func(t *testing.T) {
-			run := func(gated bool) string {
-				engine := newNodeSnapshotGateEngine(t)
-				svc := NewService(engine, 4, nil)
-				t.Cleanup(func() { _ = svc.Close() })
-				t.Cleanup(engine.open)
-				buildWriteEdgeEndpoints(t, engine)
-				stored := &storage.Edge{ID: "nornic:stored", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
-				require.NoError(t, engine.CreateEdge(stored))
-				var built chan error
-				if gated {
-					built = startGatedBuild(t, engine, svc)
-				} else {
-					engine.open()
-					require.NoError(t, svc.BuildIndexes(context.Background()))
+// TestBuildChoosesTheDimensionInTheSerialOrder owns which index dimensions an
+// open (unfixed) index takes when a build and its live writes race, and what
+// those writes report:
+//
+//   - stored vector before queued vectors: the build's first stored vector (a
+//     stored edge's, or a node's property vector) chooses them before any
+//     vector written during the build, so the write made during the build
+//     leaves the same indexes as the same write made after it.
+//   - first vector in order: on an empty index the build's own first vector
+//     chooses them, so a live write with another dimension fails with
+//     ErrDimensionMismatch and the build's vector keeps its dimension.
+//   - first write then mismatch: a live write with a vector and then an update
+//     with another dimension report what the same calls report after the build
+//     (the update fails with ErrDimensionMismatch). Each such call waits for
+//     the build while the dimensions are open, so the caller issues them from
+//     its own goroutine.
+func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
+	t.Run("stored vector before queued vectors", func(t *testing.T) {
+		// On an index whose dimensions are not fixed, the build's first stored
+		// vector (here a stored edge's) chooses them before any vector written
+		// during the build: an edge vector or a node's property vector.
+		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+		for _, kind := range []string{"edge", "property"} {
+			t.Run(kind, func(t *testing.T) {
+				run := func(gated bool) string {
+					engine := newNodeSnapshotGateEngine(t)
+					svc := NewService(engine, 4, nil)
+					t.Cleanup(func() { _ = svc.Close() })
+					t.Cleanup(engine.open)
+					buildWriteEdgeEndpoints(t, engine)
+					stored := &storage.Edge{ID: "nornic:stored", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
+					require.NoError(t, engine.CreateEdge(stored))
+					var built chan error
+					if gated {
+						built = startGatedBuild(t, engine, svc)
+					} else {
+						engine.open()
+						require.NoError(t, svc.BuildIndexes(context.Background()))
+					}
+					done := make(chan error, 1)
+					if kind == "edge" {
+						live := &storage.Edge{ID: "nornic:live", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1}}}
+						require.NoError(t, engine.CreateEdge(storage.CopyEdge(live)))
+						go func() { done <- svc.IndexEdge(live) }()
+					} else {
+						node := &storage.Node{ID: "nornic:pv", Labels: []string{"Doc"}, Properties: map[string]any{"text": "pvterm", "p": []float32{0, 1}}}
+						_, err := engine.CreateNode(storage.CopyNode(node))
+						require.NoError(t, err)
+						go func() { done <- svc.IndexNode(node) }()
+					}
+					if gated {
+						engine.open()
+						require.NoError(t, <-built)
+					}
+					require.NoError(t, <-done)
+					return buildReplayState(svc)
 				}
-				done := make(chan error, 1)
-				if kind == "edge" {
-					live := &storage.Edge{ID: "nornic:live", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1}}}
-					require.NoError(t, engine.CreateEdge(storage.CopyEdge(live)))
-					go func() { done <- svc.IndexEdge(live) }()
-				} else {
-					node := &storage.Node{ID: "nornic:pv", Labels: []string{"Doc"}, Properties: map[string]any{"text": "pvterm", "p": []float32{0, 1}}}
-					_, err := engine.CreateNode(storage.CopyNode(node))
-					require.NoError(t, err)
-					go func() { done <- svc.IndexNode(node) }()
-				}
-				if gated {
-					engine.open()
-					require.NoError(t, <-built)
-				}
-				require.NoError(t, <-done)
-				return buildReplayState(svc)
-			}
-			require.Equal(t, run(false), run(true), "a vector written during the build was judged by another dimension choice than after it")
-		})
-	}
-}
+				require.Equal(t, run(false), run(true), "a vector written during the build was judged by another dimension choice than after it")
+			})
+		}
+	})
 
-// TestBuildFirstWriteVectorThenMismatchReportsLikeTheSerialOrder: on an index
-// whose dimensions are not fixed, a write with a vector and then an update
-// with another dimension, made by one caller during a build, report what the
-// same calls report after the build (the update fails with
-// ErrDimensionMismatch). Each call waits for the build while the dimensions
-// are open, so the caller issues them from its own goroutine.
-func TestBuildFirstWriteVectorThenMismatchReportsLikeTheSerialOrder(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	run := func(gated bool) ([]error, string) {
+	t.Run("first vector in order", func(t *testing.T) {
+		// On an empty index whose dimensions are not fixed, the first vector
+		// chooses them. A write that waited for the build would come after the
+		// build's first stored vector, so a write with a different dimension
+		// fails with ErrDimensionMismatch, and the build's vectors keep their
+		// dimension.
+		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 		engine := newNodeSnapshotGateEngine(t)
-		_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
-		require.NoError(t, err)
 		svc := NewService(engine, 3, nil)
 		t.Cleanup(func() { _ = svc.Close() })
 		t.Cleanup(engine.open)
-		var built chan error
-		if gated {
-			built = startGatedBuild(t, engine, svc)
-		} else {
-			engine.open()
-			require.NoError(t, svc.BuildIndexes(context.Background()))
+		_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
+		require.NoError(t, err)
+		built := make(chan error, 1)
+		go func() { built <- svc.BuildIndexes(context.Background()) }()
+		select {
+		case <-engine.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the build did not read its node snapshot")
 		}
-		done := make(chan []error, 1)
-		go func() {
-			first := svc.IndexNode(buildWriteNode("nornic:first", "firstterm", []float32{0, 1, 0}))
-			done <- []error{first, svc.IndexNode(buildWriteNode("nornic:keep", "badterm", []float32{1, 0}))}
-		}()
-		if gated {
-			engine.open()
-			require.NoError(t, <-built)
+		written := make(chan error, 1)
+		go func() { written <- svc.IndexNode(buildWriteNode("nornic:live", "liveterm", []float32{0, 1, 0})) }()
+		engine.open()
+		require.NoError(t, <-built)
+		select {
+		case err := <-written:
+			require.ErrorIs(t, err, ErrDimensionMismatch, "a write overtook the build's choice of the dimensions")
+		case <-time.After(10 * time.Second):
+			t.Fatal("the write did not finish after the build")
 		}
-		errs := <-done
-		return errs, buildReplayState(svc) + "\n" + strings.Join(buildWriteSearchIDs(t, svc, "keepterm"), ",")
-	}
-	serialErrs, serialState := run(false)
-	gatedErrs, gatedState := run(true)
-	require.NoError(t, serialErrs[0])
-	require.ErrorIs(t, serialErrs[1], ErrDimensionMismatch)
-	require.NoError(t, gatedErrs[0])
-	require.ErrorIs(t, gatedErrs[1], ErrDimensionMismatch, "the call during the build reported another outcome than after it")
-	require.Equal(t, serialState, gatedState)
+		require.Equal(t, 4, svc.VectorIndexDimensions())
+		requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:stored", "v"), []float32{1, 0, 0, 0})
+		_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:live", "v"))
+		require.False(t, ok)
+	})
+
+	t.Run("first write then mismatch reports like the serial order", func(t *testing.T) {
+		// A write with a vector and then an update with another dimension,
+		// made by one caller during a build, report what the same calls report
+		// after the build.
+		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+		run := func(gated bool) ([]error, string) {
+			engine := newNodeSnapshotGateEngine(t)
+			_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
+			require.NoError(t, err)
+			svc := NewService(engine, 3, nil)
+			t.Cleanup(func() { _ = svc.Close() })
+			t.Cleanup(engine.open)
+			var built chan error
+			if gated {
+				built = startGatedBuild(t, engine, svc)
+			} else {
+				engine.open()
+				require.NoError(t, svc.BuildIndexes(context.Background()))
+			}
+			done := make(chan []error, 1)
+			go func() {
+				first := svc.IndexNode(buildWriteNode("nornic:first", "firstterm", []float32{0, 1, 0}))
+				done <- []error{first, svc.IndexNode(buildWriteNode("nornic:keep", "badterm", []float32{1, 0}))}
+			}()
+			if gated {
+				engine.open()
+				require.NoError(t, <-built)
+			}
+			errs := <-done
+			return errs, buildReplayState(svc) + "\n" + strings.Join(buildWriteSearchIDs(t, svc, "keepterm"), ",")
+		}
+		serialErrs, serialState := run(false)
+		gatedErrs, gatedState := run(true)
+		require.NoError(t, serialErrs[0])
+		require.ErrorIs(t, serialErrs[1], ErrDimensionMismatch)
+		require.NoError(t, gatedErrs[0])
+		require.ErrorIs(t, gatedErrs[1], ErrDimensionMismatch, "the call during the build reported another outcome than after it")
+		require.Equal(t, serialState, gatedState)
+	})
 }
 
 // TestBuildRemovalThenRecreationDuringABuild: an orphan cleanup's removal

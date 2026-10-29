@@ -85,7 +85,7 @@ func TestSemanticTransactionIsolatesCustomPropertyEncoders(t *testing.T) {
 		"emptyList": []any(nil), "emptyMap": map[string]any(nil), "when": stamp,
 	}, EmbedMeta: map[string]any{"custom": semanticResettingProperty(12), "other": "preserved"}}
 	edge := &Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"custom": semanticResettingProperty(8), "other": int64(258)}}
-	payload, err := EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}, {Type: OpCreateEdge, Edge: edge}})
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}, {Type: OpCreateEdge, Edge: edge}}})
 	require.NoError(t, err)
 	_, ops, err := DecodeEntityTransaction(payload)
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestSemanticTransactionIsolatesCustomPropertyEncoders(t *testing.T) {
 func TestSemanticTransactionRejectsMalformedCustomValue(t *testing.T) {
 	for _, value := range []any{semanticInvalidProperty{}, []any{semanticInvalidProperty{}}, map[string]any{"x": semanticInvalidProperty{}}} {
 		node := &Node{ID: "test:n", Properties: map[string]any{"bad": value}}
-		_, err := EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}})
+		_, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 		require.ErrorIs(t, err, ErrInvalidData)
 	}
 }
@@ -131,12 +131,12 @@ func TestSemanticTransactionCustomPropertyDepthBoundary(t *testing.T) {
 		value = []any{value}
 	}
 	node := &Node{ID: "test:n", Properties: map[string]any{"x": value}}
-	payload, err := EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}})
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.NoError(t, err)
 	_, _, err = DecodeEntityTransaction(payload)
 	require.NoError(t, err)
 	node.Properties["x"] = []any{value}
-	_, err = EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}})
+	_, err = EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.ErrorContains(t, err, "nesting depth")
 
 	// A typed encoder can itself emit a container; count that container
@@ -146,12 +146,12 @@ func TestSemanticTransactionCustomPropertyDepthBoundary(t *testing.T) {
 		value = []any{value}
 	}
 	node.Properties["x"] = value
-	payload, err = EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}})
+	payload, err = EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.NoError(t, err)
 	_, _, err = DecodeEntityTransaction(payload)
 	require.NoError(t, err)
 	node.Properties["x"] = []any{value}
-	_, err = EncodeEntityTransaction("test", "probe", []Operation{{Type: OpCreateNode, Node: node}})
+	_, err = EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "probe", Operations: []Operation{{Type: OpCreateNode, Node: node}}})
 	require.ErrorIs(t, err, ErrInvalidData)
 	require.ErrorContains(t, err, "nesting depth")
 }
@@ -168,7 +168,7 @@ func TestSemanticTransactionCustomPropertyWALRecovery(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"custom": semanticResettingProperty(42), "other": int64(17)}})
 	require.NoError(t, err)
-	prepared, err := tx.PrepareEntityCommit(context.Background(), "custom-recovery")
+	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "custom-recovery"})
 	require.NoError(t, err)
 	receipt, err := NewWALEngine(engine, wal).SubmitEntityCommit(context.Background(), prepared, nil)
 	require.NoError(t, err)

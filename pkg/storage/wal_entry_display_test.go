@@ -184,9 +184,9 @@ func TestGetEntryTxIDForBufferedAndSemanticCommits(t *testing.T) {
 	buffered := lastEntry(t, wal)
 	require.Equal(t, "buffered-tx", GetEntryTxID(buffered))
 
-	payload, err := EncodeEntityTransaction("perf", "semantic-tx", []Operation{{
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "perf", LogicalID: "semantic-tx", Operations: []Operation{{
 		Type: OpCreateNode, Node: &Node{ID: "perf:n"},
-	}}, CommitModeImplicit)
+	}}, Mode: CommitModeImplicit})
 	require.NoError(t, err)
 	require.NoError(t, wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, "perf"))
 	require.Equal(t, "semantic-tx", GetEntryTxID(lastEntry(t, wal)))
@@ -203,9 +203,9 @@ func TestAcceptedCommitIDsDoNotChangeTransactionRecoveryGrouping(t *testing.T) {
 	require.NoError(t, wal.AppendBufferedCommit(commit, engine.propKeyDict))
 	_, err = wal.AppendWithDatabaseReturningSeq(OpTxBegin, WALTxData{TxID: "semantic-tx", Metadata: nil}, "perf")
 	require.NoError(t, err)
-	payload, err := EncodeEntityTransaction("perf", "semantic-tx", []Operation{{
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "perf", LogicalID: "semantic-tx", Operations: []Operation{{
 		Type: OpCreateNode, Node: &Node{ID: "perf:n"},
-	}}, CommitModeImplicit)
+	}}, Mode: CommitModeImplicit})
 	require.NoError(t, err)
 	require.NoError(t, wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, "perf"))
 

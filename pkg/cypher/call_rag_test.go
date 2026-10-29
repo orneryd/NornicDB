@@ -734,54 +734,43 @@ func TestCallDbRerankProviderFailuresReturnError(t *testing.T) {
 	}
 }
 
-func TestRerankTruthfulnessFencedStructuredPublicPath(t *testing.T) {
-	for name, providerOutput := range map[string]string{
-		"markdown_fence": "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n```",
-		"trailing_prose": "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n``` candidates ranked",
-	} {
-		t.Run(name, func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			service := search.NewService(engine, search.DefaultVectorDimensions, nil)
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			service.SetReranker(search.NewLLMReranker(&search.LLMRerankerConfig{
-				Enabled: true, Timeout: time.Second, MaxCandidates: 3,
-			}, func(context.Context, string) (string, error) {
-				return providerOutput, nil
-			}))
-			exec := NewStorageExecutor(engine)
-			exec.SetSearchService(service)
-
-			response, err := exec.Execute(context.Background(), "CALL db.rerank({query: 'q', candidates: [{id: 'a', content: 'a', score: 0.3}, {id: 'b', content: 'b', score: 0.2}, {id: 'c', content: 'c', score: 0.1}]}) YIELD id RETURN id", nil)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"c"}, {"a"}, {"b"}}, response.Rows)
-		})
-	}
-}
-
-func TestRerankTruthfulnessRejectsAmbiguousStructuredPublicPath(t *testing.T) {
+// TestRerankTruthfulnessStructuredPublicPath covers every fenced structured provider envelope through the public db.rerank path: envelopes that must be accepted in the provider order, and ambiguous or conflicting envelopes that must fail closed instead of silently producing an order. Each case builds its own engine, search service and LLM reranker, so no provider or result state is shared between the accepted and rejected populations.
+func TestRerankTruthfulnessStructuredPublicPath(t *testing.T) {
 	object := `{"order":[2,0],"scores":[0.9,0.8]}`
 	fence := func(body string) string { return "```json\n" + body + "\n```" }
-	for name, providerOutput := range map[string]string{
-		"two_json_fences":             fence(object) + "\n" + fence(`{"order":[0,2],"scores":[0.9,0.8]}`),
-		"fence_then_second_object":    fence(object) + `{"ranked":[{"index":0,"score":0.9}]}`,
-		"bare_second_object":          object + " " + object,
-		"fence_then_truncated_object": fence(object) + `{"order":[`,
-		"conflicting_representations": `{"ranked":[{"index":2,"score":0.9}],"order":[0,2],"scores":[0.9,0.8]}`,
-		"duplicate_ranking_field":     `{"ranked":[{"index":2,"score":0.9}],"ranked":[{"index":0,"score":0.8}]}`,
-	} {
-		t.Run(name, func(t *testing.T) {
+	cases := []struct {
+		name           string
+		providerOutput string
+		wantAccepted   bool
+	}{
+		{name: "markdown_fence", providerOutput: "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n```", wantAccepted: true},
+		{name: "trailing_prose", providerOutput: "```json\n{\"order\":[2,0],\"scores\":[0.9,0.8]}\n``` candidates ranked", wantAccepted: true},
+		{name: "two_json_fences", providerOutput: fence(object) + "\n" + fence(`{"order":[0,2],"scores":[0.9,0.8]}`)},
+		{name: "fence_then_second_object", providerOutput: fence(object) + `{"ranked":[{"index":0,"score":0.9}]}`},
+		{name: "bare_second_object", providerOutput: object + " " + object},
+		{name: "fence_then_truncated_object", providerOutput: fence(object) + `{"order":[`},
+		{name: "conflicting_representations", providerOutput: `{"ranked":[{"index":2,"score":0.9}],"order":[0,2],"scores":[0.9,0.8]}`},
+		{name: "duplicate_ranking_field", providerOutput: `{"ranked":[{"index":2,"score":0.9}],"ranked":[{"index":0,"score":0.8}]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.SetReranker(search.NewLLMReranker(&search.LLMRerankerConfig{
 				Enabled: true, Timeout: time.Second, MaxCandidates: 3,
 			}, func(context.Context, string) (string, error) {
-				return providerOutput, nil
+				return testCase.providerOutput, nil
 			}))
 			exec := NewStorageExecutor(engine)
 			exec.SetSearchService(service)
 
 			response, err := exec.Execute(context.Background(), "CALL db.rerank({query: 'q', candidates: [{id: 'a', content: 'a', score: 0.3}, {id: 'b', content: 'b', score: 0.2}, {id: 'c', content: 'c', score: 0.1}]}) YIELD id RETURN id", nil)
+			if testCase.wantAccepted {
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"c"}, {"a"}, {"b"}}, response.Rows)
+				return
+			}
 			require.ErrorContains(t, err, "rerank failed")
 			require.Nil(t, response)
 		})

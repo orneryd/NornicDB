@@ -27,10 +27,11 @@ func EncodeNodePayload(node *Node) ([]byte, error) {
 	if node == nil {
 		return nil, fmt.Errorf("nil node")
 	}
-	return EncodeCommandPayload(transportNodeFrom(node))
+	return EncodeCommandPayload((*transportNodeImage)(node))
 }
 
 // DecodeNodePayload restores a node image from the current replication format.
+// The decoded image is the node itself; no field-by-field copy is made.
 func DecodeNodePayload(data []byte) (*Node, error) {
 	var image transportNodeImage
 	if err := DecodeCommandPayload(data, &image); err != nil {
@@ -39,7 +40,7 @@ func DecodeNodePayload(data []byte) (*Node, error) {
 	if image.ID == "" {
 		return nil, ErrInvalidID
 	}
-	return image.storedNode(), nil
+	return (*Node)(&image), nil
 }
 
 // EncodeEdgePayload encodes a complete edge image for replication.

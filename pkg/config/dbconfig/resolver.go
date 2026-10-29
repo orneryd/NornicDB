@@ -67,10 +67,10 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		EmbeddingDimensions:         global.Memory.EmbeddingDimensions,
 		SearchMinSimilarity:         global.Memory.SearchMinSimilarity,
 		BM25Enabled:                 global.Memory.SearchBM25Enabled,
-		BM25Warming:                 normalizeWarming(global.Memory.SearchBM25Warming),
-		BM25Stemmer:                 normalizeStemmerSelection(global.Memory.SearchBM25Stemmer),
+		BM25Warming:                 config.NormalizeIndexWarming(global.Memory.SearchBM25Warming),
+		BM25Stemmer:                 config.NormalizeStemmerSelection(global.Memory.SearchBM25Stemmer),
 		VectorEnabled:               global.Memory.SearchVectorEnabled,
-		VectorWarming:               normalizeWarming(global.Memory.SearchVectorWarming),
+		VectorWarming:               config.NormalizeIndexWarming(global.Memory.SearchVectorWarming),
 		QueryCacheMaxEntries:        global.Memory.QueryCacheSize,
 		QueryCacheTTL:               global.Memory.QueryCacheTTL,
 		SearchResultCacheMaxEntries: 1000,
@@ -160,18 +160,6 @@ func resolveEmbeddingProviderDefaults(global *config.Config, resolved *ResolvedD
 	resolved.Effective[dimensionsKey] = strconv.Itoa(providerConfig.Dimensions)
 }
 
-// normalizeWarming returns "startup" or "lazy"; anything else (including empty)
-// falls back to "startup" so deployments without the new keys keep today's
-// behaviour.
-func normalizeWarming(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "lazy":
-		return "lazy"
-	default:
-		return "startup"
-	}
-}
-
 // parseBoolFallback returns the parsed value when the string is a recognised
 // bool literal (true/false/1/0, case-insensitive); otherwise returns fallback.
 // Typos can't silently flip a boolean — the caller's existing value wins.
@@ -199,69 +187,14 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 			m[definition.Name] = value
 		}
 	}
-	// Embeddings
-	setEffective := func(environmentVariable, value string) { m[CanonicalSettingName(environmentVariable)] = value }
-	setEffective("NORNICDB_EMBEDDING_ENABLED", boolStr(c.Memory.EmbeddingEnabled))
-	setEffective("NORNICDB_EMBEDDING_PROVIDER", c.Memory.EmbeddingProvider)
-	setEffective("NORNICDB_EMBEDDING_MODEL", c.Memory.EmbeddingModel)
-	setEffective("NORNICDB_EMBEDDING_API_URL", c.Memory.EmbeddingAPIURL)
-	setEffective("NORNICDB_EMBEDDING_API_KEY", c.Memory.EmbeddingAPIKey)
-	setEffective("NORNICDB_EMBEDDING_MODE", c.Memory.EmbeddingMode)
-	setEffective("NORNICDB_EMBEDDING_DIMENSIONS", strconv.Itoa(c.Memory.EmbeddingDimensions))
-	if c.Memory.EmbeddingDimensions <= 0 {
-		setEffective("NORNICDB_EMBEDDING_DIMENSIONS", "1024")
-	}
-	setEffective("NORNICDB_EMBEDDING_CACHE_SIZE", strconv.Itoa(c.Memory.EmbeddingCacheSize))
-	setEffective("NORNICDB_EMBEDDING_PROPERTIES_INCLUDE", strings.Join(c.EmbeddingWorker.PropertiesInclude, ","))
-	setEffective("NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE", strings.Join(c.EmbeddingWorker.PropertiesExclude, ","))
-	setEffective("NORNICDB_EMBEDDING_INCLUDE_LABELS", boolStr(c.EmbeddingWorker.IncludeLabels))
-	setEffective("NORNICDB_EMBEDDING_LABELS_INCLUDE", strings.Join(c.EmbeddingWorker.EligibleLabels, ","))
-	setEffective("NORNICDB_EMBEDDING_LABELS_EXCLUDE", strings.Join(c.EmbeddingWorker.ExcludedLabels, ","))
-	setEffective("NORNICDB_EMBEDDING_GPU_LAYERS", strconv.Itoa(c.Memory.EmbeddingGPULayers))
-	setEffective("NORNICDB_EMBEDDING_WARMUP_INTERVAL", c.Memory.EmbeddingWarmupInterval.String())
-	// Search
-	setEffective("NORNICDB_SEARCH_MIN_SIMILARITY", strconv.FormatFloat(c.Memory.SearchMinSimilarity, 'f', -1, 64))
-	setEffective("NORNICDB_SEARCH_BM25_ENABLED", boolStr(c.Memory.SearchBM25Enabled))
-	setEffective("NORNICDB_SEARCH_BM25_WARMING", normalizeWarming(c.Memory.SearchBM25Warming))
-	setEffective("NORNICDB_SEARCH_BM25_STEMMER", normalizeStemmerSelection(c.Memory.SearchBM25Stemmer))
-	setEffective("NORNICDB_SEARCH_VECTOR_ENABLED", boolStr(c.Memory.SearchVectorEnabled))
-	setEffective("NORNICDB_SEARCH_VECTOR_WARMING", normalizeWarming(c.Memory.SearchVectorWarming))
-	setEffective("NORNICDB_SEARCH_RERANK_ENABLED", boolStr(c.Features.SearchRerankEnabled))
-	setEffective("NORNICDB_SEARCH_RERANK_PROVIDER", c.Features.SearchRerankProvider)
-	setEffective("NORNICDB_SEARCH_RERANK_MODEL", c.Features.SearchRerankModel)
-	setEffective("NORNICDB_SEARCH_RERANK_API_URL", c.Features.SearchRerankAPIURL)
-	setEffective("NORNICDB_SEARCH_RERANK_API_KEY", c.Features.SearchRerankAPIKey)
-	// K-means (from Memory)
-	setEffective("NORNICDB_KMEANS_MIN_EMBEDDINGS", strconv.Itoa(c.Memory.KmeansMinEmbeddings))
-	setEffective("NORNICDB_KMEANS_CLUSTER_INTERVAL", c.Memory.KmeansClusterInterval.String())
-	setEffective("NORNICDB_KMEANS_NUM_CLUSTERS", strconv.Itoa(c.Memory.KmeansNumClusters))
-	// Auto-links
-	setEffective("NORNICDB_AUTO_LINKS_ENABLED", boolStr(c.Memory.AutoLinksEnabled))
-	setEffective("NORNICDB_AUTO_LINKS_THRESHOLD", strconv.FormatFloat(c.Memory.AutoLinksSimilarityThreshold, 'f', -1, 64))
-	// Embed worker
-	setEffective("NORNICDB_EMBED_WORKER_NUM_WORKERS", strconv.Itoa(c.EmbeddingWorker.NumWorkers))
-	setEffective("NORNICDB_EMBED_SCAN_INTERVAL", c.EmbeddingWorker.ScanInterval.String())
-	setEffective("NORNICDB_EMBED_BATCH_DELAY", c.EmbeddingWorker.BatchDelay.String())
-	setEffective("NORNICDB_EMBED_TRIGGER_DEBOUNCE", c.EmbeddingWorker.TriggerDebounceDelay.String())
-	setEffective("NORNICDB_EMBED_MAX_RETRIES", strconv.Itoa(c.EmbeddingWorker.MaxRetries))
-	setEffective("NORNICDB_EMBED_CHUNK_SIZE", strconv.Itoa(c.EmbeddingWorker.ChunkSize))
-	setEffective("NORNICDB_EMBED_CHUNK_OVERLAP", strconv.Itoa(c.EmbeddingWorker.ChunkOverlap))
-	setEffective("NORNICDB_MVCC_LIFECYCLE_INTERVAL", c.Database.MVCCLifecycleCycleInterval.String())
-	setEffective("NORNICDB_QUERY_CACHE_SIZE", strconv.Itoa(c.Memory.QueryCacheSize))
-	setEffective("NORNICDB_QUERY_CACHE_TTL", strconv.FormatInt(c.Memory.QueryCacheTTL.Milliseconds(), 10))
-	// Transaction memory (#1343): the process default of one transaction's
-	// limit, and the process-wide pool, Neo4j's 70% default resolved.
-	setEffective("NORNICDB_MEMORY_TRANSACTION_MAX", strconv.FormatInt(c.Memory.TransactionMax, 10))
-	setEffective("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", strconv.FormatInt(c.Memory.TransactionTotalMax, 10))
-	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)
-	setEffective("NORNICDB_AUTO_TLP_ENABLED", boolStr(c.Features.TopologyAutoIntegrationEnabled))
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
+	// Typed projection of the database-scoped fields config owns: one read-only
+	// visit per setting, each value rendered exactly as the startup loader
+	// normalises it. Keys with no typed Config field keep the raw environment
+	// value written above; every key that does have one is re-projected from the
+	// effective Config value (the pre-convergence behaviour).
+	c.VisitDatabaseDefaults(func(environmentVariable, value string) {
+		m[CanonicalSettingName(environmentVariable)] = value
+	})
 }
 
 func applyOverride(r *ResolvedDbConfig, key, value string) {
@@ -320,7 +253,7 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 		}
 	}
 	if behaviorKey == "NORNICDB_SEARCH_BM25_STEMMER" {
-		r.BM25Stemmer = normalizeStemmerSelection(value)
+		r.BM25Stemmer = config.NormalizeStemmerSelection(value)
 	}
 	if key == "db.nornic.search_result_cache.max_entries" {
 		if entries, err := strconv.Atoi(value); err == nil && entries >= 0 {
@@ -363,21 +296,13 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 		r.BM25Enabled = parseBoolFallback(value, r.BM25Enabled)
 	case "NORNICDB_SEARCH_BM25_WARMING":
 		if ok, _ := IsValidEnumValue(key, value); ok {
-			r.BM25Warming = normalizeWarming(value)
+			r.BM25Warming = config.NormalizeIndexWarming(value)
 		}
 	case "NORNICDB_SEARCH_VECTOR_ENABLED":
 		r.VectorEnabled = parseBoolFallback(value, r.VectorEnabled)
 	case "NORNICDB_SEARCH_VECTOR_WARMING":
 		if ok, _ := IsValidEnumValue(key, value); ok {
-			r.VectorWarming = normalizeWarming(value)
+			r.VectorWarming = config.NormalizeIndexWarming(value)
 		}
 	}
-}
-
-func normalizeStemmerSelection(raw string) string {
-	selected := strings.ToLower(strings.TrimSpace(raw))
-	if selected == "" {
-		return "none"
-	}
-	return selected
 }

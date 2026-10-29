@@ -7,9 +7,9 @@ Owner: Tim Sweet; Urgent ticket reassigned from iBurn/mm0nst3r. No PR size limit
 - [x] Isolate original 34-file own layer (5637d0ad5 over dad30a7a1), excluding obsolete parent stack.
 - [x] Read-only DeepSeek AC/security inventory; root independently confirms concrete native/ANTLR divergence. Static review is not runtime qualification.
 - [x] Reingest immutable current release in background and independently verify its repository marker before final duplicate analysis.
-- [ ] Preserve fail-first evidence for supported remote CREATE/ALTER/DROP parity, exact quoted catalog identities, complete input rejection and credential-safe diagnostics through public protocols.
-- [ ] Port required behavior into current scannerless recursive-descent and grammar/command/credential owners; preserve current Go APIs, typed source stages and approved storage contract. Regenerate ANTLR output with the pinned generator; never patch the ANTLR runtime.
-- [ ] Verify the complete integrated public-path matrix, EXPLAIN metadata/effects, malformed/trailing input, quoted names and credential role boundaries, with original failing evidence retained.
+- [x] Preserve fail-first evidence for supported remote CREATE/ALTER/DROP parity, exact quoted catalog identities, complete input rejection and credential-safe diagnostics through public protocols.
+- [x] Port required behavior into current scannerless recursive-descent and grammar/command/credential owners; preserve current Go APIs, typed source stages and approved storage contract. Regenerate ANTLR output with the pinned generator; never patch the ANTLR runtime.
+- [x] Verify the complete integrated public-path matrix, EXPLAIN metadata/effects, malformed/trailing input, quoted names and credential role boundaries, with original failing evidence retained.
 - [ ] Profile and compare focused native parsing/command workloads with the current immutable baseline; correct regressions without sacrificing correctness. ANTLR correctness cost is accepted, but report measured limits.
 - [ ] Resolve every duplicate-checker finding against the refreshed release graph. Ask before any further analyzer, hook, or rule changes; do not ignore findings.
 - [ ] Refresh derived source inventories/census from actual current source without weakening guards; independent DeepSeek review of defensive security changes.
@@ -441,3 +441,81 @@ and the new test's memory engine is registered with the existing fixture
 owner. Both previously failing guards passed focused reruns; neither guard or
 its assertions was changed. A fresh full suite is required on the corrected
 tree.
+
+## Relationship snapshot migration follow-up
+
+- [x] Replace the relationship-search snapshot's gob writer with a packed
+  MessagePack writer and upgrade existing active snapshots in the authorized V4
+  startup flow, including already-V4 stores. Preserve the old Badger node body
+  in the tested upgrade and do not introduce another storage-version bump.
+- [x] Reject malformed, truncated, unknown and unauthorized snapshot input
+  without overwriting the source. A failed post-rename directory sync is retried
+  before an already-converted file is accepted. Direct search services report
+  an unconverted or unreadable file instead of rebuilding over it.
+- [x] Replace predictable snapshot temporary paths with exclusive temporary
+  files. The fail-first test reproduced a relative-symlink overwrite of a sibling
+  file; the corrected writer preserves that sibling and the migration source.
+- [x] Run focused race tests for search conversion, persistence and restart, and
+  for both an existing V4 store and the genuine historical-WAL V4 fixture. The
+  tests retain exact float bits, source hashes and chunk spans, verify no
+  re-embedding after conversion, and compare a Badger node body before and
+  after the search upgrade. The lexical inventory discovered one new generation
+  token reader; it was reviewed as search-state data and the unchanged lexical
+  and fixture-ownership guards passed.
+- [ ] Run the complete uncached `make test` and attempt the duplicate checker on
+  the integrated staged tree. If the test suite passes but the checker cannot
+  pass, inventory its findings for follow-up and push the tested checkpoint.
+- [ ] Continue the remaining acceptance and Northwind ingest performance work.
+
+On an isolated Apple M2 Max with `GOMAXPROCS=4`, local Qwen stopped and no
+Docker containers, six interleaved two-iteration samples per side measured the
+same snapshot encoding and file-sync fixture. For 128 vectors of 384 dimensions,
+gob's median was 5,054,979.5 ns/op, 1,541,172 B/op and 176 allocs/op; packed
+MessagePack was 4,873,812 ns/op, 70,056 B/op and 8 allocs/op. For 2,048 vectors,
+gob was 10,835,708 ns/op, 26,541,108 B/op and 2,108.5 allocs/op; packed
+MessagePack was 5,748,146 ns/op, 70,056 B/op and 8 allocs/op. These measurements
+cover snapshot encoding and file sync, not complete service startup or
+Northwind ingest. CPU profiles and the individual samples are retained locally.
+
+## Final AC and merge direction — 2026-10-29
+
+The maintainer is holding performance tuning at the current results so NOR-7's
+acceptance criteria can be completed first. The approximately five-second
+Northwind and 0.13 ms query targets carry forward to subsequent work; they are
+not achieved by this checkpoint. The completed isolated graph-only run on tree
+`3c18a75f7909f25cbb05b4bf801804b3b92ada62` ingested in 6.662 seconds and averaged
+0.176 ms over 14 queries with 30 measured iterations each; graph counts and
+query fingerprints passed. The search-enabled query run was canceled when
+performance work was held; its partial results are not a suite result.
+
+The uncached full `make test` passed 128 packages on that tree. A subsequent
+fail-first startup test showed that a directory-sync ENOENT could be suppressed
+as an absent snapshot. Only the initial source-open absence is now optional;
+post-open errors propagate through startup. Focused race checks passed, but the
+corrected final tree requires another complete suite and full PR-delta duplicate
+analysis before push and merge. The maintainer authorized merging after the AC
+and both gates pass, then pulling and reingesting the merged release head.
+
+
+## Integrated readiness checkpoint — 2026-10-29, current convergence wave
+
+- [x] Re-run the public administration/credential/remote-DDL/EXPLAIN/statistics matrix after the statistics correction (`public-ac-integrated-wave2.log`, uncached race run, 107.281s). Ordinary collected query text is preserved; administrative/system history is excluded. This does not claim parameter collection parity or full conformance.
+- [x] Compare exact GH530 with Neo4j 5.26.30: both parsers × HTTP/Bolt × auto/explicit, eight comparisons, no skips (`gh530-reference-receipt.json`).
+- [x] Re-run the original three relationship TCK regressions in auto/explicit modes: six focused scenario passes (`original-three-tck-regressions.log`). Broader conformance remains unexecuted in this wave.
+- [x] Complete the unchanged full-delta checker against release graph a9265090: frozen tree 8f124cf7 analyzed 1,611 functions, 22 findings, no cap skips or graph-baseline warnings; down from 71 at 7edf6dee. The evidence runner's console-summary serialization failed after analysis, but the complete report is preserved. This is a findings report, not a gate pass. Unchanged SIMD header extraction limitation persists.
+- [x] Preserve the original index-only, unnamespaced 6,000-node IVF fixture and the stored/namespaced 303-vector exact-stage fixture when sharing construction/indexing. No fixture population is substituted for another.
+- [x] Obtain maintainer approval for typed entity-preparation/publication migration. The actual request carries the existing Operations slice directly, avoiding a new staging callback or copy. No compatibility forwarding methods remain.
+- [ ] Finish and independently review the typed transaction, transport-image and configuration binding consolidations; refresh source populations and stored-entity census without weakening guards.
+- [ ] Run the unchanged checker on the final frozen tree and resolve every remaining finding.
+- [ ] Run uncached make test on that same integrated source; correct every failure, including release-baseline regressions.
+- [ ] Commit/push exact verified source, post evidence on PR #1525, update NOR-7 and mark ready for review.
+
+Performance tuning remains held at the maintainer's latest direction. The historical approximately-five-second ingest target is future work, not a completed claim. `make verify` remains explicitly deferred to the next PR; no full-sweep pass is claimed. No checker/hook/rule edits or Dot notifications are authorized. New transport consolidation must preserve the current wire bytes and all existing Badger layouts.
+
+## Integrated transaction convergence follow-up
+
+- Typed `EntityCommitRequest`, `CommitPublication` and prepared encoding requests replace the overlapping preparation/publication/encoding routes; callers and Go documentation migrated. Receipt observation constructs its key once, enrolls the native conflict read, and preserves acknowledged-generation visibility through physical fallback. No Badger key/payload or storage-version change.
+- Preserved fail-first proof for a detached-client publication handoff, public diagnostic before-image aliasing, physical-only receipt observation, and diagnostic typed-list aliasing. Focused race checks pass for the corrected ownership boundaries and commit/discard outcomes. The private prepared encoder retains 13 allocations for scalar and typed-list fixtures; the diagnostic copy alone allocates independent list containers. This is focused allocation evidence, not renewed Northwind timing qualification.
+- The uncached complete `make test` on tree `303d4268b438ab2ff595f74ec8edfdcf6d22eecc` finished with two source-guard failures (lexical inventory and relocated receipt metadata lookup); all other tested packages passed. Current source corrects the reviewed inventory and restores generation lookup to the buffer receiver. Both unchanged guards, diagnostic-container tests and receipt visibility tests pass focused checks; the complete suite must pass again before publication.
+- The unchanged full release-delta checker on that same tree analyzed 1,672 functions with five reuse findings, zero refactor findings and zero cap skips. The five concern consolidated owner calls and the shared unit/benchmark setup/execution owners. A concrete ownership-proof proposal is awaiting explicit maintainer authorization; no checker/hook/rule change or finding waiver has been applied. Later diagnostic-copy changes require another complete current-tree check. The existing SIMD header extraction warning remains reported.
+- `make verify`, broad performance tuning, commit/push and final readiness remain pending or explicitly deferred as described above. No full-suite or checker pass is claimed by this checkpoint.

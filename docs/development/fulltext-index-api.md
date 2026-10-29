@@ -1,11 +1,11 @@
 # Full-text index Go API
 
-`search.FulltextIndex` provides the full-text index's single-document entry
+`search.FulltextIndexV2` provides the full-text index's single-document entry
 point. Construct it with an analyzer, or pass `nil` for the default analyzer.
 Go calls must supply the analysis mode explicitly:
 
 ```go
-index := search.NewFulltextIndex(nil)
+index := search.NewFulltextIndexV2WithAnalyzer(nil)
 index.Index(id, text, nil, nil, false)
 ```
 

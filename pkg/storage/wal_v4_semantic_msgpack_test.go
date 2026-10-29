@@ -82,9 +82,9 @@ func TestV4WALMigrationTranscodesHistoricalSemanticPayload(t *testing.T) {
 
 func TestV4WALMigrationPreservesCurrentSemanticPayload(t *testing.T) {
 	stamp := time.Date(2024, 3, 5, 10, 20, 30, 123456789, time.UTC)
-	payload, err := EncodeEntityTransaction("test", "current", []Operation{{
+	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "current", Operations: []Operation{{
 		Type: OpCreateNode, Node: &Node{ID: "test:n", Properties: map[string]any{"count": int64(9)}},
-	}})
+	}}})
 	require.NoError(t, err)
 	data, err := marshalWALRecoveryPayload(nil, walEntityCommitData{Payload: payload})
 	require.NoError(t, err)

@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"encoding/gob"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,7 +54,8 @@ func TestRelationshipChunkMatchesCarryTheirSpans(t *testing.T) {
 	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	_, err = os.Stat(path + relationshipVectorsFileSuffix)
 	require.NoError(t, err)
-	loaded := svc.loadRelationshipVectors()
+	loaded, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
 	require.Equal(t, []embeddingutil.ChunkSpan{{Chunk: 0, Property: "reason", Start: 0, End: 10}, {Chunk: 1, Property: "reason", Start: 11, End: 17}}, loaded["r1"].Spans)
 	require.Nil(t, loaded["r2"].Spans)
 }
@@ -79,11 +79,14 @@ func TestRelationshipVectorFileOfAnEarlierFormatIsDropped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25")
 	file, err := os.Create(path + relationshipVectorsFileSuffix)
 	require.NoError(t, err)
-	require.NoError(t, gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: 1, Entries: map[string]*relationshipEntry{"r1": {Source: 1, Vectors: [][]float32{{1, 0, 0}}}}}))
+	old := relationshipVectorsFile{Format: 1, Entries: map[string]*relationshipEntry{"r1": {Source: 1, Vectors: [][]float32{{1, 0, 0}}}}}
+	require.NoError(t, encodeRelationshipSnapshot(file, &old))
 	require.NoError(t, file.Close())
 	svc := NewService(relationshipTestEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath(path)
-	require.Nil(t, svc.loadRelationshipVectors())
+	loaded, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Nil(t, loaded)
 }

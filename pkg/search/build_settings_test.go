@@ -56,7 +56,7 @@ func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
 	svc.SetFulltextIndexPath(path)
 	svc.SetPersistenceEnabled(true)
 
-	stale := NewFulltextIndex(nil)
+	stale := NewFulltextIndexV2WithAnalyzer(nil)
 	stale.Index("nornic:stale", "obsoleteonly", nil, nil, false)
 	require.NoError(t, stale.Save(path))
 	settings := svc.currentSearchBuildSettings()

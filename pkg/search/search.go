@@ -1242,7 +1242,7 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 	if options != nil && options.BM25Stemmer != nil {
 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
 	}
-	fulltextIndex := NewFulltextIndex(analyzer)
+	fulltextIndex := NewFulltextIndexV2WithAnalyzer(analyzer)
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
 	defaults := DefaultServiceOptions("")
@@ -2933,14 +2933,16 @@ func (s *Service) IndexNodeWithMutation(node *storage.Node, mutation NodeMutatio
 	if node == nil || mutation.nodeID != node.ID {
 		return nil
 	}
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: mutation.claim}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
+		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingNodeMutations, mutation.nodeID, mutation.generation)
+	}}); queued || err != nil {
 		if err != nil {
 			s.DiscardNodeMutation(mutation)
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.applyNodeMutationLocked(mutation, func() error { return s.indexNodeOwned(node, nil) })
+	return applyReservedIndexMutation(s, mutation.service, mutation.nodeID, mutation.generation, &s.pendingNodeMutations, func() error { return s.indexNodeOwned(node, nil) })
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
@@ -3601,14 +3603,16 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 // index or removal has superseded it. Like IndexNodeWithMutation, during a
 // build the removal is handed to the build.
 func (s *Service) RemoveNodeWithMutation(mutation NodeMutation) error {
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(mutation.nodeID), valid: mutation.claim}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(mutation.nodeID), valid: func() bool {
+		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingNodeMutations, mutation.nodeID, mutation.generation)
+	}}); queued || err != nil {
 		if err != nil {
 			s.DiscardNodeMutation(mutation)
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.applyNodeMutationLocked(mutation, func() error {
+	return applyReservedIndexMutation(s, mutation.service, mutation.nodeID, mutation.generation, &s.pendingNodeMutations, func() error {
 		s.removeNodeOwned(mutation.nodeID)
 		return nil
 	})
@@ -3662,14 +3666,16 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 // installed only while the reservation is current.
 func (s *Service) indexEdgeWithMutation(edge *storage.Edge, mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: mutation.claim}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: func() bool {
+		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingEdgeMutations, mutation.edgeID, mutation.generation)
+	}}); queued || err != nil {
 		if err != nil {
 			s.discardEdgeMutation(mutation)
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.applyEdgeMutationLocked(mutation, func() error { return s.indexEdgeOwned(edge) })
+	return applyReservedIndexMutation(s, mutation.service, mutation.edgeID, mutation.generation, &s.pendingEdgeMutations, func() error { return s.indexEdgeOwned(edge) })
 }
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
@@ -3780,14 +3786,16 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 // removeEdgeWithMutation is indexEdgeWithMutation for a removal.
 func (s *Service) removeEdgeWithMutation(mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(mutation.edgeID), relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(mutation.edgeID), valid: mutation.claim}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(mutation.edgeID), valid: func() bool {
+		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingEdgeMutations, mutation.edgeID, mutation.generation)
+	}}); queued || err != nil {
 		if err != nil {
 			s.discardEdgeMutation(mutation)
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.applyEdgeMutationLocked(mutation, func() error {
+	return applyReservedIndexMutation(s, mutation.service, mutation.edgeID, mutation.generation, &s.pendingEdgeMutations, func() error {
 		s.removeEdgeOwned(mutation.edgeID)
 		return nil
 	})

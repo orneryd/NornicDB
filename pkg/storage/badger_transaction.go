@@ -2946,7 +2946,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	return tx.CommitContextWithPublication(ctx, nil)
+	return tx.PublishCommit(ctx, CommitPublication{})
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2961,7 +2961,7 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 // between polls of the commit context.
 const commitCancelPollEvery = 256
 
-func (tx *BadgerTransaction) Commit() error { return tx.CommitContextWithPublication(nil, nil) }
+func (tx *BadgerTransaction) Commit() error { return tx.PublishCommit(nil, CommitPublication{}) }
 
 // commitConflictError reports a Badger write conflict found while committing
 // in the storage commit-conflict shape (ErrConflict, localized).

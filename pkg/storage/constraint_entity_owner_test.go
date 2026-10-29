@@ -152,7 +152,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 				_, err = tx.CreateNode(&Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"uid": "value"}})
 				require.NoError(t, err)
 			}
-			p, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
 			defer p.Abort()
 
@@ -251,7 +251,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 					node.Properties = map[string]any{"mutation": "blocked"}
 					require.NoError(t, blocked.UpdateGraphNode(node, ClientNodeEdits))
 					waiter, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-					_, err = blocked.PrepareEntityCommit(waiter, "endpoint-writer")
+					_, err = blocked.PrepareEntityCommit(waiter, EntityCommitRequest{LogicalID: "endpoint-writer"})
 					cancel()
 					require.ErrorIs(t, err, context.DeadlineExceeded, "shared endpoint authority must exclude an exclusive node writer")
 					// A rejected prepare already detached and closed the transaction.
@@ -295,7 +295,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.CreateEdge(&Edge{ID: EdgeID(local), StartNode: "test:hub", EndNode: NodeID(end), Type: "LINK", Properties: map[string]any{"uid": local}}))
-		p, err := tx.PrepareEntityCommit(context.Background(), local)
+		p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: local})
 		require.NoError(t, err)
 		return p
 	}
@@ -360,7 +360,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 			}
 			done := make(chan result, 1)
 			go func() {
-				p, err := tx.PrepareEntityCommit(context.Background(), "endpoint-node-"+caseConflict.name)
+				p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "endpoint-node-" + caseConflict.name})
 				done <- result{p, err}
 			}()
 			select {

@@ -11,19 +11,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// CommitContextWithPublication commits atomically, then invokes afterPublication
-// once on success after publication locks are released but before synchronous
-// listeners run. Database wrappers finalize accounting and release admission at
-// this boundary. The callback must not panic. Failed commits never invoke it.
-// Buffered commits invoke it at their acknowledged-publication boundary.
-func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, afterPublication func()) error {
-	if tx.clientDetached.Load() {
-		return ErrTransactionClosed
-	}
-	return tx.commitContextWithPreparation(ctx, afterPublication, nil)
+// CommitPublication specifies the single post-publication callback. The private
+// preparation continuation belongs solely to accepted entity-commit admission.
+type CommitPublication struct {
+	AfterPublication func()
+	prepare          func() error
 }
 
-func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, afterPublication func(), prepare func() error) (commitErr error) {
+// PublishCommit commits atomically, then invokes AfterPublication once on
+// success after publication locks are released and before synchronous listeners.
+// Failed commits never invoke it. Buffered commits use their acknowledged
+// publication boundary. The callback must not panic.
+func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPublication) (commitErr error) {
+	if request.prepare == nil && tx.clientDetached.Load() {
+		return ErrTransactionClosed
+	}
+	afterPublication, prepare := request.AfterPublication, request.prepare
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -54,7 +57,9 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 	}()
 	defer tx.releaseWriteBarrierLocked()
 
-	if err := tx.ensureLifecycleActiveLocked(true); err != nil {
+	// Recheck client ownership under the same mutex as the state transition.
+	// Only the private accepted-commit continuation may publish a detached tx.
+	if err := tx.ensureLifecycleActiveLocked(prepare != nil); err != nil {
 		return err
 	}
 	// The engine's write barrier is held through publication, before listener
@@ -115,7 +120,8 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 	// the final authoritative phase owns entity keys: an intervening peer may
 	// commit before this acquisition, so revalidate under the existing key order.
 	// Entity and endpoint authority precedes unique values for every native commit.
-	releaseEntityAuthority, authorityErr := tx.lockPendingEntityAuthorityLocked()
+	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
+	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}

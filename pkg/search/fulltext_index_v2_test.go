@@ -10,7 +10,7 @@ import (
 )
 
 func TestFulltextIndexV2_BasicLifecycle(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc1", "hello world distributed systems", nil, nil, false)
 	idx.Index("doc2", "hello nornicdb graph database", nil, nil, false)
 
@@ -26,7 +26,7 @@ func TestFulltextIndexV2_PrefixBounded(t *testing.T) {
 	t.Setenv("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", "2")
 	t.Setenv("NORNICDB_BM25_PREFIX_MIN_LEN", "3")
 
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("a", "prescription refill reminder", nil, nil, false)
 	idx.Index("b", "prescribe dosage reminder", nil, nil, false)
 	idx.Index("c", "prescribed medicine", nil, nil, false)
@@ -37,7 +37,7 @@ func TestFulltextIndexV2_PrefixBounded(t *testing.T) {
 }
 
 func TestFulltextIndexV2_StableTopK(t *testing.T) {
-	v2 := NewFulltextIndex(nil)
+	v2 := NewFulltextIndexV2WithAnalyzer(nil)
 
 	docs := []FulltextBatchEntry{
 		{ID: "d1", Text: "graph database nornicdb embeddings"},
@@ -65,12 +65,12 @@ func TestFulltextIndexV2_StableTopK(t *testing.T) {
 func TestFulltextIndexV2_SaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25")
 
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc1", "hello world", nil, nil, false)
 	idx.Index("doc2", "hello graph world", nil, nil, false)
 	require.NoError(t, idx.Save(path))
 
-	loaded := NewFulltextIndex(nil)
+	loaded := NewFulltextIndexV2WithAnalyzer(nil)
 	require.NoError(t, loaded.Load(path))
 	require.Equal(t, 2, loaded.Count())
 	require.NotEmpty(t, loaded.Search("hello", 10))
@@ -80,7 +80,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25-persisted-state")
 	const formerGlobalDecodeLimit = 256 * 1024 * 1024
 
-	original := NewFulltextIndex(nil)
+	original := NewFulltextIndexV2WithAnalyzer(nil)
 	original.Index("doc-1", "graph search survives restart", nil, nil, false)
 	original.Index("doc-2", "persisted keyword index remains searchable", nil, nil, false)
 	require.NoError(t, original.SaveNoCopy(path))
@@ -93,7 +93,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, info.Size(), int64(formerGlobalDecodeLimit))
 
-	reloaded := NewFulltextIndex(nil)
+	reloaded := NewFulltextIndexV2WithAnalyzer(nil)
 	require.NoError(t, reloaded.Load(path))
 	require.Equal(t, original.Count(), reloaded.Count())
 	results := reloaded.Search("survives restart", 10)
@@ -102,7 +102,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 }
 
 func TestFulltextIndexV2_DirtySaveNoCopyPhraseClear(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	require.False(t, idx.IsDirty())
 
 	idx.Index("doc1", "the quick brown fox jumps", nil, nil, false)
@@ -129,14 +129,14 @@ func TestFulltextIndexV2_LoadDecodeFailureClears(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bm25v2_corrupt")
 	require.NoError(t, os.WriteFile(path, []byte("not-msgpack"), 0644))
 
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc1", "hello world", nil, nil, false)
 	require.NoError(t, idx.Load(path))
 	require.Equal(t, 0, idx.Count())
 }
 
 func TestFulltextIndexV2_PersistenceErrorAndSnapshotBranches(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	require.NoError(t, idx.Load(filepath.Join(t.TempDir(), "missing")))
 
 	badParent := filepath.Join(t.TempDir(), "not-a-dir")
@@ -188,7 +188,7 @@ func TestFulltextIndexV2_MinIntHelper(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_CalculateIDFLocked(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -213,7 +213,7 @@ func TestFulltextIndexV2_CalculateIDFLocked(t *testing.T) {
 }
 
 func TestFulltextIndexDefersLexiconMaintenanceUntilPrefixSearch(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.maxPrefixExpansions = 10
 	idx.minPrefixLength = 2
 
@@ -284,7 +284,7 @@ func TestFulltextIndexV2_TopKFromScores(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_LexicalSeedDocIDs(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc1", "graph database nornicdb", nil, nil, false)
 	idx.Index("doc2", "relational database postgres", nil, nil, false)
 	idx.Index("doc3", "graph embeddings neural", nil, nil, false)
@@ -305,7 +305,7 @@ func TestFulltextIndexV2_LexicalSeedDocIDs(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_IndexBatchAndRemove(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 
 	batch := []FulltextBatchEntry{
 		{ID: "b1", Text: "hello world"},
@@ -337,7 +337,7 @@ func TestFulltextIndexV2_IndexBatchAndRemove(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_SearchNoMatch(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	idx.Index("doc1", "graph database", nil, nil, false)
 
 	results := idx.Search("zzzzunknownterm", 10)
@@ -349,7 +349,7 @@ func TestFulltextIndexV2_SearchNoMatch(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFulltextIndexV2_EmptyIndexOperations(t *testing.T) {
-	idx := NewFulltextIndex(nil)
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 
 	require.Equal(t, 0, idx.Count())
 	require.Empty(t, idx.Search("anything", 10))
