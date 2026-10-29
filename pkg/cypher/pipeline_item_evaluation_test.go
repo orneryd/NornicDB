@@ -140,6 +140,30 @@ func TestUnwindAliasIsOneVariable(t *testing.T) {
 	}
 }
 
+// Statement grammar errors keep the canonical parse identity through public
+// execution, including modes and subqueries, under either configured parser.
+// The standalone validator's separate diagnostic API is tested independently.
+func TestStatementSyntaxDiagnosticsHaveParserParity(t *testing.T) {
+	for _, query := range []string{
+		"UNWIND [1, 2] AS x y RETURN x",
+		"EXPLAIN UNWIND [1, 2] AS x y RETURN x",
+		"PROFILE UNWIND [1, 2] AS x y RETURN x",
+		"CALL { UNWIND [1, 2] AS x y RETURN x } RETURN x",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			// A rejected statement must not become an accepted cache hit.
+			for attempt := 0; attempt < 2; attempt++ {
+				_, err := exec.Execute(t.Context(), query, nil)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+				var diagnostic *localization.LocalizedError
+				require.ErrorAs(t, err, &diagnostic)
+				require.Equal(t, localization.MessageCypherANTLRParseSyntaxError, diagnostic.Message.ID)
+			}
+		})
+	}
+}
+
 // TestCallInTransactionsCountsMatchedRows: IN TRANSACTIONS counts the rows
 // to batch with the subquery's MATCH, not its RETURN, which reads variables
 // only the write binds; the count's own errors don't fail the statement.

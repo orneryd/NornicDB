@@ -269,7 +269,7 @@ func TestCreateDatabaseControls(t *testing.T) {
 }
 
 // TestCreateDatabaseInvalidStatementsPreserveCatalog covers the remaining
-// malformed forms: each reports its historical identity and changes nothing.
+// malformed forms: each reports its admission diagnostic and changes nothing.
 func TestCreateDatabaseInvalidStatementsPreserveCatalog(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {
@@ -297,7 +297,7 @@ func TestCreateDatabaseInvalidStatementsPreserveCatalog(t *testing.T) {
 					require.ErrorAs(t, err, &localized)
 					wantID := tc.id
 					if parser == "antlr" && tc.id != localization.MessageCypherTransactionsSyntaxUnclosedQuote {
-						wantID = localization.MessageCypherANTLRValidateSyntaxError
+						wantID = localization.MessageCypherANTLRParseSyntaxError
 					}
 					require.Equal(t, wantID, localized.Message.ID, tc.query)
 					require.Equal(t, before, catalogCreateDatabaseSnapshot(manager))
