@@ -3,7 +3,6 @@ package mcp
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 // databaseParamSchema returns the optional "database" argument schema shared by all MCP tools.
@@ -17,8 +16,8 @@ func databaseParamSchema(defaultDatabase string) map[string]interface{} {
 		"type":        "string",
 		"description": "Database name to use. If omitted, uses the server's configured default database.",
 	}
-	if strings.TrimSpace(defaultDatabase) != "" {
-		schema["default"] = strings.TrimSpace(defaultDatabase)
+	if defaultDatabase != "" {
+		schema["default"] = defaultDatabase
 	}
 	return schema
 }

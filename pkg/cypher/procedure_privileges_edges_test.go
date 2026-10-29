@@ -72,10 +72,18 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.True(t, ok)
 	require.ErrorContains(t, err, "expected ON DBMS")
 
-	require.Equal(t, []string{"a", "b"}, showPrivilegeRoles("SHOW ROLES role_a, `b` PRIVILEGES"))
-	require.Equal(t, []string{"a"}, showPrivilegeRoles("SHOW ROLE a PRIVILEGE"))
-	require.Nil(t, showPrivilegeRoles("SHOW ROLE a"))
-	require.Nil(t, showPrivilegeRoles("SHOW PRIVILEGES"))
+	roles, err := showPrivilegeRoles("SHOW ROLES role_a, `b` PRIVILEGES")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, roles)
+	roles, err = showPrivilegeRoles("SHOW ROLE a PRIVILEGE")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a"}, roles)
+	roles, err = showPrivilegeRoles("SHOW ROLE a")
+	require.NoError(t, err)
+	require.Nil(t, roles)
+	roles, err = showPrivilegeRoles("SHOW PRIVILEGES")
+	require.NoError(t, err)
+	require.Nil(t, roles)
 
 	// A nil grant check attaches nothing.
 	require.Equal(t, ctx, WithProcedureGrantChecker(ctx, nil))

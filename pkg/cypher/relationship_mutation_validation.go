@@ -41,10 +41,10 @@ func validateRelationshipMutation(pattern string, purpose relationshipMutationPu
 			"variable-length relationships cannot be "+verb,
 		)
 	}
-	if declaration.hasColon && hasDynamicToken(declaration.typeText) {
+	if declaration.hasColon && declaration.dynamic {
 		return nil
 	}
-	if declaration.hasColon && indexByteOutsideBackticks(declaration.typeText, '|') >= 0 {
+	if declaration.hasColon && declaration.alternatives {
 		return singleRelationshipTypeError(clause)
 	}
 	if declaration.invalidType != "" {
@@ -54,7 +54,7 @@ func validateRelationshipMutation(pattern string, purpose relationshipMutationPu
 			detail: "InvalidRelationshipType",
 		}
 	}
-	if len(declaration.types) != 1 {
+	if declaration.types.len() != 1 {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"NoSingleRelationshipType",

@@ -104,12 +104,12 @@ export function PropertyFilterList(props: {
   const [valueDraft, setValueDraft] = useState("");
   const [scopeDraft, setScopeDraft] = useState("");
   const add = () => {
-    const property = propertyDraft.trim();
+    const property = propertyDraft;
     if (property === "") {
       return;
     }
     const value = valueDraft.trim();
-    const scope = scopeDraft.trim();
+    const scope = scopeDraft;
     const entry: GraphPropertyFilter = {
       property,
       ...(scope !== "" ? { scope } : {}),

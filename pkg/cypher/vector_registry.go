@@ -19,7 +19,7 @@ func (e *StorageExecutor) registerVectorSpace(indexName, label, property string,
 		e.vectorIndexSpaces = make(map[string]vectorspace.VectorSpaceKey)
 	}
 
-	vectorName := strings.TrimSpace(property)
+	vectorName := property
 	if vectorName == "" {
 		vectorName = vectorspace.DefaultVectorName
 	}
@@ -72,7 +72,7 @@ func storageDatabaseName(engine storage.Engine) string {
 			}
 		}
 		if namespaceProvider, ok := engine.(interface{ Namespace() string }); ok {
-			if namespace := strings.TrimSpace(namespaceProvider.Namespace()); namespace != "" {
+			if namespace := namespaceProvider.Namespace(); namespace != "" {
 				return namespace
 			}
 		}

@@ -26,14 +26,14 @@ func TestDropConstraint_ContractRemovesCompiledEntries(t *testing.T) {
 	contract, compiled, types := gapContract()
 	require.NoError(t, sm.AddConstraintContractBundle(contract, compiled, types, false))
 	require.Len(t, sm.GetAllPropertyTypeConstraints(), 1)
-	_, hasUnique := sm.uniqueConstraints["Person:id"]
+	_, hasUnique := sm.uniqueConstraints[uniqueConstraintIdentity{"Person", "id"}]
 	require.True(t, hasUnique)
 
 	require.NoError(t, sm.DropConstraint("person_contract"))
 	require.Empty(t, sm.GetAllConstraintContracts())
 	require.Empty(t, sm.constraints)
 	require.Empty(t, sm.GetAllPropertyTypeConstraints())
-	_, hasUnique = sm.uniqueConstraints["Person:id"]
+	_, hasUnique = sm.uniqueConstraints[uniqueConstraintIdentity{"Person", "id"}]
 	require.False(t, hasUnique, "the unique lookup owned by the compiled entry is released")
 
 	err := sm.DropConstraint("person_contract")
@@ -62,7 +62,7 @@ func TestDropConstraint_ContractPersistFailureRestoresEverything(t *testing.T) {
 	require.Len(t, sm.GetAllConstraintContracts(), 1)
 	require.Contains(t, sm.constraints, ConstraintContractEntryName("person_contract", 0))
 	require.Len(t, sm.GetAllPropertyTypeConstraints(), 1)
-	_, hasUnique := sm.uniqueConstraints["Person:id"]
+	_, hasUnique := sm.uniqueConstraints[uniqueConstraintIdentity{"Person", "id"}]
 	require.True(t, hasUnique)
 }
 

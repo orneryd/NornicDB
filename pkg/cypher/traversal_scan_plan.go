@@ -28,7 +28,7 @@ func planTraversalScan(match *TraversalMatch) traversalScanPlan {
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 {
 		return traversalScanPlan{access: traversalLabelScan}
 	}
-	if !match.IsChained && !match.Relationship.VariableLength && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 && len(match.Relationship.Types) > 0 {
+	if !match.IsChained && !match.Relationship.VariableLength && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 && match.Relationship.Types.len() > 0 {
 		return traversalScanPlan{access: traversalTypeScan}
 	}
 	return traversalScanPlan{access: traversalNodeScan}
@@ -82,10 +82,11 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 	case traversalNodeScan:
 		return storage.StreamEdgesByType(ctx, store, "", oriented)
 	case traversalTypeScan:
-		for index, kind := range match.Relationship.Types {
-			if containsString(match.Relationship.Types[:index], kind) {
+		for index := 0; index < match.Relationship.Types.len(); index++ {
+			if !match.Relationship.Types.firstOccurrence(index) {
 				continue
 			}
+			kind := match.Relationship.Types.at(index).storageName()
 			if err := storage.StreamEdgesByType(ctx, store, kind, oriented); err != nil {
 				return err
 			}

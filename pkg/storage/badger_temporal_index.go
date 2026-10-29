@@ -12,7 +12,7 @@ import (
 )
 
 type temporalRefreshTarget struct {
-	constraint Constraint
+	constraint installedConstraintDefinition
 	desc       temporalIndexDescriptor
 	keyValue   interface{}
 }
@@ -29,28 +29,28 @@ type temporalIndexDescriptor struct {
 // temporalConstraintForLookup finds the single-key temporal constraint on label
 // whose properties are exactly (keyProp, startProp, endProp). Composite-key
 // constraints are not addressable by one key property.
-func temporalConstraintForLookup(schema *SchemaManager, label, keyProp, startProp, endProp string) (Constraint, bool) {
+func temporalConstraintForLookup(schema *SchemaManager, label, keyProp, startProp, endProp string) (installedConstraintDefinition, bool) {
 	if schema == nil {
-		return Constraint{}, false
+		return installedConstraintDefinition{}, false
 	}
-	constraints := schema.GetConstraintsForLabels([]string{label})
+	constraints := schema.constraintsForLabels([]string{label})
 	for _, c := range constraints {
-		if c.Type != ConstraintTemporal || len(c.Properties) != 3 {
+		if c.Type != ConstraintTemporal || c.Properties.Len() != 3 {
 			continue
 		}
-		if c.Label == label && c.Properties[0] == keyProp && c.Properties[1] == startProp && c.Properties[2] == endProp {
+		if c.Label == label && c.Properties.At(0) == keyProp && c.Properties.At(1) == startProp && c.Properties.At(2) == endProp {
 			return c, true
 		}
 	}
-	return Constraint{}, false
+	return installedConstraintDefinition{}, false
 }
 
-func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Constraint {
+func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []installedConstraintDefinition {
 	if schema == nil {
 		return nil
 	}
-	constraints := schema.GetConstraintsForLabels(labels)
-	out := make([]Constraint, 0, len(constraints))
+	constraints := schema.constraintsForLabels(labels)
+	out := make([]installedConstraintDefinition, 0, len(constraints))
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EffectiveEntityType() != ConstraintEntityNode {
 			continue
@@ -67,7 +67,9 @@ func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Cons
 // so the same persisted index keys) as before composite keys were supported;
 // composite keys join their property names with temporalKeyPropSeparator and
 // hash the []interface{} key value as a composite key.
-func makeTemporalDescriptor(namespace string, c Constraint, keyValue interface{}) temporalIndexDescriptor {
+func makeTemporalDescriptor(namespace string, source constraintDefinitionSource, keyValue interface{}) temporalIndexDescriptor {
+	c := source.installedConstraint()
+
 	spec, _ := splitTemporalKeySpec(c.Properties)
 	return temporalIndexDescriptor{
 		namespace: namespace,
@@ -140,7 +142,9 @@ func extractNodeIDFromTemporalHistoryKey(key []byte, prefixLen int) NodeID {
 // temporalNodeState returns the grouping key value (see temporalKeySpec) and
 // validity window of node under temporal constraint c; ok is false when the
 // key is incomplete or the start is not a temporal value.
-func temporalNodeState(node *Node, c Constraint) (interface{}, time.Time, time.Time, bool, bool) {
+func temporalNodeState(node *Node, source constraintDefinitionSource) (interface{}, time.Time, time.Time, bool, bool) {
+	c := source.installedConstraint()
+
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if node == nil || !ok {
 		return nil, time.Time{}, time.Time{}, false, false
@@ -157,12 +161,16 @@ func temporalNodeState(node *Node, c Constraint) (interface{}, time.Time, time.T
 }
 
 // temporalKeyValuesEqual compares two grouping key values of constraint c.
-func temporalKeyValuesEqual(c Constraint, a, b interface{}) bool {
+func temporalKeyValuesEqual(source constraintDefinitionSource, a, b interface{}) bool {
+	c := source.installedConstraint()
+
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	return ok && spec.keyEqual(a, b)
 }
 
-func temporalTargetForNode(namespace string, node *Node, c Constraint) (temporalRefreshTarget, time.Time, bool) {
+func temporalTargetForNode(namespace string, node *Node, source constraintDefinitionSource) (temporalRefreshTarget, time.Time, bool) {
+	c := source.installedConstraint()
+
 	keyValue, start, _, _, ok := temporalNodeState(node, c)
 	if !ok {
 		return temporalRefreshTarget{}, time.Time{}, false
@@ -209,7 +217,9 @@ func (b *BadgerEngine) loadNodeForTemporalTxn(txn *badger.Txn, nodeID NodeID, wi
 	return node, nil
 }
 
-func nodeMatchesTemporalLookup(node *Node, c Constraint, keyValue interface{}, asOf time.Time) bool {
+func nodeMatchesTemporalLookup(node *Node, source constraintDefinitionSource, keyValue interface{}, asOf time.Time) bool {
+	c := source.installedConstraint()
+
 	if node == nil {
 		return false
 	}
@@ -317,7 +327,9 @@ func (b *BadgerEngine) visitTemporalHistoryNodeInTxn(txn *badger.Txn, target tem
 	return previous, next, nil
 }
 
-func (b *BadgerEngine) writeTemporalIndexForNodeInTxn(txn *badger.Txn, namespace string, node *Node, c Constraint) (temporalRefreshTarget, error) {
+func (b *BadgerEngine) writeTemporalIndexForNodeInTxn(txn *badger.Txn, namespace string, node *Node, source constraintDefinitionSource) (temporalRefreshTarget, error) {
+	c := source.installedConstraint()
+
 	target, start, ok := temporalTargetForNode(namespace, node, c)
 	if !ok {
 		return temporalRefreshTarget{}, nil
@@ -328,7 +340,9 @@ func (b *BadgerEngine) writeTemporalIndexForNodeInTxn(txn *badger.Txn, namespace
 	return target, nil
 }
 
-func (b *BadgerEngine) deleteTemporalIndexForNodeInTxn(txn *badger.Txn, namespace string, node *Node, c Constraint) (temporalRefreshTarget, error) {
+func (b *BadgerEngine) deleteTemporalIndexForNodeInTxn(txn *badger.Txn, namespace string, node *Node, source constraintDefinitionSource) (temporalRefreshTarget, error) {
+	c := source.installedConstraint()
+
 	target, start, ok := temporalTargetForNode(namespace, node, c)
 	if !ok {
 		return temporalRefreshTarget{}, nil
@@ -429,7 +443,9 @@ func qualifyTemporalNodeID(namespace string, nodeID NodeID) NodeID {
 	return NodeID(namespace + ":" + string(nodeID))
 }
 
-func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time) (*Node, error) {
+func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, source constraintDefinitionSource, keyValue interface{}, asOf time.Time) (*Node, error) {
+	constraint := source.installedConstraint()
+
 	nodes, err := b.GetNodesByLabel(constraint.Label)
 	if err != nil {
 		return nil, err
@@ -462,7 +478,9 @@ func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, co
 // temporalListNodeAsOfInNamespace shares the existing descending history reader
 // across list as-of/current lookups. A current hint can hide a later historical
 // holder when an upgrade merges overlapping old-format list histories.
-func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time, withEmbeddings bool) (*Node, error) {
+func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, source constraintDefinitionSource, keyValue interface{}, asOf time.Time, withEmbeddings bool) (*Node, error) {
+	constraint := source.installedConstraint()
+
 	if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
 		node, err := b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
 		if err != nil || node == nil || !withEmbeddings {

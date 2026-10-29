@@ -124,7 +124,11 @@ func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, b
 		return command, true, procedurePrivilegeSyntaxError("expected " + target + " followed by a role")
 	}
 	for _, role := range splitTopLevelComma(strings.TrimSpace(rest[len(target):])) {
-		role = strings.Trim(strings.TrimSpace(role), "`")
+		var valid bool
+		role, valid = isOneSymbolicName(role)
+		if !valid {
+			return command, true, procedurePrivilegeSyntaxError("expected a complete role name")
+		}
 		if role != "" {
 			command.roles = append(command.roles, role)
 		}
@@ -302,7 +306,7 @@ func isShowPrivilegesCommand(cypher string) bool {
 
 // showPrivilegeRoles are the roles SHOW ROLE r[, …] PRIVILEGES names; nil for
 // SHOW PRIVILEGES (every role).
-func showPrivilegeRoles(head string) []string {
+func showPrivilegeRoles(head string) ([]string, error) {
 	rest := strings.TrimSpace(head)
 	rest = strings.TrimSpace(rest[len("SHOW"):])
 	switch {
@@ -311,22 +315,26 @@ func showPrivilegeRoles(head string) []string {
 	case startsWithKeywordFold(rest, "ROLE"):
 		rest = strings.TrimSpace(rest[len("ROLE"):])
 	default:
-		return nil
+		return nil, nil
 	}
 	end := findKeywordIndex(rest, "PRIVILEGES")
 	if end < 0 {
 		end = findKeywordIndex(rest, "PRIVILEGE")
 	}
 	if end < 0 {
-		return nil
+		return nil, nil
 	}
 	var roles []string
 	for _, role := range splitTopLevelComma(rest[:end]) {
-		if role = strings.Trim(strings.TrimSpace(role), "`"); role != "" {
-			roles = append(roles, auth.NormalizeRoleName(role))
+		name, valid := isOneSymbolicName(role)
+		if !valid {
+			return nil, procedurePrivilegeSyntaxError("expected a complete role name")
+		}
+		if name != "" {
+			roles = append(roles, auth.NormalizeRoleName(name))
 		}
 	}
-	return roles
+	return roles, nil
 }
 
 // executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
@@ -340,8 +348,12 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 	if err != nil {
 		return nil, err
 	}
+	roles, err := showPrivilegeRoles(head)
+	if err != nil {
+		return nil, err
+	}
 	only := map[string]bool{}
-	for _, role := range showPrivilegeRoles(head) {
+	for _, role := range roles {
 		only[role] = true
 	}
 	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}

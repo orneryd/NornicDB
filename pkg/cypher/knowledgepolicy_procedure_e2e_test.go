@@ -314,7 +314,7 @@ func TestE2E_CallNornicDbKnowledgePolicyProfilesAndPolicies(t *testing.T) {
 	assert.Equal(t, "binding", rowsByName["binding_alpha"][0])
 	assert.Equal(t, "profile_alpha", rowsByName["binding_alpha"][15])
 	assert.Equal(t, 0, rowsByName["binding_alpha"][17])
-	assert.Equal(t, "DECAY PROFILE 'profile_alpha'\nn.summary NO DECAY", rowsByName["binding_alpha"][18])
+	assert.Equal(t, "DECAY PROFILE 'profile_alpha'\nn.`summary` NO DECAY", rowsByName["binding_alpha"][18])
 
 	policies, err := exec.Execute(ctx, "CALL kp.policies()", nil)
 	require.NoError(t, err)
@@ -612,7 +612,7 @@ func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {
 	require.NotNil(t, bindingRow)
 	assert.Equal(t, []string{"KnowledgeFact", "Reviewed"}, bindingRow[11])
 	assert.Equal(t, "decay_b", bindingRow[15])
-	assert.Contains(t, bindingRow[18], "n.summary NO DECAY")
+	assert.Contains(t, bindingRow[18], "n.`summary` NO DECAY")
 
 	policyResult, err := exec.Execute(ctx, "CALL kp.policies()", nil)
 	require.NoError(t, err)

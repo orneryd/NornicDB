@@ -1126,11 +1126,13 @@ func TestGraphFilterSetAndCollectionHelpers(t *testing.T) {
 	filtered := newGraphFilterSet([]string{" Person ", ""}, []string{" KNOWS ", ""})
 	require.False(t, filtered.allowNode(nil))
 	require.False(t, filtered.allowNode(&storage.Node{ID: "x", Labels: []string{"Topic"}}))
-	require.True(t, filtered.allowNode(&storage.Node{ID: "p", Labels: []string{"Person"}}))
+	require.True(t, filtered.allowNode(&storage.Node{ID: "p", Labels: []string{" Person "}}))
+	require.False(t, filtered.allowNode(&storage.Node{ID: "p", Labels: []string{"Person"}}))
 
 	require.False(t, filtered.allowEdge(nil))
 	require.False(t, filtered.allowEdge(&storage.Edge{ID: "e1", Type: "LIKES"}))
-	require.True(t, filtered.allowEdge(&storage.Edge{ID: "e2", Type: "KNOWS"}))
+	require.True(t, filtered.allowEdge(&storage.Edge{ID: "e2", Type: " KNOWS "}))
+	require.False(t, filtered.allowEdge(&storage.Edge{ID: "e2", Type: "KNOWS"}))
 
 	unfiltered := newGraphFilterSet(nil, nil)
 	require.True(t, unfiltered.allowNode(&storage.Node{ID: "any"}))

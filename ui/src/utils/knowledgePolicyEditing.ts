@@ -1,4 +1,5 @@
 import type { DecayProfileBinding, PromotionPolicyDef } from "./api";
+import { quoteName } from "./cypherNames.mjs";
 
 export type PolicyScope = "NODE" | "EDGE";
 
@@ -6,11 +7,7 @@ const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function quotePolicyName(name: string): string {
   if (IDENTIFIER_PATTERN.test(name)) return name;
-  if (!name.includes("'")) return `'${name}'`;
-  if (!name.includes('"')) return `"${name}"`;
-  throw new Error(
-    "Policy names containing both quote styles cannot be edited.",
-  );
+  return optionLiteral(name);
 }
 
 export function targetValue(
@@ -19,35 +16,50 @@ export function targetValue(
   isWildcard: boolean,
 ): string {
   if (isWildcard) return "*";
-  if (edgeType) return edgeType;
-  return (labels ?? []).join(":");
+  if (edgeType) return quoteName(edgeType, "type");
+  return (labels ?? []).map((label) => quoteName(label, "label")).join(":");
+}
+
+// The editor contains written target source. Keep validated name tokens whole;
+// decoded API metadata enters this source representation through quoteName.
+function targetTokens(value: unknown, scope: PolicyScope): string[] | null {
+  const target = String(value ?? "").trim();
+  if (scope === "NODE" && target === "*") return [];
+  const token = /`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*/y;
+  const parts: string[] = [];
+  let offset = 0;
+  while (offset < target.length) {
+    token.lastIndex = offset;
+    const match = token.exec(target);
+    if (!match) return null;
+    parts.push(match[0]);
+    offset = token.lastIndex;
+    if (offset === target.length) break;
+    const separator = /^[:,\s]+/.exec(target.slice(offset));
+    if (!separator) return null;
+    offset += separator[0].length;
+    if (offset === target.length) return null;
+  }
+  if (parts.length === 0 || (scope === "EDGE" && parts.length !== 1)) return null;
+  return parts;
 }
 
 export function validateTarget(value: unknown, scope: PolicyScope): boolean {
-  const target = String(value ?? "").trim();
-  if (scope === "EDGE") return IDENTIFIER_PATTERN.test(target);
-  if (target === "*") return true;
-  const labels = target.split(/[:,\s]+/).filter(Boolean);
-  return (
-    labels.length > 0 && labels.every((label) => IDENTIFIER_PATTERN.test(label))
-  );
+  return targetTokens(value, scope) !== null;
 }
 
 export function buildTarget(value: unknown, scope: PolicyScope): string {
-  const target = String(value ?? "").trim();
-  if (!validateTarget(target, scope)) {
+  const parts = targetTokens(value, scope);
+  if (parts === null) {
     throw new Error(
       scope === "EDGE"
         ? "Enter one valid edge type."
         : "Enter labels separated by colons, or * for all nodes.",
     );
   }
-  if (scope === "EDGE") return `()-[r:${target}]-()`;
-  if (target === "*") return "()";
-  return `(n:${target
-    .split(/[:,\s]+/)
-    .filter(Boolean)
-    .join(":")})`;
+  if (scope === "EDGE") return `()-[r:${parts[0]}]-()`;
+  if (parts.length === 0) return "()";
+  return `(n:${parts.join(":")})`;
 }
 
 export function buildDecayBindingAlter(
@@ -71,7 +83,7 @@ export function buildPromotionPolicyAlter(
 export function optionLiteral(value: unknown): string {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return `'${String(value).replace(/'/g, "\\'")}'`;
+  return JSON.stringify(String(value));
 }
 
 export function buildProfileOptionAlter(

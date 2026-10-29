@@ -291,10 +291,10 @@ func TestMayUseLabelExpressions(t *testing.T) {
 
 func TestExtractLabelsFromQueryWithLabelExpressions(t *testing.T) {
 	require.Equal(t, []string{"Code", "Document"}, extractLabelsFromQuery("MATCH (n) WHERE n:Code|Document RETURN n"))
-	require.Equal(t, []string{"Code"}, extractLabelsFromQuery("MATCH (n:Code) WHERE n:Code&!Document RETURN n"))
+	require.Equal(t, []string{"Code", "Document"}, extractLabelsFromQuery("MATCH (n:Code) WHERE n:Code&!Document RETURN n"))
 	require.Nil(t, extractLabelsFromQuery("MATCH (n) WHERE n:Code|!Document RETURN n"), "the result depends on every write")
 	require.Nil(t, extractLabelsFromQuery("MATCH (n) WHERE n:% RETURN n"))
-	require.Nil(t, extractLabelsFromQuery("MATCH (n) WHERE n:(A|B) RETURN n"))
+	require.Equal(t, []string{"A", "B"}, extractLabelsFromQuery("MATCH (n) WHERE n:(A|B) RETURN n"))
 }
 
 func TestDesugarLabelExpressionsNestedAndMalformedInput(t *testing.T) {

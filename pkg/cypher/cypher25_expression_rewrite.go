@@ -124,7 +124,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 				err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCoreInvalidInput(token))
 				return
 			}
-			edits = append(edits, labelRewriteEdit{start: all, end: distinctEnd, text: "`" + query[next:distinctEnd] + "`"})
+			edits = append(edits, labelRewriteEdit{start: all, end: distinctEnd, text: cyphertext.QuoteName(query[next:distinctEnd], "variable")})
 			return
 		}
 		edits = append(edits, labelRewriteEdit{start: all, end: next, text: ""})

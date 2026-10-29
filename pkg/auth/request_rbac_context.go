@@ -48,7 +48,6 @@ func NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase string, selection
 	canonicalSeen := make(map[string]struct{})
 	for selection, database := range selections {
 		selection = normalizeDatabaseSelection(selection)
-		database = strings.TrimSpace(database)
 		if selection == "" || database == "" {
 			continue
 		}

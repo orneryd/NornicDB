@@ -65,71 +65,71 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			continue
 		}
 
-		constraints := schema.GetConstraintsForLabels(node.Labels)
+		constraints := schema.constraintsForLabels(node.Labels)
 		for _, c := range constraints {
 			switch c.Type {
 			case ConstraintUnique:
-				if len(c.Properties) != 1 {
+				if c.Properties.Len() != 1 {
 					continue
 				}
-				prop := c.Properties[0]
+				prop := c.Properties.At(0)
 				value := node.Properties[prop]
 				if value == nil {
 					continue
 				}
 				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, constraintValueKey(value))
 				if _, exists := seen[key]; exists {
-					return &ConstraintViolationError{
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintUnique,
 						Label:      c.Label,
 						Properties: []string{prop},
 						Message:    fmt.Sprintf("Node with %s=%v already exists in batch", prop, value),
-					}
+					})
 				}
 				seen[key] = struct{}{}
 			case ConstraintNodeKey:
-				values := make([]interface{}, len(c.Properties))
-				for i, prop := range c.Properties {
+				values := make([]interface{}, c.Properties.Len())
+				for i, prop := range c.Properties.All() {
 					values[i] = node.Properties[prop]
 					if values[i] == nil {
-						return &ConstraintViolationError{
+						return newConstraintViolation(ConstraintViolationError{
 							Type:       ConstraintNodeKey,
 							Label:      c.Label,
-							Properties: c.Properties,
+							Properties: c.Properties.snapshot(),
 							Message:    fmt.Sprintf("NODE KEY property %s cannot be null", prop),
-						}
+						})
 					}
 				}
 				key := fmt.Sprintf("%s:%s:%s", dbName, c.Name, constraintCompositeKey(values))
 				if _, exists := seen[key]; exists {
-					return &ConstraintViolationError{
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintNodeKey,
 						Label:      c.Label,
-						Properties: c.Properties,
-						Message:    fmt.Sprintf("Node with key %v=%v already exists in batch", c.Properties, values),
-					}
+						Properties: c.Properties.snapshot(),
+						Message:    fmt.Sprintf("Node with key %v=%v already exists in batch", c.Properties.snapshot(), values),
+					})
 				}
 				seen[key] = struct{}{}
 			case ConstraintExists:
-				if len(c.Properties) != 1 {
+				if c.Properties.Len() != 1 {
 					continue
 				}
-				prop := c.Properties[0]
+				prop := c.Properties.At(0)
 				if node.Properties == nil {
-					return &ConstraintViolationError{
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintExists,
 						Label:      c.Label,
 						Properties: []string{prop},
 						Message:    fmt.Sprintf("Required property %s is missing", prop),
-					}
+					})
 				}
 				if val, ok := node.Properties[prop]; !ok || val == nil {
-					return &ConstraintViolationError{
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintExists,
 						Label:      c.Label,
 						Properties: []string{prop},
 						Message:    fmt.Sprintf("Required property %s is missing", prop),
-					}
+					})
 				}
 			}
 		}

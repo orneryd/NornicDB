@@ -14,8 +14,8 @@ import (
 // (weight 1), and an isolated node; ages on a and b.
 func newGDSGraph(t *testing.T) (*StorageExecutor, func(string) (*ExecuteResult, error)) {
 	t.Helper()
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionIdentity]*GraphProjection) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds"))
 	run := func(query string) (*ExecuteResult, error) {
 		return exec.Execute(context.Background(), query, nil)
@@ -240,8 +240,8 @@ func TestFastRPAsGDS(t *testing.T) {
 // count degrees by relationships and give GDS's raw scores, the same values
 // the gds.alpha.linkprediction.* functions give (#1192).
 func TestLinkPredictionAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionIdentity]*GraphProjection) })
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "lp")
 	exec := NewStorageExecutor(engine)
 	run := func(query string) (*ExecuteResult, error) { return exec.Execute(context.Background(), query, nil) }

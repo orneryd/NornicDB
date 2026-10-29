@@ -219,30 +219,13 @@ type unwindMergeChainPlan struct {
 }
 
 func parseUnwindSimpleMergeMatchAssignments(raw string) ([]unwindSimpleSetAssignment, bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	expressions, err := parsePropertyExpressions(raw)
+	if err != nil || len(expressions) == 0 {
 		return nil, false
 	}
-	parts := splitTopLevelComma(trimmed)
-	out := make([]unwindSimpleSetAssignment, 0, len(parts))
-	for _, part := range parts {
-		entry := strings.TrimSpace(part)
-		if entry == "" {
-			continue
-		}
-		colonIdx := strings.Index(entry, ":")
-		if colonIdx <= 0 || colonIdx == len(entry)-1 {
-			return nil, false
-		}
-		prop := strings.TrimSpace(entry[:colonIdx])
-		expr := strings.TrimSpace(entry[colonIdx+1:])
-		if prop == "" || expr == "" {
-			return nil, false
-		}
-		out = append(out, unwindSimpleSetAssignment{prop: prop, expr: expr})
-	}
-	if len(out) == 0 {
-		return nil, false
+	out := make([]unwindSimpleSetAssignment, 0, len(expressions))
+	for _, expression := range expressions {
+		out = append(out, unwindSimpleSetAssignment{prop: expression.key, expr: expression.expr})
 	}
 	return out, true
 }
@@ -316,80 +299,53 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 	if parenEnd < 0 {
 		return "", nil, nil, false, false
 	}
-	// MATCH (v {…}) WHERE v:A|B is the form the label-expression rewrite
-	// gives MATCH (v:A|B {…}) (#860); a lookup reads its alternatives.
 	where := strings.TrimSpace(rest[parenEnd+1:])
 	if where != "" && (!allowAlternatives || !startsWithKeywordFold(where, "WHERE")) {
 		return "", nil, nil, false, false
 	}
-	nodePattern := strings.TrimSpace(rest[1:parenEnd])
-	braceStart := strings.Index(nodePattern, "{")
-	if braceStart < 0 {
+	head, properties := splitNodePatternProperties(rest[:parenEnd+1])
+	if len(properties) < 2 || properties[0] != '{' || cyphertext.FindMatchingDelimiter(properties, 0, '{', '}', cyphertext.OpeningDelimiter) != len(properties)-1 {
 		return "", nil, nil, false, false
 	}
-	exec := &StorageExecutor{}
-	braceEnd := exec.findMatchingBrace(nodePattern, braceStart)
-	if braceEnd < 0 || strings.TrimSpace(nodePattern[braceEnd+1:]) != "" {
+	mergeVar, chain, hasLabels := splitNodeHead(head)
+	if !isSimpleIdentifier(mergeVar) || hasLabels == (where != "") {
 		return "", nil, nil, false, false
 	}
-	head := strings.TrimSpace(nodePattern[:braceStart])
-	propMap := strings.TrimSpace(nodePattern[braceStart+1 : braceEnd])
-	if head == "" || propMap == "" {
-		return "", nil, nil, false, false
-	}
-	parts := strings.Split(head, ":")
-	if len(parts) < 2 && where == "" || len(parts) >= 2 && where != "" {
-		return "", nil, nil, false, false
-	}
-	mergeVar := strings.TrimSpace(parts[0])
-	if !isSimpleIdentifier(mergeVar) {
-		return "", nil, nil, false, false
-	}
-	labels := make([]string, 0, len(parts)-1)
-	anyLabel := false
 	if where != "" {
-		variable, chain, hasLabels := splitNodeHead(strings.TrimSpace(where[len("WHERE"):]))
-		expr, ok := parseLabelExpression(chain)
-		if !hasLabels || variable != mergeVar || !ok {
+		variable, predicateChain, labelled := splitNodeHead(strings.TrimSpace(where[len("WHERE"):]))
+		if !labelled || variable != mergeVar {
 			return "", nil, nil, false, false
 		}
-		alternatives, ok := expr.alternatives()
-		if !ok {
-			return "", nil, nil, false, false
-		}
-		labels, anyLabel = alternatives, len(alternatives) > 1
+		chain = predicateChain
 	}
-	for i := 1; i < len(parts); i++ {
-		label := strings.TrimSpace(parts[i])
-		if strings.Contains(label, "|") {
-			if !allowAlternatives || anyLabel || len(parts) != 2 {
-				return "", nil, nil, false, false
-			}
-			for _, alternative := range strings.Split(label, "|") {
-				alternative = strings.TrimSpace(alternative)
-				if !isSimpleIdentifier(alternative) {
-					return "", nil, nil, false, false
-				}
-				labels = append(labels, alternative)
-			}
-			anyLabel = true
-			continue
-		}
-		if !isSimpleIdentifier(label) {
+	parsed, valid := scanLabelChain(chain, false)
+	if !valid || strings.TrimSpace(chain[parsed.end:]) != "" {
+		return "", nil, nil, false, false
+	}
+	expression := parsed.expr
+	labels, conjunction := expression.names()
+	anyLabel := false
+	if !conjunction {
+		if !allowAlternatives {
 			return "", nil, nil, false, false
 		}
-		labels = append(labels, label)
+		labels, valid = expression.alternatives()
+		if !valid {
+			return "", nil, nil, false, false
+		}
+		anyLabel = len(labels) > 1
+	} else if where != "" && len(labels) != 1 {
+		return "", nil, nil, false, false
 	}
 	if len(labels) == 0 {
 		return "", nil, nil, false, false
 	}
-	assignments, ok := parseUnwindSimpleMergeMatchAssignments(propMap)
+	assignments, ok := parseUnwindSimpleMergeMatchAssignments(properties[1 : len(properties)-1])
 	if !ok {
 		return "", nil, nil, false, false
 	}
 	return mergeVar, labels, assignments, anyLabel, true
 }
-
 func parseUnwindLookupClause(clause string) (unwindMergeChainLookupPlan, bool) {
 	optional := startsWithKeywordFold(strings.TrimSpace(clause), "OPTIONAL MATCH")
 	keyword := "MATCH"
@@ -417,28 +373,26 @@ func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan un
 	for _, assignment := range lookupPlan.matchAssignments {
 		matchedProps[assignment.prop] = struct{}{}
 	}
-	for _, constraint := range schema.GetConstraintsForLabels([]string{lookupPlan.labels[0]}) {
-		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
-			continue
-		}
-		if constraint.Type != storage.ConstraintUnique && constraint.Type != storage.ConstraintNodeKey {
-			continue
-		}
-		if len(constraint.Properties) == 0 {
-			continue
-		}
-		allConstraintPropsMatched := true
-		for _, prop := range constraint.Properties {
-			if _, ok := matchedProps[prop]; !ok {
-				allConstraintPropsMatched = false
-				break
-			}
-		}
-		if allConstraintPropsMatched {
+	anchored := false
+	schema.VisitConstraints([]string{lookupPlan.labels[0]}, func(constraint storage.ConstraintFact) bool {
+		if constraint.EntityType() != storage.ConstraintEntityNode {
 			return true
 		}
-	}
-	return false
+		if constraint.Type() != storage.ConstraintUnique && constraint.Type() != storage.ConstraintNodeKey {
+			return true
+		}
+		if constraint.PropertyCount() == 0 {
+			return true
+		}
+		for index := 0; index < constraint.PropertyCount(); index++ {
+			if _, ok := matchedProps[constraint.Property(index)]; !ok {
+				return true
+			}
+		}
+		anchored = true
+		return false
+	})
+	return anchored
 }
 
 func unwindMergeChainMatchSetLookupsAreUnique(store storage.Engine, plan unwindMergeChainPlan) bool {
@@ -644,45 +598,34 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(afterFrom, "-") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	openBracket := strings.Index(afterFrom, "[")
-	closeBracket := strings.Index(afterFrom, "]")
-	if openBracket < 0 || closeBracket <= openBracket {
+	openBracket := strings.IndexByte(afterFrom, '[')
+	if openBracket < 0 {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	relInner := strings.TrimSpace(afterFrom[openBracket+1 : closeBracket])
+	closeBracket := findMatchingBracket(afterFrom, openBracket)
+	if closeBracket < 0 {
+		return unwindMergeChainRelationshipPlan{}, false
+	}
+	declaration := relationshipDeclarationOf(afterFrom[openBracket+1 : closeBracket])
+	relVar := declaration.variable
+	relType, ok := declaration.singleStaticType()
+	if !ok {
+		return unwindMergeChainRelationshipPlan{}, false
+	}
 	var matchAssignments []unwindSimpleSetAssignment
-	if propsStart := strings.Index(relInner, "{"); propsStart >= 0 {
-		propsEnd := strings.LastIndex(relInner, "}")
-		if propsEnd <= propsStart || strings.TrimSpace(relInner[propsEnd+1:]) != "" {
+	if declaration.properties != "" {
+		matchProperties, ok := declaration.propertyMapBody()
+		if !ok {
 			return unwindMergeChainRelationshipPlan{}, false
 		}
-		matchProperties := strings.TrimSpace(relInner[propsStart+1 : propsEnd])
 		if matchProperties != "" {
-			var ok bool
 			matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(matchProperties)
 			if !ok {
 				return unwindMergeChainRelationshipPlan{}, false
 			}
 		}
-		relInner = strings.TrimSpace(relInner[:propsStart])
 	}
-	var relVar string
-	var relType string
-	switch {
-	case strings.HasPrefix(relInner, ":"):
-		relType = strings.TrimSpace(relInner[1:])
-	default:
-		colonIdx := strings.Index(relInner, ":")
-		if colonIdx <= 0 || colonIdx == len(relInner)-1 {
-			return unwindMergeChainRelationshipPlan{}, false
-		}
-		relVar = strings.TrimSpace(relInner[:colonIdx])
-		relType = strings.TrimSpace(relInner[colonIdx+1:])
-		if !isSimpleIdentifier(relVar) {
-			return unwindMergeChainRelationshipPlan{}, false
-		}
-	}
-	if relType == "" {
+	if relVar != "" && !isSimpleIdentifier(relVar) {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	afterRel := strings.TrimSpace(afterFrom[closeBracket+1:])
@@ -698,7 +641,7 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	toVar := strings.TrimSpace(afterArrow[1:toEnd])
-	if !isSimpleIdentifier(relType) || !isSimpleIdentifier(toVar) {
+	if !isSimpleIdentifier(toVar) {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	return unwindMergeChainRelationshipPlan{
@@ -737,7 +680,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 			continue
 		}
 		paramName, trailing, ok := parseIdentifierToken(trimmed[pos+1:])
-		if !ok || !strings.EqualFold(paramName, unwindParamName) {
+		if !ok || paramName != unwindParamName {
 			searchFrom = withIdx + len("WITH")
 			continue
 		}
@@ -764,7 +707,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 		}
 		pos = skipSpace(pos + len("UNWIND"))
 		aliasTwo, _, ok := parseIdentifierToken(trimmed[pos:])
-		if !ok || !strings.EqualFold(aliasOne, aliasTwo) {
+		if !ok || aliasOne != aliasTwo {
 			searchFrom = withIdx + len("WITH")
 			continue
 		}
@@ -777,7 +720,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 		}
 		pos = skipSpace(pos + len("AS"))
 		stageVar, _, ok := parseIdentifierToken(trimmed[pos:])
-		if !ok || !strings.EqualFold(stageVar, unwindVar) {
+		if !ok || stageVar != unwindVar {
 			searchFrom = withIdx + len("WITH")
 			continue
 		}
@@ -1163,48 +1106,19 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		return base, field, true
 	}
 	parseIdentifierNodePattern := func(pattern string) (string, string, string, string, bool) {
-		trimmed := strings.TrimSpace(pattern)
-		if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
-			trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
-		}
-		braceIdx := strings.Index(trimmed, "{")
-		head := trimmed
-		props := ""
-		if braceIdx >= 0 {
-			closeIdx := e.findMatchingBrace(trimmed, braceIdx)
-			if closeIdx != len(trimmed)-1 {
-				return "", "", "", "", false
-			}
-			head = strings.TrimSpace(trimmed[:braceIdx])
-			props = strings.TrimSpace(trimmed[braceIdx+1 : closeIdx])
-		}
-		parts := strings.Split(head, ":")
-		if len(parts) != 2 {
-			return "", "", "", "", false
-		}
-		varName := strings.TrimSpace(parts[0])
-		label := strings.TrimSpace(parts[1])
-		if !isSimpleIdentifier(varName) || !isSimpleIdentifier(label) {
+		head, props := splitNodePatternProperties(pattern)
+		varName, labels, err := parseNodeHead(head)
+		if err != nil || len(labels) != 1 || !isSimpleIdentifier(varName) {
 			return "", "", "", "", false
 		}
 		if props == "" {
-			return varName, label, "", "", true
+			return varName, labels[0], "", "", true
 		}
-		pairs := splitTopLevelComma(props)
-		if len(pairs) != 1 {
+		expressions, err := parsePropertyExpressions(props)
+		if err != nil || len(expressions) != 1 || !isSimpleIdentifier(expressions[0].key) {
 			return "", "", "", "", false
 		}
-		pair := strings.TrimSpace(pairs[0])
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return "", "", "", "", false
-		}
-		propName := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		propExpr := strings.TrimSpace(pair[colonIdx+1:])
-		if !isSimpleIdentifier(propName) || propExpr == "" {
-			return "", "", "", "", false
-		}
-		return varName, label, propName, propExpr, true
+		return varName, labels[0], expressions[0].key, expressions[0].expr, true
 	}
 	parseRowFieldDepthExpr := func(expr string) (string, string, int, bool) {
 		parts := strings.SplitN(strings.TrimSpace(expr), "+", 2)
@@ -1250,16 +1164,20 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(rest, "-") {
 			return "", "", "", false
 		}
-		openBracket := strings.Index(rest, "[")
-		closeBracket := strings.Index(rest, "]")
-		if openBracket < 0 || closeBracket <= openBracket {
+		openBracket := strings.IndexByte(rest, '[')
+		if openBracket < 0 {
 			return "", "", "", false
 		}
-		relInner := strings.TrimSpace(rest[openBracket+1 : closeBracket])
-		if !strings.HasPrefix(relInner, ":") {
+		closeBracket := findMatchingBracket(rest, openBracket)
+		if closeBracket < 0 {
 			return "", "", "", false
 		}
-		relType := strings.TrimSpace(relInner[1:])
+		// One unnamed relationship of one type, nothing else.
+		declaration := relationshipDeclarationOf(rest[openBracket+1 : closeBracket])
+		relType, ok := declaration.singleStaticType()
+		if !ok || declaration.variable != "" || declaration.properties != "" {
+			return "", "", "", false
+		}
 		afterRel := strings.TrimSpace(rest[closeBracket+1:])
 		if !strings.HasPrefix(afterRel, "->") {
 			return "", "", "", false
@@ -1273,7 +1191,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			return "", "", "", false
 		}
 		toVar := strings.TrimSpace(afterArrow[1:toEnd])
-		if !isSimpleIdentifier(relType) || !isSimpleIdentifier(toVar) {
+		if !isSimpleIdentifier(toVar) {
 			return "", "", "", false
 		}
 		return lowerASCII(fromVar), relType, lowerASCII(toVar), true
@@ -1975,92 +1893,21 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 	return projected.Rows[0][0]
 }
 
-// parseOptionalRelPattern parses patterns like (a)-[r:TYPE]->(b:Label)
-func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
-	result := optionalRelPattern{
-		direction:   "out",
-		targetProps: make(map[string]interface{}),
-	}
-	pattern = normalizeAnonymousTraversalRelationships(strings.TrimSpace(pattern))
-
-	// Check direction
-	if strings.Contains(pattern, "<-") {
-		result.direction = "in"
-	} else if strings.Contains(pattern, "->") {
-		result.direction = "out"
-	} else if strings.Contains(pattern, "-") {
-		result.direction = "both"
-	}
-
-	// Extract source variable
-	if idx := strings.Index(pattern, "("); idx >= 0 {
-		endIdx := strings.Index(pattern[idx:], ")")
-		if endIdx > 0 {
-			sourceStr := pattern[idx+1 : idx+endIdx]
-			if colonIdx := strings.Index(sourceStr, ":"); colonIdx > 0 {
-				result.sourceVar = strings.TrimSpace(sourceStr[:colonIdx])
-			} else {
-				result.sourceVar = strings.TrimSpace(sourceStr)
-			}
+func joinedValueKey(val interface{}) string {
+	switch v := val.(type) {
+	case *storage.Node:
+		if v == nil {
+			return "node:nil"
 		}
-	}
-
-	// Extract relationship type and variable
-	if idx := strings.Index(pattern, "["); idx >= 0 {
-		endIdx := strings.Index(pattern[idx:], "]")
-		if endIdx > 0 {
-			relStr := pattern[idx+1 : idx+endIdx]
-			if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-				result.relVar = strings.TrimSpace(relStr[:colonIdx])
-				result.relType = strings.TrimSpace(relStr[colonIdx+1:])
-			} else {
-				result.relVar = strings.TrimSpace(relStr)
-			}
+		return "node:" + string(v.ID)
+	case *storage.Edge:
+		if v == nil {
+			return "edge:nil"
 		}
+		return "edge:" + string(v.ID)
+	default:
+		return fmt.Sprintf("%#v", val)
 	}
-
-	// Extract target
-	relEnd := strings.Index(pattern, "]")
-	if relEnd > 0 {
-		remaining := pattern[relEnd+1:]
-		if idx := strings.Index(remaining, "("); idx >= 0 {
-			endIdx := strings.Index(remaining[idx:], ")")
-			if endIdx > 0 {
-				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo, parseErr := e.parseNodePattern(ctx, "("+targetStr+")")
-				if parseErr != nil {
-					recordExpressionFailure(ctx, parseErr)
-					return optionalRelPattern{}
-				}
-				if targetInfo.variable != "" {
-					result.targetVar = targetInfo.variable
-				}
-				if len(targetInfo.labels) > 0 {
-					result.targetLabels = append([]string(nil), targetInfo.labels...)
-				}
-				if len(targetInfo.properties) > 0 {
-					result.targetProps = targetInfo.properties
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-func optionalRelationshipTypeMatches(filter, actual string) bool {
-	if filter == "" {
-		return true
-	}
-	if !strings.Contains(filter, "|") {
-		return filter == actual
-	}
-	for _, candidate := range strings.Split(filter, "|") {
-		if strings.TrimSpace(candidate) == actual {
-			return true
-		}
-	}
-	return false
 }
 
 // ========================================

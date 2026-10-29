@@ -275,7 +275,7 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 func TestAnyToStringSlice_DeterministicAcrossShapes(t *testing.T) {
 	t.Run("native string slice", func(t *testing.T) {
 		got := anyToStringSlice([]string{"a", "b", "", "  "})
-		require.Equal(t, []string{"a", "b"}, got)
+		require.Equal(t, []string{"a", "b", "  "}, got)
 	})
 
 	t.Run("interface slice from generic decode", func(t *testing.T) {

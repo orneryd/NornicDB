@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -27,7 +26,7 @@ func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, c
 	}
 	name := parsed.indexName
 	if name == "" {
-		name = fmt.Sprintf("index_%s_%s_%s", label, parsed.properties[0], lowerASCII(string(kind)))
+		name = generatedSchemaName("index", parsed.isRelationship, lowerASCII(string(kind)), label, parsed.properties[0])
 	}
 	create, err := e.admitIndexCreation(cypher, name, string(kind), label, parsed.properties, entityType)
 	if err != nil {

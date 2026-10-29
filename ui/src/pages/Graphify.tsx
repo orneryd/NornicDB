@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Grip, PanelRightClose, PanelRightOpen } from "l
 import type { PerspectiveCamera } from "three";
 import { callTreeLayout, layoutCallBranches, layoutSymbolBundles, packageForSymbol, rootCameraFrame } from "../utils/graphifyLayout";
 import { clampPanelBounds } from "../utils/floatingPanelBounds";
+import { cypherResultRecord } from "../utils/cypherResults";
 import {
   api,
   type CypherResponse,
@@ -321,13 +322,7 @@ function rowsFromCypher(resp: CypherResponse): Array<Record<string, unknown>> {
   const result = resp.results?.[0];
   const cols = result?.columns ?? [];
   const data = result?.data ?? [];
-  return data.map((d) => {
-    const out: Record<string, unknown> = {};
-    for (let i = 0; i < cols.length; i++) {
-      out[cols[i]] = d.row[i];
-    }
-    return out;
-  });
+  return data.map((d) => cypherResultRecord(cols, d.row));
 }
 
 function graphifyLabel(fileType: string | undefined): string {

@@ -7523,13 +7523,12 @@ func (s *Service) RelationshipFulltextProperties() []string {
 	return properties
 }
 
-// normalizeFulltextProperties trims the names and drops empty and repeated
+// normalizeFulltextProperties drops exact-empty and repeated decoded names,
 // ones, keeping the order.
 func normalizeFulltextProperties(properties []string) []string {
 	seen := make(map[string]struct{}, len(properties))
 	normalized := make([]string, 0, len(properties))
 	for _, property := range properties {
-		property = strings.TrimSpace(property)
 		if property == "" {
 			continue
 		}
@@ -7551,7 +7550,6 @@ func (s *Service) SetFulltextLabels(labels []string) {
 	seen := make(map[string]struct{}, len(labels))
 	normalized := make([]string, 0, len(labels))
 	for _, label := range labels {
-		label = strings.TrimSpace(label)
 		if label == "" {
 			continue
 		}

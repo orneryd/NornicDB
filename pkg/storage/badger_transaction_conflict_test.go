@@ -160,7 +160,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	constraint := schema.uniqueConstraints["Person:name"]
+	constraint := schema.uniqueConstraints[uniqueConstraintIdentity{"Person", "name"}]
 	require.NotNil(t, constraint)
 	constraint.mu.Lock()
 	constraint.valuesCacheComplete = true

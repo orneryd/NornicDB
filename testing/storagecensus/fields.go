@@ -194,6 +194,7 @@ var typeClasses = map[string]string{
 	"pkg/storage.overlayScopeEpoch":            "write-behind read scopes",
 	"pkg/storage.pendingEmbeddingCandidates":   "pending-embedding index cache",
 	"pkg/storage.projectedNodeDecoder":         "a decoder's scratch state",
+	"pkg/storage.retainedReader":               "a per-observation constraint-error decoder cursor (not stored state)",
 	"pkg/storage.temporalCreationGroups":       "a temporal index build's scratch state",
 	"pkg/storage.v1ToV2IndexStats":             "migration statistics",
 	"pkg/storage.v1ToV2PassStats":              "migration statistics",

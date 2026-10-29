@@ -43,7 +43,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
-		if _, builtIn := builtInCypherFunctions[lowerASCII(normalizeProjectionColumnName(strings.TrimSpace(name)))]; builtIn {
+		if _, builtIn := builtInCypherFunctions[lowerASCII(name)]; builtIn {
 			return nil, false, nil
 		}
 	}

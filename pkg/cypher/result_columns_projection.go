@@ -167,6 +167,12 @@ func starProjectionItems(ctx context.Context, columns, items []string) []string 
 	return append(out, items...)
 }
 
+// projectionVariableText is a variable as an expression: backtick-quoted when
+// it isn't a plain identifier.
+func projectionVariableText(name string) string {
+	return cyphertext.PrintIdentifier(name, cyphertext.IsIdentifier, cyphertext.AcceptedSource)
+}
+
 func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 	aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
 	if !isAggr && pipelineExpressionContainsAggregate(expr) {

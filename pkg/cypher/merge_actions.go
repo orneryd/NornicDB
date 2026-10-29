@@ -178,7 +178,7 @@ func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipeline
 func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
 	// Fewer than two relationship brackets: one relationship at most, no
 	// parse needed.
-	if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open < 0 || strings.Count(pattern[open+1:], "[") == 0 {
+	if countRelationshipPatterns(pattern) <= 1 {
 		return false
 	}
 	return len(mergePathSegments(pattern)) > 1

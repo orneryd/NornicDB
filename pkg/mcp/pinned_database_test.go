@@ -30,7 +30,7 @@ func TestSplitMCPPath(t *testing.T) {
 		{"/mcp/tenant_a/tools/list", "/mcp/tools/list", "tenant_a"},
 		{"/mcp/tenant_a/tools/call", "/mcp/tools/call", "tenant_a"},
 		{"/mcp/tenant_a/unknown", "/mcp/unknown", "tenant_a"},
-		{"/mcp/ tenant_a /tools/call", "/mcp/tools/call", "tenant_a"},
+		{"/mcp/ tenant_a /tools/call", "/mcp/tools/call", " tenant_a "},
 		// Database names that collide with legacy endpoint segments still pin.
 		{"/mcp/tools", "/mcp", "tools"},
 		{"/mcp/tools/initialize", "/mcp/initialize", "tools"},

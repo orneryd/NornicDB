@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Recovery retains one batch plus the record currently being decoded, rather
@@ -166,10 +168,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// entities without their counts.
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
-	if countErr := b.ensureLabelCounts(); countErr != nil {
+	countUpdate := func(fn func(*badger.Txn) error) error { return b.withUpdate(fn) }
+	if countErr := b.ensureLabelCounts(b.db, countUpdate); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
-	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
+	if countErr := b.ensureEdgeTypeCounts(b.db, countUpdate); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
 	return replayed, err

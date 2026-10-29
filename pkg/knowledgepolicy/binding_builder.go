@@ -4,16 +4,21 @@ import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
-	"strings"
 )
 
 var ln2 = math.Log(2)
 
-func bindingLabelKey(labels []string) string {
-	sorted := make([]string, len(labels))
-	copy(sorted, labels)
+// LabelSetKey returns the canonical key consumed by BindingTable.SetNode and
+// LookupNode. Component framing preserves every label byte, including NUL;
+// sorting leaves the caller's slice unchanged.
+func LabelSetKey(labels []string) string {
+	sorted := append([]string(nil), labels...)
 	sort.Strings(sorted)
-	return strings.Join(sorted, "\x00")
+	return labelSetKeySorted(sorted)
+}
+
+func labelSetKeySorted(labels []string) string {
+	return fmt.Sprintf("%q", labels)
 }
 
 func policyTargetKey(p *PromotionPolicyDef) string {
@@ -23,10 +28,7 @@ func policyTargetKey(p *PromotionPolicyDef) string {
 	if p.IsWildcard {
 		return "wild:node"
 	}
-	sorted := make([]string, len(p.TargetLabels))
-	copy(sorted, p.TargetLabels)
-	sort.Strings(sorted)
-	return "node:" + strings.Join(sorted, "\x00")
+	return "node:" + LabelSetKey(p.TargetLabels)
 }
 
 func computeThresholdAgeNanos(fn DecayFunction, halfLifeNanos int64, threshold float64) int64 {
@@ -237,7 +239,7 @@ func BuildBindingTable(
 			continue
 		}
 
-		key := bindingLabelKey(binding.TargetLabels)
+		key := LabelSetKey(binding.TargetLabels)
 		if prev, ok := nodeConflicts[key]; ok {
 			if prev.order == binding.Order {
 				return nil, fmt.Errorf("conflict: bindings %q and %q both target label set %v with Order %d",

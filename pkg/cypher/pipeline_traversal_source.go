@@ -36,8 +36,8 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if viewport, _ := TemporalViewportFromContext(ctx); viewport.Enabled() {
 		return nil, false, nil
 	}
-	// Admission has no input row. Inspect syntax through the shared reader;
-	// the scan planner retains the existing property-seeded access paths.
+	// Admission has no input row. Inspect syntax through the shared owner;
+	// property values are evaluated only when the complete row is available.
 	shape := e.parseTraversalPatternStructure(ctx, pattern)
 	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
 		return nil, false, nil
@@ -165,7 +165,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if len(match.Relationship.Types) > 0 && !containsString(match.Relationship.Types, edge.Type) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+				if !match.Relationship.Types.matches(edge.Type) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
 					return nil
 				}
 				return emit(edge, start, end)

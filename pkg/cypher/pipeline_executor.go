@@ -1382,24 +1382,22 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 }
 
 func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+	// Pattern variables arrive as written; references below already hold decoded names.
+	variable = normalizeProjectionColumnName(variable)
 	properties := make([]string, 0, len(inline)+2)
 	seen := make(map[string]struct{}, len(inline)+2)
 	for property := range inline {
 		seen[property] = struct{}{}
 		properties = append(properties, property)
 	}
-	prefix := normalizeProjectionColumnName(variable) + "."
 	for _, reference := range semanticExpressionReferences(expression) {
-		if reference == normalizeProjectionColumnName(variable) {
-			return nil
-		}
-		if !strings.HasPrefix(reference, prefix) {
+		if reference.variable != variable {
 			continue
 		}
-		property := strings.TrimPrefix(reference, prefix)
-		if nested := strings.IndexByte(property, '.'); nested >= 0 {
-			property = property[:nested]
+		if !reference.propertyAccess {
+			return nil
 		}
+		property := reference.property
 		if property == "" {
 			return nil
 		}
@@ -2082,6 +2080,9 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
+	if hasQuantifiedGroup(pattern) || e.isChainedPattern(pattern) {
+		return nil, false, nil
+	}
 	open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship)
 	if open < 0 || close < 0 {
 		return nil, false, nil
@@ -2096,9 +2097,6 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		if _, exists := row[declaration.variable]; !exists {
 			return nil, false, nil
 		}
-	}
-	if hasQuantifiedGroup(pattern) || e.isChainedPattern(normalizeAnonymousTraversalRelationships(pattern)) {
-		return nil, false, nil
 	}
 
 	store := e.getStorage(ctx)

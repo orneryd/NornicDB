@@ -228,7 +228,7 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 
 	s, err := optionalStringArg([]interface{}{"  x  "}, 0)
 	require.NoError(t, err)
-	require.Equal(t, "x", s)
+	require.Equal(t, "  x  ", s)
 
 	empty, err := optionalStringArg([]interface{}{nil}, 0)
 	require.NoError(t, err)

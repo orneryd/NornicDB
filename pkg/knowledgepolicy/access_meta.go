@@ -10,19 +10,22 @@ type AccessMetaFixedFields struct {
 
 // AccessMetaEntry is the full persisted entry per target.
 type AccessMetaEntry struct {
-	TargetID       string                          `json:"targetId" msgpack:"targetId"`
-	TargetScope    ScopeType                       `json:"targetScope" msgpack:"targetScope"`
-	Fixed          AccessMetaFixedFields           `json:"fixed" msgpack:"fixed"`
-	Overflow       map[string]interface{}          `json:"overflow,omitempty" msgpack:"overflow,omitempty"`
-	KalmanFilters  map[string]*KalmanPropertyState `json:"kalmanFilters,omitempty" msgpack:"kalmanFilters,omitempty"`
-	LastMutatedAt  int64                           `json:"lastMutatedAt" msgpack:"lastMutatedAt"`
-	MutationCount  int64                           `json:"mutationCount" msgpack:"mutationCount"`
-	IndexKeys      [][]byte                        `json:"-" msgpack:"indexKeys,omitempty"`
-	HasAccessState bool                            `json:"-" msgpack:"hasAccessState,omitempty"`
-	HasIndexKeys   bool                            `json:"-" msgpack:"hasIndexKeys,omitempty"`
-	Deindexed      bool                            `json:"-" msgpack:"deindexed,omitempty"`
-	DeindexWork    *DeindexWorkItem                `json:"-" msgpack:"deindexWork,omitempty"`
-	IndexTombstone bool                            `json:"-" msgpack:"indexTombstone,omitempty"`
+	TargetID    string                 `json:"targetId" msgpack:"targetId"`
+	TargetScope ScopeType              `json:"targetScope" msgpack:"targetScope"`
+	Fixed       AccessMetaFixedFields  `json:"fixed" msgpack:"fixed"`
+	Overflow    map[string]interface{} `json:"overflow,omitempty" msgpack:"overflow,omitempty"`
+	// Suppression bookkeeping has its own namespace, independent of the
+	// exact decoded custom property names stored in Overflow.
+	SuppressedProperties map[string]bool                 `json:"suppressedProperties,omitempty" msgpack:"suppressedProperties,omitempty"`
+	KalmanFilters        map[string]*KalmanPropertyState `json:"kalmanFilters,omitempty" msgpack:"kalmanFilters,omitempty"`
+	LastMutatedAt        int64                           `json:"lastMutatedAt" msgpack:"lastMutatedAt"`
+	MutationCount        int64                           `json:"mutationCount" msgpack:"mutationCount"`
+	IndexKeys            [][]byte                        `json:"-" msgpack:"indexKeys,omitempty"`
+	HasAccessState       bool                            `json:"-" msgpack:"hasAccessState,omitempty"`
+	HasIndexKeys         bool                            `json:"-" msgpack:"hasIndexKeys,omitempty"`
+	Deindexed            bool                            `json:"-" msgpack:"deindexed,omitempty"`
+	DeindexWork          *DeindexWorkItem                `json:"-" msgpack:"deindexWork,omitempty"`
+	IndexTombstone       bool                            `json:"-" msgpack:"indexTombstone,omitempty"`
 }
 
 // DeindexWorkItem records retryable index cleanup for an entity suppressed by policy.

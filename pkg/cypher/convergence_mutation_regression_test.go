@@ -367,7 +367,7 @@ func (e *StorageExecutor) sharedOptionalExpansionForTest(source *storage.Node, p
 		Relationship: RelationshipPattern{Variable: pattern.relVar, Direction: direction, MinHops: 1, MaxHops: 1},
 	}
 	if pattern.relType != "" {
-		match.Relationship.Types = strings.Split(pattern.relType, "|")
+		match.Relationship.Types = relationshipTypesForTest(strings.Split(pattern.relType, "|")...)
 	}
 	paths := e.traverseGraphSequential(context.Background(), match, []*storage.Node{source}, TemporalViewport{}, nil)
 	results := make([]optionalRelResult, 0, len(paths))

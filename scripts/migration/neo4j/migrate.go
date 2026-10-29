@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 type config struct {
@@ -115,11 +116,15 @@ func constraintToCypher(c map[string]any) string {
 	if len(labels) == 0 || len(props) == 0 {
 		return ""
 	}
-	label := labels[0]
+	role := "label"
+	if entity == "RELATIONSHIP" {
+		role = "type"
+	}
+	label := cyphertext.QuoteName(labels[0], role)
 
 	propParts := make([]string, len(props))
 	for i, p := range props {
-		propParts[i] = "n." + p
+		propParts[i] = "n." + cyphertext.QuoteName(p, "key")
 	}
 	propList := strings.Join(propParts, ", ")
 	if len(props) > 1 {
@@ -130,18 +135,18 @@ func constraintToCypher(c map[string]any) string {
 	case "NODE":
 		switch ctype {
 		case "UNIQUENESS":
-			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS UNIQUE", name, label, propList)
+			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS UNIQUE", cyphertext.QuoteName(name, "alias"), label, propList)
 		case "NODE_KEY":
-			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS NODE KEY", name, label, propList)
+			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS NODE KEY", cyphertext.QuoteName(name, "alias"), label, propList)
 		case "NODE_PROPERTY_EXISTENCE":
-			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS NOT NULL", name, label, propList)
+			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE %s IS NOT NULL", cyphertext.QuoteName(name, "alias"), label, propList)
 		}
 	case "RELATIONSHIP":
 		switch ctype {
 		case "RELATIONSHIP_PROPERTY_EXISTENCE":
-			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR ()-[r:%s]-() REQUIRE r.%s IS NOT NULL", name, label, props[0])
+			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR ()-[r:%s]-() REQUIRE r.%s IS NOT NULL", cyphertext.QuoteName(name, "alias"), label, cyphertext.QuoteName(props[0], "key"))
 		case "RELATIONSHIP_UNIQUENESS":
-			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR ()-[r:%s]-() REQUIRE r.%s IS UNIQUE", name, label, props[0])
+			return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR ()-[r:%s]-() REQUIRE r.%s IS UNIQUE", cyphertext.QuoteName(name, "alias"), label, cyphertext.QuoteName(props[0], "key"))
 		}
 	}
 	return ""
@@ -159,24 +164,28 @@ func indexToCypher(idx map[string]any) string {
 	if len(labels) == 0 || len(props) == 0 || entity != "NODE" {
 		return ""
 	}
-	label := labels[0]
+	role := "label"
+	if entity == "RELATIONSHIP" {
+		role = "type"
+	}
+	label := cyphertext.QuoteName(labels[0], role)
 
 	switch itype {
 	case "RANGE", "BTREE":
 		if len(props) == 1 {
-			return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR (n:%s) ON (n.%s)", name, label, props[0])
+			return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR (n:%s) ON (n.%s)", cyphertext.QuoteName(name, "alias"), label, cyphertext.QuoteName(props[0], "key"))
 		}
 		propParts := make([]string, len(props))
 		for i, p := range props {
-			propParts[i] = "n." + p
+			propParts[i] = "n." + cyphertext.QuoteName(p, "key")
 		}
-		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR (n:%s) ON (%s)", name, label, strings.Join(propParts, ", "))
+		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR (n:%s) ON (%s)", cyphertext.QuoteName(name, "alias"), label, strings.Join(propParts, ", "))
 	case "FULLTEXT":
 		propParts := make([]string, len(props))
 		for i, p := range props {
-			propParts[i] = "n." + p
+			propParts[i] = "n." + cyphertext.QuoteName(p, "key")
 		}
-		return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", name, label, strings.Join(propParts, ", "))
+		return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", cyphertext.QuoteName(name, "alias"), label, strings.Join(propParts, ", "))
 	case "VECTOR":
 		opts, _ := idx["options"].(map[string]any)
 		cfg, _ := opts["indexConfig"].(map[string]any)
@@ -191,7 +200,7 @@ func indexToCypher(idx map[string]any) string {
 		return fmt.Sprintf(
 			"CREATE VECTOR INDEX %s IF NOT EXISTS FOR (n:%s) ON (n.%s) "+
 				"OPTIONS {indexConfig: {`vector.dimensions`: %d, `vector.similarity_function`: '%s'}}",
-			name, label, props[0], dims, sim,
+			cyphertext.QuoteName(name, "alias"), label, cyphertext.QuoteName(props[0], "key"), dims, sim,
 		)
 	}
 	return ""
@@ -270,18 +279,18 @@ func streamNodes(ctx context.Context, sess neo4j.SessionWithContext, label strin
 		)
 		if lastID == nil {
 			q := fmt.Sprintf(
-				"MATCH (n:`%s`) "+
+				"MATCH (n:%s) "+
 					"RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props "+
 					"ORDER BY elementId(n) LIMIT $limit",
-				label,
+				cyphertext.QuoteName(label, "label"),
 			)
 			res, err = sess.Run(ctx, q, map[string]any{"limit": batch})
 		} else {
 			q := fmt.Sprintf(
-				"MATCH (n:`%s`) WHERE elementId(n) > $cursor "+
+				"MATCH (n:%s) WHERE elementId(n) > $cursor "+
 					"RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props "+
 					"ORDER BY elementId(n) LIMIT $limit",
-				label,
+				cyphertext.QuoteName(label, "label"),
 			)
 			res, err = sess.Run(ctx, q, map[string]any{"cursor": lastID, "limit": batch})
 		}
@@ -365,18 +374,18 @@ func streamEdges(ctx context.Context, sess neo4j.SessionWithContext, relType str
 		)
 		if lastID == nil {
 			q := fmt.Sprintf(
-				"MATCH (a)-[r:`%s`]->(b) "+
+				"MATCH (a)-[r:%s]->(b) "+
 					"RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props "+
 					"ORDER BY elementId(r) LIMIT $limit",
-				relType,
+				cyphertext.QuoteName(relType, "type"),
 			)
 			res, err = sess.Run(ctx, q, map[string]any{"limit": batch})
 		} else {
 			q := fmt.Sprintf(
-				"MATCH (a)-[r:`%s`]->(b) WHERE elementId(r) > $cursor "+
+				"MATCH (a)-[r:%s]->(b) WHERE elementId(r) > $cursor "+
 					"RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props "+
 					"ORDER BY elementId(r) LIMIT $limit",
-				relType,
+				cyphertext.QuoteName(relType, "type"),
 			)
 			res, err = sess.Run(ctx, q, map[string]any{"cursor": lastID, "limit": batch})
 		}
@@ -408,18 +417,18 @@ func edgeCreateCypher(relType string) string {
 		"UNWIND $rows AS row "+
 			"MATCH (a:_Migrated {_neo4j_id: row.startId}) "+
 			"MATCH (b:_Migrated {_neo4j_id: row.endId}) "+
-			"CREATE (a)-[:`%s` {_neo4j_id: row.id}]->(b)",
-		relType,
+			"CREATE (a)-[:%s {_neo4j_id: row.id}]->(b)",
+		cyphertext.QuoteName(relType, "type"),
 	)
 }
 
 func edgePropsCypher(relType string) string {
 	return fmt.Sprintf(
 		"UNWIND $rows AS row "+
-			"MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:`%s` "+
+			"MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:%s "+
 			"{_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) "+
 			"SET r += row.props",
-		relType,
+		cyphertext.QuoteName(relType, "type"),
 	)
 }
 

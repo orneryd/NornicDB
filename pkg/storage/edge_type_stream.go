@@ -195,7 +195,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 				return err
 			}
 			key := it.Item().Key()
-			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+			edgeNum, ok := extractNumIDFromNamedIndex(key, len(edgeType))
 			if !ok {
 				continue
 			}
@@ -329,7 +329,7 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(it.Item().Key())
+			edgeNum, ok := extractNumIDFromNamedIndex(it.Item().Key(), len(edgeType))
 			if !ok {
 				continue
 			}

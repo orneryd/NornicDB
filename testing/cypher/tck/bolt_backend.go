@@ -95,7 +95,7 @@ func (b *BoltBackend) dropSchemaObjects(ctx context.Context, showQuery, nameColu
 			return fmt.Errorf("%s returned a row without column %q", showQuery, nameColumn)
 		}
 		name, ok := row[nameIndex].(string)
-		if !ok || strings.TrimSpace(name) == "" {
+		if !ok || name == "" {
 			return fmt.Errorf("%s returned invalid schema object name %v", showQuery, row[nameIndex])
 		}
 		escapedName := cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)

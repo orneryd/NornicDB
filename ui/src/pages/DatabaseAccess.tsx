@@ -11,6 +11,7 @@ import { Modal } from '../components/common/Modal';
 import { api } from '../utils/api';
 import { Database, Plus, Save, Trash2, Edit2, Shield } from 'lucide-react';
 import { BASE_PATH, joinBasePath } from '../utils/basePath';
+import { controlColumnName, identityRecord } from '../utils/identityRecords';
 
 const BUILTIN_ROLES = ['admin', 'editor', 'viewer'];
 const SYSTEM_DB = 'system';
@@ -76,7 +77,7 @@ export function DatabaseAccess() {
 
   // Role entitlements (global permissions per role)
   const [globalEntitlements, setGlobalEntitlements] = useState<EntitlementDef[]>([]);
-  const [roleEntitlements, setRoleEntitlements] = useState<Record<string, string[]>>({});
+  const [roleEntitlements, setRoleEntitlements] = useState<Record<string, string[]>>(() => identityRecord());
   const [entitlementsDirty, setEntitlementsDirty] = useState(false);
   const [savingEntitlements, setSavingEntitlements] = useState(false);
 
@@ -128,7 +129,7 @@ export function DatabaseAccess() {
       }
       if (roleEntRes?.ok) {
         const rows: RoleEntitlementRow[] = await roleEntRes.json();
-        const map: Record<string, string[]> = {};
+        const map = identityRecord<string[]>();
         if (Array.isArray(rows)) {
           for (const row of rows) {
             map[row.role] = row.entitlements ?? [];
@@ -192,7 +193,7 @@ export function DatabaseAccess() {
     roleEntitlements[role] ?? [];
 
   const setEntitlementsForRole = (role: string, ids: string[]) => {
-    setRoleEntitlements((prev) => ({ ...prev, [role]: ids }));
+    setRoleEntitlements((prev) => identityRecord([...Object.entries(prev), [role, ids]]));
     setEntitlementsDirty(true);
   };
 
@@ -333,6 +334,9 @@ export function DatabaseAccess() {
 
   const userDefinedRoles = roles.filter((r) => !BUILTIN_ROLES.includes(r.toLowerCase()));
 
+  const roleColumnName = controlColumnName('role', dbNames);
+  const entitlementRoleColumnName = controlColumnName('role', globalEntitlements.map((entry) => entry.id));
+
   const accessGridData = useMemo<GridRecord[]>(() => roles.map((role) => ({
     __gridId: role,
     role,
@@ -340,7 +344,7 @@ export function DatabaseAccess() {
 
   const accessColumnDefs = useMemo<GridColumnDef[]>(() => [
     {
-      name: 'role',
+      name: roleColumnName,
       displayName: 'Role',
       field: 'role',
       width: 'minmax(12rem, 1fr)',
@@ -352,7 +356,7 @@ export function DatabaseAccess() {
       enableSorting: false,
       enableFiltering: false,
     })),
-  ], [dbNames]);
+  ], [dbNames, roleColumnName]);
 
   const accessGridOptions = useMemo<GridOptions>(() => ({
     id: 'database-access-grid',
@@ -372,7 +376,7 @@ export function DatabaseAccess() {
 
   const entitlementColumnDefs = useMemo<GridColumnDef[]>(() => [
     {
-      name: 'role',
+      name: entitlementRoleColumnName,
       displayName: 'Role',
       field: 'role',
       width: 'minmax(12rem, 1fr)',
@@ -384,7 +388,7 @@ export function DatabaseAccess() {
       enableSorting: false,
       enableFiltering: false,
     })),
-  ], [globalEntitlements]);
+  ], [globalEntitlements, entitlementRoleColumnName]);
 
   const entitlementGridOptions = useMemo<GridOptions>(() => ({
     id: 'role-entitlements-grid',
@@ -401,7 +405,7 @@ export function DatabaseAccess() {
     const row = ctx.row as GridRecord & { role: string };
     const role = row.role;
 
-    if (ctx.column.name === 'role') {
+    if (ctx.column.name === roleColumnName) {
       const permissionTags = getEffectivePermissionTagsForRole(role, privilegesMatrix, roleEntitlements);
       return (
         <div className="flex items-center gap-2 flex-wrap py-1">
@@ -456,7 +460,7 @@ export function DatabaseAccess() {
     const row = ctx.row as GridRecord & { role: string };
     const role = row.role;
 
-    if (ctx.column.name === 'role') {
+    if (ctx.column.name === entitlementRoleColumnName) {
       return <div className="font-medium text-white capitalize py-1">{role}</div>;
     }
 

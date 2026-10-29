@@ -493,11 +493,11 @@ func TestConstraintCreation_FallbackForEnginesWithoutStreaming(t *testing.T) {
 
 // legacyRefreshUniqueValues is the former AllNodes-based rebuild, kept here
 // as the reference the streamed rebuild must match.
-func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManager) map[string]map[interface{}]NodeID {
+func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManager) map[uniqueConstraintIdentity]map[interface{}]NodeID {
 	t.Helper()
 	nodes, err := engine.AllNodes()
 	require.NoError(t, err)
-	out := map[string]map[interface{}]NodeID{}
+	out := map[uniqueConstraintIdentity]map[interface{}]NodeID{}
 	schema.mu.RLock()
 	defer schema.mu.RUnlock()
 	for key := range schema.uniqueConstraints {
@@ -506,7 +506,7 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 	for _, node := range nodes {
 		for _, label := range node.Labels {
 			for prop, value := range node.Properties {
-				values, ok := out[label+":"+prop]
+				values, ok := out[uniqueConstraintIdentity{label, prop}]
 				if !ok {
 					continue
 				}
@@ -519,10 +519,10 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 	return out
 }
 
-func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeID {
+func uniqueCacheSnapshot(schema *SchemaManager) map[uniqueConstraintIdentity]map[interface{}]NodeID {
 	schema.mu.RLock()
 	defer schema.mu.RUnlock()
-	out := map[string]map[interface{}]NodeID{}
+	out := map[uniqueConstraintIdentity]map[interface{}]NodeID{}
 	for key, uc := range schema.uniqueConstraints {
 		uc.mu.RLock()
 		values := make(map[interface{}]NodeID, len(uc.values))
@@ -530,7 +530,7 @@ func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeI
 			values[k] = v
 		}
 		if !uc.valuesCacheComplete {
-			panic("unique cache " + key + " not marked complete")
+			panic(fmt.Sprintf("unique cache %q.%q not marked complete", key.label, key.property))
 		}
 		uc.mu.RUnlock()
 		out[key] = values
@@ -565,8 +565,8 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nsA, schema))
 	got := uniqueCacheSnapshot(schema)
 	require.Equal(t, legacyRefreshUniqueValues(t, nsA, schema), got)
-	require.Equal(t, NodeID("a:u1"), got["User:email"]["a@x"])
-	require.Len(t, got["Admin:uid"], 2)
+	require.Equal(t, NodeID("a:u1"), got[uniqueConstraintIdentity{"User", "email"}]["a@x"])
+	require.Len(t, got[uniqueConstraintIdentity{"Admin", "uid"}], 2)
 
 	// A duplicate among constrained values is still reported.
 	nsDup := NewNamespacedEngine(inner, "dup")

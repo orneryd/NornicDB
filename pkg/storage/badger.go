@@ -95,22 +95,22 @@ const (
 	prefixMVCCMetaEdgeTypeCountReady = byte(0x09)
 	// prefixMVCCMetaEdgeTypeCount stores one namespace-scoped relationship-type
 	// count as:
-	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace bytes..., 0x00, type] -> uint64 count
+	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace length, namespace, type] -> uint64 count
 	prefixMVCCMetaEdgeTypeCount = byte(0x0A)
 	// prefixMVCCMetaLabelCountDelta stores committed per-label count deltas as:
-	//   [prefixMVCCMeta, prefixMVCCMetaLabelCountDelta, namespace..., 0x00, label, 0x00, unique8] -> int64
+	//   [prefixMVCCMeta, prefixMVCCMetaLabelCountDelta, namespace length, namespace, label, 0x00, unique8] -> int64
 	// These are the append-only change log of prefixMVCCMetaLabelCount (see
 	// badger_count_deltas.go), not positional pair counts: sub-IDs 0x0F/0x10
 	// are the first free MVCC-meta sub-keys.
 	prefixMVCCMetaLabelCountDelta = byte(0x0F)
 	// prefixMVCCMetaEdgeTypeCountDelta stores committed per-type count deltas:
-	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCountDelta, namespace..., 0x00, type, 0x00, unique8] -> int64
+	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCountDelta, namespace length, namespace, type, 0x00, unique8] -> int64
 	prefixMVCCMetaEdgeTypeCountDelta = byte(0x10)
 	// prefixMVCCMetaEdgeTypeStartLabelCount / ...EndLabelCount store the
 	// positional namespace-scoped (label, relationship-type) counts Neo4j
 	// answers one-labeled-endpoint shapes from its counts store, e.g.
 	// (s:Label)-[:T]->() and ()-[:T]->(e:Label):
-	//   [prefixMVCCMeta, sub, namespace bytes..., 0x00, label, 0x00, type] -> uint64 count
+	//   [prefixMVCCMeta, sub, namespace length, namespace, label length, label, type] -> uint64 count
 	// The start tier counts edges whose physical START endpoint carries the
 	// label; the end tier counts edges whose physical END endpoint does.
 	prefixMVCCMetaEdgeTypeStartLabelCount = byte(0x0B)
@@ -1141,14 +1141,15 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
-	if err := engine.ensureLabelCounts(); err != nil {
+	countUpdate := func(fn func(*badger.Txn) error) error { return engine.withUpdate(fn) }
+	if err := engine.ensureLabelCounts(engine.db, countUpdate); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
 	}
 
 	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
 	// over the edge-type index, same shape as the label counts above.
-	if err := engine.ensureEdgeTypeCounts(); err != nil {
+	if err := engine.ensureEdgeTypeCounts(engine.db, countUpdate); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}

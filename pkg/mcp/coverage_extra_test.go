@@ -262,7 +262,7 @@ func TestHasAnyTag_NilAndEmptyEdges(t *testing.T) {
 }
 
 // ============================================================================
-// extractDatabaseArg — handles "database", "db" keys, blank, nil, trims spaces,
+// extractDatabaseArg — handles "database", "db" keys, exact empty, nil, preserves decoded spaces,
 // and deletes both keys from the input map.
 // ============================================================================
 
@@ -274,7 +274,7 @@ func TestExtractDatabaseArg_AllBranches(t *testing.T) {
 	t.Run("database key preferred over db key", func(t *testing.T) {
 		args := map[string]interface{}{"database": " primary ", "db": "backup", "other": 1}
 		got := extractDatabaseArg(args)
-		require.Equal(t, "primary", got, "whitespace trimmed")
+		require.Equal(t, " primary ", got, "decoded database identity is preserved")
 		require.NotContains(t, args, "database")
 		require.NotContains(t, args, "db", "db key must also be removed")
 		require.Contains(t, args, "other", "non-database keys must be preserved")

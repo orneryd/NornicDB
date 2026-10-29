@@ -73,7 +73,7 @@ func accessMetaInTxn(w kvWriter, entityID string, mode accessMetaMode, value *kn
 
 func hasAccessState(entry *knowledgepolicy.AccessMetaEntry) bool {
 	return entry != nil && (entry.HasAccessState || entry.Fixed != (knowledgepolicy.AccessMetaFixedFields{}) ||
-		entry.LastMutatedAt != 0 || entry.MutationCount != 0 || len(entry.Overflow) != 0 || len(entry.KalmanFilters) != 0)
+		entry.LastMutatedAt != 0 || entry.MutationCount != 0 || len(entry.Overflow) != 0 || len(entry.KalmanFilters) != 0 || len(entry.SuppressedProperties) != 0)
 }
 
 func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.AccessMetaEntry) error {

@@ -54,6 +54,12 @@ from pathlib import Path
 
 import ijson
 
+# Support both module import and the documented direct script invocation.
+if __package__:
+    from .migration.cypher_names import quote_name
+else:
+    from migration.cypher_names import quote_name
+
 # The stale-deletion guard only applies to graphs at least this large; a small
 # repository legitimately loses a big share of its symbols in one commit.
 MASS_DELETE_MIN_EXISTING = 200
@@ -1278,7 +1284,7 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                     for batch in (rows[i:i + batch_size] for i in range(0, len(rows), batch_size)):
                         run_retry(
                             f"UNWIND $rows AS row "
-                            f"MATCH (a:{source_label} {{id: row.src, repo: $repo}})-[r:{rel}]->"
+                            f"MATCH (a:{source_label} {{id: row.src, repo: $repo}})-[r:{quote_name(rel, 'type')}]->"
                             f"(b:{target_label} {{id: row.tgt, repo: $repo}}) DELETE r",
                             rows=batch, repo=repo,
                         ).consume()

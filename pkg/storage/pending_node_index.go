@@ -344,8 +344,8 @@ func (sm *SchemaManager) trackPendingPairs() {
 		pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Property})
 	}
 	for _, constraint := range sm.constraints {
-		if (constraint.Type == ConstraintUnique || constraint.Type == ConstraintNodeKey) && len(constraint.Properties) > 0 {
-			pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Properties[0]})
+		if (constraint.Type == ConstraintUnique || constraint.Type == ConstraintNodeKey) && constraint.Properties.Len() > 0 {
+			pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Properties.At(0)})
 		}
 	}
 	sm.mu.RUnlock()

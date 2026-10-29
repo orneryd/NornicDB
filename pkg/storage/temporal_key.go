@@ -28,40 +28,42 @@ const temporalKeyPropSeparator = "\x1f"
 // property value) so persisted temporal indexes stay byte-identical; composite
 // keys use a []interface{} of the key values in property order.
 type temporalKeySpec struct {
-	keyProps  []string
+	keyProps  constraintPropertyNames
 	startProp string
 	endProp   string
 }
 
 // splitTemporalKeySpec returns the key/window split of temporal constraint
 // properties, or false when fewer than three properties are given.
-func splitTemporalKeySpec(properties []string) (temporalKeySpec, bool) {
-	n := len(properties)
+func splitTemporalKeySpec(sourceProperties any) (temporalKeySpec, bool) {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
+	n := properties.Len()
 	if n < 3 {
 		return temporalKeySpec{}, false
 	}
 	return temporalKeySpec{
-		keyProps:  properties[:n-2],
-		startProp: properties[n-2],
-		endProp:   properties[n-1],
+		keyProps:  properties.Slice(0, n-2),
+		startProp: properties.At(n - 2),
+		endProp:   properties.At(n - 1),
 	}, true
 }
 
-func (s temporalKeySpec) composite() bool { return len(s.keyProps) > 1 }
+func (s temporalKeySpec) composite() bool { return s.keyProps.Len() > 1 }
 
 // keyValue extracts the grouping key from props. It returns the name of the
 // first null/absent key property when the key is incomplete (a violation:
 // TEMPORAL key properties cannot be null).
 func (s temporalKeySpec) keyValue(props map[string]interface{}) (interface{}, string) {
 	if !s.composite() {
-		value := props[s.keyProps[0]]
+		value := props[s.keyProps.At(0)]
 		if value == nil {
-			return nil, s.keyProps[0]
+			return nil, s.keyProps.At(0)
 		}
 		return value, ""
 	}
-	values := make([]interface{}, len(s.keyProps))
-	for i, prop := range s.keyProps {
+	values := make([]interface{}, s.keyProps.Len())
+	for i, prop := range s.keyProps.All() {
 		values[i] = props[prop]
 		if values[i] == nil {
 			return nil, prop
@@ -81,7 +83,7 @@ func (s temporalKeySpec) keyEqual(a, b interface{}) bool {
 	}
 	av, aok := a.([]interface{})
 	bv, bok := b.([]interface{})
-	if !aok || !bok || len(av) != len(bv) || len(av) != len(s.keyProps) {
+	if !aok || !bok || len(av) != len(bv) || len(av) != s.keyProps.Len() {
 		return false
 	}
 	for i := range av {
@@ -100,12 +102,12 @@ func (s temporalKeySpec) keyMatches(props map[string]interface{}, keyValue inter
 
 // keyLabel names the key for error messages ("fact_key" or "tenant, fact_key").
 func (s temporalKeySpec) keyLabel() string {
-	return strings.Join(s.keyProps, ", ")
+	return s.keyProps.Join(", ")
 }
 
 // indexKeyProp is the key property name stored in temporal index keys.
 func (s temporalKeySpec) indexKeyProp() string {
-	return strings.Join(s.keyProps, temporalKeyPropSeparator)
+	return s.keyProps.Join(temporalKeyPropSeparator)
 }
 
 // keyHash hashes a key value for temporal index keys. The temporal history and

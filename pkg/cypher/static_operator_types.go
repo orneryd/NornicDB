@@ -1416,29 +1416,41 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 	if !mayNeedStaticTypeCheck(text) {
 		return nil
 	}
-	visitPatternValues := func(pattern string) error {
-		for index := 0; index < len(pattern); index++ {
-			switch cypherStringLexicalByte(pattern[index]) {
-			case cypherStringQuoteClass:
-				index = skipQuotedSemanticText(pattern, index) - 1
-			case '{':
-				closing := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter)
-				if closing < 0 {
-					return nil
-				}
-				if body := pattern[index+1 : closing]; mayNeedStaticTypeCheck(body) {
-					for _, pair := range splitTopLevelComma(body) {
-						if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-							if err := visit(pair[separator+1:], false); err != nil {
-								return err
-							}
-						}
+	visitMapValues := func(properties string) error {
+		if len(properties) < 2 || properties[0] != '{' {
+			return nil
+		}
+		closing := cyphertext.FindMatchingDelimiter(properties, 0, '{', '}', cyphertext.OpeningDelimiter)
+		if closing < 0 {
+			return nil
+		}
+		if body := properties[1:closing]; mayNeedStaticTypeCheck(body) {
+			for _, pair := range splitTopLevelComma(body) {
+				if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
+					if err := visit(pair[separator+1:], false); err != nil {
+						return err
 					}
 				}
-				index = closing
 			}
 		}
 		return nil
+	}
+	// The property maps of the pattern's nodes and relationships; a
+	// relationship's map is its declaration's (a '{' in a dynamic type or a
+	// quoted name is not one).
+	visitPatternValues := func(pattern string) (err error) {
+		eachPatternElement(pattern, func(element patternElement) {
+			if err != nil {
+				return
+			}
+			if !element.isRelationship {
+				_, properties := splitNodePatternProperties(element.node)
+				err = visitMapValues(properties)
+				return
+			}
+			err = visitMapValues(element.relationship.properties)
+		})
+		return err
 	}
 	visitPredicate := func(body string, afterProjection bool) error {
 		where := topLevelKeywordIndex(body, "WHERE")

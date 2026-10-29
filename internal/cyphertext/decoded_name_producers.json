@@ -1,0 +1,781 @@
+{
+  "authorship": {
+    "record_author": "#1486 implementation lane (Codex)",
+    "contract_interpretation_author": "#1486 implementation lane (Codex)",
+    "status": "Discovery representation contracts, not a whole-population semantic approval. Every actual input/caller path and candidate remains subject to semantic review."
+  },
+  "calls": [
+    {
+      "symbol": "github.com/orneryd/nornicdb/internal/cyphertext.SymbolicNameValue",
+      "result": 0,
+      "role": "symbolic name",
+      "reason": "The reviewed owner returns the decoded symbolic name in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.symbolicNameValue",
+      "result": 0,
+      "role": "symbolic name",
+      "reason": "The reviewed owner returns the decoded symbolic name in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.normalizePropertyKey",
+      "result": 0,
+      "role": "property key",
+      "reason": "The reviewed owner returns the decoded property key in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.normalizeIdentifierToken",
+      "result": 0,
+      "role": "DDL identity",
+      "reason": "The reviewed owner returns the decoded DDL identity in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.normalizeProjectionColumnName",
+      "result": 0,
+      "role": "variable or result name",
+      "reason": "The reviewed owner returns the decoded variable or result name in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.parseProjectionExprAlias",
+      "result": 1,
+      "role": "projection alias",
+      "reason": "The reviewed owner returns the decoded projection alias in result slot 1. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.parseVarPropertyRef",
+      "result": 1,
+      "role": "property key",
+      "reason": "The reviewed owner returns the decoded property key in result slot 1. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.labelChainNames",
+      "result": 0,
+      "role": "label",
+      "reason": "The reviewed owner returns the decoded label in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.unwindBindingName",
+      "result": 0,
+      "role": "variable",
+      "reason": "The reviewed owner returns the decoded variable in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.extractPathAssignmentVariable",
+      "result": 0,
+      "role": "variable",
+      "reason": "The reviewed owner returns the decoded variable in result slot 0. Written input and other result slots are separate representations."
+    },
+    {
+      "symbol": "(github.com/orneryd/nornicdb/internal/cyphertext.RelationshipType).StorageName",
+      "result": 0,
+      "role": "relationship type",
+      "reason": "The retained owner publishes exact decoded relationship type; metadata containers are conservative carriers and each field consumer needs semantic interpretation."
+    },
+    {
+      "symbol": "(github.com/orneryd/nornicdb/pkg/cypher.relationshipTypeFacts).storageName",
+      "result": 0,
+      "role": "relationship type",
+      "reason": "The retained owner publishes exact decoded relationship type; metadata containers are conservative carriers and each field consumer needs semantic interpretation."
+    },
+    {
+      "symbol": "(github.com/orneryd/nornicdb/pkg/cypher.relationshipTypes).storageNames",
+      "result": 0,
+      "role": "relationship type",
+      "reason": "The retained owner publishes exact decoded relationship type; metadata containers are conservative carriers and each field consumer needs semantic interpretation."
+    },
+    {
+      "symbol": "(*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).GetIndexes",
+      "result": 0,
+      "role": "schema name metadata",
+      "reason": "The retained owner publishes exact decoded schema name metadata; metadata containers are conservative carriers and each field consumer needs semantic interpretation."
+    },
+    {
+      "symbol": "(*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).GetAllConstraints",
+      "result": 0,
+      "role": "constraint metadata",
+      "reason": "The retained owner publishes exact decoded constraint metadata; metadata containers are conservative carriers and each field consumer needs semantic interpretation."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.qualifiedNameAt",
+      "result": 0,
+      "role": "qualified procedure/database/alias name",
+      "reason": "The common framing owner obtains each decoded component and extent from scanIdentifierToken; punctuation inside quotes remains identity bytes. Commands and CALL keep their own eligibility policy."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.administrationName",
+      "result": 0,
+      "role": "database/alias name",
+      "reason": "This command-field adapter checks full source consumption and returns the shared qualifiedNameAt decoded name unchanged."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.parseProcedureOutputColumns",
+      "result": 0,
+      "role": "procedure result name metadata",
+      "reason": "This declaration owner frames the signature output list and reads exact decoded column names through parseIdentifierToken. Its result container carries ProcedureColumn.Name identities."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.kpScanIdent",
+      "result": 0,
+      "role": "symbolic name",
+      "reason": "Reviewed policy declaration/API adapter returns decoded identity; written input extents and scalar option vocabulary remain separate responsibilities."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.kpScanName",
+      "result": 0,
+      "role": "policy name",
+      "reason": "Reviewed policy declaration/API adapter returns decoded identity; written input extents and scalar option vocabulary remain separate responsibilities."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.kpParseKnowledgeName",
+      "result": 0,
+      "role": "policy name",
+      "reason": "Reviewed policy declaration/API adapter returns decoded identity; written input extents and scalar option vocabulary remain separate responsibilities."
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/cypher.knowledgePolicyLabelArg",
+      "result": 0,
+      "role": "label",
+      "reason": "Reviewed policy declaration/API adapter returns decoded identity; written input extents and scalar option vocabulary remain separate responsibilities."
+    },
+    {
+      "symbol": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).Namespace",
+      "result": 0,
+      "role": "database identity",
+      "reason": "This public adapter returns the constructor-retained decoded namespace string unchanged; no source-token decoder is applied.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.decodeStoredNodeLabels",
+      "result": 0,
+      "role": "stored label",
+      "reason": "The retained primary-record decoder returns a slice containing the exact stored decoded labels. Binary record decoding is a representation boundary; each returned element is a label identity.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.countNamespaceParts",
+      "result": 0,
+      "role": "database identity",
+      "reason": "The count codec decodes the length-framed namespace component from a current-format persisted key; it returns the complete namespace, not the caller-owned encoded tail.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.countDeltaKeyParts",
+      "result": 0,
+      "role": "database identity",
+      "reason": "The count delta reader publishes the exact namespace from the shared namespace framer; the fixed numeric suffix remains a separate protocol.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.countDeltaKeyParts",
+      "result": 1,
+      "role": "stored label or relationship type",
+      "reason": "The retained delta key reader decodes the complete final graph name before its fixed-width numeric suffix. The kind byte determines label versus type; neither reserves NUL inside the name.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.parseEdgeTypeLabelCountKey",
+      "result": 0,
+      "role": "database identity",
+      "reason": "The positional count reader delegates namespace framing to countNamespaceParts and returns its decoded identity unchanged.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.parseEdgeTypeLabelCountKey",
+      "result": 1,
+      "role": "stored label",
+      "reason": "The positional count reader obtains the decoded stored label from its explicit byte-length extent.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "symbol": "github.com/orneryd/nornicdb/pkg/storage.parseEdgeTypeLabelCountKey",
+      "result": 2,
+      "role": "relationship type",
+      "reason": "The positional count reader returns the remaining exact bytes as the decoded stored relationship type.",
+      "authored_by": "#1486 lane (Codex)"
+    }
+  ],
+  "fields": [
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Node",
+      "Field": "Labels",
+      "Channel": "/element",
+      "Role": "label",
+      "Reason": "The pkg/storage.Node.Labels contract stores decoded label; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Node",
+      "Field": "Properties",
+      "Channel": "/key",
+      "Role": "property key",
+      "Reason": "The pkg/storage.Node.Properties contract stores decoded property key; map keys retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Node",
+      "Field": "NamedEmbeddings",
+      "Channel": "/key",
+      "Role": "vector property key",
+      "Reason": "The pkg/storage.Node.NamedEmbeddings contract stores decoded vector property key; map keys retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Edge",
+      "Field": "Type",
+      "Channel": "",
+      "Role": "relationship type",
+      "Reason": "The pkg/storage.Edge.Type contract stores decoded relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Edge",
+      "Field": "Properties",
+      "Channel": "/key",
+      "Role": "property key",
+      "Reason": "The pkg/storage.Edge.Properties contract stores decoded property key; map keys retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "constraint name",
+      "Reason": "The pkg/storage.Constraint.Name contract stores decoded constraint name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "Label",
+      "Channel": "",
+      "Role": "label or relationship type",
+      "Reason": "The pkg/storage.Constraint.Label contract stores decoded label or relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "SourceLabel",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/storage.Constraint.SourceLabel contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "TargetLabel",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/storage.Constraint.TargetLabel contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "OwnedIndex",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.Constraint.OwnedIndex contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.Constraint",
+      "Field": "Properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The pkg/storage.Constraint.Properties contract stores decoded property key; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "constraint name",
+      "Reason": "The pkg/storage.installedConstraintDefinition.Name contract stores decoded constraint name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "Label",
+      "Channel": "",
+      "Role": "label or relationship type",
+      "Reason": "The pkg/storage.installedConstraintDefinition.Label contract stores decoded label or relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "SourceLabel",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/storage.installedConstraintDefinition.SourceLabel contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "TargetLabel",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/storage.installedConstraintDefinition.TargetLabel contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "OwnedIndex",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.installedConstraintDefinition.OwnedIndex contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.installedConstraintDefinition",
+      "Field": "Properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The retained immutable definition stores property names as a string slice; each element is a decoded identity."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.VectorIndex",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.VectorIndex.Name contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.VectorIndex",
+      "Field": "Label",
+      "Channel": "",
+      "Role": "label or relationship type",
+      "Reason": "The pkg/storage.VectorIndex.Label contract stores decoded label or relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.VectorIndex",
+      "Field": "Property",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "The pkg/storage.VectorIndex.Property contract stores decoded property key; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.RangeIndex",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.RangeIndex.Name contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.RangeIndex",
+      "Field": "Label",
+      "Channel": "",
+      "Role": "label or relationship type",
+      "Reason": "The pkg/storage.RangeIndex.Label contract stores decoded label or relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.RangeIndex",
+      "Field": "Property",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "The pkg/storage.RangeIndex.Property contract stores decoded property key; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.RangeIndex",
+      "Field": "Properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The pkg/storage.RangeIndex.Properties contract stores decoded property key; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.RangeIndex",
+      "Field": "OwningConstraint",
+      "Channel": "",
+      "Role": "constraint name",
+      "Reason": "The pkg/storage.RangeIndex.OwningConstraint contract stores decoded constraint name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.FulltextIndex",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.FulltextIndex.Name contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.FulltextIndex",
+      "Field": "Labels",
+      "Channel": "/element",
+      "Role": "label",
+      "Reason": "The pkg/storage.FulltextIndex.Labels contract stores decoded label; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.FulltextIndex",
+      "Field": "RelationshipTypes",
+      "Channel": "/element",
+      "Role": "relationship type",
+      "Reason": "The pkg/storage.FulltextIndex.RelationshipTypes contract stores decoded relationship type; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.FulltextIndex",
+      "Field": "Properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The pkg/storage.FulltextIndex.Properties contract stores decoded property key; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.CompositeIndex",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/storage.CompositeIndex.Name contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.CompositeIndex",
+      "Field": "Label",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/storage.CompositeIndex.Label contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.CompositeIndex",
+      "Field": "Properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The pkg/storage.CompositeIndex.Properties contract stores decoded property key; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/vectorspace.VectorSpaceKey",
+      "Field": "Type",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/vectorspace.VectorSpaceKey.Type contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/vectorspace.VectorSpaceKey",
+      "Field": "VectorName",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "The pkg/vectorspace.VectorSpaceKey.VectorName contract stores decoded property key; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.ProcedureSpec",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "procedure name",
+      "Reason": "The pkg/cypher.ProcedureSpec.Name contract stores decoded procedure name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.ProcedureColumn",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "procedure column or argument name",
+      "Reason": "The pkg/cypher.ProcedureColumn.Name contract stores decoded procedure column or argument name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.ProcedureParam",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "procedure column or argument name",
+      "Reason": "The pkg/cypher.ProcedureParam.Name contract stores decoded procedure column or argument name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.parsedCreateIndexDDL",
+      "Field": "indexName",
+      "Channel": "",
+      "Role": "index name",
+      "Reason": "The pkg/cypher.parsedCreateIndexDDL.indexName contract stores decoded index name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.parsedCreateIndexDDL",
+      "Field": "label",
+      "Channel": "",
+      "Role": "label",
+      "Reason": "The pkg/cypher.parsedCreateIndexDDL.label contract stores decoded label; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.parsedCreateIndexDDL",
+      "Field": "relationshipType",
+      "Channel": "",
+      "Role": "relationship type",
+      "Reason": "The pkg/cypher.parsedCreateIndexDDL.relationshipType contract stores decoded relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.parsedCreateIndexDDL",
+      "Field": "properties",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "The pkg/cypher.parsedCreateIndexDDL.properties contract stores decoded property key; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/multidb.DatabaseInfo",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "database name",
+      "Reason": "The pkg/multidb.DatabaseInfo.Name contract stores decoded database name; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.NodePayload",
+      "Field": "Labels",
+      "Channel": "/element",
+      "Role": "label",
+      "Reason": "The pkg/storage.NodePayload.Labels contract stores decoded label; slice elements retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.NodePayload",
+      "Field": "Properties",
+      "Channel": "/key",
+      "Role": "property key",
+      "Reason": "The pkg/storage.NodePayload.Properties contract stores decoded property key; map keys retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.EdgePayload",
+      "Field": "Type",
+      "Channel": "",
+      "Role": "relationship type",
+      "Reason": "The pkg/storage.EdgePayload.Type contract stores decoded relationship type; the scalar retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.EdgePayload",
+      "Field": "Properties",
+      "Channel": "/key",
+      "Role": "property key",
+      "Reason": "The pkg/storage.EdgePayload.Properties contract stores decoded property key; map keys retain identity across reads and publication."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBinding",
+      "Field": "TargetLabels",
+      "Channel": "/element",
+      "Role": "label",
+      "Reason": "Public schema/policy APIs receive decoded graph label slices; duplicate-target admission and runtime selection must preserve each exact component."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBinding",
+      "Field": "TargetEdgeType",
+      "Channel": "",
+      "Role": "relationship type",
+      "Reason": "The policy declaration stores a decoded relationship type for exact edge binding selection."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfilePropertyRule",
+      "Field": "PropertyPath",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "Despite its historical PropertyPath spelling, parseBindingApplyBlock reads one decoded property token and compiled/scorer maps access that exact key. Metadata emission must quote it as one name."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.PromotionPolicyDef",
+      "Field": "TargetLabels",
+      "Channel": "/element",
+      "Role": "label",
+      "Reason": "Promotion targets carry the same decoded graph label set as decay binding selection, through a separate declaration field."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.PromotionPolicyDef",
+      "Field": "TargetEdgeType",
+      "Channel": "",
+      "Role": "relationship type",
+      "Reason": "Promotion edge targets retain the exact decoded relationship-type identity."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/multidb.ConstituentRef",
+      "Field": "Alias",
+      "Channel": "",
+      "Role": "constituent alias",
+      "Reason": "The multidb constituent definition is a decoded alias; query/catalog consumers must not reinterpret it as a written token."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/multidb.ConstituentRef",
+      "Field": "DatabaseName",
+      "Channel": "",
+      "Role": "database name",
+      "Reason": "The public constituent target is a decoded database name, separate from its authored credential/source extents."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBundle",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBundle",
+      "Field": "ScoreFromProperty",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded property key; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBinding",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfileBinding",
+      "Field": "ProfileRef",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.DecayProfilePropertyRule",
+      "Field": "ProfileRef",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.PromotionProfileDef",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.PromotionPolicyDef",
+      "Field": "Name",
+      "Channel": "",
+      "Role": "policy name",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded policy name; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.CompiledBinding",
+      "Field": "ScoreFromProperty",
+      "Channel": "",
+      "Role": "property key",
+      "Reason": "Public policy definition/compiled binding stores an exact decoded property key; traced declaration, schema metadata, binding builder and scorer/editor consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.EntityMeta",
+      "Field": "PropertyKeys",
+      "Channel": "/element",
+      "Role": "property key",
+      "Reason": "Entity metadata publishes exact decoded node/edge property keys to per-property scorer and suppression consumers."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessMetaEntry",
+      "Field": "Overflow",
+      "Channel": "/key",
+      "Role": "custom property key",
+      "Reason": "Public access metadata and ON ACCESS mutations use exact decoded custom property keys. Internal bookkeeping cannot share these data keys."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/knowledgepolicy.AccessMetaEntry",
+      "Field": "SuppressedProperties",
+      "Channel": "/key",
+      "Role": "property key",
+      "Reason": "Suppression bookkeeping is keyed by the exact decoded entity property identity, in a separate internal namespace from custom access values."
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine",
+      "Field": "namespace",
+      "Channel": "",
+      "Role": "database identity",
+      "Reason": "NewNamespacedEngine stores its already-decoded namespace input unchanged; the public Namespace method and all named-count/scope consumers read it. The public manager forwards nonempty names without a reserved-NUL restriction, verified by both-parser namespace count redscc55/4313 and corrected de2b/7738.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/internal/cyphertext.Identifier",
+      "Field": "Value",
+      "Channel": "",
+      "Role": "symbolic name",
+      "Reason": "Credentials ScanIdentifier returns a structured product: only Value is decoded identity; Start/End are written byte offsets, Quoted is provenance. No full struct/result-slot identity root.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher/antlr.QueryInfo",
+      "Field": "Labels",
+      "Channel": "/element",
+      "Role": "label or relationship type",
+      "Reason": "The public Analyze Labels contract is decoded identity. labelExpressionNames consumes the lower decoder; F22 joined probe9941/9ef1 confirms these assertions pass in both environments.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher/antlr.ClauseInfo",
+      "Field": "UnwindAs",
+      "Channel": "",
+      "Role": "variable binding",
+      "Reason": "Public ExtractClauses exposes the UNWIND alias identity. Current TJ-owned #1515 EnterUnwindSt violates that contract by retaining written quotes: NOR-206 owned by TJ in #1515, not an approved representation. Seed the semantic slot to enumerate all forward consumers; producer correction/composition green remains required.",
+      "authored_by": "#1486 lane (Codex)",
+      "ownership_routing_author": "Nornic2 orchestrator, audit14\u00a77; prior #1525 route withdrawn"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher/antlr.ClauseInfo",
+      "Field": "Variables",
+      "Channel": "/element",
+      "Role": "variable binding",
+      "Reason": "Public ExtractClauses Variables are semantic binding identities. Current TJ-owned #1515 EnterSymbol still supplies written source: NOR-206, #1515 dependency, six joined failures per environment with UnwindAs. This declared slot is a candidate root, not a claim that the producer currently decodes correctly.",
+      "authored_by": "#1486 lane (Codex)",
+      "ownership_routing_author": "Nornic2 orchestrator, audit14\u00a77; prior #1525 route withdrawn"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/vectorspace.VectorSpaceKey",
+      "Field": "DB",
+      "Channel": "",
+      "Role": "database identity",
+      "Reason": "Public CreateDatabase admits exact nonempty names. NamespacedEngine.Namespace passes that identity to registerVectorSpace and the shared registry. The public three-database witness fails when Canonical normalizes it.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/mcp.ServerConfig",
+      "Field": "DefaultDatabase",
+      "Channel": "",
+      "Role": "database identity",
+      "Reason": "SetDefaultDatabase and public tool-schema defaults receive a decoded catalog database name. It is not Cypher source or an enum.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/fabric.LocationLocal",
+      "Field": "DBName",
+      "Channel": "",
+      "Role": "database identity",
+      "Reason": "The public catalog location carries the actual database name passed to the local storage resolver; alias/catalog lookup syntax is separate.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/fabric.LocationRemote",
+      "Field": "DBName",
+      "Channel": "",
+      "Role": "database identity",
+      "Reason": "The remote location DBName is passed to the driver as its target database; URI formatting and catalog graph selection are separate protocols.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/auth.RequestDatabaseScope",
+      "Field": "selections",
+      "Channel": "/key",
+      "Role": "database or alias identity",
+      "Reason": "The request scope is built from catalog selections, then Resolve receives a decoded requested database or alias. Authentication policy is separate from exact catalog identity.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/auth.RequestDatabaseScope",
+      "Field": "selections",
+      "Channel": "/value",
+      "Role": "database identity",
+      "Reason": "Selection map values identify the physical catalog database returned to actual storage resolution; source selection spelling is not this product.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.quotedToken",
+      "Field": "name",
+      "Channel": "",
+      "Role": "variable or parameter identity",
+      "Reason": "scanQuotedTokens stores the primitive-decoded token identity separately from written source and binding-position facts.",
+      "authored_by": "#1486 lane (Codex)"
+    },
+    {
+      "Type": "github.com/orneryd/nornicdb/pkg/cypher.quotedVariableName",
+      "Field": "name",
+      "Channel": "",
+      "Role": "variable or parameter identity",
+      "Reason": "rememberInternal stores the already-decoded original identity separately from its written spelling; firstInternal and the overflow map are one complete product.",
+      "authored_by": "#1486 lane (Codex)"
+    }
+  ],
+  "writers": [
+    "github.com/orneryd/nornicdb/internal/cyphertext.QuoteName",
+    "github.com/orneryd/nornicdb/internal/cyphertext.NameText",
+    "github.com/orneryd/nornicdb/internal/cyphertext.quoteName"
+  ],
+  "recording_owners": [
+    "github.com/orneryd/nornicdb/internal/cyphertext.QuoteName",
+    "github.com/orneryd/nornicdb/internal/cyphertext.NameText",
+    "github.com/orneryd/nornicdb/internal/cyphertext.quoteName",
+    "github.com/orneryd/nornicdb/internal/cyphertext.RecordPropertyReference",
+    "github.com/orneryd/nornicdb/pkg/adminimport.quoteCypherIdent",
+    "github.com/orneryd/nornicdb/pkg/fabric.quoteCypherIdentifier",
+    "github.com/orneryd/nornicdb/pkg/cypher.cypher25NameText",
+    "github.com/orneryd/nornicdb/pkg/cypher.labelExpressionNameText",
+    "github.com/orneryd/nornicdb/pkg/cypher.projectionVariableText",
+    "github.com/orneryd/nornicdb/pkg/cypher.quoteSchemaName",
+    "github.com/orneryd/nornicdb/pkg/storage.remoteQuotedName",
+    "github.com/orneryd/nornicdb/pkg/storage.quoteIdent",
+    "github.com/orneryd/nornicdb/pkg/cypher.quoteKnowledgePolicyName",
+    "github.com/orneryd/nornicdb/pkg/cypher.cypherStringLiteral",
+    "github.com/orneryd/nornicdb/pkg/cypher.generatedSchemaName"
+  ],
+  "recording_owner_review": {
+    "author": "#1486 lane (Codex)",
+    "meaning": "Exact compiler identities of the canonical symbolic writer, its transparent adapters, written-property marker and distinct knowledge-policy string-name adapter. These are recorded-construction boundaries, not decoded return roots or semantic approvals. Additional construction rows can arise from actual recorded delegation. The policy-string adapter needs its own semantic observation or reviewed narrow disposition; listing it grants no reach.",
+    "extension_author": "#1486 lane (Codex)",
+    "extension": "Executable decoded-name literal emission and implicit schema-name construction use tagged Go observations. Exact compiled callers are obligations; every new site still needs recorded reach plus a concrete semantic observation or reviewed narrow exclusion. No production JS/Python observer is added."
+  }
+}

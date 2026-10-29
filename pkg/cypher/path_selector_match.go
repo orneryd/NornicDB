@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
@@ -135,7 +136,11 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 func pathSelectorCount(ctx context.Context, count string) (int, error) {
 	var value interface{}
 	if strings.HasPrefix(count, "$") {
-		value = getParamsFromContext(ctx)[strings.Trim(count[1:], "`")]
+		cyphertext.ParameterReferences(count, func(name string, start, end int) {
+			if start == 0 && end == len(count) {
+				value = getParamsFromContext(ctx)[name]
+			}
+		})
 	} else {
 		value = pathSelectorCountLiteral(count)
 	}

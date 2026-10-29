@@ -1242,12 +1242,15 @@ func TestCallGdsGraphProject_AdditionalBranches(t *testing.T) {
 	_, err = exec.callGdsGraphProject(nil)
 	require.ErrorContains(t, err, "argument graphName is null")
 
-	// A name text listing several labels / types (NornicDB's kept form).
+	// Several labels or types are a list. A name text is one literal name, as
+	// in Neo4j GDS: 'Person:User:Memory' is a single label, which is missing.
 	counts := func(res *ExecuteResult) []any { return res.Rows[0][2:5] }
-	res, err := exec.callGdsGraphProject([]interface{}{"g_parse", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
+	res, err := exec.callGdsGraphProject([]interface{}{"g_parse", []interface{}{"Person", "User", "Memory"}, []interface{}{"KNOWS", "RELATES_TO", "REFERENCES"}})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, []any{"g_parse", int64(3), int64(3)}, counts(res))
+	_, err = exec.callGdsGraphProject([]interface{}{"g_literal", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
+	require.ErrorContains(t, err, "labels not found: 'Person:User:Memory'")
 
 	// Lists, maps (an entry's label / type overrides its key) and '*'.
 	res, err = exec.callGdsGraphProject([]interface{}{"g_list", []interface{}{"Person", "User"}, map[string]interface{}{"K": map[string]interface{}{"type": "KNOWS"}}})

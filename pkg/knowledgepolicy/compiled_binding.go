@@ -38,7 +38,7 @@ type CompiledBinding struct {
 // BindingTable is the compiled lookup for all labels and edge types.
 type BindingTable struct {
 	mu       sync.RWMutex
-	nodes    map[string]*CompiledBinding // key: sorted label set joined by "\x00"
+	nodes    map[string]*CompiledBinding // key: LabelSetKey of exact decoded labels
 	edges    map[string]*CompiledBinding // key: edge type
 	wildNode *CompiledBinding
 	wildEdge *CompiledBinding
@@ -52,7 +52,7 @@ func NewBindingTable() *BindingTable {
 	}
 }
 
-// LookupNode returns the compiled binding for the given sorted label set.
+// LookupNode returns the compiled binding for the canonical key from LabelSetKey.
 // Returns the wildcard binding if no specific match exists, or nil if neither exists.
 func (bt *BindingTable) LookupNode(labelKey string) *CompiledBinding {
 	bt.mu.RLock()
@@ -81,7 +81,7 @@ func (bt *BindingTable) LookupEdge(edgeType string) *CompiledBinding {
 	return bt.wildEdge
 }
 
-// SetNode sets a compiled binding for a label key.
+// SetNode sets a compiled binding for a canonical LabelSetKey.
 func (bt *BindingTable) SetNode(labelKey string, cb *CompiledBinding) {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()

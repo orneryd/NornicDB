@@ -179,8 +179,12 @@ const rowStatementContextKey = "\x00statement_context"
 // graph expressions. This applies to nested calls as well as whole expressions:
 // every registry function must see the same execution identity and version.
 func needsRowStatementContext(expression string) bool {
+	return needsNonPatternRowStatementContext(expression) || containsRelationshipPattern(expression)
+}
+
+func needsNonPatternRowStatementContext(expression string) bool {
 	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression) {
+		containsContextPluginCall(expression) {
 		return true
 	}
 	called := false

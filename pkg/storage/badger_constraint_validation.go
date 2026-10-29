@@ -79,14 +79,14 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 		return nil
 	}
 
-	constraints := schema.GetConstraintsForLabels(node.Labels)
+	constraints := schema.constraintsForLabels(node.Labels)
 	for _, c := range constraints {
 		switch c.Type {
 		case ConstraintUnique:
-			if len(c.Properties) > 1 {
-				values := make([]interface{}, len(c.Properties))
+			if c.Properties.Len() > 1 {
+				values := make([]interface{}, c.Properties.Len())
 				complete := true
-				for index, property := range c.Properties {
+				for index, property := range c.Properties.All() {
 					values[index] = node.Properties[property]
 					if values[index] == nil {
 						complete = false
@@ -103,10 +103,10 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 				continue
 			}
-			if len(c.Properties) != 1 {
+			if c.Properties.Len() != 1 {
 				continue
 			}
-			prop := c.Properties[0]
+			prop := c.Properties.At(0)
 			value := node.Properties[prop]
 			if value == nil {
 				continue
@@ -121,41 +121,41 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				return err
 			}
 		case ConstraintNodeKey:
-			values := make([]interface{}, len(c.Properties))
-			for i, prop := range c.Properties {
+			values := make([]interface{}, c.Properties.Len())
+			for i, prop := range c.Properties.All() {
 				values[i] = node.Properties[prop]
 				if values[i] == nil {
-					return &ConstraintViolationError{
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintNodeKey,
 						Label:      c.Label,
-						Properties: c.Properties,
+						Properties: c.Properties.snapshot(),
 						Message:    fmt.Sprintf("NODE KEY property %s cannot be null", prop),
-					}
+					})
 				}
 			}
 			if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
 				return err
 			}
 		case ConstraintExists:
-			if len(c.Properties) != 1 {
+			if c.Properties.Len() != 1 {
 				continue
 			}
-			prop := c.Properties[0]
+			prop := c.Properties.At(0)
 			if node.Properties == nil {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       ConstraintExists,
 					Label:      c.Label,
 					Properties: []string{prop},
 					Message:    fmt.Sprintf("Required property %s is missing", prop),
-				}
+				})
 			}
 			if val, ok := node.Properties[prop]; !ok || val == nil {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       ConstraintExists,
 					Label:      c.Label,
 					Properties: []string{prop},
 					Message:    fmt.Sprintf("Required property %s is missing", prop),
-				}
+				})
 			}
 		case ConstraintTemporal:
 			spec, ok := splitTemporalKeySpec(c.Properties)
@@ -164,37 +164,37 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			}
 			keyVal, missing := spec.keyValue(node.Properties)
 			if missing != "" {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       ConstraintTemporal,
 					Label:      c.Label,
-					Properties: c.Properties,
+					Properties: c.Properties.snapshot(),
 					Message:    fmt.Sprintf("TEMPORAL key property %s cannot be null", missing),
-				}
+				})
 			}
 			interval, ok := spec.interval(node.Properties)
 			if !ok {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       ConstraintTemporal,
 					Label:      c.Label,
-					Properties: c.Properties,
+					Properties: c.Properties.snapshot(),
 					Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", spec.startProp),
-				}
+				})
 			}
 
 			if err := b.scanForTemporalOverlapInTxn(txn, namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, excludeNodeID); err != nil {
 				return err
 			}
 		case ConstraintDomain:
-			if len(c.Properties) == 1 && len(c.AllowedValues) > 0 {
-				prop := c.Properties[0]
+			if c.Properties.Len() == 1 && c.AllowedValues.Len() > 0 {
+				prop := c.Properties.At(0)
 				value := node.Properties[prop]
-				if value != nil && !isValueInAllowedList(value, c.AllowedValues) {
-					return &ConstraintViolationError{
+				if value != nil && !c.AllowedValues.Allows(value) {
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintDomain,
 						Label:      c.Label,
 						Properties: []string{prop},
-						Message:    fmt.Sprintf("Property %s value %v is not in allowed values %v", prop, value, c.AllowedValues),
-					}
+						Message:    fmt.Sprintf("Property %s value %v is not in allowed values %v", prop, value, c.AllowedValues.snapshot()),
+					})
 				}
 			}
 		}
@@ -204,12 +204,12 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	for _, c := range typeConstraints {
 		value := node.Properties[c.Property]
 		if err := ValidatePropertyType(value, c.ExpectedType); err != nil {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       ConstraintPropertyType,
 				Label:      c.Label,
 				Properties: []string{c.Property},
 				Message:    fmt.Sprintf("Property %s must be %s (%v)", c.Property, c.ExpectedType, err),
-			}
+			})
 		}
 	}
 
@@ -229,7 +229,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+		nodeNum, ok := extractNumIDFromNamedIndex(key, labelLen)
 		if !ok {
 			continue
 		}
@@ -264,14 +264,14 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 
 		if existingValue, ok := existingNode.Properties[property]; ok {
 			if compareValues(existingValue, value) {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       ConstraintUnique,
 					Label:      label,
 					Properties: []string{property},
 					// Wire contract: "Node with ... already exists" is matched by downstream
 					// Bolt classifiers. See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 					Message: fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", property, value, existingNode.ID),
-				}
+				})
 			}
 		}
 	}
@@ -279,7 +279,9 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 	return nil
 }
 
-func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
+func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, label string, sourceProperties any, values []interface{}, excludeNodeID NodeID) error {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	prefix := labelIndexPrefix(label)
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
@@ -288,7 +290,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 	nsPrefix := namespace + ":"
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+		nodeNum, ok := extractNumIDFromNamedIndex(key, labelLen)
 		if !ok {
 			continue
 		}
@@ -322,7 +324,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 		}
 
 		match := true
-		for i, prop := range properties {
+		for i, prop := range properties.All() {
 			existingValue, ok := existingNode.Properties[prop]
 			if !ok || !compareValues(existingValue, values[i]) {
 				match = false
@@ -330,14 +332,14 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 			}
 		}
 		if match {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       ConstraintNodeKey,
 				Label:      label,
-				Properties: properties,
+				Properties: properties.snapshot(),
 				// Wire contract: "Node with ... already exists" is matched downstream.
 				// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-				Message: fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", properties, values, existingNode.ID),
-			}
+				Message: fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", properties.snapshot(), values, existingNode.ID),
+			})
 		}
 	}
 
@@ -346,27 +348,29 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 
 // temporalOverlapViolation reports whether existing overlaps the interval for
 // keyValue under constraint c, returning the violation to surface.
-func temporalOverlapViolation(c Constraint, spec temporalKeySpec, existing *Node, keyValue interface{}, interval temporalInterval) error {
+func temporalOverlapViolation(source constraintDefinitionSource, spec temporalKeySpec, existing *Node, keyValue interface{}, interval temporalInterval) error {
+	c := source.installedConstraint()
+
 	if existing == nil || !spec.keyMatches(existing.Properties, keyValue) {
 		return nil
 	}
 	existingInterval, ok := spec.interval(existing.Properties)
 	if !ok {
-		return &ConstraintViolationError{
+		return newConstraintViolation(ConstraintViolationError{
 			Type:       ConstraintTemporal,
 			Label:      c.Label,
-			Properties: c.Properties,
+			Properties: c.Properties.snapshot(),
 			Message:    fmt.Sprintf("TEMPORAL constraint requires %s for node %s", spec.startProp, existing.ID),
-		}
+		})
 	}
 	if intervalsOverlap(interval, existingInterval) {
-		return &ConstraintViolationError{
+		return newConstraintViolation(ConstraintViolationError{
 			Type:       ConstraintTemporal,
 			Label:      c.Label,
-			Properties: c.Properties,
+			Properties: c.Properties.snapshot(),
 			Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with node %s for %s=%v",
 				existing.ID, spec.keyLabel(), keyValue),
-		}
+		})
 	}
 	return nil
 }
@@ -385,12 +389,13 @@ const (
 // histories for canonical list keys, and the canonical label reader when an
 // index cannot establish completeness. Every route shares body decoding and
 // the same interval/equality violation owner.
-func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
+func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, source constraintDefinitionSource, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
+	c := source.installedConstraint()
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return nil
 	}
-	constraint := Constraint{Type: ConstraintTemporal, Label: c.Label, Properties: c.Properties}
+	constraint := c
 	target := temporalRefreshTarget{constraint: constraint, desc: makeTemporalDescriptor(namespace, constraint, keyValue), keyValue: keyValue}
 	prefix := temporalHistoryPrefix(target.desc)
 	fullLabel := len(mode) > 0 && mode[0] == temporalOverlapFullLabel
@@ -466,7 +471,7 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 		return nil
 	}
 
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	constraints := schema.constraintsForLabels([]string{edge.Type})
 	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
@@ -493,16 +498,16 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 				return err
 			}
 		case ConstraintDomain:
-			if len(c.Properties) == 1 && len(c.AllowedValues) > 0 {
-				prop := c.Properties[0]
+			if c.Properties.Len() == 1 && c.AllowedValues.Len() > 0 {
+				prop := c.Properties.At(0)
 				value := edge.Properties[prop]
-				if value != nil && !isValueInAllowedList(value, c.AllowedValues) {
-					return &ConstraintViolationError{
+				if value != nil && !c.AllowedValues.Allows(value) {
+					return newConstraintViolation(ConstraintViolationError{
 						Type:       ConstraintDomain,
 						Label:      edge.Type,
 						Properties: []string{prop},
-						Message:    fmt.Sprintf("Property %s value %v is not in allowed values %v", prop, value, c.AllowedValues),
-					}
+						Message:    fmt.Sprintf("Property %s value %v is not in allowed values %v", prop, value, c.AllowedValues.snapshot()),
+					})
 				}
 			}
 		case ConstraintCardinality:
@@ -524,12 +529,12 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 		}
 		value := edge.Properties[ptc.Property]
 		if err := ValidatePropertyType(value, ptc.ExpectedType); err != nil {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       ConstraintPropertyType,
 				Label:      edge.Type,
 				Properties: []string{ptc.Property},
 				Message:    fmt.Sprintf("Property %s must be %s (%v)", ptc.Property, ptc.ExpectedType, err),
-			}
+			})
 		}
 	}
 
@@ -537,30 +542,34 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 }
 
 // checkEdgeExistence validates that all required properties exist on the edge.
-func checkEdgeExistence(edge *Edge, c Constraint) error {
-	for _, prop := range c.Properties {
+func checkEdgeExistence(edge *Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	for _, prop := range c.Properties.All() {
 		if edge.Properties == nil {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       c.Type,
 				Label:      edge.Type,
 				Properties: []string{prop},
 				Message:    fmt.Sprintf("Required property %s is missing on relationship", prop),
-			}
+			})
 		}
 		if val, ok := edge.Properties[prop]; !ok || val == nil {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       c.Type,
 				Label:      edge.Type,
 				Properties: []string{prop},
 				Message:    fmt.Sprintf("Required property %s is missing on relationship", prop),
-			}
+			})
 		}
 	}
 	return nil
 }
 
 // checkEdgeUniquenessInTxn scans all edges of the same type to check for uniqueness violations.
-func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
+func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, source constraintDefinitionSource, namespace string, excludeEdgeID EdgeID) error {
+	c := source.installedConstraint()
+
 	// Scan via edge type index
 	prefix := edgeTypeIndexPrefix(edge.Type)
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -570,7 +579,7 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
-		edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+		edgeNum, ok := extractNumIDFromNamedIndex(key, len(edge.Type))
 		if !ok {
 			continue
 		}
@@ -603,28 +612,28 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 			return err
 		}
 
-		if len(c.Properties) == 1 {
-			prop := c.Properties[0]
+		if c.Properties.Len() == 1 {
+			prop := c.Properties.At(0)
 			newVal := edge.Properties[prop]
 			if newVal == nil {
 				return nil // NULL doesn't violate uniqueness
 			}
 			existVal := existingEdge.Properties[prop]
 			if existVal != nil && compareValues(existVal, newVal) {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       c.Type,
 					Label:      edge.Type,
 					Properties: []string{prop},
 					// Wire contract: "Relationship with ... already exists" is matched downstream.
 					// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 					Message: fmt.Sprintf("Relationship with %s=%v already exists (edgeID: %s)", prop, newVal, existingEdge.ID),
-				}
+				})
 			}
 		} else {
 			// Composite uniqueness
 			allMatch := true
 			allPresent := true
-			for _, prop := range c.Properties {
+			for _, prop := range c.Properties.All() {
 				newVal := edge.Properties[prop]
 				if newVal == nil {
 					allPresent = false
@@ -640,14 +649,14 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 				return nil // NULL in composite key doesn't violate uniqueness
 			}
 			if allMatch {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:       c.Type,
 					Label:      edge.Type,
-					Properties: c.Properties,
+					Properties: c.Properties.snapshot(),
 					// Wire contract: "Relationship with ... already exists" is matched downstream.
 					// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 					Message: fmt.Sprintf("Relationship with duplicate composite key already exists (edgeID: %s)", existingEdge.ID),
-				}
+				})
 			}
 		}
 	}
@@ -655,8 +664,8 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 }
 
 // edgeTemporalCompositeKeyMatch checks whether the existing edge has the same composite key values as keyVals.
-func edgeTemporalCompositeKeyMatch(existingEdge *Edge, keyProps []string, keyVals []interface{}) bool {
-	for i, prop := range keyProps {
+func edgeTemporalCompositeKeyMatch(existingEdge *Edge, keyProps constraintPropertyNames, keyVals []interface{}) bool {
+	for i, prop := range keyProps.All() {
 		existingVal := existingEdge.Properties[prop]
 		if existingVal == nil || !compareValues(existingVal, keyVals[i]) {
 			return false
@@ -667,37 +676,39 @@ func edgeTemporalCompositeKeyMatch(existingEdge *Edge, keyProps []string, keyVal
 
 // checkEdgeTemporalInTxn scans all edges of the same type to check for temporal overlap violations.
 // Supports composite key properties: all properties except the last 2 form the key.
-func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
-	if len(c.Properties) < 3 {
+func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, source constraintDefinitionSource, namespace string, excludeEdgeID EdgeID) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() < 3 {
 		return fmt.Errorf("TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)")
 	}
 
-	keyProps := c.Properties[:len(c.Properties)-2]
-	startProp := c.Properties[len(c.Properties)-2]
-	endProp := c.Properties[len(c.Properties)-1]
+	keyProps := c.Properties.Slice(0, c.Properties.Len()-2)
+	startProp := c.Properties.At(c.Properties.Len() - 2)
+	endProp := c.Properties.At(c.Properties.Len() - 1)
 
 	// Validate all key properties are non-null
-	keyVals := make([]interface{}, len(keyProps))
-	for i, prop := range keyProps {
+	keyVals := make([]interface{}, keyProps.Len())
+	for i, prop := range keyProps.All() {
 		keyVals[i] = edge.Properties[prop]
 		if keyVals[i] == nil {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       ConstraintTemporal,
 				Label:      edge.Type,
-				Properties: c.Properties,
+				Properties: c.Properties.snapshot(),
 				Message:    fmt.Sprintf("TEMPORAL key property %s cannot be null", prop),
-			}
+			})
 		}
 	}
 
 	start, ok := CoerceTemporalTime(edge.Properties[startProp])
 	if !ok {
-		return &ConstraintViolationError{
+		return newConstraintViolation(ConstraintViolationError{
 			Type:       ConstraintTemporal,
 			Label:      edge.Type,
-			Properties: c.Properties,
+			Properties: c.Properties.snapshot(),
 			Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", startProp),
-		}
+		})
 	}
 	end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 
@@ -712,7 +723,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 
 	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
 		key := iter.Item().KeyCopy(nil)
-		edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+		edgeNum, ok := extractNumIDFromNamedIndex(key, len(edge.Type))
 		if !ok {
 			continue
 		}
@@ -758,13 +769,13 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 		existingInterval := temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}
 
 		if intervalsOverlap(newInterval, existingInterval) {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:       ConstraintTemporal,
 				Label:      edge.Type,
-				Properties: c.Properties,
+				Properties: c.Properties.snapshot(),
 				Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with edge %s for key=%v",
 					existingEdge.ID, keyVals),
-			}
+			})
 		}
 	}
 
@@ -774,7 +785,9 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 // checkEdgeCardinalityInTxn counts edges of the given type connected to the anchor
 // node (determined by constraint direction) and rejects the new edge if adding it
 // would exceed MaxCount.
-func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
+func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, source constraintDefinitionSource, namespace string, excludeEdgeID EdgeID) error {
+	c := source.installedConstraint()
+
 	// Determine anchor node based on direction.
 	var anchorNode NodeID
 	if c.Direction == "OUTGOING" {
@@ -837,12 +850,12 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 			count++
 			if count >= c.MaxCount {
 				dir := strings.ToLower(c.Direction)
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:  ConstraintCardinality,
 					Label: c.Label,
 					Message: fmt.Sprintf("Adding this edge would exceed max %s count of %d for relationship type %s on node %s (current: %d)",
 						dir, c.MaxCount, c.Label, anchorNode, count),
-				}
+				})
 			}
 		}
 	}
@@ -854,10 +867,10 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 // All policies for the edge type are evaluated as a set: DISALLOWED policies are checked
 // individually, while ALLOWED policies form a union (at least one must match).
 func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	constraints := schema.constraintsForLabels([]string{edge.Type})
 
-	var allowedPolicies []Constraint
-	var disallowedPolicies []Constraint
+	var allowedPolicies []installedConstraintDefinition
+	var disallowedPolicies []installedConstraintDefinition
 	for _, c := range constraints {
 		if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
@@ -894,12 +907,12 @@ func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema 
 	// Check DISALLOWED policies first (they take precedence).
 	for _, c := range disallowedPolicies {
 		if hasLabel(srcLabels, c.SourceLabel) && hasLabel(tgtLabels, c.TargetLabel) {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:  ConstraintPolicy,
 				Label: c.Label,
 				Message: fmt.Sprintf("DISALLOWED policy violation: (:%s)-[:%s]->(:%s) is forbidden (constraint %q)",
 					c.SourceLabel, c.Label, c.TargetLabel, c.Name),
-			}
+			})
 		}
 	}
 
@@ -913,12 +926,12 @@ func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema 
 			}
 		}
 		if !matched {
-			return &ConstraintViolationError{
+			return newConstraintViolation(ConstraintViolationError{
 				Type:  ConstraintPolicy,
 				Label: edge.Type,
 				Message: fmt.Sprintf("ALLOWED policy violation: no ALLOWED policy permits (:%s)-[:%s]->(:%s)",
 					strings.Join(srcLabels, ":"), edge.Type, strings.Join(tgtLabels, ":")),
-			}
+			})
 		}
 	}
 
@@ -1042,9 +1055,9 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}
 
 		// Check policy constraints for this edge type.
-		constraints := schema.GetConstraintsForLabels([]string{edge.Type})
-		var allowedPolicies []Constraint
-		var disallowedPolicies []Constraint
+		constraints := schema.constraintsForLabels([]string{edge.Type})
+		var allowedPolicies []installedConstraintDefinition
+		var disallowedPolicies []installedConstraintDefinition
 		for _, c := range constraints {
 			if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
 				continue
@@ -1063,12 +1076,12 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		// DISALLOWED check.
 		for _, c := range disallowedPolicies {
 			if hasLabel(srcLabels, c.SourceLabel) && hasLabel(tgtLabels, c.TargetLabel) {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:  ConstraintPolicy,
 					Label: c.Label,
 					Message: fmt.Sprintf("Label change would violate DISALLOWED policy: (:%s)-[:%s]->(:%s) (constraint %q)",
 						c.SourceLabel, c.Label, c.TargetLabel, c.Name),
-				}
+				})
 			}
 		}
 
@@ -1082,12 +1095,12 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 				}
 			}
 			if !matched {
-				return &ConstraintViolationError{
+				return newConstraintViolation(ConstraintViolationError{
 					Type:  ConstraintPolicy,
 					Label: edge.Type,
 					Message: fmt.Sprintf("Label change would violate ALLOWED policy: no ALLOWED policy permits (:%s)-[:%s]->(:%s)",
 						strings.Join(srcLabels, ":"), edge.Type, strings.Join(tgtLabels, ":")),
-				}
+				})
 			}
 		}
 	}

@@ -298,7 +298,7 @@ func TestPropertyVisibility_CompiledPropertyOverride_ScoreFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("Record")
+	cb := bt.LookupNode(LabelSetKey([]string{"Record"}))
 	if cb == nil {
 		t.Fatal("expected compiled binding for Record")
 	}
@@ -519,7 +519,7 @@ func TestPropertyVisibility_HasNoDecayPropertyFlag_Precomputed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cb1 := bt1.LookupNode(bindingLabelKey([]string{"WithAnchor"}))
+	cb1 := bt1.LookupNode(LabelSetKey([]string{"WithAnchor"}))
 	if cb1 == nil {
 		t.Fatal("expected binding for WithAnchor")
 	}
@@ -541,7 +541,7 @@ func TestPropertyVisibility_HasNoDecayPropertyFlag_Precomputed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cb2 := bt2.LookupNode(bindingLabelKey([]string{"NoAnchor"}))
+	cb2 := bt2.LookupNode(LabelSetKey([]string{"NoAnchor"}))
 	if cb2 == nil {
 		t.Fatal("expected binding for NoAnchor")
 	}

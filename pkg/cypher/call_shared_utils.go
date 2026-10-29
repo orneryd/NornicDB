@@ -120,7 +120,7 @@ func toStringSlice(v interface{}) []string {
 	case []interface{}:
 		out := make([]string, 0, len(t))
 		for _, item := range t {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			if s, ok := item.(string); ok && s != "" {
 				out = append(out, s)
 			}
 		}

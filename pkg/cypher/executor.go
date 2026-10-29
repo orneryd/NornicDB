@@ -1321,9 +1321,12 @@ func queryDeletesNodes(query string) bool {
 	if strings.Contains(upperASCII(query), "DETACH DELETE") {
 		return true
 	}
-	// Relationship pattern (has -[...]-> or <-[...]-) with CREATE+DELETE = relationship delete only
-	if strings.Contains(query, "]->(") || strings.Contains(query, ")<-[") {
-		return false
+	// Relationship pattern (has -[...]-> or <-[...]-) with CREATE+DELETE = relationship delete only.
+	// The shared bracket finder reads it: an arrow in a string is no pattern.
+	for open, close := readRelationshipBracket(query, 0, requireClosedRelationship); open >= 0; open, close = readRelationshipBracket(query, close+1, requireClosedRelationship) {
+		if strings.HasPrefix(query[close+1:], "->(") || strings.HasSuffix(query[:open+1], ")<-[") {
+			return false
+		}
 	}
 	return true
 }

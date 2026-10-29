@@ -15,6 +15,8 @@ import type {
 } from "@ornery/ui-grid-core";
 import { ExpandableCell } from "../common/ExpandableCell";
 import { extractNodeFromResult } from "../../utils/nodeUtils";
+import { cypherResultRecord } from "../../utils/cypherResults";
+import { controlColumnName } from "../../utils/identityRecords";
 
 type QueryResultNodeData = {
   id: string;
@@ -52,8 +54,14 @@ export function QueryResultsTable({
   const [gridApi, setGridApi] = useState<UiGridApi | null>(null);
   const isSyncingSelectionRef = useRef(false);
 
-  const { columnDefs, gridData } = useMemo(() => {
+  const { columnDefs, gridData, rowMetadata, selectionColumnName } = useMemo(() => {
     const nextColumns = result.columns ?? [];
+    const metadata = new WeakMap<GridRecord, {
+      gridId: string;
+      nodeId: string | null;
+      nodeData: QueryResultNodeData | null;
+    }>();
+    const selectColumn = controlColumnName("nornicSelect", nextColumns);
 
     const nextGridData: GridRecord[] = result.data.map((row, rowIndex) => {
       let nodeId: string | null = null;
@@ -73,14 +81,11 @@ export function QueryResultsTable({
         }
       }
 
-      const record: GridRecord = {
-        __gridId: `result-row-${rowIndex}-${nodeId ?? "no-node"}`,
-        __nodeId: nodeId,
-        __nodeData: nodeData,
-      };
-
-      nextColumns.forEach((column, index) => {
-        record[column] = row.row[index];
+      const record: GridRecord = cypherResultRecord(nextColumns, row.row);
+      metadata.set(record, {
+        gridId: `result-row-${rowIndex}-${nodeId ?? "no-node"}`,
+        nodeId,
+        nodeData,
       });
 
       return record;
@@ -88,9 +93,9 @@ export function QueryResultsTable({
 
     const nextColumnDefs: GridColumnDef[] = [
       {
-        name: "nornicSelect",
+        name: selectColumn,
         displayName: "Select",
-        field: "nornicSelect",
+        field: selectColumn,
         width: "96px",
         headerRenderer: () => "",
         sortable: false,
@@ -100,7 +105,7 @@ export function QueryResultsTable({
       ...nextColumns.map((column) => ({
         name: column,
         displayName: column,
-        field: column,
+        // A decoded alias is a literal column name; field denotes a grid path.
         enableCellEdit: false,
         type: "object" as const,
         width: "minmax(12rem, 1fr)",
@@ -110,6 +115,8 @@ export function QueryResultsTable({
     return {
       columnDefs: nextColumnDefs,
       gridData: nextGridData,
+      rowMetadata: metadata,
+      selectionColumnName: selectColumn,
     };
   }, [cypherResult, result.columns, result.data]);
 
@@ -118,7 +125,7 @@ export function QueryResultsTable({
       id: "query-results-grid",
       data: gridData,
       columnDefs,
-      rowIdentity: (row) => String(row.__gridId),
+      rowIdentity: (row) => rowMetadata.get(row)?.gridId ?? "",
       enableSorting: true,
       enableFiltering: false,
       enableCellEdit: false,
@@ -127,16 +134,16 @@ export function QueryResultsTable({
       enableFullRowSelection: true,
       enableSelectAll: true,
       enableSelectionBatchEvent: true,
-      isRowSelectable: (row) => Boolean(row.entity.__nodeId),
+      isRowSelectable: (row) => Boolean(rowMetadata.get(row.entity)?.nodeId),
       viewportHeight: 520,
       emptyMessage: "No rows returned",
     }),
-    [columnDefs, gridData],
+    [columnDefs, gridData, rowMetadata],
   );
 
   const getSelectableNodeIds = (rows: GridRecord[]) =>
     rows
-      .map((row) => row.__nodeId)
+      .map((row) => rowMetadata.get(row)?.nodeId)
       .filter(
         (nodeId): nodeId is string =>
           typeof nodeId === "string" && nodeId.length > 0,
@@ -169,7 +176,7 @@ export function QueryResultsTable({
       unsubscribeSingle();
       unsubscribeBatch();
     };
-  }, [gridApi, onSelectionChange]);
+  }, [gridApi, onSelectionChange, rowMetadata]);
 
   useEffect(() => {
     if (!gridApi?.selection) {
@@ -177,7 +184,7 @@ export function QueryResultsTable({
     }
 
     const targetRows = gridData.filter((row) =>
-      selectedNodeIds.has(String(row.__nodeId ?? "")),
+      selectedNodeIds.has(rowMetadata.get(row)?.nodeId ?? ""),
     );
     const currentSelectedRows = gridApi.selection.getSelectedRows?.() ?? [];
     const targetIds = new Set(getSelectableNodeIds(targetRows));
@@ -199,7 +206,7 @@ export function QueryResultsTable({
     } finally {
       isSyncingSelectionRef.current = false;
     }
-  }, [gridApi, gridData, selectedNodeIds]);
+  }, [gridApi, gridData, selectedNodeIds, rowMetadata]);
 
   // Stable renderer identity matters: the UiGrid React wrapper drops
   // and re-portals every cell when cellRenderers identity changes, so
@@ -208,10 +215,7 @@ export function QueryResultsTable({
   // (statusCellRenderer is a class arrow property there).
   const renderSelectCell = useCallback(
     (ctx: GridCellTemplateContext) => {
-      const row = ctx.row as GridRecord & {
-        __nodeData?: QueryResultNodeData | null;
-      };
-      const nodeData = row.__nodeData ?? null;
+      const nodeData = rowMetadata.get(ctx.row)?.nodeData ?? null;
 
       if (!nodeData) {
         return <div className="text-xs text-norse-fog py-1">-</div>;
@@ -229,7 +233,7 @@ export function QueryResultsTable({
         </div>
       );
     },
-    [onNodeSelect],
+    [onNodeSelect, rowMetadata],
   );
 
   const renderCell = useCallback((ctx: GridCellTemplateContext) => {
@@ -262,10 +266,10 @@ export function QueryResultsTable({
       Object.fromEntries(
         columnDefs.map(({ name }) => [
           name,
-          name === "nornicSelect" ? renderSelectCell : renderCell,
+          name === selectionColumnName ? renderSelectCell : renderCell,
         ]),
       ),
-    [columnDefs, renderCell, renderSelectCell],
+    [columnDefs, renderCell, renderSelectCell, selectionColumnName],
   );
 
   return (

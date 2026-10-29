@@ -25,36 +25,44 @@ import (
 // A value whose type is known when the statement is compiled is checked
 // then, as Neo4j does (staticDynamicTokenError).
 
+// resolvedTokenNames is the one reader of label and relationship-type names
+// given as values: dynamic labels and types, procedure arguments such as GDS
+// projections, parameters and list items. A string is one name, taken
+// literally, and several names come only as a list of strings. A name is
+// data, never relationship-pattern syntax: 'A|B' and 'A:B' are single names.
+// For any other value, or a list holding a non-string, ok is false and bad is
+// the value or list item that is not a string.
+func resolvedTokenNames(value interface{}) (names []string, bad interface{}, ok bool) {
+	if name, isString := value.(string); isString {
+		return []string{name}, nil, true
+	}
+	items, isList := cypherListValue(value)
+	if !isList {
+		return nil, value, false
+	}
+	names = make([]string, 0, len(items))
+	for _, item := range items {
+		name, isString := item.(string)
+		if !isString {
+			return nil, item, false
+		}
+		names = append(names, name)
+	}
+	return names, nil, true
+}
+
 // dynamicLabelNames reads the value of a dynamic label $(expr).
 func dynamicLabelNames(value interface{}) ([]string, error) {
-	switch typed := value.(type) {
-	case string:
-		if err := tokenNameError(typed); err != nil {
+	names, _, ok := resolvedTokenNames(value)
+	if !ok {
+		return nil, dynamicLabelValueError()
+	}
+	for _, name := range names {
+		if err := tokenNameError(name); err != nil {
 			return nil, err
 		}
-		return []string{typed}, nil
-	case []string:
-		for _, name := range typed {
-			if err := tokenNameError(name); err != nil {
-				return nil, err
-			}
-		}
-		return typed, nil
-	case []interface{}:
-		names := make([]string, 0, len(typed))
-		for _, item := range typed {
-			name, ok := item.(string)
-			if !ok {
-				return nil, dynamicLabelValueError()
-			}
-			if err := tokenNameError(name); err != nil {
-				return nil, err
-			}
-			names = append(names, name)
-		}
-		return names, nil
 	}
-	return nil, dynamicLabelValueError()
+	return names, nil
 }
 
 func dynamicLabelValueError() error {
@@ -331,15 +339,21 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 			}
 		}
 	}
-	operand := scope.operandOf(expression)
 	if use == dynamicTokenLabel {
-		if operand.excludes(isLabelTokenTypeName) {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(operand.typeName()))
-		}
-		return nil
+		return dynamicLabelTypeError(scope.operandOf(expression))
 	}
+	operand := scope.operandOf(expression)
 	if operand.excludes(isKeyTokenTypeName) {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(operand.typeName()))
+	}
+	return nil
+}
+
+// dynamicLabelTypeError checks the static type of a dynamic label or type
+// value: one that can be neither a string nor a list of strings fails.
+func dynamicLabelTypeError(operand staticOperand) error {
+	if operand.excludes(isLabelTokenTypeName) {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(operand.typeName()))
 	}
 	return nil
 }
@@ -356,6 +370,11 @@ const dynamicLabelTestFunction = "__nornic_haslabels"
 // its argument types are checked only when a row reaches the predicate.
 const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
 
+// Neo4j 5.26 checks a legacy variable-length dynamic type statically, but
+// does not evaluate it or filter the expanded relationships by it. Keep a
+// generated call for staticPatternTokenError to check; its runtime is true.
+const dynamicRangeTypeMode = "range"
+
 func init() {
 	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
 	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
@@ -365,6 +384,9 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 	if len(args) != 3 {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))
+	}
+	if strings.TrimSpace(args[2]) == "'"+dynamicRangeTypeMode+"'" {
+		return true, nil
 	}
 	values := make([]interface{}, len(args))
 	for i, arg := range args {
@@ -412,22 +434,7 @@ func labelsSatisfyNames(labels, names []string, any bool) bool {
 
 // hasDynamicToken reports whether text holds a dynamic label or type ($(e),
 // $all(e), $any(e)) outside quoted text.
-func hasDynamicToken(text string) bool {
-	if strings.IndexByte(text, '$') < 0 {
-		return false
-	}
-	for i := 0; i < len(text); i++ {
-		switch c := text[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			i = skipCypherQuotedText(text, i, c) - 1
-		case '$':
-			if dynamicLabelStartsAt(text, i) {
-				return true
-			}
-		}
-	}
-	return false
-}
+func hasDynamicToken(text string) bool { return cyphertext.HasDynamicToken(text) }
 
 // resolveRowDynamicTokens replaces the dynamic labels and types of a CREATE
 // or MERGE pattern whose values depend on the row (the label-expression
@@ -488,7 +495,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 				if index > 0 {
 					out.WriteByte(':')
 				}
-				out.WriteString(labelExpressionNameText(name))
+				out.WriteString(labelExpressionNameText(name, "label", "type"))
 			}
 			last = closing + 1
 			i = closing

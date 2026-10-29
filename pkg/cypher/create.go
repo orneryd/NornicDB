@@ -5,10 +5,10 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -185,7 +185,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			if rest, _, ok := splitPatternParameterMap(relStr); ok {
 				relStr = rest
 			}
-			relVar := relationshipDeclarationOf(relStr).variable
+			relVar := relationshipDeclarationHead(relStr).variable
 
 			// CREATE needs exactly one relationship type.
 			if relType == "" {
@@ -681,6 +681,13 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 				continue
 			}
 		}
+		if c == '[' && depth == 0 {
+			// A relationship's inside ([:R {k: f(x)}]) holds no node.
+			if end := findMatchingBracket(pattern, i); end > i {
+				i = end
+				continue
+			}
+		}
 		switch c {
 		case '{':
 			if depth > 0 {
@@ -737,7 +744,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 // or "r:TYPE $props" into the type (unquoted) and the properties map. A
 // pattern with no type ("r", ":") yields an empty type. The type's shape
 // (one type, a quoted or identifier name) is checked before, by
-// validateSingleRelationshipDeclaration.
+// validateRelationshipMutation.
 func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string, row pipelineRow) (string, map[string]interface{}, error) {
 	relStr = strings.TrimSpace(relStr)
 	relType := ""

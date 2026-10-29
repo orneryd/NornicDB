@@ -508,12 +508,12 @@ type smartCachedResult struct {
 	result *ExecuteResult
 	// entities is whether result returns a node or relationship, whose
 	// access Execute records on every hit (resultHasMaterializedEntities).
-	entities  bool
-	trace     HotPathTrace
-	timestamp time.Time
-	ttl       time.Duration
-	labels    []string // Labels this query depends on
-	key       string
+	entities     bool
+	trace        HotPathTrace
+	timestamp    time.Time
+	ttl          time.Duration
+	dependencies statementSchemaReference // Immutable owner-produced plan or its deferred source
+	key          string
 
 	// The provider publication captured before execution. A scalar token keeps
 	// cached results from retaining old providers or their embedding caches.
@@ -626,53 +626,58 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 	return cached.result, cached.trace, cached.entities, true
 }
 
-// PutWithLabels stores a result with associated labels for smart invalidation.
-func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabels(resultCacheEntryKey(context.Background(), cypher, params), result, ttl, labels)
+func (sc *SmartQueryCache) putWithDependenciesAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, dependencies *statementSchemaFacts, trace HotPathTrace, generation uint64) {
+	sc.putWithSchemaReferenceAndTraceForEmbedding(key, result, ttl, resolvedStatementSchemaReference(dependencies), trace, generation)
 }
 
-func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabelsAndTrace(key, result, ttl, labels, HotPathTrace{})
-}
-
-func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
-	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
-}
-
-func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+func (sc *SmartQueryCache) putWithSchemaReferenceAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, dependencies statementSchemaReference, trace HotPathTrace, generation uint64) {
 	result = cacheOwnedResult(result)
 	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-
-	// Remove old entry if exists
-	if _, exists := sc.cache[key]; exists {
-		sc.removeEntry(key)
-	}
-
-	// Evict if at capacity
-	for sc.lru.Len() >= sc.maxSize {
-		sc.evictOldestLRU()
+	previous, exists := sc.cache[key]
+	if exists {
+		dependencies = dependencies.reuse(previous.dependencies)
 	}
 
 	// Add new entry
 	entry := &smartCachedResult{
-		result:    result,
-		entities:  entities,
-		trace:     trace,
-		timestamp: time.Now(),
-		ttl:       ttl,
-		labels:    labels,
-		key:       key,
+		result:       result,
+		entities:     entities,
+		trace:        trace,
+		timestamp:    time.Now(),
+		ttl:          ttl,
+		dependencies: dependencies,
+		key:          key,
 
 		embeddingGeneration: generation,
+	}
+	if exists {
+		if previous.dependencies == dependencies {
+			// The immutable owner plan proves the indexes are unchanged.
+			// Publish a new entry: an in-flight reader may still hold the
+			// old one after releasing the cache lock.
+			sc.cache[key] = entry
+			elem := sc.lruMap[key]
+			elem.Value = entry
+			sc.lru.MoveToFront(elem)
+			return
+		}
+		sc.removeEntry(key)
+	}
+	for sc.lru.Len() >= sc.maxSize {
+		sc.evictOldestLRU()
 	}
 	sc.cache[key] = entry
 	elem := sc.lru.PushFront(entry)
 	sc.lruMap[key] = elem
 
-	// Index by labels
-	for _, label := range labels {
+	sc.indexDependencies(key, dependencies)
+}
+
+func (sc *SmartQueryCache) indexDependencies(key string, dependencies statementSchemaReference) {
+	for index := 0; index < dependencies.labelCount(); index++ {
+		label := dependencies.labelAt(index)
 		if sc.labelIndex[label] == nil {
 			sc.labelIndex[label] = make(map[string]struct{})
 		}
@@ -680,10 +685,10 @@ func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result 
 	}
 }
 
-// Put stores a result, auto-extracting labels from the query.
+// Put stores a result. Its exact statement supplies schema dependencies when
+// selective invalidation first needs them; publication never reparses it.
 func (sc *SmartQueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
-	labels := extractLabelsFromQuery(cypher)
-	sc.PutWithLabels(cypher, params, result, ttl, labels)
+	sc.putWithSchemaReferenceAndTraceForEmbedding(resultCacheEntryKey(context.Background(), cypher, params), result, ttl, deferredStatementSchemaReference(cypher), HotPathTrace{}, 0)
 }
 
 // InvalidateLabels removes only cache entries that depend on the given labels.
@@ -708,7 +713,24 @@ func (sc *SmartQueryCache) InvalidateLabels(labels []string) {
 	// Also invalidate queries with NO labels (they match all nodes)
 	// These queries are affected by ANY node creation/deletion
 	for key, entry := range sc.cache {
-		if len(entry.labels) == 0 {
+		if entry.dependencies.deferred() {
+			resolved := entry.dependencies.resolve()
+			affected := resolved.labelCount() == 0
+			for index := 0; !affected && index < resolved.labelCount(); index++ {
+				affected = containsString(labels, resolved.labelAt(index))
+			}
+			if affected {
+				keysToRemove[key] = struct{}{}
+			} else {
+				published := *entry
+				published.dependencies = resolved
+				sc.cache[key] = &published
+				sc.lruMap[key].Value = &published
+				sc.indexDependencies(key, resolved)
+			}
+			continue
+		}
+		if entry.dependencies.labelCount() == 0 {
 			keysToRemove[key] = struct{}{}
 		}
 	}
@@ -746,7 +768,8 @@ func (sc *SmartQueryCache) Stats() (hits, misses int64, size int, smartInvals, f
 func (sc *SmartQueryCache) removeEntry(key string) {
 	if entry, ok := sc.cache[key]; ok {
 		// Remove from label indexes
-		for _, label := range entry.labels {
+		for index := 0; index < entry.dependencies.labelCount(); index++ {
+			label := entry.dependencies.labelAt(index)
 			if keys, ok := sc.labelIndex[label]; ok {
 				delete(keys, key)
 				if len(keys) == 0 {
@@ -773,108 +796,6 @@ func (sc *SmartQueryCache) evictOldestLRU() {
 		sc.removeEntry(entry.key)
 		sc.observeEviction("lru")
 	}
-}
-
-// extractLabelsFromQuery extracts node labels and relationship type tokens from
-// a Cypher query string. It scans for label/type tokens like :Label,
-// :Label:AnotherLabel, and :TYPE_A|TYPE_B while skipping quoted string content.
-// A label expression that matches entities without a listed label (:!A, :%,
-// :A|!B, a parenthesised group) makes it return nil: the result depends on
-// every write, as an unlabelled query's does (#860).
-func extractLabelsFromQuery(cypher string) []string {
-	seen := make(map[string]struct{})
-	var labels []string
-	addLabel := func(label string) {
-		if label == "RETURN" || label == "WHERE" || label == "AND" || label == "OR" {
-			return
-		}
-		if _, ok := seen[label]; ok {
-			return
-		}
-		seen[label] = struct{}{}
-		labels = append(labels, label)
-	}
-
-	for i := 0; i < len(cypher); i++ {
-		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
-			i = end - 1
-			continue
-		}
-		ch := cypher[i]
-
-		if ch != ':' {
-			continue
-		}
-		// Skip type-cast and namespace-style double-colon constructs.
-		if i+1 < len(cypher) && cypher[i+1] == ':' {
-			continue
-		}
-
-		start := i + 1
-		if start >= len(cypher) {
-			continue
-		}
-		first := cypher[start]
-		if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, start) {
-			return nil
-		}
-		if !cyphertext.NameStartAt(cypher, start) {
-			continue
-		}
-
-		end := start + 1
-		for end < len(cypher) {
-			if cyphertext.NamePartAt(cypher, end) {
-				end++
-				continue
-			}
-			break
-		}
-		addLabel(cypher[start:end])
-
-		scan := end
-		for scan < len(cypher) {
-			j := scan
-			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
-				j++
-			}
-			if j >= len(cypher) || cypher[j] != '|' {
-				break
-			}
-			j++
-			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
-				j++
-			}
-			if j < len(cypher) && cypher[j] == ':' {
-				j++
-			}
-			if j >= len(cypher) {
-				break
-			}
-			first := cypher[j]
-			if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, j) {
-				return nil
-			}
-			if !cyphertext.NameStartAt(cypher, j) {
-				break
-			}
-			altStart := j
-			j++
-			for j < len(cypher) {
-				if cyphertext.NamePartAt(cypher, j) {
-					j++
-					continue
-				}
-				break
-			}
-			addLabel(cypher[altStart:j])
-			scan = j
-		}
-
-		i = scan - 1
-	}
-
-	return labels
 }
 
 // resultCacheEntryKey is the result cache's key for cypher run with params: the
@@ -1079,6 +1000,12 @@ func (pc *QueryPlanCache) Clear() {
 func normalizeQuery(cypher string) string { return normalizeQueryWithPresentation(cypher, nil) }
 
 func normalizeQueryWithPresentation(cypher string, protected []statementPresentationSpan) string {
+	// Most cache keys already use single ASCII spaces. The byte precheck
+	// only decides whether to enter the existing quote-aware spacing phase;
+	// it never changes the bytes of a literal or a symbolic name itself.
+	if !strings.Contains(cypher, "  ") && strings.IndexAny(cypher, "\t\n\r\f\v") < 0 {
+		return strings.TrimSpace(cypher)
+	}
 	// Collapse consecutive whitespace to a single ASCII space without allocating
 	// the intermediate []string created by strings.Fields. Text inside a
 	// string literal or a backtick-quoted name is kept as it is: 'a  b' and
@@ -1265,17 +1192,6 @@ func labelExpressionWidensMatch(c byte) bool {
 // $all(e), $any(e)) starts at s[i]: its names are known only at run time,
 // so a query with one depends on every write, as an unlabelled one does.
 // A parameter ({k:$v}) is not one.
-func dynamicLabelStartsAt(s string, i int) bool {
-	if i+1 >= len(s) || s[i] != '$' {
-		return false
-	}
-	if s[i+1] == '(' {
-		return true
-	}
-	for _, function := range [...]string{"all(", "any("} {
-		if i+1+len(function) <= len(s) && strings.EqualFold(s[i+1:i+1+len(function)], function) {
-			return true
-		}
-	}
-	return false
+func dynamicLabelStartsAt(text string, index int) bool {
+	return cyphertext.DynamicLabelStartsAt(text, index)
 }

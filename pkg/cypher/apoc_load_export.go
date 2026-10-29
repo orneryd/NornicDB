@@ -602,25 +602,34 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 
 	// Nodes section
 	csvContent.WriteString("# Nodes\n")
-	csvContent.WriteString("_id,_labels,properties\n")
+	writer := csv.NewWriter(&csvContent)
+	if err := writer.Write([]string{"_id", "_labels", "properties"}); err != nil {
+		return nil, err
+	}
 	for _, node := range nodes {
 		props, _ := json.Marshal(node.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
-			node.ID,
-			strings.Join(node.Labels, ";"),
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+		if err := writer.Write([]string{string(node.ID), strings.Join(node.Labels, ";"), string(props)}); err != nil {
+			return nil, err
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
 	}
 
 	csvContent.WriteString("\n# Relationships\n")
-	csvContent.WriteString("_id,_type,_start,_end,properties\n")
+	if err := writer.Write([]string{"_id", "_type", "_start", "_end", "properties"}); err != nil {
+		return nil, err
+	}
 	for _, edge := range edges {
 		props, _ := json.Marshal(edge.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
-			edge.ID,
-			edge.Type,
-			edge.StartNode,
-			edge.EndNode,
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+		if err := writer.Write([]string{string(edge.ID), edge.Type, string(edge.StartNode), string(edge.EndNode), string(props)}); err != nil {
+			return nil, err
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
 	}
 
 	content := csvContent.String()
@@ -675,10 +684,12 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 
 	// Build CSV
 	var csvContent strings.Builder
+	writer := csv.NewWriter(&csvContent)
 
 	// Header
-	csvContent.WriteString(strings.Join(result.Columns, ","))
-	csvContent.WriteByte('\n')
+	if err := writer.Write(result.Columns); err != nil {
+		return nil, err
+	}
 
 	// Data rows
 	for _, row := range result.Rows {
@@ -686,16 +697,21 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 		for i, val := range row {
 			switch v := val.(type) {
 			case string:
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
+				values[i] = v
 			case nil:
 				values[i] = ""
 			default:
 				jsonVal, _ := json.Marshal(v)
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
+				values[i] = string(jsonVal)
 			}
 		}
-		csvContent.WriteString(strings.Join(values, ","))
-		csvContent.WriteByte('\n')
+		if err := writer.Write(values); err != nil {
+			return nil, err
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
 	}
 
 	content := csvContent.String()

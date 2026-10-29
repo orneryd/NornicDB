@@ -746,7 +746,7 @@ func labelsExpr(labels []string) string {
 	}
 	parts := make([]string, 0, len(labels))
 	for _, l := range labels {
-		if strings.TrimSpace(l) == "" {
+		if l == "" {
 			continue
 		}
 		parts = append(parts, ":"+cyphertext.PrintIdentifier(l, nil, cyphertext.RawSource))
@@ -1032,7 +1032,7 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 		returnExpr = "reveal(n)"
 	}
 	stmt := fmt.Sprintf("MATCH (n) RETURN %s", returnExpr)
-	if strings.TrimSpace(label) != "" {
+	if label != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN %s", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource), returnExpr)
 	}
 	return queryRemoteEntities(r, ctx, stmt, nil, valueToNode, allRemoteEntities[Node])
@@ -1040,7 +1040,7 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 
 func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	stmt := "MATCH (n) RETURN n LIMIT 1"
-	if strings.TrimSpace(label) != "" {
+	if label != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 1", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 	}
 	return queryRemoteEntities(r, nil, stmt, nil, valueToNode, firstRemoteEntity[Node])

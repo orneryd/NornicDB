@@ -64,7 +64,7 @@ func TestPrepareMergeNodeForWriteLocksUntrustedHolder(t *testing.T) {
 	engine, schema := newMergeKeyTestEngine(t)
 	ctx := context.Background()
 	nodeID := createKeyNode(t, engine, "w2", 2)
-	constraint := schema.uniqueConstraints["U:k"]
+	constraint := schema.uniqueConstraints[uniqueConstraintIdentity{"U", "k"}]
 	constraint.mu.Lock()
 	constraint.valuesCacheComplete = false
 	constraint.mu.Unlock()

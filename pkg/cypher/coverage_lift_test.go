@@ -77,8 +77,9 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 		assert.Equal(t, want.rest, rest, text)
 		assert.Equal(t, want.distinct, distinct, text)
 	}
-	assert.True(t, withProjectionContainsVariable([]returnItem{{expr: "e"}, {expr: "score"}}, "E"))
-	assert.False(t, withProjectionContainsVariable([]returnItem{{expr: "edge"}}, "e"))
+	assert.True(t, vectorWithProjectionPreservesBindings([]returnItem{{expr: "e", alias: "e"}, {expr: "score", alias: "score"}}, 1, "e"))
+	assert.False(t, vectorWithProjectionPreservesBindings([]returnItem{{expr: "e", alias: "e"}, {expr: "score", alias: "score"}}, 1, "E"))
+	assert.False(t, vectorWithProjectionPreservesBindings([]returnItem{{expr: "edge", alias: "edge"}}, -1, "e"))
 }
 
 func TestCoverageLiftPureBranchHelpers(t *testing.T) {

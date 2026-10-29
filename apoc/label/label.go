@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 var (
@@ -427,7 +428,11 @@ func Pattern(labels []string) string {
 	if len(labels) == 0 {
 		return ""
 	}
-	return ":" + strings.Join(labels, ":")
+	names := make([]string, len(labels))
+	for i, name := range labels {
+		names[i] = cyphertext.NameText(name, "label")
+	}
+	return ":" + strings.Join(names, ":")
 }
 
 // FromPattern extracts labels from a pattern string.
@@ -440,7 +445,16 @@ func FromPattern(pattern string) []string {
 	if pattern == "" {
 		return []string{}
 	}
-	return strings.Split(pattern, ":")
+	var labels []string
+	if !cyphertext.EachChainItem(pattern, func(text string, quoted, dynamic bool) {
+		if dynamic {
+			text = "$(" + text + ")"
+		}
+		labels = append(labels, text)
+	}) {
+		return nil
+	}
+	return labels
 }
 
 // Stats returns statistics about labels.

@@ -59,6 +59,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -284,7 +285,7 @@ func (s *Server) SetDatabaseScopedStorage(fn func(dbName string) (storage.Engine
 // created so multi-database deployments target the configured default database
 // instead of the namespace of the single DB instance the server was opened with.
 func (s *Server) SetDefaultDatabase(name string) {
-	s.config.DefaultDatabase = strings.TrimSpace(name)
+	s.config.DefaultDatabase = name
 }
 
 // registerHandlers registers all MCP tool handlers.
@@ -384,7 +385,7 @@ func splitMCPPath(path string) (endpoint, database string) {
 		return path, ""
 	}
 	segments := strings.Split(rest, "/")
-	pinned := strings.TrimSpace(segments[0])
+	pinned := segments[0]
 	if pinned == "" {
 		return "/mcp", ""
 	}
@@ -762,7 +763,7 @@ func (s *Server) DefaultDatabaseName() string {
 	if s == nil {
 		return ""
 	}
-	if configured := strings.TrimSpace(s.config.DefaultDatabase); configured != "" {
+	if configured := s.config.DefaultDatabase; configured != "" {
 		return configured
 	}
 	if s.db == nil {
@@ -905,14 +906,13 @@ func (s *Server) handleStore(ctx context.Context, args map[string]interface{}) (
 		return nil, execErr
 	}
 	if exec != nil {
-		// Validate and sanitize all labels
+		// Validate the caller identity before passing it to the name writer.
 		var safeLabels []string
 		for _, l := range labels {
-			safe := strings.ReplaceAll(l, "`", "")
-			if !IsValidNodeType(safe) {
+			if !IsValidNodeType(l) {
 				return nil, localizedError(localization.MCPInvalidLabel(l), nil)
 			}
-			safeLabels = append(safeLabels, safe)
+			safeLabels = append(safeLabels, cyphertext.NameText(l, "label"))
 		}
 		labelExpr := strings.Join(safeLabels, ":")
 		query := fmt.Sprintf("CREATE (n:%s) SET n += $props RETURN elementId(n) AS id", labelExpr)
@@ -1275,8 +1275,8 @@ func (s *Server) handleLink(ctx context.Context, args map[string]interface{}) (i
 		}
 
 		// Create the edge via Cypher to capture receipt metadata
-		edgeType := strings.ReplaceAll(strings.ToUpper(relation), "`", "")
-		query := fmt.Sprintf("MATCH (a), (b) WHERE elementId(a) = $from AND elementId(b) = $to CREATE (a)-[r:%s]->(b) SET r += $props RETURN elementId(r) AS id", edgeType)
+		edgeType := strings.ToUpper(relation)
+		query := fmt.Sprintf("MATCH (a), (b) WHERE elementId(a) = $from AND elementId(b) = $to CREATE (a)-[r:%s]->(b) SET r += $props RETURN elementId(r) AS id", cyphertext.NameText(edgeType, "type"))
 		result, err := runCypherMutationWithRetry(ctx, exec, query, map[string]interface{}{
 			"from":  fromNode.ID,
 			"to":    toNode.ID,
@@ -1847,7 +1847,7 @@ func extractDatabaseArg(args map[string]interface{}) string {
 		}
 	}
 	delete(args, "db")
-	return strings.TrimSpace(db)
+	return db
 }
 
 func normalizeNodeElementID(id string) string {

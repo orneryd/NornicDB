@@ -1512,7 +1512,7 @@ func defaultBoltDatabaseName(db *nornicdb.DB) string {
 		return "nornic"
 	}
 	if namespaced, ok := db.GetStorage().(interface{ Namespace() string }); ok {
-		if ns := strings.TrimSpace(namespaced.Namespace()); ns != "" {
+		if ns := namespaced.Namespace(); ns != "" {
 			return ns
 		}
 	}

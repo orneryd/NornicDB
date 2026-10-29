@@ -35,8 +35,8 @@ func TestConstraintContract_ParsersAndComparators(t *testing.T) {
 		ok, pattern, comp, threshold, err := parseCountPatternExpression("COUNT { MATCH (n)-[:REL]->(:Target) } >= 2")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.Equal(t, "OUTGOING", pattern.Direction)
-		require.Equal(t, "REL", pattern.RelationType)
+		require.Equal(t, "OUTGOING", pattern.Direction())
+		require.True(t, pattern.MatchesType("REL"))
 		require.Equal(t, ">=", comp)
 		require.Equal(t, 2, threshold)
 
@@ -53,7 +53,7 @@ func TestConstraintContract_ParsersAndComparators(t *testing.T) {
 		ok, pattern, err := parseNotExistsPatternExpression("NOT EXISTS { MATCH (n)<-[:REL]-(:From) }")
 		require.NoError(t, err)
 		require.True(t, ok)
-		require.Equal(t, "INCOMING", pattern.Direction)
+		require.Equal(t, "INCOMING", pattern.Direction())
 
 		ok, _, err = parseNotExistsPatternExpression("NOT EXISTS { MATCH (n)-[:REL]->(:Target) ")
 		require.NoError(t, err)
@@ -63,13 +63,13 @@ func TestConstraintContract_ParsersAndComparators(t *testing.T) {
 	t.Run("parseConstraintPattern", func(t *testing.T) {
 		p, err := parseConstraintPattern("(n)-[:WORKS_AT]->(:Company:Entity)")
 		require.NoError(t, err)
-		require.Equal(t, "OUTGOING", p.Direction)
-		require.Equal(t, "WORKS_AT", p.RelationType)
-		require.Equal(t, []string{"Company", "Entity"}, p.TargetLabels)
+		require.Equal(t, "OUTGOING", p.Direction())
+		require.True(t, p.MatchesType("WORKS_AT"))
+		assertContractPatternLabels(t, p, []string{"Company", "Entity"})
 
 		p, err = parseConstraintPattern("(n)<-[:MANAGES]-(:Boss)")
 		require.NoError(t, err)
-		require.Equal(t, "INCOMING", p.Direction)
+		require.Equal(t, "INCOMING", p.Direction())
 
 		_, err = parseConstraintPattern("n-[:REL]->(:T)")
 		require.Error(t, err)

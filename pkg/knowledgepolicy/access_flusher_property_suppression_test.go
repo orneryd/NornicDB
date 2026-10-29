@@ -31,7 +31,7 @@ func (m *mockEntityMeta) GetEntityMeta(entityID string) (EntityMeta, error) {
 
 // suppressionCase is one entity configuration for the property-suppression
 // contract: which binding applies, how old the entity is, which properties it
-// has, and how the persisted overflow/callback state must look afterwards.
+// has, and how the persisted suppression/callback state must look afterwards.
 type suppressionCase struct {
 	// name is the subtest name, matching the original per-test suffix.
 	name string
@@ -50,25 +50,24 @@ type suppressionCase struct {
 	verify func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture)
 }
 
-// bioMarker asserts that "bio" carries a present, nil-valued suppression
-// marker. The nil value is the persisted suppression encoding, so the check
-// covers both the key and its representation.
+// bioMarker asserts that "bio" carries a present, true-valued suppression
+// entry in the internal namespace, checking both its key and representation.
 func bioMarker(t *testing.T, entry *AccessMetaEntry, context string) {
 	t.Helper()
 
 	value, ok := suppressionMarker(entry, "bio")
 	if !ok {
-		t.Errorf("expected _suppress:bio marker %s", context)
+		t.Errorf("expected bio suppression state %s", context)
 		return
 	}
-	if value != nil {
-		t.Errorf("expected _suppress:bio marker to be nil-valued %s, got %#v", context, value)
+	if value != true {
+		t.Errorf("expected bio suppression state to be true %s, got %#v", context, value)
 	}
 }
 
 // TestFlusherPropertySuppression covers the property-level suppression contract
-// of the access flusher: decayed properties get a nil-valued "_suppress:<prop>"
-// marker, recent properties stay unmarked, a change in suppression state
+// of the access flusher: decayed properties get a true entry in the internal
+// suppression namespace, recent properties stay unmarked, a state change
 // invokes embedInvalidate exactly once for the entity, and restoring a property
 // removes its marker.
 //
@@ -125,13 +124,13 @@ func TestFlusherPropertySuppression(t *testing.T) {
 			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
 				t.Helper()
 
-				bioMarker(t, entry, "in overflow")
+				bioMarker(t, entry, "in the suppression namespace")
 
 				value, ok := suppressionMarker(entry, "name")
 				if !ok {
-					t.Error("expected _suppress:name marker for old node")
-				} else if value != nil {
-					t.Errorf("expected _suppress:name marker to be nil-valued, got %#v", value)
+					t.Error("expected name suppression state for old node")
+				} else if value != true {
+					t.Errorf("expected _suppress:name suppression state to be true, got %#v", value)
 				}
 			},
 		},
@@ -207,16 +206,16 @@ func TestFlusherPropertySuppression(t *testing.T) {
 			installSuppression: true,
 			preSeed: func(entityID string) *AccessMetaEntry {
 				return &AccessMetaEntry{
-					TargetID:    entityID,
-					TargetScope: ScopeNode,
-					Overflow:    map[string]interface{}{"_suppress:bio": nil},
+					TargetID:             entityID,
+					TargetScope:          ScopeNode,
+					SuppressedProperties: map[string]bool{"bio": true},
 				}
 			},
 			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
 				t.Helper()
 
 				if _, ok := suppressionMarker(entry, "bio"); ok {
-					t.Error("expected _suppress:bio marker to be removed after restoration")
+					t.Error("expected bio suppression state to be removed after restoration")
 				}
 				want := f.entityID("p5")
 				if len(f.invalidated) != 1 || f.invalidated[0] != want {

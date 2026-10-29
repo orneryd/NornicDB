@@ -2,8 +2,6 @@ package storage
 
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -263,8 +261,7 @@ func TestDecayFilter_BindingTableRebuiltOnDDL(t *testing.T) {
 	}
 
 	labels := []string{"TestNode"}
-	sort.Strings(labels)
-	key := strings.Join(labels, "\x00")
+	key := knowledgepolicy.LabelSetKey(labels)
 	if cb := bt.LookupNode(key); cb == nil {
 		t.Error("BindingTable should contain the TestNode binding")
 	}

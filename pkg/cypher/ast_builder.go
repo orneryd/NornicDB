@@ -899,12 +899,12 @@ func (b *ASTBuilder) parsePatterns(source *cyphertext.Source) []ASTPattern {
 					if finish < len(part) && part[finish] == '>' {
 						finish++
 					}
-					arrowDirection, _, _ := relationshipArrows(part[start:finish])
+					connection, _ := readRelationshipConnection(part[start:finish], 0)
 					direction := EdgeBoth
-					switch arrowDirection {
-					case "incoming":
+					switch {
+					case connection.incoming && !connection.outgoing:
 						direction = EdgeIncoming
-					case "outgoing":
+					case connection.outgoing && !connection.incoming:
 						direction = EdgeOutgoing
 					}
 					relationship := ASTRelationship{Variable: variable, Direction: direction}

@@ -301,11 +301,13 @@ func rowContextShapeOf(expr string) *rowContextShape {
 	if shape, cached := rowContextShapes.get(expr); cached {
 		return shape
 	}
+	facts := relationshipExpressionReaderText(expr)
+	pattern := facts.pattern
 	shape := &rowContextShape{
-		pattern:          containsRelationshipPattern(expr),
-		statementContext: needsRowStatementContext(expr),
+		pattern:          pattern,
+		statementContext: pattern || needsNonPatternRowStatementContext(expr),
 		trimmed:          strings.TrimSpace(expr),
-		brace:            strings.Contains(expr, "{"),
+		brace:            facts.brace,
 	}
 	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
 	var callFacts1 functionCallFacts

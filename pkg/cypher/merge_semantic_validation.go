@@ -127,10 +127,10 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 		}
 	}
 	for _, name := range extractNodeVariables(pattern) {
-		scope.bind(name)
+		scope.bindWritten(name)
 	}
 	for _, name := range extractRelationshipVariables(pattern) {
-		scope.bind(name)
+		scope.bindWritten(name)
 	}
 	if name := extractPathAssignmentVariable(pattern); name != "" {
 		scope.bind(name)
@@ -172,6 +172,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	relationshipPattern := patternHasRelationship(pattern)
 	relationshipVariables := extractRelationshipVariables(pattern)
 	for _, variable := range relationshipVariables {
+		variable = normalizeProjectionColumnName(variable)
 		if scope.contains(variable) {
 			return mergeVariableAlreadyBoundError(variable)
 		}
@@ -207,7 +208,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		scope.bind(variable)
 	}
 	for _, variable := range relationshipVariables {
-		scope.bind(variable)
+		scope.bindWritten(variable)
 	}
 	if pathVariable := extractPathAssignmentVariable(pattern); pathVariable != "" {
 		if scope.contains(pathVariable) {
@@ -254,6 +255,15 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 		case '/':
 			if end := queryCommentEnd(pattern, index); end >= 0 {
 				index = end - 1
+			}
+		case '[':
+			if relationshipBracketAt(pattern, 0, index) {
+				if closing := findMatchingBracket(pattern, index); closing > index {
+					if strings.HasPrefix(relationshipDeclarationHead(pattern[index+1:closing]).properties, "$") {
+						return true
+					}
+					index = closing
+				}
 			}
 		case '{':
 			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {

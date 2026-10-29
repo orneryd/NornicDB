@@ -2775,8 +2775,9 @@ func snapshotLabelProjectionKey(label string, properties []string) string {
 	canonical := append([]string(nil), properties...)
 	sort.Strings(canonical)
 	var key strings.Builder
+	key.WriteString(strconv.Itoa(len(label)))
+	key.WriteByte(':')
 	key.WriteString(label)
-	key.WriteByte(0)
 	for _, property := range canonical {
 		key.WriteString(strconv.Itoa(len(property)))
 		key.WriteByte(':')
@@ -3661,11 +3662,11 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 	if schema == nil {
 		return nil
 	}
-	for _, c := range schema.GetConstraintsForLabels(pending.Labels) {
-		if c.Type != ConstraintUnique || len(c.Properties) != 1 {
+	for _, c := range schema.constraintsForLabels(pending.Labels) {
+		if c.Type != ConstraintUnique || c.Properties.Len() != 1 {
 			continue
 		}
-		prop := c.Properties[0]
+		prop := c.Properties.At(0)
 		val, has := pending.Properties[prop]
 		if !has {
 			continue
@@ -3860,12 +3861,12 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 		return err
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	constraints := schema.GetConstraintsForLabels(node.Labels)
+	constraints := schema.constraintsForLabels(node.Labels)
 
 	for _, constraint := range constraints {
 		switch constraint.Type {
 		case ConstraintUnique:
-			if len(constraint.Properties) > 1 {
+			if constraint.Properties.Len() > 1 {
 				if err := tx.checkNodeKeyConstraint(node, constraint); err != nil {
 					return err
 				}
@@ -3887,11 +3888,11 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 				return err
 			}
 		case ConstraintDomain:
-			if len(constraint.Properties) == 1 && len(constraint.AllowedValues) > 0 {
-				prop := constraint.Properties[0]
+			if constraint.Properties.Len() == 1 && constraint.AllowedValues.Len() > 0 {
+				prop := constraint.Properties.At(0)
 				value := node.Properties[prop]
-				if value != nil && !isValueInAllowedList(value, constraint.AllowedValues) {
-					message := localization.StorageValidationPropertyDomainInvalid(prop, value, constraint.AllowedValues)
+				if value != nil && !constraint.AllowedValues.Allows(value) {
+					message := localization.StorageValidationPropertyDomainInvalid(prop, value, constraint.AllowedValues.snapshot())
 					return newLocalizedConstraintViolation(ConstraintDomain, constraint.Label, []string{prop}, message, nil)
 				}
 			}
@@ -3916,8 +3917,10 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 // (see pinNamespaceFromIDLocked), so the in-tx scan does not need to
 // re-filter by namespace prefix. The committed-data fallback still filters
 // because the label index spans all namespaces.
-func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) error {
-	prop := c.Properties[0]
+func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	prop := c.Properties.At(0)
 	value := node.Properties[prop]
 
 	if value == nil {
@@ -4088,16 +4091,18 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 }
 
 // checkNodeKeyConstraint ensures composite key uniqueness across ALL data.
-func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) error {
-	values := make([]interface{}, len(c.Properties))
-	for i, prop := range c.Properties {
+func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	values := make([]interface{}, c.Properties.Len())
+	for i, prop := range c.Properties.All() {
 		values[i] = node.Properties[prop]
 		if values[i] == nil {
 			if c.Type == ConstraintUnique {
 				return nil
 			}
 			message := localization.StorageValidationNodeKeyNull(prop)
-			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties.snapshot(), message, nil)
 		}
 	}
 
@@ -4108,14 +4113,14 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; the namespace-prefix filter that used to live here is
 	// redundant.
-	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, c.Properties[0], values[0], func(n *Node) error {
-		for i := 1; i < len(c.Properties); i++ {
-			if !compareValues(n.Properties[c.Properties[i]], values[i]) {
+	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, c.Properties.At(0), values[0], func(n *Node) error {
+		for i := 1; i < c.Properties.Len(); i++ {
+			if !compareValues(n.Properties[c.Properties.At(i)], values[i]) {
 				return nil
 			}
 		}
-		message := localization.StorageValidationNodeKeyInTransaction(c.Properties, values)
-		return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+		message := localization.StorageValidationNodeKeyInTransaction(c.Properties.snapshot(), values)
+		return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties.snapshot(), message, nil)
 	}); err != nil {
 		return err
 	}
@@ -4126,7 +4131,7 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// Commits update the index before releasing the key's commit lock, so a
 	// concurrent commit of the same key is listed or still holds the lock.
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
-		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
+		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties.At(0), values)
 		if err != nil {
 			return err
 		}
@@ -4134,8 +4139,8 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 			if existing.ID == node.ID || tx.committedNodeSupersededLocked(existing.ID) || !nodeHoldsKey(existing, tx.namespace, c.Label, c.Properties, node.Properties) {
 				continue
 			}
-			message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
-			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+			message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties.snapshot(), values, string(existing.ID))
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		return nil
 	}
@@ -4154,7 +4159,9 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 // committedKeyHolder returns candidate id's committed node when it holds the
 // key (nodeHoldsKey): the MERGE admission read of a composite equality-index
 // candidate.
-func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
+func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, sourceProperties any, props map[string]interface{}) *Node {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	existing, err := b.GetNode(id)
 	if err != nil || existing == nil || !nodeHoldsKey(existing, namespace, label, properties, props) {
 		return nil
@@ -4167,7 +4174,9 @@ func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, pr
 // composite equality-index candidate into the key's holder, for commit
 // validation and MERGE admission alike. The index lists a node under its last
 // indexed values, so the node's current values decide.
-func nodeHoldsKey(node *Node, namespace, label string, properties []string, props map[string]interface{}) bool {
+func nodeHoldsKey(node *Node, namespace, label string, sourceProperties any, props map[string]interface{}) bool {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	id := node.ID
 	if namespace != "" && !(len(id) > len(namespace) && strings.HasPrefix(string(id), namespace) && id[len(namespace)] == ':') {
 		return false
@@ -4175,7 +4184,7 @@ func nodeHoldsKey(node *Node, namespace, label string, properties []string, prop
 	if !hasLabel(node.Labels, label) {
 		return false
 	}
-	for _, prop := range properties {
+	for _, prop := range properties.All() {
 		if v, ok := node.Properties[prop]; !ok || !compareValues(v, props[prop]) {
 			return false
 		}
@@ -4185,7 +4194,9 @@ func nodeHoldsKey(node *Node, namespace, label string, properties []string, prop
 
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations
 // within a single namespace (database).
-func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
+func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, sourceProperties any, values []interface{}, excludeNodeID NodeID) error {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	if hook := nodeKeyScanHook.Load(); hook != nil {
 		(*hook)()
 	}
@@ -4207,7 +4218,7 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, pr
 		}
 
 		match := true
-		for i, prop := range properties {
+		for i, prop := range properties.All() {
 			existingValue, ok := existingNode.Properties[prop]
 			if !ok || !compareValues(existingValue, values[i]) {
 				match = false
@@ -4216,8 +4227,8 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, pr
 		}
 
 		if match {
-			message := localization.StorageValidationNodeCompositeKeyExisting(properties, values, string(existingNode.ID))
-			return newLocalizedConstraintViolation(ConstraintNodeKey, label, properties, message, nil)
+			message := localization.StorageValidationNodeCompositeKeyExisting(properties.snapshot(), values, string(existingNode.ID))
+			return newLocalizedConstraintViolation(ConstraintNodeKey, label, properties.snapshot(), message, nil)
 		}
 	}
 
@@ -4225,8 +4236,10 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, pr
 }
 
 // checkExistenceConstraint ensures required property exists.
-func (tx *BadgerTransaction) checkExistenceConstraint(node *Node, c Constraint) error {
-	prop := c.Properties[0]
+func (tx *BadgerTransaction) checkExistenceConstraint(node *Node, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	prop := c.Properties.At(0)
 	value := node.Properties[prop]
 
 	if value == nil {
@@ -4244,7 +4257,9 @@ func (tx *BadgerTransaction) checkExistenceConstraint(node *Node, c Constraint) 
 // It must validate against:
 // - other pending nodes in this transaction (read-your-writes), and
 // - existing committed nodes in storage (via the label index scan).
-func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) error {
+func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
@@ -4253,13 +4268,13 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	keyVal, missing := spec.keyValue(node.Properties)
 	if missing != "" {
 		message := localization.StorageValidationTemporalKeyNull(missing)
-		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 	}
 
 	interval, ok := spec.interval(node.Properties)
 	if !ok {
 		message := localization.StorageValidationTemporalStartInvalid(spec.startProp)
-		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 	}
 
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
@@ -4274,11 +4289,11 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 		otherInterval, ok := spec.interval(other.Properties)
 		if !ok {
 			message := localization.StorageValidationTemporalNodeRequired(spec.startProp, string(other.ID))
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		if intervalsOverlap(interval, otherInterval) {
 			message := localization.StorageValidationTemporalNodeOverlap(string(other.ID), spec.keyLabel(), keyVal)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		return nil
 	}
@@ -4286,7 +4301,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; only the committed-data scan still needs the prefix filter
 	// because the label index spans namespaces.
-	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]], collides); err != nil {
+	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, spec.keyProps.At(0), node.Properties[spec.keyProps.At(0)], collides); err != nil {
 		return err
 	}
 
@@ -4588,7 +4603,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(edge *Edge) error {
 		return nil
 	}
 
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	constraints := schema.constraintsForLabels([]string{edge.Type})
 	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
@@ -4614,11 +4629,11 @@ func (tx *BadgerTransaction) validateEdgeConstraints(edge *Edge) error {
 				return err
 			}
 		case ConstraintDomain:
-			if len(c.Properties) == 1 && len(c.AllowedValues) > 0 {
-				prop := c.Properties[0]
+			if c.Properties.Len() == 1 && c.AllowedValues.Len() > 0 {
+				prop := c.Properties.At(0)
 				value := edge.Properties[prop]
-				if value != nil && !isValueInAllowedList(value, c.AllowedValues) {
-					message := localization.StorageValidationPropertyDomainInvalid(prop, value, c.AllowedValues)
+				if value != nil && !c.AllowedValues.Allows(value) {
+					message := localization.StorageValidationPropertyDomainInvalid(prop, value, c.AllowedValues.snapshot())
 					return newLocalizedConstraintViolation(ConstraintDomain, edge.Type, []string{prop}, message, nil)
 				}
 			}
@@ -4654,26 +4669,28 @@ func (tx *BadgerTransaction) validateEdgeConstraints(edge *Edge) error {
 // parameter filters committed edges (which span all namespaces in the
 // underlying engine) to the transaction's pinned namespace; all pending edges
 // already belong to that namespace by invariant.
-func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, namespace string) error {
-	values := make([]interface{}, len(c.Properties))
-	for i, prop := range c.Properties {
+func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, source constraintDefinitionSource, namespace string) error {
+	c := source.installedConstraint()
+
+	values := make([]interface{}, c.Properties.Len())
+	for i, prop := range c.Properties.All() {
 		if values[i] = edge.Properties[prop]; values[i] == nil {
 			return nil
 		}
 	}
 	collides := func(other *Edge) error {
-		for i, prop := range c.Properties {
+		for i, prop := range c.Properties.All() {
 			otherVal := other.Properties[prop]
 			if otherVal == nil || !compareValues(otherVal, values[i]) {
 				return nil
 			}
 		}
-		if len(c.Properties) == 1 {
-			message := localization.StorageValidationRelationshipUniqueExisting(c.Properties[0], values[0], string(other.ID))
-			return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
+		if c.Properties.Len() == 1 {
+			message := localization.StorageValidationRelationshipUniqueExisting(c.Properties.At(0), values[0], string(other.ID))
+			return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties.snapshot(), message, nil)
 		}
 		message := localization.StorageValidationRelationshipCompositeExisting(string(other.ID))
-		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
+		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties.snapshot(), message, nil)
 	}
 
 	for id, otherEdge := range tx.pendingEdges {
@@ -4738,29 +4755,31 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 // checkEdgeTemporalConstraint checks temporal no-overlap constraints for an edge in a transaction.
 // The namespace parameter filters committed edges to the same database namespace.
 // Supports composite key properties: all properties except the last 2 form the key.
-func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constraint, namespace string) error {
-	if len(c.Properties) < 3 {
+func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, source constraintDefinitionSource, namespace string) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() < 3 {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
 
-	keyProps := c.Properties[:len(c.Properties)-2]
-	startProp := c.Properties[len(c.Properties)-2]
-	endProp := c.Properties[len(c.Properties)-1]
+	keyProps := c.Properties.Slice(0, c.Properties.Len()-2)
+	startProp := c.Properties.At(c.Properties.Len() - 2)
+	endProp := c.Properties.At(c.Properties.Len() - 1)
 
 	// Validate all key properties are non-null
-	keyVals := make([]interface{}, len(keyProps))
-	for i, prop := range keyProps {
+	keyVals := make([]interface{}, keyProps.Len())
+	for i, prop := range keyProps.All() {
 		keyVals[i] = edge.Properties[prop]
 		if keyVals[i] == nil {
 			message := localization.StorageValidationTemporalKeyNull(prop)
-			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties.snapshot(), message, nil)
 		}
 	}
 
 	start, ok := CoerceTemporalTime(edge.Properties[startProp])
 	if !ok {
 		message := localization.StorageValidationTemporalStartInvalid(startProp)
-		return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+		return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties.snapshot(), message, nil)
 	}
 	end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
@@ -4784,7 +4803,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		otherEnd, otherHasEnd := CoerceTemporalTime(otherEdge.Properties[endProp])
 		if intervalsOverlap(newInterval, temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd}) {
 			message := localization.StorageValidationTemporalEdgeOverlap(string(id), keyVals)
-			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties.snapshot(), message, nil)
 		}
 	}
 
@@ -4810,7 +4829,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		existingEnd, existingHasEnd := CoerceTemporalTime(existingEdge.Properties[endProp])
 		if intervalsOverlap(newInterval, temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}) {
 			message := localization.StorageValidationTemporalEdgeOverlap(string(existingEdge.ID), keyVals)
-			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties.snapshot(), message, nil)
 		}
 	}
 
@@ -4820,7 +4839,9 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 // checkEdgeCardinality enforces cardinality constraints within a transaction.
 // It counts pending + committed edges of the given type connected to the anchor node,
 // excluding deleted edges, and rejects the new edge if adding it would exceed MaxCount.
-func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, namespace string) error {
+func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, source constraintDefinitionSource, namespace string) error {
+	c := source.installedConstraint()
+
 	// Determine anchor node based on direction.
 	var anchorNode NodeID
 	if c.Direction == "OUTGOING" {
@@ -4888,10 +4909,10 @@ func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, name
 // checkEdgePolicy validates DISALLOWED and ALLOWED endpoint policies within a transaction.
 // Reads node labels from pending nodes first (read-your-writes), then falls back to committed storage.
 func (tx *BadgerTransaction) checkEdgePolicy(edge *Edge, schema *SchemaManager, namespace string) error {
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	constraints := schema.constraintsForLabels([]string{edge.Type})
 
-	var allowedPolicies []Constraint
-	var disallowedPolicies []Constraint
+	var allowedPolicies []installedConstraintDefinition
+	var disallowedPolicies []installedConstraintDefinition
 	for _, c := range constraints {
 		if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
@@ -5028,9 +5049,9 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 			}
 
 			// Check policy constraints.
-			constraints := schema.GetConstraintsForLabels([]string{edge.Type})
-			var allowedPolicies []Constraint
-			var disallowedPolicies []Constraint
+			constraints := schema.constraintsForLabels([]string{edge.Type})
+			var allowedPolicies []installedConstraintDefinition
+			var disallowedPolicies []installedConstraintDefinition
 			for _, c := range constraints {
 				if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
 					continue

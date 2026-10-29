@@ -135,7 +135,7 @@ func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *tes
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	ready, err := engine2.labelCountReady()
+	ready, err := engine2.labelCountReady(engine2.db)
 	require.NoError(t, err)
 	require.True(t, ready)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cucumber/godog"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -256,5 +257,30 @@ func startConformanceServerWithEngine(t *testing.T, engine storage.Engine) (neo4
 		if err := engine.Close(); err != nil {
 			t.Errorf("close storage engine: %v", err)
 		}
+	}
+}
+
+func TestBoltBackendResetDecodedSchemaNames(t *testing.T) {
+	for _, name := range []string{" ", "  ", "\t", "a`b", "ordinary"} {
+		t.Run(name, func(t *testing.T) {
+			driver, shutdown := startConformanceServer(t)
+			defer shutdown()
+			backend, err := NewBoltBackend(BoltBackendConfig{Driver: driver, DatabaseName: "nornic", Mode: AutocommitMode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			query := "CREATE INDEX " + cyphertext.QuoteName(name) + " FOR (n:ResetName) ON (n.value)"
+			if _, err := backend.Execute(ctx, query, nil); err != nil {
+				t.Fatalf("create named index: %v", err)
+			}
+			if err := backend.Reset(ctx); err != nil {
+				t.Fatalf("Reset exact name %q: %v", name, err)
+			}
+			indexes, err := backend.Execute(ctx, "SHOW INDEXES", nil)
+			if err != nil || len(indexes.Rows) != 0 {
+				t.Fatalf("Reset retained indexes: %v, %v", indexes.Rows, err)
+			}
+		})
 	}
 }

@@ -63,15 +63,14 @@ type VectorSpaceKey struct {
 }
 
 // Canonical returns a normalized copy of the key:
-//   - trims whitespace
-//   - lowercases the database name; the type (a label) and the vector name (a
-//     property) keep their case, as Neo4j's names are case-sensitive (#862)
+//   - preserves exact database, type (label) and vector (property) names
+//   - normalizes the distance protocol
 //   - defaults vectorName to "default" when empty
 //   - defaults distance to cosine when empty
 //   - validates dimensions > 0 and distance support
 func (k VectorSpaceKey) Canonical() (VectorSpaceKey, error) {
-	db := normalizeIdentifier(k.DB)
-	typ := strings.TrimSpace(k.Type)
+	db := k.DB
+	typ := k.Type
 	if db == "" || typ == "" {
 		return VectorSpaceKey{}, fmt.Errorf("vector space key requires db and type")
 	}
@@ -79,7 +78,7 @@ func (k VectorSpaceKey) Canonical() (VectorSpaceKey, error) {
 		return VectorSpaceKey{}, fmt.Errorf("vector space dimensions must be > 0")
 	}
 
-	name := strings.TrimSpace(k.VectorName)
+	name := k.VectorName
 	if name == "" {
 		name = DefaultVectorName
 	}
@@ -232,10 +231,6 @@ func (r *IndexRegistry) Stats() []VectorSpaceStats {
 	return stats
 }
 
-func normalizeIdentifier(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}
-
 func normalizeDistance(dist DistanceMetric) (DistanceMetric, error) {
 	d := DistanceMetric(strings.ToLower(strings.TrimSpace(string(dist))))
 	if d == "" {
@@ -256,5 +251,7 @@ func normalizeBackend(kind BackendKind) BackendKind {
 }
 
 func buildKeyString(key VectorSpaceKey) string {
-	return fmt.Sprintf("%s|%s|%s|%d|%s", key.DB, key.Type, key.VectorName, key.Dims, key.Distance)
+	// A delimited concatenation cannot distinguish ("A|B", "C") from
+	// ("A", "B|C"). Go string quotation frames and escapes each component.
+	return fmt.Sprintf("%q|%q|%q|%d|%q", key.DB, key.Type, key.VectorName, key.Dims, key.Distance)
 }

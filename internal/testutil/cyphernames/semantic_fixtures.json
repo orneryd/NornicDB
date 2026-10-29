@@ -1,0 +1,62 @@
+[
+  {
+    "name": "Plain",
+    "quoted": "`Plain`"
+  },
+  {
+    "name": "",
+    "quoted": "``"
+  },
+  {
+    "name": "a.b",
+    "quoted": "`a.b`"
+  },
+  {
+    "name": "a,b",
+    "quoted": "`a,b`"
+  },
+  {
+    "name": "a(b)",
+    "quoted": "`a(b)`"
+  },
+  {
+    "name": "space ",
+    "quoted": "`space `"
+  },
+  {
+    "name": "two words",
+    "quoted": "`two words`"
+  },
+  {
+    "name": "tick`key",
+    "quoted": "`tick``key`"
+  },
+  {
+    "name": "\u540d",
+    "quoted": "`\u540d`"
+  },
+  {
+    "name": "\u03a9",
+    "quoted": "`\u03a9`"
+  },
+  {
+    "name": "a\u00a0",
+    "quoted": "`a\u00a0`"
+  },
+  {
+    "name": "\ud83d\ude00",
+    "quoted": "`\ud83d\ude00`"
+  },
+  {
+    "name": "MATCH",
+    "quoted": "`MATCH`"
+  },
+  {
+    "name": "1name",
+    "quoted": "`1name`"
+  },
+  {
+    "name": "a$b",
+    "quoted": "`a$b`"
+  }
+]

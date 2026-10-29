@@ -12,7 +12,7 @@ import (
 func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property, where string) bool {
 	for _, term := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(where))) {
 		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterParens(strings.TrimSpace(term)))
-		if ok && strings.EqualFold(required, property) {
+		if ok && required == property {
 			return true
 		}
 	}

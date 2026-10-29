@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -24,45 +23,28 @@ func parseConstraintContractForClause(forClause string) (entityType storage.Cons
 		return "", "", "", false
 	}
 
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
-		if bracketStart < 0 {
+	if hop, valid := readRelationshipHop(forClause); valid {
+		declaration := hop.declaration
+		if !declaration.hasColon {
 			return "", "", "", false
 		}
-		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-		if !ok {
-			return "", "", "", false
-		}
-		prefix := strings.TrimSpace(forClause[:bracketStart])
-		suffix := strings.TrimSpace(rest)
-		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", "", false
-		}
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
-			return "", "", "", false
-		}
-		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+		variable = symbolicNameValue(declaration.variable)
+		labelOrType = declaration.staticTypeName()
 		if labelOrType == "" {
 			return "", "", "", false
 		}
 		return storage.ConstraintEntityRelationship, variable, labelOrType, true
 	}
-
 	inside, rest, ok := extractParenSection(forClause)
 	if !ok || strings.TrimSpace(rest) != "" {
 		return "", "", "", false
 	}
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
+	writtenVariable, labels, valid := strictNodeHeadLabels(inside)
+	if !valid || len(labels) != 1 || labels[0] == "" {
 		return "", "", "", false
 	}
-	variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-	labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if labelOrType == "" {
-		return "", "", "", false
-	}
+	variable = symbolicNameValue(writtenVariable)
+	labelOrType = labels[0]
 	return storage.ConstraintEntityNode, variable, labelOrType, true
 }
 
@@ -124,7 +106,7 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 	}
 
 	if name == "" {
-		name = fmt.Sprintf("constraint_%s_contract", labelOrType)
+		name = generatedSchemaName("constraint", entityType == storage.ConstraintEntityRelationship, "contract", labelOrType)
 	}
 	return parsedCreateConstraintContractDDL{
 		name:        name,
@@ -186,7 +168,13 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 			return nil, true, err
 		}
 	}
-	if err := storage.ValidateConstraintContractOnCreationForEngine(e.storage, contract); err != nil {
+	// One compilation serves admission, the scan of existing data and the
+	// stored schema revision.
+	compiled, err := storage.CompileConstraintContract(contract)
+	if err != nil {
+		return nil, true, err
+	}
+	if err := storage.ValidateCompiledConstraintContractOnCreationForEngine(e.storage, compiled); err != nil {
 		return nil, true, err
 	}
 	schema := e.storage.GetSchema()
@@ -201,7 +189,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 			newTemporal = append(newTemporal, constraint)
 		}
 	}
-	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
+	if err := schema.AddCompiledConstraintContractBundle(compiled, compiledConstraints, compiledTypes, ifNotExists); err != nil {
 		return nil, true, err
 	}
 	// See addSchemaConstraint: new temporal entries are authoritative on an
@@ -231,67 +219,10 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 }
 
 func splitConstraintContractEntries(body string) ([]string, error) {
-	entries := make([]string, 0)
-	var current strings.Builder
-	braceDepth := 0
-	bracketDepth := 0
-	parenDepth := 0
-
-	flush := func() {
-		entry := strings.TrimSpace(current.String())
-		if entry != "" {
-			entries = append(entries, entry)
-		}
-		current.Reset()
-	}
-
-	for index := 0; index < len(body); index++ {
-		if end, skipped := skipCypherLexicalToken(body, index); skipped {
-			current.WriteString(body[index:end])
-			index = end - 1
-			continue
-		}
-		ch := body[index]
-		switch {
-		case ch == '{':
-			braceDepth++
-			current.WriteByte(ch)
-		case ch == '}':
-			if braceDepth == 0 {
-				return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
-			}
-			braceDepth--
-			current.WriteByte(ch)
-		case ch == '[':
-			bracketDepth++
-			current.WriteByte(ch)
-		case ch == ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-			current.WriteByte(ch)
-		case ch == '(':
-			parenDepth++
-			current.WriteByte(ch)
-		case ch == ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-			current.WriteByte(ch)
-		case ch == '\n' || ch == ';':
-			if braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 {
-				flush()
-				continue
-			}
-			current.WriteByte(ch)
-		default:
-			current.WriteByte(ch)
-		}
-	}
-	if braceDepth != 0 || bracketDepth != 0 || parenDepth != 0 {
+	entries, valid := cyphertext.SplitConstraintEntries(body)
+	if !valid {
 		return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 	}
-	flush()
 	return entries, nil
 }
 

@@ -239,7 +239,7 @@ func (r *ProcedureRegistry) ClearUser() {
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {
-	if strings.TrimSpace(spec.Name) == "" {
+	if spec.Name == "" {
 		return fmt.Errorf("procedure name cannot be empty")
 	}
 	if spec.MinArgs < 0 {
@@ -269,19 +269,42 @@ func procedureOutputTypes(ctx context.Context, clause string) map[string]string 
 // procedureDeclaredReturns is the registry's ordered output declaration,
 // shared by static type consumers and result-header analysis.
 func procedureDeclaredReturns(spec ProcedureSpec) []ProcedureColumn {
-	outputs := spec.Returns
-	if len(outputs) == 0 {
-		separator := strings.LastIndex(spec.Signature, " :: (")
-		if separator < 0 || !strings.HasSuffix(spec.Signature, ")") {
-			return nil
-		}
-		for _, output := range splitTopLevelComma(spec.Signature[separator+5 : len(spec.Signature)-1]) {
-			if name, typeName, ok := strings.Cut(output, "::"); ok {
-				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
-			}
-		}
+	if len(spec.Returns) > 0 {
+		return spec.Returns
 	}
+	separator := findTopLevelOperator(spec.Signature, "::", false, true)
+	if separator < 0 {
+		return nil
+	}
+	outputs, _ := parseProcedureOutputColumns(strings.TrimSpace(spec.Signature[separator+2:]))
 	return outputs
+}
+
+// parseProcedureOutputColumns frames the output declaration, then takes each
+// decoded name and its source extent from the symbolic-name owner. A delimiter
+// in a quoted name belongs to that name, not to the declaration's type separator.
+func parseProcedureOutputColumns(declaration string) ([]ProcedureColumn, bool) {
+	inner, ok := stripEnclosingRowDelimiter(declaration, '(', ')')
+	if !ok {
+		return nil, false
+	}
+	if inner == "" {
+		return nil, true
+	}
+	var outputs []ProcedureColumn
+	for _, output := range splitTopLevelComma(inner) {
+		name, rest, ok := parseIdentifierToken(output)
+		rest = strings.TrimSpace(rest)
+		if !ok || !strings.HasPrefix(rest, "::") {
+			return nil, false
+		}
+		typeName := strings.TrimSpace(rest[2:])
+		if typeName == "" {
+			return nil, false
+		}
+		outputs = append(outputs, ProcedureColumn{Name: name, Type: typeName})
+	}
+	return outputs, true
 }
 
 func procedureStaticType(typeName string) string {

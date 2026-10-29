@@ -185,7 +185,7 @@ class GraphifyLocalTest(unittest.TestCase):
         fetch_ids = [q for q, _ in queries if "MATCH (n:Code {repo: $repo})" in q and "RETURN n.id AS id" in q][0]
         self.assertIn("n.props_hash IS NOT NULL", fetch_ids)
         delete_edges = [(q, params) for q, params in queries
-                        if "MATCH (a:Code {id: row.src, repo: $repo})-[r:CALLS]->(b:Code {id: row.tgt, repo: $repo})" in q]
+                        if "MATCH (a:Code {id: row.src, repo: $repo})-[r:`CALLS`]->(b:Code {id: row.tgt, repo: $repo})" in q]
         # b->a is stale; a->stale-node goes with its node (DETACH DELETE) and is not deleted separately
         self.assertEqual([params["rows"] for _, params in delete_edges], [[{"src": "b", "tgt": "a"}]])
         # the sync's own fetch (the last one) is restricted to nodes this importer wrote

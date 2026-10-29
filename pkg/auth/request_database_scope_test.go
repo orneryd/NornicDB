@@ -53,3 +53,23 @@ func TestRequestDatabaseScopeOmittedSelection(t *testing.T) {
 		require.False(t, ok)
 	})
 }
+
+// Selection spelling is a separate, normalized protocol. Its mapped physical
+// database is a decoded catalog identity and must reach the resolver unchanged.
+func TestRequestDatabaseScopeCanonicalDatabaseIdentity(t *testing.T) {
+	for _, name := range []string{"db", " db ", "DB", " ", "\t"} {
+		t.Run(name, func(t *testing.T) {
+			var checked []string
+			scope := NewRequestDatabaseScopeWithSelectionCheck("primary", map[string]string{"primary": name}, func(selection string) bool {
+				checked = append(checked, selection)
+				return true
+			})
+			for _, selection := range []string{"", " PRIMARY "} {
+				database, ok := scope.Resolve(selection)
+				require.True(t, ok)
+				require.Equal(t, name, database)
+			}
+			require.Equal(t, []string{"primary", "primary"}, checked)
+		})
+	}
+}

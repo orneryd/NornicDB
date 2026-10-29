@@ -551,7 +551,7 @@ func (k changeKeys) ofNode(node *Node) map[string][]map[string]any {
 		return nil
 	}
 	var keys map[string][]map[string]any
-	for _, constraint := range k.schema.GetConstraintsForLabels(node.Labels) {
+	for _, constraint := range k.schema.constraintsForLabels(node.Labels) {
 		if constraint.Type != ConstraintNodeKey || constraint.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
@@ -572,7 +572,7 @@ func (k changeKeys) ofEdge(edge *Edge) []map[string]any {
 	if edge == nil || k.schema == nil {
 		return nil
 	}
-	constraints := k.schema.GetAllConstraints()
+	constraints := k.schema.allConstraints()
 	sort.Slice(constraints, func(i, j int) bool { return constraints[i].Name < constraints[j].Name })
 	var keys []map[string]any
 	for _, constraint := range constraints {
@@ -587,12 +587,14 @@ func (k changeKeys) ofEdge(edge *Edge) []map[string]any {
 }
 
 // keyValues is the named properties' values, or nil when one is missing.
-func keyValues(names []string, properties map[string]any) map[string]any {
-	if len(names) == 0 {
+func keyValues(sourceNames any, properties map[string]any) map[string]any {
+	names := constraintPropertyNamesOf(sourceNames)
+
+	if names.Len() == 0 {
 		return nil
 	}
-	values := make(map[string]any, len(names))
-	for _, name := range names {
+	values := make(map[string]any, names.Len())
+	for _, name := range names.All() {
 		value, ok := properties[name]
 		if !ok || value == nil {
 			return nil

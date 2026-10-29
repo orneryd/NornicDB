@@ -139,15 +139,13 @@ func TestParseConstraintPattern_Outgoing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "OUTGOING" {
-		t.Fatalf("expected OUTGOING, got %s", pattern.Direction)
+	if pattern.Direction() != "OUTGOING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "KNOWS" {
-		t.Fatalf("expected KNOWS, got %s", pattern.RelationType)
+	if !pattern.MatchesType("KNOWS") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 1 || pattern.TargetLabels[0] != "Person" {
-		t.Fatalf("expected TargetLabels=[Person], got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{"Person"})
 }
 
 func TestParseConstraintPattern_OutgoingNoTargetLabel(t *testing.T) {
@@ -155,15 +153,13 @@ func TestParseConstraintPattern_OutgoingNoTargetLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "OUTGOING" {
-		t.Fatalf("expected OUTGOING, got %s", pattern.Direction)
+	if pattern.Direction() != "OUTGOING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "LIKES" {
-		t.Fatalf("expected LIKES, got %s", pattern.RelationType)
+	if !pattern.MatchesType("LIKES") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 0 {
-		t.Fatalf("expected empty target labels, got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{})
 }
 
 func TestParseConstraintPattern_Incoming(t *testing.T) {
@@ -171,15 +167,13 @@ func TestParseConstraintPattern_Incoming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "INCOMING" {
-		t.Fatalf("expected INCOMING, got %s", pattern.Direction)
+	if pattern.Direction() != "INCOMING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "FOLLOWS" {
-		t.Fatalf("expected FOLLOWS, got %s", pattern.RelationType)
+	if !pattern.MatchesType("FOLLOWS") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 0 {
-		t.Fatalf("expected empty target labels, got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{})
 }
 
 func TestParseConstraintPattern_Unsupported(t *testing.T) {
@@ -194,15 +188,13 @@ func TestParseConstraintPattern_MultiLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "OUTGOING" {
-		t.Fatalf("expected OUTGOING, got %s", pattern.Direction)
+	if pattern.Direction() != "OUTGOING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "KNOWS" {
-		t.Fatalf("expected KNOWS, got %s", pattern.RelationType)
+	if !pattern.MatchesType("KNOWS") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 2 || pattern.TargetLabels[0] != "Person" || pattern.TargetLabels[1] != "Employee" {
-		t.Fatalf("expected TargetLabels=[Person Employee], got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{"Person", "Employee"})
 }
 
 func TestParseConstraintPattern_VariableOnBothSides(t *testing.T) {
@@ -210,15 +202,13 @@ func TestParseConstraintPattern_VariableOnBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "OUTGOING" {
-		t.Fatalf("expected OUTGOING, got %s", pattern.Direction)
+	if pattern.Direction() != "OUTGOING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "KNOWS" {
-		t.Fatalf("expected KNOWS, got %s", pattern.RelationType)
+	if !pattern.MatchesType("KNOWS") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 1 || pattern.TargetLabels[0] != "Person" {
-		t.Fatalf("expected TargetLabels=[Person], got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{"Person"})
 }
 
 func TestParseConstraintPattern_IncomingWithLabels(t *testing.T) {
@@ -226,15 +216,13 @@ func TestParseConstraintPattern_IncomingWithLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pattern.Direction != "INCOMING" {
-		t.Fatalf("expected INCOMING, got %s", pattern.Direction)
+	if pattern.Direction() != "INCOMING" {
+		t.Fatalf("wrong direction: %s", pattern.Direction())
 	}
-	if pattern.RelationType != "MANAGES" {
-		t.Fatalf("expected MANAGES, got %s", pattern.RelationType)
+	if !pattern.MatchesType("MANAGES") || pattern.MatchesType("Wrong") {
+		t.Fatal("wrong owned relationship type")
 	}
-	if len(pattern.TargetLabels) != 2 || pattern.TargetLabels[0] != "Manager" || pattern.TargetLabels[1] != "Admin" {
-		t.Fatalf("expected TargetLabels=[Manager Admin], got %v", pattern.TargetLabels)
-	}
+	assertContractPatternLabels(t, pattern, []string{"Manager", "Admin"})
 }
 
 // --- parseCountPatternExpression ---
@@ -247,7 +235,7 @@ func TestParseCountPatternExpression_Valid(t *testing.T) {
 	if !matched {
 		t.Fatal("expected match")
 	}
-	if pattern.Direction != "OUTGOING" || pattern.RelationType != "KNOWS" {
+	if pattern.Direction() != "OUTGOING" || !pattern.MatchesType("KNOWS") {
 		t.Fatalf("unexpected pattern: %+v", pattern)
 	}
 	if comparator != ">=" {
@@ -276,7 +264,7 @@ func TestParseCountPatternExpression_WithMatch(t *testing.T) {
 	if !matched {
 		t.Fatal("expected match")
 	}
-	if pattern.Direction != "OUTGOING" || pattern.RelationType != "LIKES" || len(pattern.TargetLabels) != 1 || pattern.TargetLabels[0] != "Movie" {
+	if pattern.Direction() != "OUTGOING" || !pattern.MatchesType("LIKES") || pattern.TargetLabelCount() != 1 || !pattern.MatchesTargetLabels([]string{"Movie"}) {
 		t.Fatalf("unexpected pattern: %+v", pattern)
 	}
 	if comparator != "=" || threshold != 0 {
@@ -294,7 +282,7 @@ func TestParseNotExistsPatternExpression_Valid(t *testing.T) {
 	if !matched {
 		t.Fatal("expected match")
 	}
-	if pattern.Direction != "OUTGOING" || pattern.RelationType != "OWNS" || len(pattern.TargetLabels) != 1 || pattern.TargetLabels[0] != "Car" {
+	if pattern.Direction() != "OUTGOING" || !pattern.MatchesType("OWNS") || pattern.TargetLabelCount() != 1 || !pattern.MatchesTargetLabels([]string{"Car"}) {
 		t.Fatalf("unexpected pattern: %+v", pattern)
 	}
 }

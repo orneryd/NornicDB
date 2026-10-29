@@ -104,6 +104,6 @@ func TestLabelScanReadsOnlyUsedProperties(t *testing.T) {
 
 // A keyword-named variable followed by a property access is a reference.
 func TestSemanticExpressionReferencesKeywordVariableProperty(t *testing.T) {
-	require.Equal(t, []string{"where.id", "x"}, semanticExpressionReferences("where.id + x"))
-	require.Equal(t, []string{"x"}, semanticExpressionReferences("x IS NOT NULL AND true"))
+	require.Equal(t, []semanticReference{{variable: "where", property: "id", propertyAccess: true}, {variable: "x"}}, semanticExpressionReferences("where.id + x"))
+	require.Equal(t, []semanticReference{{variable: "x"}}, semanticExpressionReferences("x IS NOT NULL AND true"))
 }

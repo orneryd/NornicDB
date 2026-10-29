@@ -5,22 +5,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 var labelCountReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaLabelCountReady}
 
 func labelCountKey(namespace, label string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(label)))
-	key = append(key, prefixMVCCMeta, prefixMVCCMetaLabelCount)
-	key = append(key, namespace...)
-	key = append(key, 0)
-	key = append(key, label...)
-	return key
+	return append(countNamespaceKey(prefixMVCCMetaLabelCount, namespace, len(label)), label...)
 }
 
 func labelCountPrefix() []byte {
@@ -28,10 +21,7 @@ func labelCountPrefix() []byte {
 }
 
 func labelCountNamespacePrefix(namespace string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace)))
-	key = append(key, prefixMVCCMeta, prefixMVCCMetaLabelCount)
-	key = append(key, namespace...)
-	return append(key, 0)
+	return countNamespaceKey(prefixMVCCMetaLabelCount, namespace, 0)
 }
 
 type namespaceLabel struct {
@@ -239,11 +229,11 @@ func (b *BadgerEngine) applyLabelCountDeltasLocked(deltas map[namespaceLabel]int
 }
 
 func (b *BadgerEngine) rebuildAuthoritativeLabelCountsLocked() error {
-	counts, err := b.collectAuthoritativeLabelCounts()
+	counts, err := b.collectAuthoritativeLabelCounts(b.db)
 	if err != nil {
 		return err
 	}
-	return b.rebuildLabelCounts(counts)
+	return b.rebuildLabelCounts(counts, func(fn func(*badger.Txn) error) error { return b.withUpdate(fn) }, false)
 }
 
 func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
@@ -258,6 +248,9 @@ func (b *BadgerEngine) repairLabelCountLocked(namespace, label string) error {
 		prefix := countDeltaPrefixFor(countDeltaKindLabel, namespace, label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			if len(it.Item().Key()) != len(prefix)+8 {
+				continue
+			}
 			if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
 				it.Close()
 				return err
@@ -287,7 +280,7 @@ func (b *BadgerEngine) countLabelIndexEntriesInNamespace(namespace, label string
 		labelLen := len(label)
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			num, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+			num, ok := extractNumIDFromNamedIndex(key, labelLen)
 			if !ok {
 				continue
 			}
@@ -326,13 +319,15 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	return b.namedCount(countDeltaKindLabel, label)
 }
 
-func (b *BadgerEngine) labelCountReady() (bool, error) {
+func (b *BadgerEngine) labelCountReady(view badgerViewer) (bool, error) {
 	var ready bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(labelCountReadyKey)
+	err := view.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(labelCountReadyKey)
 		if err == nil {
-			ready = true
-			return nil
+			return item.Value(func(value []byte) error {
+				ready = len(value) == 1 && value[0] == namedCountFormatVersion
+				return nil
+			})
 		}
 		if err == badger.ErrKeyNotFound {
 			return nil
@@ -342,25 +337,24 @@ func (b *BadgerEngine) labelCountReady() (bool, error) {
 	return ready, err
 }
 
-func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
-	persisted := make(map[string]int64)
-	err := b.db.View(func(txn *badger.Txn) error {
+func (b *BadgerEngine) loadPersistedLabelCounts(view badgerViewer) (map[namespaceLabel]int64, error) {
+	persisted := make(map[namespaceLabel]int64)
+	err := view.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(labelCountPrefix()))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			sep := bytes.IndexByte(key[2:], 0)
-			if sep < 0 {
+			namespace, name, valid := countNamespaceParts(key)
+			if !valid {
 				continue
 			}
-			namespace := string(key[2 : 2+sep])
-			label := string(key[2+sep+1:])
+			label := string(name)
 			if err := it.Item().Value(func(val []byte) error {
 				count, decodeErr := decodeDerivedCount(val)
 				if decodeErr != nil {
 					return decodeErr
 				}
-				persisted[namespace+"\x00"+label] = count
+				persisted[namespaceLabel{namespace: namespace, label: label}] = count
 				return nil
 			}); err != nil {
 				return err
@@ -371,9 +365,9 @@ func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 	return persisted, err
 }
 
-func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, error) {
-	counts := make(map[string]int64)
-	err := b.db.View(func(txn *badger.Txn) error {
+func (b *BadgerEngine) collectAuthoritativeLabelCounts(view badgerViewer) (map[namespaceLabel]int64, error) {
+	counts := make(map[namespaceLabel]int64)
+	err := view.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -392,7 +386,7 @@ func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, erro
 					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
 				}
 				for _, label := range uniqueLabels(node.Labels) {
-					counts[namespace+"\x00"+label]++
+					counts[namespaceLabel{namespace: namespace, label: label}]++
 				}
 				return nil
 			}); err != nil {
@@ -404,7 +398,7 @@ func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, erro
 	return counts, err
 }
 
-func sameLabelCounts(actual, persisted map[string]int64) bool {
+func sameLabelCounts(actual, persisted map[namespaceLabel]int64) bool {
 	if len(actual) != len(persisted) {
 		return false
 	}
@@ -416,60 +410,65 @@ func sameLabelCounts(actual, persisted map[string]int64) bool {
 	return true
 }
 
-func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		prefix := labelCountPrefix()
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if err := txn.Delete(key); err != nil {
-				it.Close()
-				return fmt.Errorf("clear label count %q before rebuild: %w", key, err)
-			}
+func (b *BadgerEngine) rebuildLabelCounts(counts map[namespaceLabel]int64, run func(func(*badger.Txn) error) error, resetDeltas bool) error {
+	return run(func(txn *badger.Txn) error {
+		prefixes := [][]byte{labelCountPrefix()}
+		if resetDeltas {
+			prefixes = append(prefixes, countDeltaAllPrefix(countDeltaKindLabel))
 		}
-		it.Close()
-		for composite, count := range counts {
-			parts := strings.SplitN(composite, "\x00", 2)
-			if len(parts) != 2 {
-				continue
+		for _, prefix := range prefixes {
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+				key := it.Item().KeyCopy(nil)
+				if err := txn.Delete(key); err != nil {
+					it.Close()
+					return fmt.Errorf("clear label count %q before rebuild: %w", key, err)
+				}
 			}
-			if err := txn.Set(labelCountKey(parts[0], parts[1]), encodeDerivedCount(count)); err != nil {
+			it.Close()
+		}
+		for key, count := range counts {
+			if err := txn.Set(labelCountKey(key.namespace, key.label), encodeDerivedCount(count)); err != nil {
 				return err
 			}
 		}
-		return txn.Set(labelCountReadyKey, []byte{1})
+		return txn.Set(labelCountReadyKey, []byte{namedCountFormatVersion})
 	})
 }
 
-func (b *BadgerEngine) ensureLabelCounts() error {
+func (b *BadgerEngine) ensureLabelCounts(view badgerViewer, run func(func(*badger.Txn) error) error) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	// Fold any deltas a crash left behind first, so the persisted form is
-	// base keys again before verification compares them.
-	if err := b.foldAllLabelCountDeltas(); err != nil {
-		return err
-	}
-	// Verification and rebuild rewrite the base keys: they hold the count
-	// lock, as every rewrite of them does (rebuildAuthoritativeLabelCountsLocked).
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	ready, err := b.labelCountReady()
+	ready, err := b.labelCountReady(view)
 	if err != nil {
 		return err
 	}
-	actual, err := b.collectAuthoritativeLabelCounts()
+	if ready {
+		if err := b.foldCountDeltasOn(view.View, run, countDeltaKindLabel, labelCountKey, "", ""); err != nil {
+			return err
+		}
+	}
+	actual, err := b.collectAuthoritativeLabelCounts(view)
 	if err != nil {
 		return err
 	}
-	persisted, err := b.loadPersistedLabelCounts()
+	if !ready {
+		// Older derived keys are not interpreted with the current codec. This
+		// initialization owner publishes rebuilt bases and retires their deltas
+		// atomically, before startup/restore admits work again.
+		return b.rebuildLabelCounts(actual, run, true)
+	}
+	persisted, err := b.loadPersistedLabelCounts(view)
 	if err != nil {
 		return err
 	}
-	if ready && sameLabelCounts(actual, persisted) {
+	if sameLabelCounts(actual, persisted) {
 		return nil
 	}
-	return b.rebuildLabelCounts(actual)
+	return b.rebuildLabelCounts(actual, run, false)
 }
 
 func (tx *BadgerTransaction) bufferAdjustLabelCount(namespace, label string, delta int64) {
@@ -592,11 +591,11 @@ func (b *BadgerEngine) namedCount(kind byte, name string) (int64, error) {
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			sep := bytes.IndexByte(key[2:], 0)
-			if sep < 0 {
+			_, keyName, valid := countNamespaceParts(key)
+			if !valid {
 				continue
 			}
-			if !bytes.Equal(key[2+sep+1:], needle) {
+			if !bytes.Equal(keyName, needle) {
 				continue
 			}
 			if err := it.Item().Value(func(val []byte) error {

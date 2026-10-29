@@ -42,7 +42,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 		require.NoError(t, engine.rebuildUniqueConstraintValues("alpha", sm))
 
-		uc, ok := sm.uniqueConstraints["User:email"]
+		uc, ok := sm.uniqueConstraints[uniqueConstraintIdentity{"User", "email"}]
 		require.True(t, ok)
 		uc.mu.RLock()
 		require.True(t, uc.valuesCacheComplete)

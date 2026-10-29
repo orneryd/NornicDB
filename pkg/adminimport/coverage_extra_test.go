@@ -913,14 +913,14 @@ func TestPreserveEmptyStringProperty_RecognisesScalarStringTypes(t *testing.T) {
 }
 
 // ============================================================================
-// uniqueNonEmpty — preserves order, deduplicates, drops blanks.
+// uniqueNonEmpty — preserves exact identities, deduplicates, drops exact empty.
 // ============================================================================
 
 func TestUniqueNonEmpty_OrderedAndDeduplicated(t *testing.T) {
-	require.Equal(t, []string{"a", "b", "c"},
+	require.Equal(t, []string{"a", " ", "b", "c"},
 		uniqueNonEmpty([]string{"a", " ", "a", "b", "", "c", "b"}))
 	require.Equal(t, []string{}, uniqueNonEmpty(nil))
-	require.Equal(t, []string{}, uniqueNonEmpty([]string{"", "   "}))
+	require.Equal(t, []string{"   "}, uniqueNonEmpty([]string{"", "   "}))
 }
 
 // ============================================================================

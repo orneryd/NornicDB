@@ -287,8 +287,8 @@ func (f *AccessFlusher) flush() {
 	}
 }
 
-// evaluatePropertySuppression checks each property with a decay rule and writes
-// nil markers for suppressed properties (or removes them if restored).
+// evaluatePropertySuppression checks each property with a decay rule and records
+// its suppression state separately from user-chosen custom access properties.
 // Returns true if any suppression state changed.
 func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *AccessMetaEntry, meta EntityMeta, nowNanos int64) bool {
 	if f.scorerFunc == nil || f.entityMeta == nil {
@@ -308,21 +308,18 @@ func (f *AccessFlusher) evaluatePropertySuppression(entityID string, entry *Acce
 	changed := false
 	for _, key := range meta.PropertyKeys {
 		res := scoreEntityProperty(scorer, entityID, meta, key, entry, nowNanos)
-		overflowKey := "_suppress:" + key
-
-		if entry.Overflow == nil {
-			entry.Overflow = make(map[string]interface{})
-		}
-
-		_, wasSuppressed := entry.Overflow[overflowKey]
+		wasSuppressed := entry.SuppressedProperties[key]
 		if res.SuppressionEligible {
 			if !wasSuppressed {
-				entry.Overflow[overflowKey] = nil
+				if entry.SuppressedProperties == nil {
+					entry.SuppressedProperties = make(map[string]bool)
+				}
+				entry.SuppressedProperties[key] = true
 				changed = true
 			}
 		} else {
 			if wasSuppressed {
-				delete(entry.Overflow, overflowKey)
+				delete(entry.SuppressedProperties, key)
 				changed = true
 			}
 		}

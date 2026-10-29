@@ -85,6 +85,6 @@ func TestUnionColumnOrder(t *testing.T) {
 	require.False(t, same)
 	require.Equal(t, [][]interface{}{{int64(2), int64(1)}, {nil, int64(3)}},
 		reorderUnionRows([][]interface{}{{int64(1), int64(2)}, {int64(3)}}, []int{1, 0}))
-	require.Equal(t, []string{"n.y"}, semanticFreeReferences(removeAggregateCalls("collect(n.x)[0].id + n.y")))
+	require.Equal(t, []semanticReference{{variable: "n", property: "y", propertyAccess: true}}, semanticFreeReferences(removeAggregateCalls("collect(n.x)[0].id + n.y")))
 	require.Empty(t, semanticFreeReferences("[1, 2][0..1]"))
 }

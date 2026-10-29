@@ -176,6 +176,7 @@ func mapPatternScope(query string, open int, stack []mapDelimiter, context *mapP
 // statement scope. Nested expression groups and sibling patterns then use
 // constant-time delimiter lookups rather than rescanning overlapping suffixes.
 type mapPatternContext struct {
+	unbalanced bool
 	closes     map[int]int
 	scopes     map[int]*mapPatternClauseIndex
 	qualified  map[int]bool
@@ -226,15 +227,19 @@ func newMapPatternContext(query string) *mapPatternContext {
 			stack = append(stack, index)
 		case ')', ']', '}':
 			if len(stack) == 0 {
+				context.unbalanced = true
 				continue
 			}
 			open := stack[len(stack)-1]
 			if query[open] == '(' && c == ')' || query[open] == '[' && c == ']' || query[open] == '{' && c == '}' {
 				context.closes[open] = index
 				stack = stack[:len(stack)-1]
+			} else {
+				context.unbalanced = true
 			}
 		}
 	}
+	context.unbalanced = context.unbalanced || len(stack) != 0
 	return context
 }
 func (context *mapPatternContext) close(open int) int {

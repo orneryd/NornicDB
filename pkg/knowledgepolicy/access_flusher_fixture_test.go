@@ -99,22 +99,18 @@ func (f *accessFlusherFixture) flushAccesses(suffix string) {
 	f.flusher.Flush()
 }
 
-// suppressionMarker reports the overflow value and map presence of the
-// persisted suppression marker for one property. Presence is reported
-// separately from the value because suppression is stored as a nil-valued key.
+// suppressionMarker reports the exact property's internal suppression state.
 func suppressionMarker(entry *AccessMetaEntry, property string) (value interface{}, present bool) {
-	value, present = entry.Overflow["_suppress:"+property]
+	value, present = entry.SuppressedProperties[property]
 	return value, present
 }
 
-// suppressionMarkerKeys lists every "_suppress:" marker key currently recorded
-// on the entry.
+// suppressionMarkerKeys lists suppressed properties in the internal namespace.
 func suppressionMarkerKeys(entry *AccessMetaEntry) []string {
-	const prefix = "_suppress:"
-	keys := make([]string, 0, len(entry.Overflow))
-	for k := range entry.Overflow {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			keys = append(keys, k)
+	keys := make([]string, 0, len(entry.SuppressedProperties))
+	for key, suppressed := range entry.SuppressedProperties {
+		if suppressed {
+			keys = append(keys, key)
 		}
 	}
 	return keys

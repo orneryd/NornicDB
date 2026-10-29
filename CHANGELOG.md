@@ -145,6 +145,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently. Preserve replacement property-index entries after deletion.
 - Persist replacement transaction embedding chunks and remove obsolete chunks
   across repeated updates, rollback and database reopen.
+- Preserve quoted property keys through index and constraint installation and
+  SHOW recreation, including dots, commas, parentheses, backticks and trailing
+  spaces. Share name emission across projection/remote writers, browser property
+  editing and JavaScript/Python migration peers, with a source-to-subject inventory.
+
+- Quote literal relationship types, labels and property names in public Go APOC
+  Cypher exports, and share the canonical identifier writer across value text,
+  remote count queries and Fabric output. Generated round trips cover Cypher
+  source emitters, including names containing pipes, spaces and backticks.
+  Apply the same contract to Neo4j migration tools, label patterns and index
+  hints. A typed production-source check rejects unquoted name interpolation,
+  with generated migration round trips and independent mutation controls.
 
 - Preserve hidden stored node and relationship identity, quota usage and cascades.
   Order buffered, direct and maintenance writes together so flushes and restarts
@@ -251,6 +263,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. This prevents new corruption; it cannot repair data already corrupted
   by an older binary during cross-store recovery.
 
+- Derive query-cache dependencies from parsed statement facts, preserving quoted
+  relationship alternatives and label names during selective invalidation.
+- Read label and relationship-type names given as values literally: a GDS projection
+  of 'A|B' or ['A|B'] projects the one type A|B, and GraphQL quotes the names it writes into Cypher.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
@@ -1055,6 +1071,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backtick-quoted relationship types work in `CREATE`, `MERGE` and `MATCH`
   (CREATE rejected them, MERGE stored the backticks, MATCH searched for the
   quoted text) (#907).
+- Relationship type declarations using `IS` recognize maps inside dynamic
+  expressions. Count and property-aggregation shortcuts use the shared type
+  facts or fall back to normal execution; repeated type names count once.
 - `CREATE (n $props) RETURN n` binds `n`, `CREATE ()-[r:R $props]->()` takes
   the map, and a non-map parameter there is Neo4j's SyntaxError (#907).
 - Whitespace inside a relationship arrow is ignored: `(b) <-[r]-(a)` matched

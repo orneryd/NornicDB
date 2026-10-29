@@ -2,7 +2,7 @@
 package storage
 
 import (
-	"bytes"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -19,7 +19,7 @@ import (
 //
 // Key shape:
 //
-//	[prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace..., 0x00, type] -> uint64 count
+//	[prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace length, namespace, type] -> uint64 count
 //
 // A typed relationship count is then a single Badger point read (summed across
 // namespaces by EdgeCountByType), never a function of edge cardinality or
@@ -28,12 +28,7 @@ import (
 var edgeTypeCountReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEdgeTypeCountReady}
 
 func edgeTypeCountKey(namespace, edgeType string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(edgeType)))
-	key = append(key, prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount)
-	key = append(key, namespace...)
-	key = append(key, 0)
-	key = append(key, edgeType...)
-	return key
+	return append(countNamespaceKey(prefixMVCCMetaEdgeTypeCount, namespace, len(edgeType)), edgeType...)
 }
 
 func edgeTypeCountPrefix() []byte {
@@ -41,10 +36,7 @@ func edgeTypeCountPrefix() []byte {
 }
 
 func edgeTypeCountNamespacePrefix(namespace string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace)))
-	key = append(key, prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount)
-	key = append(key, namespace...)
-	return append(key, 0)
+	return countNamespaceKey(prefixMVCCMetaEdgeTypeCount, namespace, 0)
 }
 
 // namespaceEdgeType is the composite key for edge-type count deltas.
@@ -101,6 +93,9 @@ func (b *BadgerEngine) repairEdgeTypeCountLocked(namespace, edgeType string) err
 		prefix := countDeltaPrefixFor(countDeltaKindEdgeType, namespace, edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			if len(it.Item().Key()) != len(prefix)+8 {
+				continue
+			}
 			if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
 				it.Close()
 				return err
@@ -129,7 +124,7 @@ func (b *BadgerEngine) countEdgeTypeIndexEntriesInNamespace(namespace, edgeType 
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			num, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+			num, ok := extractNumIDFromNamedIndex(key, len(edgeType))
 			if !ok {
 				continue
 			}
@@ -155,13 +150,15 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 	return b.namedCount(countDeltaKindEdgeType, edgeType)
 }
 
-func (b *BadgerEngine) edgeTypeCountReady() (bool, error) {
+func (b *BadgerEngine) edgeTypeCountReady(view badgerViewer) (bool, error) {
 	var ready bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(edgeTypeCountReadyKey)
+	err := view.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(edgeTypeCountReadyKey)
 		if err == nil {
-			ready = true
-			return nil
+			return item.Value(func(value []byte) error {
+				ready = len(value) == 1 && value[0] == namedCountFormatVersion
+				return nil
+			})
 		}
 		if err == badger.ErrKeyNotFound {
 			return nil
@@ -216,12 +213,10 @@ func loadPersistedEdgeTypeCountsSnapshot(txn *badger.Txn) (*edgeTypeCountSnapsho
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			sep := bytes.IndexByte(key[2:], 0)
-			if sep < 0 {
+			namespace, rest, valid := countNamespaceParts(key)
+			if !valid {
 				continue
 			}
-			namespace := string(key[2 : 2+sep])
-			rest := key[2+sep+1:]
 			if err := it.Item().Value(func(val []byte) error {
 				count, decodeErr := decodeDerivedCount(val)
 				if decodeErr != nil {
@@ -240,18 +235,10 @@ func loadPersistedEdgeTypeCountsSnapshot(txn *badger.Txn) (*edgeTypeCountSnapsho
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			sep1 := bytes.IndexByte(key[2:], 0)
-			if sep1 < 0 {
+			namespace, label, edgeType, valid := parseEdgeTypeLabelCountKey(key)
+			if !valid {
 				continue
 			}
-			namespace := string(key[2 : 2+sep1])
-			rest := key[2+sep1+1:]
-			sep2 := bytes.IndexByte(rest, 0)
-			if sep2 < 0 {
-				continue
-			}
-			label := string(rest[:sep2])
-			edgeType := string(rest[sep2+1:])
 			if err := it.Item().Value(func(val []byte) error {
 				count, decodeErr := decodeDerivedCount(val)
 				if decodeErr != nil {
@@ -314,13 +301,13 @@ func (b *BadgerEngine) readNodeLabelsIfPresentInTxn(txn *badger.Txn, id NodeID) 
 // collectAuthoritativeEdgeTypeCountsSnapshot derives the true counts for all
 // three tiers in one pass over edge primary keys: each edge contributes its
 // type, its start-endpoint labels, and its end-endpoint labels.
-func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCountSnapshot, error) {
+func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot(view badgerViewer) (*edgeTypeCountSnapshot, error) {
 	snap := &edgeTypeCountSnapshot{
 		types:       make(map[namespaceEdgeType]int64),
 		startLabels: make(map[namespaceEdgeTypeLabel]int64),
 		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
 	}
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := view.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -370,23 +357,12 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 	return snap, nil
 }
 
-// collectAuthoritativeEdgeTypeCounts is the type-tier projection of the
-// snapshot collector, retained for DeleteByPrefix accounting.
-func (b *BadgerEngine) collectAuthoritativeEdgeTypeCounts() (map[string]int64, error) {
-	snap, err := b.collectAuthoritativeEdgeTypeCountsSnapshot()
-	if err != nil {
-		return nil, err
-	}
-	counts := make(map[string]int64, len(snap.types))
-	for key, count := range snap.types {
-		counts[key.namespace+"\x00"+key.edgeType] = count
-	}
-	return counts, nil
-}
-
-func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot, run func(func(*badger.Txn) error) error, resetDeltas bool) error {
+	return run(func(txn *badger.Txn) error {
 		prefixes := [][]byte{edgeTypeCountPrefix(), edgeTypeStartLabelCountPrefix(), edgeTypeEndLabelCountPrefix()}
+		if resetDeltas {
+			prefixes = append(prefixes, countDeltaAllPrefix(countDeltaKindEdgeType))
+		}
 		for _, prefix := range prefixes {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -413,36 +389,37 @@ func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot
 				return err
 			}
 		}
-		return txn.Set(edgeTypeCountReadyKey, []byte{1})
+		return txn.Set(edgeTypeCountReadyKey, []byte{namedCountFormatVersion})
 	})
 }
 
 // ensureEdgeTypeCounts verifies persisted edge-type counts (all three tiers)
 // against the edge primary keys and rebuilds them on drift. It runs once at
 // engine open, behind the ready marker (same shape as ensureLabelCounts).
-func (b *BadgerEngine) ensureEdgeTypeCounts() error {
+func (b *BadgerEngine) ensureEdgeTypeCounts(view badgerViewer, run func(func(*badger.Txn) error) error) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	// Fold any deltas a crash left behind first, so the persisted form is
-	// base keys again before verification compares them.
-	if err := b.foldAllEdgeTypeCountDeltas(); err != nil {
-		return err
-	}
-	// Verification and rebuild rewrite the base keys: they hold the count
-	// lock, as every rewrite of them does (rebuildAuthoritativeEdgeTypeCountsLocked).
 	b.edgeTypeCountWriteMu.Lock()
 	defer b.edgeTypeCountWriteMu.Unlock()
-	ready, err := b.edgeTypeCountReady()
+	ready, err := b.edgeTypeCountReady(view)
 	if err != nil {
 		return err
 	}
-	actual, err := b.collectAuthoritativeEdgeTypeCountsSnapshot()
+	if ready {
+		if err := b.foldCountDeltasOn(view.View, run, countDeltaKindEdgeType, edgeTypeCountKey, "", ""); err != nil {
+			return err
+		}
+	}
+	actual, err := b.collectAuthoritativeEdgeTypeCountsSnapshot(view)
 	if err != nil {
 		return err
+	}
+	if !ready {
+		return b.rebuildEdgeTypeCountsSnapshot(actual, run, true)
 	}
 	var persisted *edgeTypeCountSnapshot
-	err = b.db.View(func(txn *badger.Txn) error {
+	err = view.View(func(txn *badger.Txn) error {
 		var loadErr error
 		persisted, loadErr = loadPersistedEdgeTypeCountsSnapshot(txn)
 		return loadErr
@@ -450,10 +427,10 @@ func (b *BadgerEngine) ensureEdgeTypeCounts() error {
 	if err != nil {
 		return err
 	}
-	if ready && actual.same(persisted) {
+	if actual.same(persisted) {
 		return nil
 	}
-	return b.rebuildEdgeTypeCountsSnapshot(actual)
+	return b.rebuildEdgeTypeCountsSnapshot(actual, run, false)
 }
 
 // foldEdgeTypeCountDeltas collapses the persisted deltas of one edge type
@@ -556,11 +533,11 @@ func (b *BadgerEngine) applyEdgeTypeCountDeltasLocked(deltas map[namespaceEdgeTy
 // counters (all three tiers) from the edge primary keys. The caller must hold
 // edgeTypeCountWriteMu.
 func (b *BadgerEngine) rebuildAuthoritativeEdgeTypeCountsLocked() error {
-	snap, err := b.collectAuthoritativeEdgeTypeCountsSnapshot()
+	snap, err := b.collectAuthoritativeEdgeTypeCountsSnapshot(b.db)
 	if err != nil {
 		return err
 	}
-	return b.rebuildEdgeTypeCountsSnapshot(snap)
+	return b.rebuildEdgeTypeCountsSnapshot(snap, func(fn func(*badger.Txn) error) error { return b.withUpdate(fn) }, false)
 }
 
 // collectEdgeTypeCountsByPrefix derives per-(namespace, type) counts for edges
@@ -636,21 +613,35 @@ func edgeTypeEndLabelCountPrefix() []byte {
 }
 
 func edgeTypeLabelCountNamespacePrefix(sub byte, namespace string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace)))
-	key = append(key, prefixMVCCMeta, sub)
-	key = append(key, namespace...)
-	return append(key, 0)
+	return countNamespaceKey(sub, namespace, 0)
 }
 
+// Positional counts have one variable-length decoded component before the
+// final type. Its byte length, not a sentinel inside its identity, frames it.
 func edgeTypeLabelCountKey(sub byte, namespace, label, edgeType string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(4, len(namespace), len(label), len(edgeType)))
-	key = append(key, prefixMVCCMeta, sub)
-	key = append(key, namespace...)
-	key = append(key, 0)
+	key := countNamespaceKey(sub, namespace, util.SafePreallocSum(binary.MaxVarintLen64, len(label), len(edgeType)))
+	key = binary.AppendUvarint(key, uint64(len(label)))
 	key = append(key, label...)
-	key = append(key, 0)
-	key = append(key, edgeType...)
-	return key
+	return append(key, edgeType...)
+}
+
+// parseEdgeTypeLabelCountKey is shared by snapshot verification and unscoped
+// reads. Namespace and label lengths frame their complete decoded identities;
+// the remaining bytes are the exact relationship type.
+func parseEdgeTypeLabelCountKey(key []byte) (namespace, label, edgeType string, valid bool) {
+	if len(key) < 3 || (key[1] != prefixMVCCMetaEdgeTypeStartLabelCount && key[1] != prefixMVCCMetaEdgeTypeEndLabelCount) {
+		return "", "", "", false
+	}
+	namespace, rest, valid := countNamespaceParts(key)
+	if !valid {
+		return "", "", "", false
+	}
+	length, used := binary.Uvarint(rest)
+	if used <= 0 || length > uint64(len(rest)-used) {
+		return "", "", "", false
+	}
+	end := used + int(length)
+	return namespace, string(rest[used:end]), string(rest[end:]), true
 }
 
 // namespaceEdgeTypeLabel is the composite key for positional count deltas.
@@ -733,8 +724,6 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, ed
 	}
 	b.edgeTypeCountWriteMu.RLock()
 	defer b.edgeTypeCountWriteMu.RUnlock()
-	needleLabel := []byte(label)
-	needleType := []byte(edgeType)
 	var prefix []byte
 	if len(namespace) == 0 {
 		if sub == prefixMVCCMetaEdgeTypeStartLabelCount {
@@ -754,16 +743,8 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, ed
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			sep1 := bytes.IndexByte(key[2:], 0)
-			if sep1 < 0 {
-				continue
-			}
-			rest := key[2+sep1+1:]
-			sep2 := bytes.IndexByte(rest, 0)
-			if sep2 < 0 {
-				continue
-			}
-			if !bytes.Equal(rest[:sep2], needleLabel) || !bytes.Equal(rest[sep2+1:], needleType) {
+			_, keyLabel, keyType, valid := parseEdgeTypeLabelCountKey(key)
+			if !valid || keyLabel != label || keyType != edgeType {
 				continue
 			}
 			if err := it.Item().Value(func(val []byte) error {

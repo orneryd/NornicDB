@@ -7,6 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -314,9 +315,9 @@ func (r *queryResolver) querySearchByProperty(ctx context.Context, key string, v
 		return nil, err
 	}
 
-	cypher := fmt.Sprintf("MATCH (n) WHERE n.%s = $value RETURN n LIMIT $limit", key)
+	cypher := fmt.Sprintf("MATCH (n) WHERE n.%s = $value RETURN n LIMIT $limit", cyphertext.NameText(key, "key"))
 	if len(labels) > 0 {
-		cypher = fmt.Sprintf("MATCH (n:%s) WHERE n.%s = $value RETURN n LIMIT $limit", labels[0], key)
+		cypher = fmt.Sprintf("MATCH (n:%s) WHERE n.%s = $value RETURN n LIMIT $limit", cyphertext.NameText(labels[0], "label"), cyphertext.NameText(key, "key"))
 	}
 
 	lim := 100
@@ -390,7 +391,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 	labelStats := make([]*models.LabelStats, 0, len(labels))
 	for _, label := range labels {
 		// Use Cypher COUNT for accurate label counts
-		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH (n:%s) RETURN count(n) as cnt", label), nil, "")
+		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH (n:%s) RETURN count(n) as cnt", cyphertext.NameText(label, "label")), nil, "")
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {
@@ -409,7 +410,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 	typeStats := make([]*models.RelationshipTypeStats, 0, len(relTypes))
 	for _, typ := range relTypes {
 		// Use Cypher COUNT for accurate relationship counts
-		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r) as cnt", typ), nil, "")
+		result, err := r.executeCypher(ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r) as cnt", cyphertext.NameText(typ, "type")), nil, "")
 		count := 0
 		if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
 			if cnt, ok := result.Rows[0][0].(int64); ok {

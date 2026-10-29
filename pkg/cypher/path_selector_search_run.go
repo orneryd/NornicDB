@@ -172,14 +172,8 @@ func (s *pathSearch) chainHolds(chain pathSearchChain, node *storage.Node) bool 
 
 // transitionHolds reports whether edge may take transition t.
 func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge) bool {
-	if len(t.types) > 0 {
-		matched := false
-		for _, name := range t.types {
-			matched = matched || edge.Type == name
-		}
-		if !matched {
-			return false
-		}
+	if !t.types.matches(edge.Type) {
+		return false
 	}
 	if t.variable != "" && !t.list {
 		if bound, exists := s.row[t.variable]; exists {

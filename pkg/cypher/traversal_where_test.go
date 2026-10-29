@@ -437,7 +437,7 @@ func TestFilterPathsByWhere(t *testing.T) {
 	matches := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "e", labels: []string{"Entry"}},
 		EndNode:      nodePatternInfo{variable: "i", labels: []string{"IssueType"}},
-		Relationship: RelationshipPattern{Variable: "r", Types: []string{"HAS_ISSUE"}},
+		Relationship: RelationshipPattern{Variable: "r", Types: relationshipTypesForTest("HAS_ISSUE")},
 	}
 	ctx := context.Background()
 

@@ -641,7 +641,8 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 // the ANTLR grammar, which the Nornic validator checks instead under
 // NORNICDB_PARSER=antlr (#957): NornicDB's own knowledge-policy DDL,
 // procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP PROCEDURE) and database
-// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
+// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), constituent inspection
+// (SHOW CONSTITUENTS), and the database options
 // the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
 // SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
@@ -652,6 +653,7 @@ func isNornicExtensionStatement(cypher string) bool {
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
 		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
+		startsWithKeywords(cypher, "SHOW", "CONSTITUENTS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
 		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&

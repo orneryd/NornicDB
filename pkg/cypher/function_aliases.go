@@ -109,7 +109,7 @@ func propertyExistsKeyName(query string, open int) (start, end int, literal stri
 	if closing := skipSpaces(query, key.End); !ok || closing >= len(query) || query[closing] != ')' {
 		return 0, 0, ""
 	}
-	return start, key.End, "'" + strings.ReplaceAll(strings.ReplaceAll(key.Value, `\`, `\\`), `'`, `\'`) + "'"
+	return start, key.End, cypherStringLiteral(key.Value)
 }
 
 // mayCallFunctionAlias is canonicalizeFunctionAliases's quick check, in one

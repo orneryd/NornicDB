@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -73,13 +74,17 @@ func (h *IndexHint) String() string {
 	switch h.Type {
 	case HintIndex:
 		if len(h.Properties) > 1 {
-			return fmt.Sprintf("USING INDEX %s:%s(%s)", h.Variable, h.Label, strings.Join(h.Properties, ", "))
+			properties := make([]string, len(h.Properties))
+			for i, property := range h.Properties {
+				properties[i] = cyphertext.NameText(property, "key")
+			}
+			return fmt.Sprintf("USING INDEX %s:%s(%s)", cyphertext.NameText(h.Variable, "variable"), cyphertext.NameText(h.Label, "label"), strings.Join(properties, ", "))
 		}
-		return fmt.Sprintf("USING INDEX %s:%s(%s)", h.Variable, h.Label, h.Property)
+		return fmt.Sprintf("USING INDEX %s:%s(%s)", cyphertext.NameText(h.Variable, "variable"), cyphertext.NameText(h.Label, "label"), cyphertext.NameText(h.Property, "key"))
 	case HintScan:
-		return fmt.Sprintf("USING SCAN %s:%s", h.Variable, h.Label)
+		return fmt.Sprintf("USING SCAN %s:%s", cyphertext.NameText(h.Variable, "variable"), cyphertext.NameText(h.Label, "label"))
 	case HintJoin:
-		return fmt.Sprintf("USING JOIN ON %s", h.Variable)
+		return fmt.Sprintf("USING JOIN ON %s", cyphertext.NameText(h.Variable, "variable"))
 	default:
 		return "UNKNOWN HINT"
 	}
@@ -115,6 +120,16 @@ func ParseIndexHints(query string) ([]IndexHint, string) {
 		if hint, end, ok := parseSingleIndexHint(query, usingIdx); ok {
 			hints = append(hints, hint)
 			pos = end
+			// The preceding source gap already separates the remaining
+			// tokens. Remove only this hint's following whitespace; names,
+			// strings and all other source keep their original contents.
+			for pos < len(query) {
+				width := cyphertext.WhitespaceAt(query, pos)
+				if width == 0 {
+					break
+				}
+				pos += width
+			}
 			continue
 		}
 
@@ -123,7 +138,7 @@ func ParseIndexHints(query string) ([]IndexHint, string) {
 		pos = usingIdx + 5
 	}
 
-	return hints, strings.Join(strings.Fields(clean.String()), " ")
+	return hints, strings.TrimSpace(clean.String())
 }
 
 func parseSingleIndexHint(query string, usingIdx int) (IndexHint, int, bool) {

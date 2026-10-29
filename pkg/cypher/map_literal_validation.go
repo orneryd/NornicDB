@@ -137,17 +137,7 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 	// CALL (a, b) { … }: step back over the import list to the CALL.
 	if index >= 0 && query[index] == ')' {
-		depth := 0
-		for ; index >= 0; index-- {
-			if query[index] == ')' {
-				depth++
-			} else if query[index] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
-		}
+		index = cyphertext.FindMatchingDelimiter(query, index, '(', ')', cyphertext.ClosingDelimiter)
 		if index < 0 {
 			return false
 		}

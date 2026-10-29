@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -34,26 +33,17 @@ const countDeltaFoldThreshold = 64
 // countDeltaKey builds the derived-count delta key for one namespace and
 // name (a label or an edge type).
 func countDeltaKey(kind byte, namespace, name string, suffix uint64) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(5, len(namespace), len(name)))
-	key = append(key, prefixMVCCMeta, kind)
-	key = append(key, namespace...)
-	key = append(key, 0)
+	key := countNamespaceKey(kind, namespace, util.SafePreallocSum(9, len(name)))
 	key = append(key, name...)
 	key = append(key, 0)
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], suffix)
-	return append(key, buf[:]...)
+	return binary.BigEndian.AppendUint64(key, suffix)
 }
 
 // countDeltaPrefixFor returns the iteration prefix of every delta of one
 // namespace/name pair.
 func countDeltaPrefixFor(kind byte, namespace, name string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace), len(name)))
-	key = append(key, prefixMVCCMeta, kind)
-	key = append(key, namespace...)
-	key = append(key, 0)
-	key = append(key, name...)
-	return append(key, 0)
+	key := countNamespaceKey(kind, namespace, util.SafePreallocSum(1, len(name)))
+	return append(append(key, name...), 0)
 }
 
 // countDeltaAllPrefix returns the iteration prefix of every delta of one
@@ -63,13 +53,10 @@ func countDeltaAllPrefix(kind byte) []byte {
 }
 
 // countDeltaNamespacePrefix returns the iteration prefix of every delta of
-// one kind in one namespace (the trailing separator excludes namespaces that
-// are string prefixes of this one).
+// one kind in one namespace. Its explicit length distinguishes namespaces
+// that are string prefixes of one another.
 func countDeltaNamespacePrefix(kind byte, namespace string) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(3, len(namespace)))
-	key = append(key, prefixMVCCMeta, kind)
-	key = append(key, namespace...)
-	return append(key, 0)
+	return countNamespaceKey(kind, namespace, 0)
 }
 
 // countDeltaKindLabel / countDeltaKindEdgeType are the second bytes of the
@@ -96,6 +83,9 @@ func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (in
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if len(it.Item().Key()) != len(prefix)+8 {
+			continue
+		}
 		seen++
 		if err := it.Item().Value(func(val []byte) error {
 			delta, decodeErr := decodeCountDelta(val)
@@ -116,20 +106,11 @@ func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (in
 func sumCountDeltasByNameInTxn(txn *badger.Txn, kind byte, name string) (int64, error) {
 	var total int64
 	prefix := countDeltaAllPrefix(kind)
-	needle := []byte(name)
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-		key := it.Item().KeyCopy(nil)
-		sep := bytesIndexByte(key[2:], 0)
-		if sep < 0 {
-			continue
-		}
-		nameSep := bytesIndexByte(key[2+sep+1:], 0)
-		if nameSep < 0 {
-			continue
-		}
-		if !bytes.Equal(key[2+sep+1:2+sep+1+nameSep], needle) {
+		_, keyName, valid := countDeltaKeyParts(it.Item().Key())
+		if !valid || keyName != name {
 			continue
 		}
 		if err := it.Item().Value(func(val []byte) error {
@@ -173,18 +154,11 @@ const countDeltaFoldChunk = 10000
 // countDeltaKeyParts splits a delta key of one kind into its namespace and
 // name. ok is false for a malformed key.
 func countDeltaKeyParts(key []byte) (namespace, name string, ok bool) {
-	if len(key) < 3 {
+	namespace, tail, valid := countNamespaceParts(key)
+	if !valid || len(tail) < 9 || tail[len(tail)-9] != 0 {
 		return "", "", false
 	}
-	sep := bytesIndexByte(key[2:], 0)
-	if sep < 0 {
-		return "", "", false
-	}
-	nameSep := bytesIndexByte(key[2+sep+1:], 0)
-	if nameSep < 0 {
-		return "", "", false
-	}
-	return string(key[2 : 2+sep]), string(key[2+sep+1 : 2+sep+1+nameSep]), true
+	return namespace, string(tail[:len(tail)-9]), true
 }
 
 // foldCountDeltaKeys folds one bounded set of delta keys into their base keys
@@ -277,6 +251,9 @@ func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) erro
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			if namespace != "" && len(it.Item().Key()) != len(prefix)+8 {
+				continue
+			}
 			keys = append(keys, it.Item().KeyCopy(nil))
 		}
 		return nil
@@ -297,18 +274,15 @@ func (b *BadgerEngine) foldCountDeltasChunked(kind byte, baseKey func(string, st
 	return b.foldCountDeltasOn(b.withView, func(fn func(*badger.Txn) error) error { return b.withUpdate(fn) }, kind, baseKey, namespace, name)
 }
 
-// foldRestoredCountDeltas folds every derived-count delta a restore loaded,
-// past the restore's read hold.
+// foldRestoredCountDeltas validates the restored count format, rebuilding older
+// derived keys or folding current deltas through the same startup owners.
+// The restored ID/key dictionaries are loaded before this held-read operation.
 func (b *BadgerEngine) foldRestoredCountDeltas(db *managedBadgerDB) error {
-	b.labelCountWriteMu.Lock()
-	err := b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindLabel, labelCountKey, "", "")
-	b.labelCountWriteMu.Unlock()
-	if err != nil {
+	view := heldViewer{db: db}
+	if err := b.ensureLabelCounts(view, db.updateHeld); err != nil {
 		return err
 	}
-	b.edgeTypeCountWriteMu.Lock()
-	defer b.edgeTypeCountWriteMu.Unlock()
-	return b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
+	return b.ensureEdgeTypeCounts(view, db.updateHeld)
 }
 
 // readDerivedCountInTxn reads one persisted base count (0 when absent).
@@ -332,13 +306,4 @@ func readDerivedCountInTxn(txn *badger.Txn, key []byte) (int64, error) {
 		return 0, err
 	}
 	return count, nil
-}
-
-func bytesIndexByte(data []byte, needle byte) int {
-	for i, c := range data {
-		if c == needle {
-			return i
-		}
-	}
-	return -1
 }

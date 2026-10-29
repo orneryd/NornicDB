@@ -77,14 +77,15 @@ type quotedVariableName struct {
 }
 
 type quotedToken struct {
-	start, end int
-	written    string
-	name       string
-	variable   bool // in a variable position
-	binding    bool // in a position that binds the variable
-	procColumn bool // a YIELD procedure column (no AS): unquoted only
-	selector   bool // a map projection variable selector
-	parameter  bool // a parameter name ($`a b`)
+	relationshipBinding bool
+	start, end          int
+	written             string
+	name                string
+	variable            bool // in a variable position
+	binding             bool // in a position that binds the variable
+	procColumn          bool // a YIELD procedure column (no AS): unquoted only
+	selector            bool // a map projection variable selector
+	parameter           bool // a parameter name ($`a b`)
 }
 
 // Fabric's planner and remote participants consume native Cypher names.
@@ -263,8 +264,9 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // (NaN and Infinity read as their float), and without a '$', which only
 // Cypher 5 reads inside a name (Cypher 25 starts a parameter there).
 func isPlainVariableName(name string) bool {
-	end, ok := cyphertext.ScanIdentifier(name, 0)
-	return ok && end.End == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
+	// name is already decoded. A value containing surrounding backticks is
+	// an identity requiring quotation, not another written identifier to decode.
+	return cyphertext.IsIdentifier(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
@@ -301,7 +303,7 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 		scopeName := hasParent && parent.Rule() == cypherantlr.CypherParserRULE_callSubquery
 		quoted := strings.HasPrefix(node.Text(), "`")
 		start, end := node.Span()
-		token := quotedToken{start: start, end: end, written: node.Text(), name: name}
+		token := quotedToken{start: start, end: end, written: node.Text(), name: name, relationshipBinding: hasParent && parent.Rule() == cypherantlr.CypherParserRULE_relationDetail}
 		parent, ok := node.Parent()
 		if !ok {
 			return nil
@@ -327,7 +329,7 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 				token.parameter = true
 			}
 		}
-		if !quoted && !scopeName && (!token.variable || isPlainVariableName(name)) {
+		if !quoted && !scopeName && !token.relationshipBinding && (!token.variable || isPlainVariableName(name)) {
 			return nil
 		}
 		tokens = append(tokens, token)
@@ -552,4 +554,14 @@ func declaredAt(text string, from, at int) bool {
 	}
 	_, declared, _, ok := namedPathDeclaration(text, from)
 	return ok && declared == at
+}
+
+// internalVariableName projects the current binding owner's decoded identity.
+func (names *quotedVariableNames) internalVariableName(identifier string) (quotedVariableName, bool) {
+	value, ok := names.internal[identifier]
+	return value, ok
+}
+
+func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *quotedVariableNames) {
+	return canonicalizeQuotedVariablesWithBindings(ctx, query, nil)
 }

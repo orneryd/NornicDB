@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"fmt"
-
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -24,8 +22,8 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 	defer sm.mu.Unlock()
 
 	var restore func()
-	if contract, ok := sm.constraintContracts[name]; ok {
-		restore = sm.dropConstraintContractLocked(contract)
+	if revision, ok := sm.constraintContracts[name]; ok {
+		restore = sm.dropConstraintContractLocked(revision)
 	} else {
 		r, err := sm.dropConstraintLocked(name)
 		if err != nil {
@@ -48,22 +46,23 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 // dropConstraintContractLocked removes a contract and the primitives compiled
 // from it, returning a function that restores all of them. Compiled entries a
 // user already dropped individually are skipped.
-func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContract) func() {
-	restores := make([]func(), 0, len(contract.Entries))
-	for idx, entry := range contract.Entries {
-		if entry.Kind != ConstraintContractKindPrimitiveNode && entry.Kind != ConstraintContractKindPrimitiveRelationship {
+func (sm *SchemaManager) dropConstraintContractLocked(revision constraintContractRevision) func() {
+	name := revision.contractName()
+	restores := make([]func(), 0, revision.entryCount())
+	for idx := 0; idx < revision.entryCount(); idx++ {
+		if !revision.isPrimitiveEntry(idx) {
 			continue
 		}
-		if restore, err := sm.dropConstraintLocked(ConstraintContractEntryName(contract.Name, idx)); err == nil {
+		if restore, err := sm.dropConstraintLocked(ConstraintContractEntryName(name, idx)); err == nil {
 			restores = append(restores, restore)
 		}
 	}
-	delete(sm.constraintContracts, contract.Name)
+	delete(sm.constraintContracts, name)
 	return func() {
 		for i := len(restores) - 1; i >= 0; i-- {
 			restores[i]()
 		}
-		sm.constraintContracts[contract.Name] = contract
+		sm.constraintContracts[name] = revision
 	}
 }
 
@@ -72,7 +71,7 @@ func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContrac
 func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 	if c, ok := sm.constraints[name]; ok {
 		var droppedUnique *UniqueConstraint
-		var droppedUniqueKey string
+		var droppedUniqueKey uniqueConstraintIdentity
 		var droppedOwnedIndex *RangeIndex
 		var droppedPropertyIndex *PropertyIndex
 
@@ -80,7 +79,7 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 		sm.forgetTemporalIndexCompleteLocked(c)
 
 		if constraintPropertyIndexKey(c) != "" {
-			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {
+			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties.At(0)); ok && idx.OwningConstraint == name {
 				droppedPropertyIndex = idx
 				delete(sm.compositeIndexes, idx.Name)
 			}
@@ -92,8 +91,8 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 			}
 		}
 
-		if c.Type == ConstraintUnique && len(c.Properties) == 1 {
-			droppedUniqueKey = fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
+		if c.Type == ConstraintUnique && c.Properties.Len() == 1 {
+			droppedUniqueKey = uniqueConstraintIdentity{c.Label, c.Properties.At(0)}
 			if existing, ok := sm.uniqueConstraints[droppedUniqueKey]; ok {
 				droppedUnique = existing
 				delete(sm.uniqueConstraints, droppedUniqueKey)

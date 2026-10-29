@@ -894,20 +894,23 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	if len(imports) == 0 {
 		return query
 	}
+	decodedImports := make([]string, 0, len(imports))
 	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		if name == "" || strings.Contains(name, " ") {
+		name, valid := isOneSymbolicName(item)
+		// Keep the plain-name substitution eligibility policy. Other names
+		// retain the original WITH and the production record-binding owner.
+		if !valid || !isSimpleIdentifier(name) {
 			return query
 		}
 		if _, ok := recordBindings[name]; !ok {
 			return query
 		}
+		decodedImports = append(decodedImports, name)
 	}
 	rewritten := rest
 	local := localOccurrences{text: rest}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
+	for _, name := range decodedImports {
+		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+cyphertext.NameText(name, "parameter"), &local)
 	}
 	return rewritten
 }

@@ -12,14 +12,28 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// newConstraintViolation is the one constructor of a violation report. The
+// report is the caller's: its property list is copied, so a constraint's own
+// list is never reachable from a report.
+func newConstraintViolation(violation ConstraintViolationError) *ConstraintViolationError {
+	violation.Properties = slices.Clone(violation.Properties)
+	return &violation
+}
+
+// newLocalizedConstraintViolation also copies every list or map in the
+// message data (a domain's allowed values, a key's properties).
 func newLocalizedConstraintViolation(constraintType ConstraintType, label string, properties []string, message localization.Message, cause error) *ConstraintViolationError {
-	return &ConstraintViolationError{
+	if message.Data != nil {
+		message.Data = copyContractValue(message.Data).(map[string]interface{})
+	}
+	message.PluralCount = copyContractValue(message.PluralCount)
+	return newConstraintViolation(ConstraintViolationError{
 		Type:       constraintType,
 		Label:      label,
 		Properties: properties,
 		Message:    message.Fallback,
 		Cause:      localizedError(message, cause),
-	}
+	})
 }
 
 // ValidateConstraintOnCreation validates that all existing data satisfies the constraint.
@@ -84,7 +98,7 @@ func RefreshUniqueConstraintValuesForConstraintsForEngine(engine Engine, schema 
 		if c.Type != ConstraintUnique || c.EntityType == ConstraintEntityRelationship || len(c.Properties) != 1 {
 			continue
 		}
-		if uc, ok := schema.uniqueConstraints[fmt.Sprintf("%s:%s", c.Label, c.Properties[0])]; ok {
+		if uc, ok := schema.uniqueConstraints[uniqueConstraintIdentity{c.Label, c.Properties[0]}]; ok {
 			uniqueConstraints = append(uniqueConstraints, uc)
 		}
 	}
@@ -171,15 +185,17 @@ func isValueInAllowedList(value interface{}, allowedValues []interface{}) bool {
 }
 
 // validateDomainConstraintOnCreationForEngine validates that all existing nodes satisfy the domain constraint.
-func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) error {
-	if len(c.Properties) != 1 {
-		return localizedError(localization.StorageValidationDomainPropertyCount(len(c.Properties)), nil)
+func validateDomainConstraintOnCreationForEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() != 1 {
+		return localizedError(localization.StorageValidationDomainPropertyCount(c.Properties.Len()), nil)
 	}
-	if len(c.AllowedValues) == 0 {
+	if c.AllowedValues.Len() == 0 {
 		return localizedError(localization.StorageValidationDomainAllowedValuesRequired(), nil)
 	}
 
-	property := c.Properties[0]
+	property := c.Properties.At(0)
 
 	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
@@ -191,8 +207,8 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 		if value == nil {
 			continue // NULL is valid for domain constraints
 		}
-		if !isValueInAllowedList(value, c.AllowedValues) {
-			message := localization.StorageValidationDomainNodeInvalid(string(node.ID), property, value, c.AllowedValues)
+		if !c.AllowedValues.Allows(value) {
+			message := localization.StorageValidationDomainNodeInvalid(string(node.ID), property, value, c.AllowedValues.snapshot())
 			return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{property}, message, nil)
 		}
 	}
@@ -201,15 +217,17 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 }
 
 // validateUniqueConstraintOnCreation checks all existing nodes for duplicates.
-func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
-	if len(c.Properties) > 1 {
+func validateUniqueConstraintOnCreationWithEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() > 1 {
 		return validateNodeKeyConstraintOnCreationWithEngine(engine, c)
 	}
-	if len(c.Properties) != 1 {
-		return localizedError(localization.StorageValidationUniquePropertyCount(len(c.Properties)), nil)
+	if c.Properties.Len() != 1 {
+		return localizedError(localization.StorageValidationUniquePropertyCount(c.Properties.Len()), nil)
 	}
 
-	property := c.Properties[0]
+	property := c.Properties.At(0)
 	seen := make(constraintCreationValues)
 
 	// Scan all nodes with this label
@@ -235,8 +253,10 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 }
 
 // validateNodeKeyConstraintOnCreation checks all existing nodes for duplicate composite keys.
-func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
-	if len(c.Properties) < 1 {
+func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() < 1 {
 		return localizedError(localization.StorageValidationNodeKeyPropertyRequired(), nil)
 	}
 
@@ -249,10 +269,10 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 
 	for _, node := range nodes {
 		// Extract all property values
-		values := make([]interface{}, len(c.Properties))
+		values := make([]interface{}, c.Properties.Len())
 		hasAllValues := true
 
-		for i, prop := range c.Properties {
+		for i, prop := range c.Properties.All() {
 			val := node.Properties[prop]
 			if val == nil {
 				if c.Type == ConstraintUnique {
@@ -260,7 +280,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 					break
 				}
 				message := localization.StorageValidationNodeKeyNullCreation(string(node.ID), prop)
-				return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+				return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties.snapshot(), message, nil)
 			}
 			values[i] = val
 		}
@@ -270,11 +290,11 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 		}
 
 		if existingID, found := seen.add(string(node.ID), values); found {
-			message := localization.StorageValidationNodeKeyDuplicateCreation(existingID, string(node.ID), c.Properties, values)
+			message := localization.StorageValidationNodeKeyDuplicateCreation(existingID, string(node.ID), c.Properties.snapshot(), values)
 			if c.Type == ConstraintUnique {
-				message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, existingID)
+				message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties.snapshot(), values, existingID)
 			}
-			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties.snapshot(), message, nil)
 		}
 
 	}
@@ -283,12 +303,14 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 }
 
 // validateExistenceConstraintOnCreation checks all existing nodes have the required property.
-func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
-	if len(c.Properties) != 1 {
-		return localizedError(localization.StorageValidationExistsPropertyCount(len(c.Properties)), nil)
+func validateExistenceConstraintOnCreationWithEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() != 1 {
+		return localizedError(localization.StorageValidationExistsPropertyCount(c.Properties.Len()), nil)
 	}
 
-	property := c.Properties[0]
+	property := c.Properties.At(0)
 
 	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
@@ -309,7 +331,9 @@ func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint
 // validateTemporalConstraintOnCreationWithEngine enforces no-overlap for temporal intervals.
 // Every property before the trailing (valid_from, valid_to) pair forms the
 // grouping key (see temporalKeySpec).
-func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
+func validateTemporalConstraintOnCreationWithEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
@@ -326,14 +350,14 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		keyVal, missing := spec.keyValue(node.Properties)
 		if missing != "" {
 			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), missing)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		key := groups.groupFor(keyVal)
 
 		interval, ok := spec.interval(node.Properties)
 		if !ok {
 			message := localization.StorageValidationTemporalNodeInvalidCreation(string(node.ID), spec.startProp)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		interval.nodeID = node.ID
 		byKey[key] = append(byKey[key], interval)
@@ -348,7 +372,7 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 			curr := intervals[i]
 			if intervalsOverlap(prev, curr) {
 				message := localization.StorageValidationTemporalNodesOverlapCreation(string(prev.nodeID), string(curr.nodeID))
-				return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+				return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 			}
 		}
 	}

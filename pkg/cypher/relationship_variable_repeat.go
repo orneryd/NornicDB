@@ -2,8 +2,6 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"strings"
-
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -47,6 +45,9 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 			}
 		}
 	}
+	if !r.relationships.mayRepeatVariables() {
+		return nil, nil
+	}
 	places := make(map[string][]relationshipPlace)
 	var order []string
 	for i := start; i < end; i++ {
@@ -62,17 +63,16 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 			if close < 0 {
 				return nil, nil
 			}
-			name, nameEnd, ok := relationshipVariableAt(q[:close], i)
-			if ok && relationshipBracketAt(q, start, i) {
+			if !relationshipBracketAt(q, start, i) {
+				i = close
+				continue
+			}
+			declaration := r.relationships.readDeclaration(q[i+1 : close])
+			name := declaration.variable
+			nameEnd := i + 1 + declaration.variableEnd
+			if isPatternVariableName(name) {
 				_, _, quantified := quantifierAfterArrow(q, close, end)
-				inner := close
-				if where := elementWhereIndex(q, i, close); where >= 0 {
-					inner = where
-				}
-				if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
-					inner = i + 1 + brace
-				}
-				list := quantified || indexOutsideQuotes(q[i+1:inner], '*') >= 0
+				list := quantified || declaration.hasLength
 				if _, seen := places[name]; !seen {
 					order = append(order, name)
 				}
@@ -111,30 +111,8 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 // it jumps from [ to [ and reads brackets in string literals too (an extra
 // yes only costs the full rewrite, which reads quotes).
 func mayRepeatRelationshipVariable(query string) bool {
-	var seen [8]string
-	count := 0
-	for i := strings.IndexByte(query, '['); i >= 0; {
-		if relationshipBracketAt(query, 0, i) {
-			if name, _, ok := relationshipVariableAt(query, i); ok {
-				if count == len(seen) {
-					return true
-				}
-				for _, earlier := range seen[:count] {
-					if earlier == name {
-						return true
-					}
-				}
-				seen[count] = name
-				count++
-			}
-		}
-		next := strings.IndexByte(query[i+1:], '[')
-		if next < 0 {
-			return false
-		}
-		i += next + 1
-	}
-	return false
+	_, facts := relationshipNodeReaderText(query)
+	return facts.repeated
 }
 
 // relationshipBracketAt reports whether the [ at query[i] opens a
@@ -142,14 +120,4 @@ func mayRepeatRelationshipVariable(query string) bool {
 func relationshipBracketAt(query string, start, i int) bool {
 	j := trimRightIndex(query, start, i)
 	return j > start && query[j-1] == '-'
-}
-
-// relationshipVariableAt reads the variable of the relationship bracket at
-// query[open]; IS followed by a space starts a type expression ([IS T]).
-func relationshipVariableAt(query string, open int) (string, int, bool) {
-	name, end, ok := scanSymbolicName(query, skipASCIISpaces(query, open+1, len(query)))
-	if ok && strings.EqualFold(name, "IS") && end < len(query) && cyphertext.IsWhitespaceAt(query, end) {
-		return "", end, false
-	}
-	return name, end, ok
 }

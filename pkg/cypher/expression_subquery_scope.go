@@ -14,7 +14,7 @@ func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineCl
 		return nil
 	}
 	check := func(expression, alias string) error {
-		name := normalizeProjectionColumnName(alias)
+		name := alias
 		if simpleSemanticIdentifier(unwrapOuterParens(expression)) != name {
 			return enclosing.redeclarationError(name)
 		}

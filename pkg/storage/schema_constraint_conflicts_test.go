@@ -111,7 +111,7 @@ func TestAddConstraint_NameTakenByIndex(t *testing.T) {
 // constraint.
 func TestAddConstraint_NameTakenByContract(t *testing.T) {
 	sm := NewSchemaManager()
-	sm.constraintContracts["taken"] = ConstraintContract{Name: "taken", TargetEntityType: string(ConstraintEntityNode), TargetLabelOrType: "Doc"}
+	sm.constraintContracts["taken"] = compileConstraintContractRevision(ConstraintContract{Name: "taken", TargetEntityType: string(ConstraintEntityNode), TargetLabelOrType: "Doc"})
 	require.Error(t, sm.AddConstraint(Constraint{Name: "taken", Type: ConstraintUnique, Label: "Doc", Properties: []string{"id"}}))
 	require.Error(t, sm.AddPropertyTypeConstraint("taken", "Doc", "id", PropertyTypeString))
 	require.Empty(t, sm.GetAllConstraints())

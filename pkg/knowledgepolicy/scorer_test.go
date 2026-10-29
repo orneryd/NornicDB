@@ -319,7 +319,7 @@ func TestScorer_ThresholdAgeNanos_FastPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 
 	scoreAtThreshold := exponentialDecay(cb.ThresholdAgeNanos, cb.HalfLifeNanos)
 	if math.Abs(scoreAtThreshold-0.10) > 1e-6 {

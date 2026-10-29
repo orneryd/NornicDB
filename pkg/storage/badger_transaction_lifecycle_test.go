@@ -35,7 +35,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.NoError(t, committed.AddCompositeIndex("retained_composite", "Account", []string{"name", "retainedUID"}))
 	require.NoError(t, committed.AddRangeIndex("retained_range", "Account", "age"))
 	retainedProperty, _ := committed.GetPropertyIndex("Account", "name")
-	retainedUnique := committed.uniqueConstraints["Account:retainedUID"]
+	retainedUnique := committed.uniqueConstraints[uniqueConstraintIdentity{"Account", "retainedUID"}]
 	retainedComposite := committed.compositeIndexes["retained_composite"]
 	retainedRange, _ := committed.GetRangeIndex("retained_range")
 	tx, err := engine.BeginTransaction()
@@ -50,7 +50,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.NoError(t, view.BackfillPropertyIndex("Account", "id", map[NodeID]interface{}{"schema_lifetime:created": int64(1)}))
 	require.NoError(t, view.AddUniqueConstraint("created_unique", "Account", "uid"))
 	view.RegisterUniqueValue("Account", "uid", "created", "schema_lifetime:created")
-	view.uniqueConstraints["Account:uid"].valuesCacheComplete = true
+	view.uniqueConstraints[uniqueConstraintIdentity{"Account", "uid"}].valuesCacheComplete = true
 	require.NoError(t, view.AddCompositeIndex("created_composite", "Account", []string{"id", "uid"}))
 	view.compositeIndexes["created_composite"].fullIndex["created"] = []NodeID{"schema_lifetime:created"}
 	view.compositeIndexes["created_composite"].prefixIndex["created"] = []NodeID{"schema_lifetime:created"}
@@ -70,7 +70,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	require.True(t, complete)
 	actualProperty, _ := committed.GetPropertyIndex("Account", "name")
 	require.Same(t, retainedProperty, actualProperty)
-	require.Same(t, retainedUnique, committed.uniqueConstraints["Account:retainedUID"])
+	require.Same(t, retainedUnique, committed.uniqueConstraints[uniqueConstraintIdentity{"Account", "retainedUID"}])
 	require.Same(t, retainedComposite, committed.compositeIndexes["retained_composite"])
 	require.Same(t, retainedRange, committed.rangeIndexes["retained_range"])
 	require.Error(t, tx.StageSchemaChanges())

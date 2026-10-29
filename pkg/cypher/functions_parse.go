@@ -34,15 +34,19 @@ func inspectFunctionCall(source string, purpose functionCallPurpose, expectedNam
 	default:
 		return false
 	}
-	open := strings.IndexByte(source, '(')
-	if open < 0 || (purpose == qualifiedFunctionCall && open == 0) {
-		return false
-	}
 	var name string
+	var open int
 	if purpose == qualifiedFunctionCall {
-		var ok bool
-		name, ok = canonicalCallableName(source[:open])
-		if !ok {
+		var end int
+		var valid bool
+		name, end, valid = qualifiedNameAt(source, 0)
+		open = queryGapEnd(source, end)
+		if !valid || open >= len(source) || source[open] != '(' {
+			return false
+		}
+	} else {
+		open = strings.IndexByte(source, '(')
+		if open < 0 {
 			return false
 		}
 	}
@@ -96,38 +100,13 @@ func functionNameStartsAt(text string, at int) bool {
 // validation, preserving component case while removing trivia around separators.
 func canonicalCallableName(text string) (string, bool) {
 	text = strings.TrimSpace(text)
-	// Ordinary unquoted names need no normalization. Validate their lexical
-	// components in one pass before using the trivia/quoted-token reader.
-	if len(text) > 0 && cyphertext.NameStartAt(text, 0) {
-		compact := true
-		for index := 1; index < len(text); index++ {
-			if cyphertext.NamePartAt(text, index) {
-				continue
-			}
-			if text[index] == '.' && index+1 < len(text) && cyphertext.NameStartAt(text, index+1) {
-				index++
-				continue
-			}
-			compact = false
-			break
-		}
-		if compact {
-			return text, true
-		}
-	}
-	name, ok := cyphertext.ScanIdentifier(text, 0)
-	if !ok {
-		return "", false
-	}
-	if name.End == len(text) {
-		return name.Value, true
-	}
-	parts, end := dottedNameParts(text, name.End, true)
-	if end != len(text) && queryGapEnd(text, end) != len(text) {
-		return "", false
-	}
-	if len(name.Value)+len(parts) == len(text) {
-		return text, true
-	}
-	return name.Value + parts, true
+	name, end, ok := qualifiedNameAt(text, 0)
+	return name, ok && queryGapEnd(text, end) == len(text)
+}
+
+// parseFunctionCallWS adapts the retained standalone-call shape owner.
+func parseFunctionCallWS(source string) (name, inner string, ok bool) {
+	var facts functionCallFacts
+	ok = inspectFunctionCall(source, qualifiedFunctionCall, "", &facts)
+	return facts.name, facts.inner, ok
 }

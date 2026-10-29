@@ -125,12 +125,12 @@ func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeSc
 			continue
 		}
 		operand := projectedOperand(types, input, expression)
-		if simpleSemanticIdentifier(name) == "" {
+		if readProjectionItemSource(ctx, raw, projectionAdmitted).as < 0 && simpleSemanticIdentifier(expression) == "" {
 			// Unaliased, a column is named by its text (WITH {a: 1}); only a
 			// name binds a variable whose members are known.
 			operand.members = nil
 		}
-		projected[normalizeProjectionColumnName(name)] = operand
+		projected[name] = operand
 	}
 	return projected
 }

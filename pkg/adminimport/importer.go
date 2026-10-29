@@ -572,7 +572,7 @@ func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts 
 func parseHeader(header []string, node bool) ([]columnSpec, error) {
 	cols := make([]columnSpec, len(header))
 	for i, raw := range header {
-		col, err := parseColumnSpec(strings.TrimSpace(raw), node)
+		col, err := parseColumnSpec(raw, node)
 		if err != nil {
 			return nil, err
 		}
@@ -632,19 +632,34 @@ func parseColumnSpec(raw string, node bool) (columnSpec, error) {
 	return columnSpec{Name: name, Kind: kindProperty, Type: strings.ToLower(keyword), IDSpace: arg, Options: opts, VectorDims: dims}, nil
 }
 
+// splitNameType uses the last colon before type options or an ID-space
+// argument. Property-name colons remain identity bytes, as in Neo4j's header.
 func splitNameType(raw string) (string, string) {
-	idx := strings.IndexRune(raw, ':')
-	if idx < 0 {
+	end := len(raw)
+	if marker := strings.IndexAny(raw, "({"); marker >= 0 {
+		end = marker
+	}
+	index := strings.LastIndexByte(raw[:end], ':')
+	if index < 0 {
 		return raw, "string"
 	}
-	return raw[:idx], raw[idx+1:]
+	return raw[:index], raw[index+1:]
 }
 
 func parseKeyword(raw string) (string, string, map[string]string) {
 	options := make(map[string]string)
-	base := raw
-	if brace := strings.IndexRune(base, '{'); brace >= 0 {
-		end := strings.LastIndex(base, "}")
+	base, arg := raw, ""
+	// An argument is a name product. Consume its whole extent before
+	// interpreting options, so braces in that name remain name bytes.
+	open, brace := strings.IndexByte(base, '('), strings.IndexByte(base, '{')
+	if open >= 0 && (brace < 0 || open < brace) {
+		if close := strings.LastIndexByte(base, ')'); close > open {
+			arg = base[open+1 : close]
+			base = base[:open] + base[close+1:]
+		}
+	}
+	if brace := strings.IndexByte(base, '{'); brace >= 0 {
+		end := strings.LastIndexByte(base, '}')
 		if end > brace {
 			for _, part := range strings.Split(base[brace+1:end], ",") {
 				key, val, ok := strings.Cut(strings.TrimSpace(part), ":")
@@ -653,13 +668,6 @@ func parseKeyword(raw string) (string, string, map[string]string) {
 				}
 			}
 			base = base[:brace]
-		}
-	}
-	arg := ""
-	if open := strings.IndexRune(base, '('); open >= 0 {
-		if close := strings.LastIndex(base, ")"); close > open {
-			arg = base[open+1 : close]
-			base = base[:open]
 		}
 	}
 	return base, arg, options
@@ -671,6 +679,9 @@ func parsePropertyValue(value string, col columnSpec, opts Options) (any, error)
 		parts := splitList(value, opts.ArrayDelimiter)
 		out := make([]any, 0, len(parts))
 		for _, part := range parts {
+			if base != "string" && base != "char" {
+				part = strings.TrimSpace(part)
+			}
 			parsed, err := parseScalar(part, base, opts)
 			if err != nil {
 				return nil, err
@@ -994,8 +1005,10 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 			return err
 		}
 	}
-	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
+	// The imported schema's own revisions check the imported data; nothing is
+	// compiled again.
+	for _, compiled := range schema.CompiledConstraintContracts() {
+		if err := storage.ValidateCompiledConstraintContractOnCreationForEngine(engine, compiled); err != nil {
 			return err
 		}
 	}
@@ -1123,7 +1136,6 @@ func splitList(value string, delim rune) []string {
 	parts := strings.Split(value, string(delim))
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
 		if part != "" {
 			out = append(out, part)
 		}
@@ -1147,7 +1159,6 @@ func uniqueNonEmpty(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}

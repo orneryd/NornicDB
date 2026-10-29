@@ -185,7 +185,7 @@ func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64
 	for _, label := range node.Labels {
 		prefix := labelIndexPrefix(label)
 		found, err := b.unresolvedNumIDs(prefix, func(key []byte) (uint64, bool) {
-			return extractNodeNumIDFromLabelIndex(key, len(label))
+			return extractNumIDFromNamedIndex(key, len(label))
 		}, func(num uint64) bool {
 			_, known := b.idDict.lookupNodeIDByNum(num)
 			return known || claimed[num]
@@ -222,7 +222,9 @@ func (b *BadgerEngine) lostEdgeNumID(id EdgeID, claimed map[uint64]bool) (uint64
 	}{
 		{outgoingIndexPrefix(startNum), extractEdgeNumIDFromOutgoingKey},
 		{incomingIndexPrefix(endNum), extractEdgeNumIDFromOutgoingKey},
-		{edgeTypeIndexPrefix(edge.Type), extractEdgeNumIDFromEdgeTypeKey},
+		{edgeTypeIndexPrefix(edge.Type), func(key []byte) (uint64, bool) {
+			return extractNumIDFromNamedIndex(key, len(edge.Type))
+		}},
 	} {
 		found, err := b.unresolvedNumIDs(source.prefix, source.extract, unknown)
 		if err != nil {

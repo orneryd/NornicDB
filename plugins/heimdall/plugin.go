@@ -45,6 +45,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"log"
 	"runtime"
 	"strings"
@@ -494,13 +495,13 @@ func (p *WatcherPlugin) actionAutocompleteSuggest(ctx heimdall.ActionContext) (*
 			}
 		}
 		if len(labels) > 0 {
-			suggestions = append(suggestions, fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 25", labels[0]))
+			suggestions = append(suggestions, fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 25", cyphertext.QuoteName(labels[0], "label")))
 		}
 		if len(relTypes) > 0 {
-			suggestions = append(suggestions, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r LIMIT 25", relTypes[0]))
+			suggestions = append(suggestions, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r LIMIT 25", cyphertext.QuoteName(relTypes[0], "type")))
 		}
 		if len(properties) > 0 {
-			suggestions = append(suggestions, fmt.Sprintf("MATCH (n) WHERE exists(n.%s) RETURN n LIMIT 25", properties[0]))
+			suggestions = append(suggestions, fmt.Sprintf("MATCH (n) WHERE exists(n.%s) RETURN n LIMIT 25", cyphertext.QuoteName(properties[0], "key")))
 		}
 	}
 	suggestion := ""

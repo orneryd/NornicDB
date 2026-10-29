@@ -57,7 +57,7 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 					"expressions in WITH must be explicitly aliased",
 				)
 			}
-			name := normalizeProjectionColumnName(alias)
+			name := alias
 			if name == "*" {
 				continue
 			}
@@ -110,7 +110,7 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 			return nil
 		}
 		aggregates = aggregates || containsAggregateFunc(expression)
-		aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+		aliases[alias] = struct{}{}
 		expressions = append(expressions, strings.Join(strings.Fields(expression), " "))
 	}
 	if !aggregates && !distinct {
@@ -135,8 +135,8 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 			masked = maskProjectedExpression(masked, expression)
 		}
 		for _, reference := range semanticFreeReferences(masked) {
-			base := strings.SplitN(reference, ".", 2)[0]
-			if _, projected := aliases[normalizeProjectionColumnName(base)]; projected {
+			base := reference.variable
+			if _, projected := aliases[base]; projected {
 				continue
 			}
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable",

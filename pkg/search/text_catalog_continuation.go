@@ -135,14 +135,14 @@ func (s *Service) completeContinuationProjectionProperties(options *SearchOption
 		properties[request.GroupBy] = struct{}{}
 	}
 	if schema := s.engine.GetSchema(); schema != nil {
-		for _, constraint := range schema.GetAllConstraints() {
-			if constraint.Type != storage.ConstraintTemporal {
-				continue
+		schema.VisitConstraints(nil, func(constraint storage.ConstraintFact) bool {
+			if constraint.Type() == storage.ConstraintTemporal {
+				for index := 0; index < constraint.PropertyCount(); index++ {
+					properties[constraint.Property(index)] = struct{}{}
+				}
 			}
-			for _, property := range constraint.Properties {
-				properties[property] = struct{}{}
-			}
-		}
+			return true
+		})
 	}
 	projected := make([]string, 0, len(properties))
 	for property := range properties {

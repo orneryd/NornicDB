@@ -19,15 +19,15 @@ func TestVectorSpaceKeyCanonicalization(t *testing.T) {
 	canonical, err := key.Canonical()
 	require.NoError(t, err)
 
-	assert.Equal(t, "maindb", canonical.DB)
-	assert.Equal(t, "Documents", canonical.Type, "a label keeps its case (#862)")
-	assert.Equal(t, "Title", canonical.VectorName, "a property keeps its case")
+	assert.Equal(t, "MainDB ", canonical.DB, "database creation stores exact nonempty names")
+	assert.Equal(t, " Documents", canonical.Type, "a decoded label keeps all its bytes")
+	assert.Equal(t, " Title ", canonical.VectorName, "a decoded property keeps all its bytes")
 	assert.Equal(t, 1536, canonical.Dims)
 	assert.Equal(t, DistanceCosine, canonical.Distance)
 
 	hash, err := canonical.Hash()
 	require.NoError(t, err)
-	assert.Equal(t, "maindb|Documents|Title|1536|cosine", hash)
+	assert.Equal(t, `"MainDB "|" Documents"|" Title "|1536|"cosine"`, hash)
 
 	lower := key
 	lower.Type = "documents"
@@ -90,7 +90,7 @@ func TestIndexRegistryLifecycle(t *testing.T) {
 	assert.Equal(t, BackendHNSW, space.Backend)
 
 	fetched, ok := registry.GetSpace(VectorSpaceKey{
-		DB:         "prod",
+		DB:         "Prod",
 		Type:       "Collection",
 		VectorName: "chunks",
 		Dims:       256,

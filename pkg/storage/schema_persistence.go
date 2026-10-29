@@ -85,28 +85,7 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraints) > 0 {
 		def.Constraints = make([]Constraint, 0, len(sm.constraints))
 		for _, c := range sm.constraints {
-			// Copy properties slice to avoid aliasing.
-			props := make([]string, len(c.Properties))
-			copy(props, c.Properties)
-			var allowedVals []interface{}
-			if len(c.AllowedValues) > 0 {
-				allowedVals = make([]interface{}, len(c.AllowedValues))
-				copy(allowedVals, c.AllowedValues)
-			}
-			def.Constraints = append(def.Constraints, Constraint{
-				Name:          c.Name,
-				Type:          c.Type,
-				EntityType:    c.EntityType,
-				Label:         c.Label,
-				Properties:    props,
-				OwnedIndex:    c.OwnedIndex,
-				AllowedValues: allowedVals,
-				MaxCount:      c.MaxCount,
-				Direction:     c.Direction,
-				SourceLabel:   c.SourceLabel,
-				TargetLabel:   c.TargetLabel,
-				PolicyMode:    c.PolicyMode,
-			})
+			def.Constraints = append(def.Constraints, c.snapshot())
 		}
 		sort.Slice(def.Constraints, func(i, j int) bool {
 			if def.Constraints[i].Label != def.Constraints[j].Label {
@@ -118,8 +97,8 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
-		for _, contract := range sm.constraintContracts {
-			def.ConstraintContracts = append(def.ConstraintContracts, cloneConstraintContract(contract))
+		for _, revision := range sm.constraintContracts {
+			def.ConstraintContracts = append(def.ConstraintContracts, revision.description())
 		}
 		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
 			return def.ConstraintContracts[i].Name < def.ConstraintContracts[j].Name
@@ -337,9 +316,9 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	defer sm.publishTokenSnapshotLocked(nil, nil)
 
 	// Reset all collections.
-	sm.uniqueConstraints = make(map[string]*UniqueConstraint)
-	sm.constraints = make(map[string]Constraint)
-	sm.constraintContracts = make(map[string]ConstraintContract)
+	sm.uniqueConstraints = make(map[uniqueConstraintIdentity]*UniqueConstraint)
+	sm.constraints = make(map[string]installedConstraintDefinition)
+	sm.constraintContracts = make(map[string]constraintContractRevision)
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
 	sm.compositeIndexes = make(map[string]*CompositeIndex)
 	sm.fulltextIndexes = make(map[string]*FulltextIndex)
@@ -349,43 +328,17 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	sm.tokenOrder = newSchemaTokenOrder(def.LabelTokens, def.RelationshipTypeTokens)
 
 	// Constraints.
-	for _, c := range def.Constraints {
-		props := make([]string, len(c.Properties))
-		copy(props, c.Properties)
-		var allowedVals []interface{}
-		if len(c.AllowedValues) > 0 {
-			allowedVals = make([]interface{}, len(c.AllowedValues))
-			copy(allowedVals, c.AllowedValues)
-		}
-		cc := Constraint{
-			Name:          c.Name,
-			Type:          c.Type,
-			EntityType:    c.EntityType,
-			Label:         c.Label,
-			Properties:    props,
-			OwnedIndex:    c.OwnedIndex,
-			AllowedValues: allowedVals,
-			MaxCount:      c.MaxCount,
-			Direction:     c.Direction,
-			SourceLabel:   c.SourceLabel,
-			TargetLabel:   c.TargetLabel,
-			PolicyMode:    c.PolicyMode,
-		}
-		sm.constraints[cc.Name] = cc
-
-		if cc.Type == ConstraintUnique && len(cc.Properties) == 1 {
-			key := cc.Label + ":" + cc.Properties[0]
-			sm.uniqueConstraints[key] = &UniqueConstraint{
-				Name:     cc.Name,
-				Label:    cc.Label,
-				Property: cc.Properties[0],
-				values:   make(map[interface{}]NodeID),
-			}
+	for _, input := range def.Constraints {
+		c := installConstraintDefinition(input)
+		sm.constraints[c.Name] = c
+		if c.Type == ConstraintUnique && c.Properties.Len() == 1 {
+			key := uniqueConstraintIdentity{c.Label, c.Properties.At(0)}
+			sm.uniqueConstraints[key] = &UniqueConstraint{Name: c.Name, Label: c.Label, Property: c.Properties.At(0), values: make(map[interface{}]NodeID)}
 		}
 	}
 
 	for _, contract := range def.ConstraintContracts {
-		sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+		sm.constraintContracts[contract.Name] = compileConstraintContractRevision(contract)
 	}
 
 	// Property type constraints.

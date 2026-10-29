@@ -1,4 +1,5 @@
 import type { GraphNodePayload, SearchResult } from "./api";
+import { identityRecord } from "./identityRecords";
 
 /**
  * Node utility functions extracted from Browser.tsx
@@ -63,7 +64,7 @@ export function extractNodeFromResult(
     "meta",
     "properties",
   ]);
-  const properties: Record<string, unknown> = {};
+  const properties = identityRecord();
   for (const [key, value] of Object.entries(cell)) {
     if (!excludeKeys.has(key)) {
       properties[key] = value;
