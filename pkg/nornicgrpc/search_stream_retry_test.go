@@ -18,7 +18,7 @@ func TestSearchStreamRetryGRPC(t *testing.T) {
 		memory := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { require.NoError(t, memory.Close()) })
 		engine := storage.NewNamespacedEngine(memory, "retry")
-		service := search.NewService(engine)
+		service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		rpc, err := NewService(Config{DefaultDatabase: "retry", OwnerFromContext: func(context.Context) string { return "retry" }}, nil, nil, service)
 		require.NoError(t, err)

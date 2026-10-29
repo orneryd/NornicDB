@@ -10,7 +10,7 @@ import (
 // migrateV3ToV4 runs only under the startup runner's existing maintenance lease.
 // It does not acquire another lifecycle or call normal entity write methods.
 // The exact catalog body and schema marker commit in one native transaction.
-func (b *BadgerEngine) migrateV3ToV4(ctx context.Context) error {
+func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) error {
 	if ctx == nil {
 		return fmt.Errorf("catalog upgrade requires a context")
 	}
@@ -23,10 +23,10 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if version == storageVersionCatalogV4 {
+		if version == storageVersionCatalogV4 && !replayCurrent {
 			return nil
 		}
-		if version != storageVersionEdgeAdjacencyV3 {
+		if version != storageVersionEdgeAdjacencyV3 && version != storageVersionCatalogV4 {
 			return fmt.Errorf("catalog V4 arm requires V3 storage, got %d", version)
 		}
 		plan := b.catalogUpgradeV4
@@ -84,10 +84,19 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, storageVersionCatalogV4); err != nil {
+		if version != storageVersionCatalogV4 {
+			if _, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, storageVersionCatalogV4); err != nil {
+				return err
+			}
+		}
+		if _, err := txn.Get(v4WALRecoveryKey); err == nil {
+			if err := txn.Delete(v4WALRecoveryKey); err != nil {
+				return err
+			}
+		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		migrated = true
+		migrated = version != storageVersionCatalogV4 || changed
 		return nil
 	})
 	if err != nil {

@@ -14,7 +14,7 @@ import (
 
 func TestIndexNode_DoesNotBlockSearchStateReads(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 
 	tmpDir := t.TempDir()
 	vfsPath := filepath.Join(tmpDir, "vectors")

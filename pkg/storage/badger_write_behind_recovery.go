@@ -42,6 +42,9 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
+	if err := ValidateWALFormat(wal.config.Dir, WALValidateCurrent); err != nil {
+		return 0, err
+	}
 	// The batch reader retains engine state through import, physical apply
 	// and count repair. Close rejects later admissions and waits for this lease.
 	if _, err := b.beginHelperTxn(); err != nil {
@@ -56,6 +59,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
 
 	var pending []bufferedCommit
+	var historicalNumericAliases map[walNumericToken]string
 	var pendingBytes int64
 	replayed := 0
 	flush := func() error {
@@ -87,22 +91,24 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			if err != nil {
 				return err
 			}
-			present, err := b.bufferedFlushMarkerExists(envelope.Namespace, "", envelope.LogicalTxID)
+			// Both reads below are physical-only: the record's own marker,
+			// never the pending generations, which replay does not consult.
+			receipt, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
 			if err != nil {
 				return err
 			}
-			if present {
+			if receipt.present {
 				return nil
 			}
 			// Recovery applies an already accepted record physically, as the
 			// existing buffered replay does; it must not emit a fresh ACK or
 			// append another buffered record while visiting this WAL.
 			envelope.Mode = CommitModeDirect
-			receipt, err := submitDecodedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			accepted, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
 			if err != nil {
 				return err
 			}
-			if outcome := receipt.WaitOutcome(context.Background()); outcome.Err != nil {
+			if outcome := accepted.WaitOutcome(context.Background()); outcome.Err != nil {
 				return outcome.Err
 			}
 			replayed++
@@ -118,12 +124,18 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		if data.TxID == "" {
 			return nil
 		}
-		exists, err := b.bufferedFlushMarkerExists(data.Namespace, data.TxID, data.LogicalTxID)
+		marker, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
-		if exists {
+		if marker.present {
 			return nil // each remaining record supplies its own authority
+		}
+		if authority == walOwnDirectoryAtOpen && len(data.NumericBindings) == 0 {
+			if historicalNumericAliases == nil {
+				historicalNumericAliases = make(map[walNumericToken]string)
+			}
+			data.numericAliases = historicalNumericAliases
 		}
 		c, err := b.importBufferedWALRecord(&data, authority)
 		if err != nil {

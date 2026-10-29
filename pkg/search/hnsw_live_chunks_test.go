@@ -14,7 +14,7 @@ func TestHNSWLiveIndexTakesEveryChunk(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "first", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
 	require.NoError(t, err)

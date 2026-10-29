@@ -3,7 +3,6 @@ package storage
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -56,11 +55,7 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		return plan, readErr
 	}
 	if binary.LittleEndian.Uint32(magic[:]) != walMagic {
-		// Legacy JSON holds no controls; its entries still reach the visitor.
-		if visit != nil {
-			return plan, visitWALEntriesWithLogger(path, discardWALSlog(), visitWALEntryWithSequence(visit))
-		}
-		return plan, nil
+		return plan, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, path)
 	}
 	reader := bufio.NewReader(source)
 	var header [9]byte
@@ -76,7 +71,10 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		}
 		version := header[4]
 		size := binary.LittleEndian.Uint32(header[5:])
-		if binary.LittleEndian.Uint32(header[:]) != walMagic || size > walMaxEntrySize || version > walFormatVersionPropertyEpoch {
+		if version != walFormatVersionCurrent {
+			return plan, unsupportedWALVersion(version)
+		}
+		if binary.LittleEndian.Uint32(header[:]) != walMagic || size > walMaxEntrySize {
 			return plan, ErrWALCorrupted
 		}
 		length := int64(9 + size + 4)
@@ -99,7 +97,8 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		if version >= 2 && binary.LittleEndian.Uint64(record[13+size:]) != walTrailer {
 			return plan, ErrWALCorrupted
 		}
-		entry, err := decodeWALEntry(payload, version)
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
 			return plan, err
 		}
@@ -109,7 +108,7 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		if entry.Sequence > plan.last {
 			plan.last = entry.Sequence
 		}
-		if version == walFormatVersionPropertyEpoch {
+		if isWALPropertyEpoch(entry) {
 			frame, err := decodeWALPropertyEpochFrame(entry)
 			if err != nil {
 				return plan, err
@@ -175,7 +174,7 @@ func (plan walPropertyEpochSealPlan) apply() error {
 			return err
 		}
 		writer := bufio.NewWriter(temp)
-		if _, err := writeAtomicRecordBufio(writer, payload, walFormatVersionV3); err != nil {
+		if _, err := writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent); err != nil {
 			return err
 		}
 		if err := writer.Flush(); err != nil {
@@ -221,21 +220,6 @@ func (w *WAL) planPropertyEpochSealLocked(visit func(WALEntry) error) ([]walProp
 	manifest, err := loadWALManifest(w.config.Dir)
 	if err != nil {
 		return nil, err
-	}
-	if visit != nil && len(manifest.Segments) == 0 {
-		// Same recovery view as VisitWALEntriesAfterFromDir; these unlisted
-		// segments are checked but, as before, never converted.
-		if scanned, scanErr := scanSegmentsFromDir(w.config.Dir); scanErr == nil {
-			for _, segment := range scanned {
-				path, err := resolveWALSegmentPath(w.config.Dir, segment.Path)
-				if err != nil {
-					return nil, err
-				}
-				if err := visitWALEntriesWithLogger(path, discardWALSlog(), visitWALEntryWithSequence(visit)); err != nil {
-					return nil, err
-				}
-			}
-		}
 	}
 	plans := make([]walPropertyEpochSealPlan, 0, len(manifest.Segments)+1)
 	for _, segment := range manifest.Segments {
@@ -323,12 +307,13 @@ func (b *BadgerEngine) finishPropertyWALOnClose(db *managedBadgerDB) error {
 				return err
 			}
 			// Decode only the transaction identity, not bodies/binding tables.
+			// Buffered records can use the typed recovery codec or legacy JSON.
 			var data struct {
 				TxID        string `json:"tx_id"`
 				Namespace   string `json:"namespace"`
 				LogicalTxID string `json:"logical_tx_id"`
 			}
-			if err := json.Unmarshal(payload, &data); err != nil {
+			if err := decodeRecoveryPayload(payload, &data); err != nil {
 				return err
 			}
 			if data.TxID == "" {

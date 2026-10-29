@@ -238,6 +238,9 @@ type BadgerTransaction struct {
 	// closeLocked then drops them instead of allocating fresh maps the
 	// dead transaction will never use.
 	bufferedStagingTransferred bool
+	// Prepared images are immutable while the detached native continuation
+	// retains entity authority. Reuse them for buffered publication accounting.
+	preparedEntityCommit *PreparedEntityCommit
 
 	// Transaction metadata (for logging/debugging)
 	Metadata           map[string]interface{}
@@ -405,6 +408,7 @@ func (tx *BadgerTransaction) IsActive() bool {
 }
 
 func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool, closedErr error) {
+	tx.preparedEntityCommit = nil
 	if tx.badgerTx != nil && tx.engine != nil && tx.engine.idDict != nil {
 		// Drop any staged counter state. Safe whether the txn
 		// committed (flushTxnCounters already cleared it) or is being
@@ -696,15 +700,15 @@ func (tx *BadgerTransaction) bufferDelete(key []byte) {
 // Allocates numeric IDs for endpoints + edge via the engine's id
 // dictionary. Any allocation failure propagates as a returned error.
 func (tx *BadgerTransaction) bufferSetEdgeBetweenIndexes(edge *Edge) error {
-	startNum, err := tx.engine.idDict.resolveOrAllocateNodeNumIDInTxn(tx.staged(), edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), NodeID(edge.StartNode))
 	if err != nil {
 		return err
 	}
-	endNum, err := tx.engine.idDict.resolveOrAllocateNodeNumIDInTxn(tx.staged(), edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), NodeID(edge.EndNode))
 	if err != nil {
 		return err
 	}
-	edgeNum, err := tx.engine.idDict.resolveOrAllocateEdgeNumIDInTxn(tx.staged(), edge.ID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(tx.engine.idDict, tx.staged(), EdgeID(edge.ID))
 	if err != nil {
 		return err
 	}
@@ -2093,7 +2097,7 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 	// A node deleted while relationships still connect it is still their
 	// endpoint (DeleteGraphNode with RejectConnected).
 	if node, connected := tx.connectedDeletes[nodeID]; connected {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 	// Check deleted
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
@@ -2101,7 +2105,7 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 	}
 	// Check pending
 	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 
 	return tx.getCommittedNodeProjectedLocked(nodeID, properties)
@@ -2115,7 +2119,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 		return tx.engine.GetNodeProjected(nodeID, properties)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
-		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		return projectCachedNodeForRead(node, properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		sidecar := false
@@ -2124,7 +2128,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 			return nil
 		})
 		if !sidecar {
-			return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+			return projectCachedNodeForRead(node, properties, true), nil
 		}
 	}
 	if tx.readTS.IsZero() {
@@ -2942,7 +2946,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	return tx.CommitContextWithPublication(ctx, nil)
+	return tx.PublishCommit(ctx, CommitPublication{})
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2957,7 +2961,7 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 // between polls of the commit context.
 const commitCancelPollEvery = 256
 
-func (tx *BadgerTransaction) Commit() error { return tx.CommitContextWithPublication(nil, nil) }
+func (tx *BadgerTransaction) Commit() error { return tx.PublishCommit(nil, CommitPublication{}) }
 
 // commitConflictError reports a Badger write conflict found while committing
 // in the storage commit-conflict shape (ErrConflict, localized).

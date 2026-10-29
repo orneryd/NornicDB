@@ -16,7 +16,7 @@ func BenchmarkRRetrieveOneShotCache(b *testing.B) {
 		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 		require.NoError(b, err)
 	}
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	b.Cleanup(func() { require.NoError(b, svc.Close()) })
 	require.NoError(b, svc.BuildIndexes(context.Background()))
 	for _, parameterized := range []bool{false, true} {

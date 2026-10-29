@@ -802,7 +802,7 @@ func (s *Server) ensureSearchBuildStartedForKnownDatabases() {
 				localization.ServerSearchReconcileStorageUnavailableEvent(info.Name, err))
 			continue
 		}
-		if _, err := s.db.EnsureSearchIndexesBuildStarted(info.Name, storageEngine); err != nil {
+		if _, err := s.db.EnsureSearchIndexes(nil, info.Name, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(context.Background(), slog.LevelWarn,
 				localization.ServerSearchReconcileFailedEvent(info.Name, err))
 		}
@@ -1763,13 +1763,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					s.dbConfigActive[info.Name] = cloneStringMap(resolved.Effective)
 				}
 			}
-			db.SetDbConfigResolver(func(dbName string) (int, float64, string) {
+			db.SetDbConfigResolver(func(dbName string) (int, float64) {
 				overrides := dbConfigStore.GetOverrides(dbName)
 				r := dbconfig.Resolve(globalConfig, overrides)
 				if r == nil {
-					return 0, 0, ""
+					return 0, 0
 				}
-				return r.EmbeddingDimensions, r.SearchMinSimilarity, r.BM25Engine
+				return r.EmbeddingDimensions, r.SearchMinSimilarity
 			})
 			db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
 				overrides := dbConfigStore.GetOverrides(dbName)

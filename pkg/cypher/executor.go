@@ -1259,7 +1259,7 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 // Search reads the node itself after reserving the refresh, so a later write or
 // delete that commits first is not overwritten by this notification.
 func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	e.refreshSearch(storage.NodeID(nodeID), "")
+	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1270,46 +1270,21 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	e.refreshSearch("", storage.EdgeID(edgeID))
-}
-
-// refreshSearch has search read a node or relationship this statement changed.
-// Inside a transaction the change is not visible yet: the transaction keeps
-// it until its commit (refreshSearchAfterCommit), and drops it on rollback.
-func (e *StorageExecutor) refreshSearch(node storage.NodeID, edge storage.EdgeID) {
-	if node == "" && edge == "" {
-		return
-	}
-	if tx, ok := e.storage.(*transactionStorageWrapper); ok {
-		if e.searchResolver != nil || e.searchService != nil {
-			tx.deferSearchRefresh(node, edge)
-		}
-		return
-	}
-	svc := e.search()
-	if svc == nil {
-		return
-	}
-	if node != "" {
-		_ = svc.RefreshNode(node)
-	}
-	if edge != "" {
-		_ = svc.RefreshEdge(edge)
-	}
+	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
 }
 
 // refreshSearchAfterCommit refreshes what the committed transaction changed.
+// The service is captured once, before the publish, so resets mid-publish do
+// not defer or skip the remaining changes.
 func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
 	nodes, edges := tx.takeSearchRefreshes()
-	svc := e.search()
-	if svc == nil {
-		return
-	}
+	service := e.search()
+	scope := cypherRefreshScope{executor: e}
 	for id := range nodes {
-		_ = svc.RefreshNode(id)
+		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
 	for id := range edges {
-		_ = svc.RefreshEdge(id)
+		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
@@ -1322,7 +1297,7 @@ func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	e.refreshSearch(storage.NodeID(localID), "")
+	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
@@ -1576,7 +1551,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if txID != "" {
 		wal, dbName = e.resolveWALAndDatabase()
 		if wal != nil {
-			walSeqStart, err = wal.AppendTxBegin(dbName, txID, nil)
+			walSeqStart, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: txID, Metadata: nil}, dbName)
 			if err != nil {
 				_ = tx.Rollback()
 				return nil, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
@@ -1636,7 +1611,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, execErr.Error())
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: execErr.Error()}, dbName)
 		}
 		return result, execErr
 	}
@@ -1647,7 +1622,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() {
 		_ = tx.Rollback()
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "no mutations")
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: "no mutations"}, dbName)
 		}
 		return result, nil
 	}
@@ -1657,7 +1632,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			tx.Rollback()
 			txExec.invalidateNodeLookupCache()
 			if wal != nil && walSeqStart > 0 {
-				_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
+				_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 			}
 			return nil, err
 		}
@@ -1668,7 +1643,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "terminated")
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: "terminated"}, dbName)
 		}
 		return nil, transactionTerminatedError()
 	}
@@ -1681,14 +1656,14 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		_ = tx.Rollback()
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, admissionErr.Error())
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: admissionErr.Error()}, dbName)
 		}
 		return nil, admissionErr
 	}
 	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 		}
 		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
@@ -1710,7 +1685,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// layer tells an acknowledged buffered commit from a durable one.
 	if wal != nil && walSeqStart > 0 {
 		opCount := tx.OperationCount()
-		if commitSeq, walErr := wal.AppendTxCommit(dbName, txID, opCount); walErr == nil {
+		if commitSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: txID, OpCount: opCount}, dbName); walErr == nil {
 			if receipt, recErr := storage.NewReceipt(txID, walSeqStart, commitSeq, dbName, time.Now().UTC()); recErr == nil {
 				if result.Metadata == nil {
 					result.Metadata = make(map[string]interface{})

@@ -20,14 +20,55 @@ type indexCapacityUsage struct {
 // nodeFulltext is the BM25 text one IndexNode call writes for a node,
 // extracted once and shared by the capacity check and the index update.
 type nodeFulltext struct {
-	index     bool   // the call updates BM25 for this node
-	text      string // the node's searchable text
-	unchanged bool   // the index already holds exactly this text for the node
+	index     bool           // the call updates BM25 for this node
+	text      string         // the node's searchable text
+	unchanged bool           // the index already holds exactly this text for the node
+	terms     []string       // analyzed once for both capacity and the index write
+	frequency map[string]int // the same distinct terms and counts the index will write
 }
 
 func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, fulltext nodeFulltext) (indexCapacityUsage, error) {
-	usage := s.estimateNodeIndexCapacityLocked(node, fulltext)
-	previous := s.indexCapacityByNode[string(node.ID)]
+	// Text the index already holds keeps its recorded BM25 size instead of
+	// being analyzed again.
+	usage := indexCapacityUsage{}
+	nodeID := string(node.ID)
+	previous, recorded := s.indexCapacityByNode[nodeID]
+	if fulltext.index && fulltext.unchanged && recorded {
+		usage.bm25Resident = previous.bm25Resident
+		usage.bm25Metadata = previous.bm25Metadata
+	} else if fulltext.index {
+		text := fulltext.text
+		usage.bm25Resident = int64(len(text))
+		if text != "" {
+			usage.bm25Metadata = int64(len(nodeID) + 16)
+			for term := range fulltext.frequency {
+				usage.bm25Metadata += int64(len(term) + 8)
+			}
+		}
+	}
+	if s.vectorEnabled.Load() {
+		usage.vectorMetadata = int64(len(nodeID) + 16)
+		for _, label := range node.Labels {
+			usage.vectorMetadata += int64(len(label) + 8)
+		}
+		dimensions := 0
+		s.mu.RLock()
+		if s.vectorIndex != nil {
+			dimensions = s.vectorIndex.GetDimensions()
+		}
+		diskPayload := s.vectorFileStore != nil || s.vectorStorageMode == "disk"
+		s.mu.RUnlock()
+		s.forEachNodeVectorEntry(node, dimensions, func(item nodeVectorEntry) bool {
+			if dimensions > 0 && len(item.vector) != dimensions {
+				return true
+			}
+			usage.vectorMetadata += int64(len(item.key) + 16)
+			if !diskPayload {
+				usage.vectorResident += int64(len(item.vector) * 2 * 4)
+			}
+			return true
+		})
+	}
 	checks := []struct {
 		name     string
 		current  int64
@@ -47,61 +88,6 @@ func (s *Service) checkNodeIndexCapacityLocked(node *storage.Node, fulltext node
 		}
 	}
 	return usage, nil
-}
-
-// estimateNodeIndexCapacityLocked sizes the index entries node needs. Text the
-// index already holds keeps its recorded BM25 size instead of being analyzed
-// again.
-func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, fulltext nodeFulltext) indexCapacityUsage {
-	if node == nil {
-		return indexCapacityUsage{}
-	}
-	usage := indexCapacityUsage{}
-	nodeID := string(node.ID)
-	previous, recorded := s.indexCapacityByNode[nodeID]
-	if fulltext.index && fulltext.unchanged && recorded {
-		usage.bm25Resident = previous.bm25Resident
-		usage.bm25Metadata = previous.bm25Metadata
-	} else if fulltext.index {
-		text := fulltext.text
-		usage.bm25Resident = int64(len(text))
-		if text != "" {
-			usage.bm25Metadata = int64(len(nodeID) + 16)
-			seenTerms := make(map[string]struct{})
-			for _, term := range normalizeAnalyzer(s.bm25Analyzer).Analyze(text) {
-				if _, exists := seenTerms[term]; exists {
-					continue
-				}
-				seenTerms[term] = struct{}{}
-				usage.bm25Metadata += int64(len(term) + 8)
-			}
-		}
-	}
-	if !s.vectorEnabled.Load() {
-		return usage
-	}
-	usage.vectorMetadata = int64(len(nodeID) + 16)
-	for _, label := range node.Labels {
-		usage.vectorMetadata += int64(len(label) + 8)
-	}
-	dimensions := 0
-	s.mu.RLock()
-	if s.vectorIndex != nil {
-		dimensions = s.vectorIndex.GetDimensions()
-	}
-	diskPayload := s.vectorFileStore != nil || s.vectorStorageMode == "disk"
-	s.mu.RUnlock()
-	s.forEachNodeVectorEntry(node, dimensions, func(item nodeVectorEntry) bool {
-		if dimensions > 0 && len(item.vector) != dimensions {
-			return true
-		}
-		usage.vectorMetadata += int64(len(item.key) + 16)
-		if !diskPayload {
-			usage.vectorResident += int64(len(item.vector) * 2 * 4)
-		}
-		return true
-	})
-	return usage
 }
 
 func (s *Service) commitNodeIndexCapacityLocked(nodeID string, usage indexCapacityUsage) {

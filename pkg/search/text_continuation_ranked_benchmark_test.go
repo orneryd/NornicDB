@@ -22,7 +22,7 @@ func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
 		b.Helper()
 		b.Setenv(EnvSearchResultCacheEnabled, fmt.Sprint(cache))
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-		service := NewServiceWithDimensions(engine, 2)
+		service := NewService(engine, 2, nil)
 		b.Cleanup(func() { _ = service.Close() })
 		for i := 0; i < docs; i++ {
 			angle := math.Pi * float64(i) / float64(docs)

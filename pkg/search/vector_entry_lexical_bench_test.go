@@ -12,18 +12,18 @@ import (
 // input preparation. This does not measure total HNSW build or query latency.
 func BenchmarkVectorEntryLexicalConstructionInputs(b *testing.B) {
 	const documents, chunks = 256, 4
-	ft := NewFulltextIndexV2()
+	ft := NewFulltextIndexV2WithAnalyzer(nil)
 	ids := make([]string, 0, documents*chunks)
 	vectors := make([][]float32, 0, documents*chunks)
 	for i := 0; i < documents; i++ {
 		id := fmt.Sprintf("document-%04d", i)
-		ft.Index(id, fmt.Sprintf("topic%d topic%d", i%8, i%8))
+		ft.Index(id, fmt.Sprintf("topic%d topic%d", i%8, i%8), nil, nil, false)
 		for chunk := 0; chunk < chunks; chunk++ {
 			ids = append(ids, nodeChunkVectorKey(id, chunk))
 			vectors = append(vectors, []float32{1, float32(i + 1)})
 		}
 	}
-	service := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
+	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	defer service.Close()
 	hints := service.hnswLexicalSeedHints(ft, 16)
 	if len(hints) == 0 {

@@ -43,6 +43,7 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -554,6 +555,57 @@ def behavior_standout(candidate, hits, *, min_gap, min_lead, min_hits):
     return None
 
 
+@lru_cache(maxsize=2048)
+def go_forwarding_wrapper(body):
+    """Identify a single-statement Go forwarding shim, or None if unparseable."""
+    try:
+        from tree_sitter import Language, Parser
+        import tree_sitter_go
+        tree = Parser(Language(tree_sitter_go.language())).parse(("package duplicatecheck\n" + body).encode())
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+    decls = [n for n in tree.root_node.named_children if n.type in ("function_declaration", "method_declaration")]
+    if len(decls) != 1 or decls[0].has_error:
+        return None
+    block = decls[0].child_by_field_name("body")
+    if block is None:
+        return False
+    # Comments are named tree-sitter nodes, but are not executable statements.
+    # Ignoring only those nodes prevents a comment from hiding a true shim.
+    executable = lambda node: [child for child in node.named_children if child.type != "comment"]
+    block_children = executable(block)
+    if len(block_children) != 1 or block_children[0].type != "statement_list":
+        return False
+    statements = executable(block_children[0])
+    if len(statements) != 1:
+        return False
+    statement = statements[0]
+    children = executable(statement)
+    call = None
+    if statement.type == "return_statement" and len(children) == 1:
+        expression_list = children[0]
+        expressions = executable(expression_list)
+        if expression_list.type == "expression_list" and len(expressions) == 1:
+            call = expressions[0]
+    elif statement.type == "expression_statement" and len(children) == 1:
+        call = children[0]
+    if call is None or call.type != "call_expression":
+        return False
+    function = call.child_by_field_name("function")
+    if function is None or function.type not in ("identifier", "selector_expression"):
+        return False
+    # A callback or nested call can carry substantial behavior; it is not a
+    # proof of a one-call forwarding shim.
+    stack = list(call.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type in ("func_literal", "call_expression"):
+            return False
+        stack.extend(child.named_children)
+    return True
+
+
+
 def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False, max_matches=5,
              min_tokens=0, ignore=(), semantic=True, semantic_min_gap=0.15, semantic_min_lead=0.05,
              semantic_min_hits=5, deadline=None, owner_calls=None, existing_owner_calls=None):
@@ -561,7 +613,9 @@ def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False
     # A semantic-only match to an AST-resolved callee identifies existing reuse.
     # Copied bodies still qualify on code similarity, even if they also call it.
     owner_calls = owner_calls or {}
+    wrapper = go_forwarding_wrapper(candidate.body) if candidate.source_file.endswith(".go") else False
     reused = {hit.id for hit in hits if hit.id in owner_calls and hit.repo == repo
+              and wrapper is False
               and "." not in hit.label.split("(", 1)[0]
               and similarity(candidate.body, hit.body)["score"] < min_similarity}
     standout = behavior_standout(candidate, [hit for hit in hits if hit.id not in reused],
@@ -587,6 +641,9 @@ def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False
         sim = similarity(candidate.body, hit.body)
         if sim["score"] >= min_similarity:
             basis = "code"
+        elif (wrapper is True and hit.id in owner_calls and hit.repo == repo
+              and "." not in hit.label.split("(", 1)[0]):
+            basis = "forwarder"
         elif hit.id == standout:
             basis = "behavior"
         else:
@@ -721,6 +778,8 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
 
 def _describe(match):
     """How a match was established, for the comment and the summary."""
+    if match.basis == "forwarder":
+        return "forwarding shim detected; migrate callers to the owner"
     h = match.hit
     if match.basis == "behavior":
         similarity = f"{h.vector_similarity:.2f}" if h.vector_similarity is not None else "n/a"

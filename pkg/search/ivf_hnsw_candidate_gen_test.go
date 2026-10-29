@@ -14,27 +14,21 @@ func TestIVFHNSW_UsedAfterClustering_CPUOnly(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 
-	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
-	svc.EnableClustering(nil, 2)
-	svc.SetMinEmbeddingsForClustering(1)
+	svc, _ := newVectorService(t, 4, "")
+	enableVectorClustering(t, svc, 2)
 
-	// Two obvious groups, large enough to exercise the per-cluster ANN pipeline.
+	// Keep the original index-only, unnamespaced 6,000-node population.
 	for i := 0; i < 3000; i++ {
-		n := &storage.Node{
-			ID:              storage.NodeID("a-" + itoa(i)),
-			Labels:          []string{"Doc"},
+		indexVectorNodes(t, svc, nil, &storage.Node{
+			ID: storage.NodeID("a-" + itoa(i)), Labels: []string{"Doc"},
 			ChunkEmbeddings: [][]float32{{1, 0, 0, 0}},
-		}
-		require.NoError(t, svc.IndexNode(n))
+		})
 	}
 	for i := 0; i < 3000; i++ {
-		n := &storage.Node{
-			ID:              storage.NodeID("b-" + itoa(i)),
-			Labels:          []string{"Doc"},
+		indexVectorNodes(t, svc, nil, &storage.Node{
+			ID: storage.NodeID("b-" + itoa(i)), Labels: []string{"Doc"},
 			ChunkEmbeddings: [][]float32{{0, 1, 0, 0}},
-		}
-		require.NoError(t, svc.IndexNode(n))
+		})
 	}
 
 	require.NoError(t, svc.TriggerClustering(context.Background()))

@@ -140,7 +140,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := copyNodeProjectedWithoutEmbeddings(record.Node, properties)
+	node := projectCachedNodeForRead(record.Node, properties, true)
 	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}

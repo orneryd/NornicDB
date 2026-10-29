@@ -155,6 +155,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 	// still explicit, reasoned exceptions when present, but absence on the
 	// other branch cannot make that branch's guard stale.
 	branchOptionalAllowlist := map[string]string{
+		"internal/testutil/compositeddl/inventory.go:Cases":               "Fixture factory builds synthetic command text for test cases; it does not parse, route, or execute Cypher at runtime.",
 		"pkg/multidb/remote_credentials.go:isCredentialFreeSimpleHTTPURL": "This URL fast path rejects userinfo, query, fragment, and ambiguous authority punctuation; it does not scan Cypher names or strings.",
 		"pkg/cypher/json_stringify.go:writeString":                        "emits JSON string escapes and does not read Cypher text",
 		"pkg/cypher/json_stringify.go:pythonBytesRepr":                    "emits a Python bytes representation and does not read Cypher text",

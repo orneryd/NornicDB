@@ -110,7 +110,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		return err
 	}
 	logicalID := uuid.NewString()
-	prepared, err := tx.PrepareEntityCommit(ctx, logicalID)
+	prepared, err := tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: logicalID})
 	if err != nil {
 		_ = tx.Rollback()
 		release()

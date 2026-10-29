@@ -52,8 +52,44 @@ type CypherParserListener interface {
 	// EnterAdministrationCommand is called when entering the administrationCommand production.
 	EnterAdministrationCommand(c *AdministrationCommandContext)
 
+	// EnterCompositeConstituent is called when entering the compositeConstituent production.
+	EnterCompositeConstituent(c *CompositeConstituentContext)
+
+	// EnterCompositeConstituentOption is called when entering the compositeConstituentOption production.
+	EnterCompositeConstituentOption(c *CompositeConstituentOptionContext)
+
+	// EnterCompositeValue is called when entering the compositeValue production.
+	EnterCompositeValue(c *CompositeValueContext)
+
 	// EnterQualifiedName is called when entering the qualifiedName production.
 	EnterQualifiedName(c *QualifiedNameContext)
+
+	// EnterCompositeAt is called when entering the compositeAt production.
+	EnterCompositeAt(c *CompositeAtContext)
+
+	// EnterCompositePassword is called when entering the compositePassword production.
+	EnterCompositePassword(c *CompositePasswordContext)
+
+	// EnterCompositeOidc is called when entering the compositeOidc production.
+	EnterCompositeOidc(c *CompositeOidcContext)
+
+	// EnterCompositeCredential is called when entering the compositeCredential production.
+	EnterCompositeCredential(c *CompositeCredentialContext)
+
+	// EnterCompositeForwarding is called when entering the compositeForwarding production.
+	EnterCompositeForwarding(c *CompositeForwardingContext)
+
+	// EnterCompositeSecret is called when entering the compositeSecret production.
+	EnterCompositeSecret(c *CompositeSecretContext)
+
+	// EnterCompositeRef is called when entering the compositeRef production.
+	EnterCompositeRef(c *CompositeRefContext)
+
+	// EnterCompositeAccess is called when entering the compositeAccess production.
+	EnterCompositeAccess(c *CompositeAccessContext)
+
+	// EnterCompositeConstituents is called when entering the compositeConstituents production.
+	EnterCompositeConstituents(c *CompositeConstituentsContext)
 
 	// EnterSchemaCommand is called when entering the schemaCommand production.
 	EnterSchemaCommand(c *SchemaCommandContext)
@@ -496,8 +532,44 @@ type CypherParserListener interface {
 	// ExitAdministrationCommand is called when exiting the administrationCommand production.
 	ExitAdministrationCommand(c *AdministrationCommandContext)
 
+	// ExitCompositeConstituent is called when exiting the compositeConstituent production.
+	ExitCompositeConstituent(c *CompositeConstituentContext)
+
+	// ExitCompositeConstituentOption is called when exiting the compositeConstituentOption production.
+	ExitCompositeConstituentOption(c *CompositeConstituentOptionContext)
+
+	// ExitCompositeValue is called when exiting the compositeValue production.
+	ExitCompositeValue(c *CompositeValueContext)
+
 	// ExitQualifiedName is called when exiting the qualifiedName production.
 	ExitQualifiedName(c *QualifiedNameContext)
+
+	// ExitCompositeAt is called when exiting the compositeAt production.
+	ExitCompositeAt(c *CompositeAtContext)
+
+	// ExitCompositePassword is called when exiting the compositePassword production.
+	ExitCompositePassword(c *CompositePasswordContext)
+
+	// ExitCompositeOidc is called when exiting the compositeOidc production.
+	ExitCompositeOidc(c *CompositeOidcContext)
+
+	// ExitCompositeCredential is called when exiting the compositeCredential production.
+	ExitCompositeCredential(c *CompositeCredentialContext)
+
+	// ExitCompositeForwarding is called when exiting the compositeForwarding production.
+	ExitCompositeForwarding(c *CompositeForwardingContext)
+
+	// ExitCompositeSecret is called when exiting the compositeSecret production.
+	ExitCompositeSecret(c *CompositeSecretContext)
+
+	// ExitCompositeRef is called when exiting the compositeRef production.
+	ExitCompositeRef(c *CompositeRefContext)
+
+	// ExitCompositeAccess is called when exiting the compositeAccess production.
+	ExitCompositeAccess(c *CompositeAccessContext)
+
+	// ExitCompositeConstituents is called when exiting the compositeConstituents production.
+	ExitCompositeConstituents(c *CompositeConstituentsContext)
 
 	// ExitSchemaCommand is called when exiting the schemaCommand production.
 	ExitSchemaCommand(c *SchemaCommandContext)

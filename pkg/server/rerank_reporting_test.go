@@ -48,7 +48,7 @@ func (r malformedSearchReranker) Rerank(context.Context, string, []search.Rerank
 
 func TestHTTPSearchMalformedRerankFallsBackTruthfully(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	server.db.SetDbConfigResolver(func(string) (int, float64, string) { return 2, 0, search.DefaultBM25Engine() })
+	server.db.SetDbConfigResolver(func(string) (int, float64) { return 2, 0 })
 	server.db.SetEmbedConfigForDB(nil)
 	server.db.SetEmbedder(fixedSearchEmbedder{})
 	database := server.dbManager.DefaultDatabaseName()

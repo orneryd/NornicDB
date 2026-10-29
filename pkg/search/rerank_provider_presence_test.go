@@ -57,9 +57,10 @@ type providerRepresentation struct {
 }
 
 type providerShapeCase struct {
-	shape       string
-	wantApplied bool
-	wantIDs     []string
+	shape          string
+	wantApplied    bool
+	wantIDs        []string
+	publicRejected bool
 }
 
 type providerListedPackage struct {
@@ -124,7 +125,16 @@ func parseProviderPackageFiles(fset *token.FileSet, listed *providerListedPackag
 	return files, nil
 }
 
-func TestRerankProviderRepresentationShapeMatrix(t *testing.T) {
+// TestRerankProviderOutputMatrix is the single canonical case table for the provider-representation x malformed-shape population of the rerank contract. Every discovered production reranker type must appear both in the executable representation population and in this table, every representation must carry the full shape set its provider can produce, and each shape declares the outcome its owner enforces:
+//
+// Concretely:
+//
+//   - the internal runner must apply accepted shapes in the documented order with no duplicate results, and must return the original order, log a rerank failure and report SearchFallbackRerankFailed for every shape it rejects;
+//   - the public RerankCandidates owner must reject the structured-ambiguity shapes with an error and no results, must surface the canonical rerank failure for every shape the internal runner rejects, and otherwise returns the same order the internal runner produced.
+//
+// Sequencing is derived per shape from the shape token plus the internal
+// verdict, so one case cannot disagree with itself across the two owners.
+func TestRerankProviderOutputMatrix(t *testing.T) {
 	providerTypes := discoverProductionRerankerTypes(t)
 	representations := executableProviderRepresentations()
 	if len(representations) != 9 {
@@ -142,16 +152,36 @@ func TestRerankProviderRepresentationShapeMatrix(t *testing.T) {
 		{ID: "b", Content: "beta", Score: 0.02},
 		{ID: "c", Content: "gamma", Score: 0.01},
 	}
-	observations := 0
+	invalidOutputRejections := make(map[string]int)
+	// structuredPublicRejections counts only the representation/shape pairs the
+	// public owner refuses although the internal runner can still fall back.
+	structuredPublicRejections := make(map[string]int)
+	publicRejections := make(map[string]int)
+	executedShapeObservations := 0
 	for _, representation := range representations {
 		cases := executableProviderShapeCases(representation.name)
 		if len(cases) == 0 {
 			t.Fatalf("provider representation %s has no executable shape cases", representation.name)
 		}
 		for _, testCase := range cases {
-			t.Run(representation.name+"/"+testCase.shape, func(t *testing.T) {
+			// A provider failure is itself a public rejection: explicit callers
+			// receive the canonical rerank error, never a fallback order.
+			if !testCase.wantApplied {
+				invalidOutputRejections[representation.providerType]++
+			}
+			if testCase.publicRejected && !testCase.wantApplied {
+				publicRejections[representation.providerType]++
+				structuredPublicRejections[representation.name+"/"+testCase.shape]++
+			}
+			executedShapeObservations++
+			wantIDs := testCase.wantIDs
+			if !testCase.wantApplied {
+				wantIDs = []string{"a", "b", "c"}
+			}
+
+			t.Run(representation.name+"/"+testCase.shape+"/internal_runner", func(t *testing.T) {
 				reranker := makeProviderShapeReranker(t, representation, testCase.shape)
-				service := NewService(newNamespacedEngine(t))
+				service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 				t.Cleanup(func() { _ = service.Close() })
 				var logs bytes.Buffer
 				service.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -168,10 +198,6 @@ func TestRerankProviderRepresentationShapeMatrix(t *testing.T) {
 						t.Fatalf("invalid provider response was not logged: %q", logs.String())
 					}
 				}
-				wantIDs := testCase.wantIDs
-				if !testCase.wantApplied {
-					wantIDs = []string{"a", "b", "c"}
-				}
 				if len(outcome.Results) != len(wantIDs) {
 					t.Fatalf("complete result length = %d want %d", len(outcome.Results), len(wantIDs))
 				}
@@ -186,64 +212,70 @@ func TestRerankProviderRepresentationShapeMatrix(t *testing.T) {
 					seen[result.ID] = true
 				}
 			})
-			observations++
-		}
-	}
-	if observations != 108 {
-		t.Fatalf("provider representation/shape executable population changed: got %d want 108", observations)
-	}
-	t.Logf("executed %d discovered provider types, %d representations, %d applicable shape cases", len(providerTypes), len(representations), observations)
-}
 
-func TestRerankCandidatesRejectsAmbiguousProviderOutput(t *testing.T) {
-	candidates := []RerankCandidate{
-		{ID: "a", Content: "alpha", Score: 0.03},
-		{ID: "b", Content: "beta", Score: 0.02},
-		{ID: "c", Content: "gamma", Score: 0.01},
-	}
-	cases := map[string][]string{
-		"cross_encoder.results":  {"bare_second_object", "truncated_structured_suffix", "conflicting_representations", "duplicate_json_field"},
-		"cross_encoder.rankings": {"bare_second_object", "truncated_structured_suffix"},
-		"cross_encoder.scores":   {"bare_second_object", "truncated_structured_suffix"},
-		"llm.ranked":             {"bare_second_object", "truncated_structured_suffix", "two_json_fences", "fence_then_second_object", "conflicting_representations", "duplicate_json_field"},
-		"llm.order":              {"bare_second_object", "truncated_structured_suffix", "two_json_fences", "fence_then_second_object"},
-		"llm.array":              {"bare_second_object", "truncated_structured_suffix", "two_json_fences", "fence_then_second_object"},
-		// The local scorer is typed and cannot emit a structured envelope. Its
-		// malformed control proves that it still reaches the same public owner.
-		"local.scorer":   {"nan_or_inf"},
-		"voyage.data":    {"bare_second_object", "truncated_structured_suffix", "conflicting_representations", "duplicate_json_field"},
-		"voyage.results": {"bare_second_object", "truncated_structured_suffix"},
-	}
-	seenTypes := make(map[string]int)
-	observations := 0
-	for _, representation := range executableProviderRepresentations() {
-		for _, shape := range cases[representation.name] {
-			t.Run(representation.name+"/"+shape, func(t *testing.T) {
-				reranker := makeProviderShapeReranker(t, representation, shape)
-				service := NewService(newNamespacedEngine(t))
+			t.Run(representation.name+"/"+testCase.shape+"/public_candidates", func(t *testing.T) {
+				reranker := makeProviderShapeReranker(t, representation, testCase.shape)
+				service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 				t.Cleanup(func() { _ = service.Close() })
 				service.SetReranker(reranker)
 				options := DefaultSearchOptions()
 				options.RerankTopK = len(candidates)
 				results, err := service.RerankCandidates(context.Background(), "query", candidates, options)
-				if err == nil {
-					t.Fatalf("ambiguous provider output reported success: results=%+v", results)
+				if !testCase.wantApplied {
+					// Both owners read one rerankOutcome: a provider failure is
+					// reported as the canonical rerank error, never as a silent
+					// fallback order for an explicit caller.
+					if err == nil {
+						t.Fatalf("failed provider output reported success: results=%+v", results)
+					}
+					if results != nil {
+						t.Fatalf("failed explicit rerank returned results: %+v", results)
+					}
+					return
 				}
-				if results != nil {
-					t.Fatalf("failed explicit rerank returned results: %+v", results)
+				if !testCase.publicRejected {
+					if err != nil {
+						t.Fatalf("accepted provider output reported failure: %v", err)
+					}
+				}
+				// The public owner returns the internal owner's order: the
+				// provider's for applied shapes, the original for fallbacks.
+				if len(results) != len(wantIDs) {
+					t.Fatalf("public result length = %d want %d", len(results), len(wantIDs))
+				}
+				for index, result := range results {
+					if result.ID != wantIDs[index] {
+						t.Fatalf("public result %d = %q want %q", index, result.ID, wantIDs[index])
+					}
 				}
 			})
-			seenTypes[representation.providerType]++
-			observations++
 		}
 	}
-	providerTypes := discoverProductionRerankerTypes(t)
-	if strings.Join(providerTypes, "\n") != strings.Join(sortedProviderTypeKeys(seenTypes), "\n") {
-		t.Fatalf("type-derived reranker population has no exact public invalid-output case\n--- go/types ---\n%s\n--- executable ---\n%s", strings.Join(providerTypes, "\n"), strings.Join(sortedProviderTypeKeys(seenTypes), "\n"))
+	if strings.Join(providerTypes, "\n") != strings.Join(sortedProviderTypeKeys(publicRejections), "\n") {
+		t.Fatalf("type-derived reranker population has no exact public invalid-output case\n--- go/types ---\n%s\n--- executable ---\n%s", strings.Join(providerTypes, "\n"), strings.Join(sortedProviderTypeKeys(publicRejections), "\n"))
 	}
-	if observations != 29 {
-		t.Fatalf("public ambiguous-output population changed: got %d want 29", observations)
+	invalidOutputObservations := 0
+	for _, count := range invalidOutputRejections {
+		invalidOutputObservations += count
 	}
+	publicObservations := 0
+	for _, count := range publicRejections {
+		publicObservations += count
+	}
+	if invalidOutputObservations != 83 {
+		t.Fatalf("public invalid-output population changed: got %d want 83", invalidOutputObservations)
+	}
+	ambiguousPublicObservations := 0
+	for _, count := range structuredPublicRejections {
+		ambiguousPublicObservations += count
+	}
+	if ambiguousPublicObservations != 29 {
+		t.Fatalf("public ambiguous-output population changed: got %d want 29 from %d rejections", ambiguousPublicObservations, publicObservations)
+	}
+	if executedShapeObservations != 108 {
+		t.Fatalf("provider representation/shape executable population changed: got %d want 108", executedShapeObservations)
+	}
+	t.Logf("executed %d discovered provider types, %d representations, %d internal runner shape cases, %d public invalid-output cases", len(providerTypes), len(representations), executedShapeObservations, publicObservations)
 }
 
 func executableProviderShapeCases(name string) []providerShapeCase {
@@ -251,6 +283,10 @@ func executableProviderShapeCases(name string) []providerShapeCase {
 		cases := make([]providerShapeCase, len(shapes))
 		for index, shape := range shapes {
 			cases[index] = providerShapeCase{shape: shape}
+			switch shape {
+			case "bare_second_object", "truncated_structured_suffix", "two_json_fences", "fence_then_second_object", "conflicting_representations", "duplicate_json_field":
+				cases[index].publicRejected = true
+			}
 		}
 		return cases
 	}
@@ -290,7 +326,7 @@ func executableProviderShapeCases(name string) []providerShapeCase {
 		return append(cases, structuredSuffixFailures...)
 	case "local.scorer":
 		return []providerShapeCase{
-			{shape: "nan_or_inf"}, success("negative", "c", "b", "a"),
+			{shape: "nan_or_inf", publicRejected: true}, success("negative", "c", "b", "a"),
 			success("valid_zero_index", "c", "a", "b"), success("valid_zero_score", "c", "b", "a"),
 		}
 	default:
@@ -568,7 +604,7 @@ func TestLLMRerankerRejectsMalformedStructuredOutputPublicOutcome(t *testing.T) 
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			service := NewService(newNamespacedEngine(t))
+			service := NewService(newNamespacedEngine(t), DefaultVectorDimensions, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			reranker := NewLLMReranker(&LLMRerankerConfig{
 				Enabled:       true,

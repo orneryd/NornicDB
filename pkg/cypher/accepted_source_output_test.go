@@ -74,10 +74,10 @@ func acceptedSourceOutputObserver(t *testing.T) func(*testing.T, string, []strin
 			}
 		}
 		require.True(t, found)
-		for _, output := range outputs {
+		for boundary, output := range outputs {
 			for _, secret := range secrets {
 				if strings.Contains(output, secret) {
-					t.Error("credential reached an original-source output boundary; details withheld")
+					t.Errorf("credential reached original-source output boundary %d; details withheld", boundary)
 				}
 			}
 		}

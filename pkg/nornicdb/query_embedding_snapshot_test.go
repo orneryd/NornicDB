@@ -109,7 +109,7 @@ func TestQueryEmbeddingSnapshotResolvesDatabaseOnce(t *testing.T) {
 			old := &snapshotQueryProvider{name: "old", vector: []float32{1, 0}}
 			replacement := &snapshotQueryProvider{name: "new", vector: []float32{0, 1}}
 			db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, old)}
-			db.SetDbConfigResolver(func(string) (int, float64, string) { return 3, 0, "" })
+			db.SetDbConfigResolver(func(string) (int, float64) { return 3, 0 })
 			cfg := &embed.Config{Provider: "ollama", Model: "database-model", Dimensions: 2}
 			key := embedConfigKey(cfg)
 			special := &coverageQueryEmbedder{chunks: []string{"special"}, embed: []float32{0.5, 0.5}}

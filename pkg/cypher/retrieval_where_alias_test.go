@@ -16,7 +16,7 @@ func TestRetrievalWhereFunctionAliases(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "where_alias")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	service.EnableRelationshipSearch(nil)
 	service.StartRelationshipIndex()

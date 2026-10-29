@@ -169,7 +169,7 @@ func TestIVFPQCandidateGenDefersSimilarityThresholdUntilExactScoring(t *testing.
 }
 
 func TestServiceTracksCompressedIndexMutationsWithoutRebuild(t *testing.T) {
-	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	service := NewService(newTestMemoryEngine(t), 2, nil)
 	service.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 2}}
 
 	service.indexMu.Lock()

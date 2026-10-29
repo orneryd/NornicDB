@@ -32,7 +32,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 			seed := buildWriteNode("nornic:seed", "seedterm", []float32{1, 0, 0})
 			_, err := engine.CreateNode(storage.CopyNode(seed))
 			require.NoError(t, err)
-			svc := NewServiceWithDimensions(engine, 3)
+			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			t.Cleanup(engine.open)
 			require.NoError(t, svc.IndexNode(seed))

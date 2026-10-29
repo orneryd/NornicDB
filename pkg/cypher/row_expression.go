@@ -122,11 +122,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
-			if !ok {
-				return nil, false, rowPropertyChainTypeError(base, chain)
-			}
-			return value, true, nil
+			return evaluateRowPropertyResult(base, chain, e)
 		}
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
@@ -655,13 +651,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
-			if !ok {
-				if err := rowPropertyChainTypeError(base, chain); err != nil {
-					return nil, false, err
-				}
-			}
-			return value, ok, nil
+			return evaluateRowPropertyResult(base, chain, e)
 		}
 	}
 	return e.evaluateRowFallback(expr, values, rowFallbackValue)
@@ -1154,12 +1144,30 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	return value, true, resolved, err
 }
 
-func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, bool) {
+// evaluateRowPropertyChain resolves only the selected path. When property
+// decay is active, plain parameter maps can be read without projecting every
+// unrelated member. Entity receivers and the final value still use the same
+// visibility owner as a complete query projection.
+func evaluateRowPropertyChain(value interface{}, chain string, executor *StorageExecutor, direct bool) (interface{}, bool) {
+	projectRemaining := executor != nil && executor.queryPropertyDecayEnabled()
 	for start := 0; start < len(chain); {
-		end := nextRowPropertySeparator(chain, start)
-		property := normalizePropertyKey(strings.TrimSpace(chain[start:end]))
+		end := len(chain)
+		property := chain
+		if !direct {
+			end = nextRowPropertySeparator(chain, start)
+			property = normalizePropertyKey(strings.TrimSpace(chain[start:end]))
+		}
 		if property == "" {
 			return nil, false
+		}
+		if projectRemaining {
+			// A map lookup itself does not inspect its other values. Once a
+			// non-map receiver is projected, the canonical projection has
+			// already handled its subtree exactly as before.
+			if _, plainMap := value.(map[string]interface{}); !plainMap {
+				value = executor.projectVisibleQueryValue(value)
+				projectRemaining = false
+			}
 		}
 		next, ok := rowPropertyValue(value, property)
 		if !ok {
@@ -1170,6 +1178,9 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 			break
 		}
 		start = end + 1
+	}
+	if projectRemaining {
+		value = executor.projectVisibleQueryValue(value)
 	}
 	return value, true
 }

@@ -61,39 +61,8 @@ func TestEmbedQueryChunkedHonoursChunkLimit(t *testing.T) {
 // matched, and that row reports how many of a long query's chunks were
 // searched: a caller can tell "nothing matched" from "the searched part
 // matched nothing" (#907).
-func TestRetrieveContinuationReportsQueryChunksWithoutHits(t *testing.T) {
-	ctx := context.Background()
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
-	service := search.NewServiceWithDimensions(store, 2)
-	require.NoError(t, service.BuildIndexes(ctx))
-	exec.SetSearchService(service)
-	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
-	t.Setenv(search.EnvSearchQueryChunkOverflow, "")
-
-	plain, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
-	require.NoError(t, err)
-	require.Empty(t, plain.Rows)
-
-	continued, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5, n: 5}) YIELD page RETURN page", nil)
-	require.NoError(t, err)
-	require.Len(t, continued.Rows, 1)
-	page := continued.Rows[0][0].(map[string]interface{})
-	require.Empty(t, page["results"])
-	require.Equal(t, int64(2), page["query_chunks_searched"])
-	require.Equal(t, int64(4), page["query_chunks_total"])
-}
 
 // A continued db.retrieve page reports a long query's chunk counts.
-func TestSearchContinuationPageReportsQueryChunks(t *testing.T) {
-	page := executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now(), QueryChunksSearched: 3, QueryChunksTotal: 5}, "")
-	row := page.Rows[0][0].(map[string]interface{})
-	require.Equal(t, int64(3), row["query_chunks_searched"])
-	require.Equal(t, int64(5), row["query_chunks_total"])
-	page = executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now()}, "")
-	require.NotContains(t, page.Rows[0][0].(map[string]interface{}), "query_chunks_total")
-}
 
 type failingQueryChunkReranker struct{}
 
@@ -108,46 +77,6 @@ func (failingQueryChunkReranker) Rerank(context.Context, string, []search.Rerank
 // were searched, whatever the fallback reason: here a failed rerank holds
 // fallback_reason, and the counts still show that chunks were dropped
 // (#907).
-func TestRetrieveRowsReportQueryChunks(t *testing.T) {
-	ctx := context.Background()
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
-	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
-	require.NoError(t, service.BuildIndexes(ctx))
-	service.SetReranker(failingQueryChunkReranker{})
-	exec.SetSearchService(service)
-	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
-	t.Setenv(search.EnvSearchQueryChunkOverflow, "")
-
-	column := func(result *ExecuteResult, name string) interface{} {
-		for index, candidate := range result.Columns {
-			if candidate == name {
-				return result.Rows[0][index]
-			}
-		}
-		t.Fatalf("no column %s in %v", name, result.Columns)
-		return nil
-	}
-	result, err := exec.Execute(ctx, "CALL db.rretrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, result.Rows)
-	require.Equal(t, int64(2), column(result, "query_chunks_searched"))
-	require.Equal(t, int64(4), column(result, "query_chunks_total"))
-	require.Equal(t, string(search.SearchFallbackRerankFailed), column(result, "fallback_reason"))
-
-	yielded, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5}) YIELD node, query_chunks_searched, query_chunks_total RETURN query_chunks_searched, query_chunks_total", nil)
-	require.NoError(t, err)
-	require.Equal(t, []interface{}{int64(2), int64(4)}, yielded.Rows[0])
-
-	// A query searched whole reports 0 and 0.
-	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha"}})
-	result, err = exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', limit: 5})", nil)
-	require.NoError(t, err)
-	require.Equal(t, int64(0), column(result, "query_chunks_total"))
-}
 
 type sizedVectorEmbedder struct {
 	vector []float32
@@ -168,7 +97,7 @@ func TestRetrieveUnusableQueryEmbeddingFails(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	for name, embedder := range map[string]sizedVectorEmbedder{
 		"empty":           {vector: []float32{}, dims: 2},
@@ -185,4 +114,83 @@ func TestRetrieveUnusableQueryEmbeddingFails(t *testing.T) {
 		require.Error(t, err, name)
 	}
 	require.Zero(t, queryEmbedderDimensions(&chunkCountingEmbedder{}))
+}
+
+// TestRetrieveRowsReportQueryChunks verifies the three chunk-count surfaces
+// with each original fixture and its own lifetime.
+func TestRetrieveRowsReportQueryChunks(t *testing.T) {
+	t.Run("empty continuation retains chunk counts", func(t *testing.T) {
+		ctx := context.Background()
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+		exec := NewStorageExecutor(store)
+		exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
+		service := search.NewService(store, 2, nil)
+		require.NoError(t, service.BuildIndexes(ctx))
+		exec.SetSearchService(service)
+		t.Setenv(search.EnvSearchQueryMaxChunks, "2")
+		t.Setenv(search.EnvSearchQueryChunkOverflow, "")
+
+		plain, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
+		require.NoError(t, err)
+		require.Empty(t, plain.Rows)
+
+		continued, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5, n: 5}) YIELD page RETURN page", nil)
+		require.NoError(t, err)
+		require.Len(t, continued.Rows, 1)
+		page := continued.Rows[0][0].(map[string]interface{})
+		require.Empty(t, page["results"])
+		require.Equal(t, int64(2), page["query_chunks_searched"])
+		require.Equal(t, int64(4), page["query_chunks_total"])
+
+	})
+	t.Run("page projection retains and omits optional counts", func(t *testing.T) {
+		page := executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now(), QueryChunksSearched: 3, QueryChunksTotal: 5}, "")
+		row := page.Rows[0][0].(map[string]interface{})
+		require.Equal(t, int64(3), row["query_chunks_searched"])
+		require.Equal(t, int64(5), row["query_chunks_total"])
+		page = executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now()}, "")
+		require.NotContains(t, page.Rows[0][0].(map[string]interface{}), "query_chunks_total")
+
+	})
+	t.Run("rerank fallback retains searched and total counts", func(t *testing.T) {
+		ctx := context.Background()
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+		exec := NewStorageExecutor(store)
+		exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
+		_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+		require.NoError(t, err)
+		service := search.NewService(store, 2, nil)
+		require.NoError(t, service.BuildIndexes(ctx))
+		service.SetReranker(failingQueryChunkReranker{})
+		exec.SetSearchService(service)
+		t.Setenv(search.EnvSearchQueryMaxChunks, "2")
+		t.Setenv(search.EnvSearchQueryChunkOverflow, "")
+
+		column := func(result *ExecuteResult, name string) interface{} {
+			for index, candidate := range result.Columns {
+				if candidate == name {
+					return result.Rows[0][index]
+				}
+			}
+			t.Fatalf("no column %s in %v", name, result.Columns)
+			return nil
+		}
+		result, err := exec.Execute(ctx, "CALL db.rretrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, result.Rows)
+		require.Equal(t, int64(2), column(result, "query_chunks_searched"))
+		require.Equal(t, int64(4), column(result, "query_chunks_total"))
+		require.Equal(t, string(search.SearchFallbackRerankFailed), column(result, "fallback_reason"))
+
+		yielded, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5}) YIELD node, query_chunks_searched, query_chunks_total RETURN query_chunks_searched, query_chunks_total", nil)
+		require.NoError(t, err)
+		require.Equal(t, []interface{}{int64(2), int64(4)}, yielded.Rows[0])
+
+		// A query searched whole reports 0 and 0.
+		exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha"}})
+		result, err = exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', limit: 5})", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), column(result, "query_chunks_total"))
+
+	})
 }

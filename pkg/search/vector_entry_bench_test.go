@@ -50,7 +50,7 @@ func BenchmarkNodeVectorSearch(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		svc := NewServiceWithDimensions(engine, dims)
+		svc := NewService(engine, dims, nil)
 		svc.resultCache = nil // measure search, not cached responses
 		for _, node := range nodes {
 			if err := svc.IndexNode(node); err != nil {

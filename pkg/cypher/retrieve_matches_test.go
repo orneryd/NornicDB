@@ -37,7 +37,7 @@ func TestRetrieveReturnsMatches(t *testing.T) {
 	embeddingutil.RecordChunkSpans(node, source, []string{"text: Rent is due monthly. ", "Notices go to Müller."})
 	_, err := store.CreateNode(node)
 	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 

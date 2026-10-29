@@ -52,7 +52,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		if tx.OperationCount() == 0 {
 			return nil, nil, true, tx.CommitContext(ctx)
 		}
-		prepared, err = tx.PrepareEntityCommit(ctx, tx.ID)
+		prepared, err = tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: tx.ID})
 	}
 	if err != nil {
 		return nil, nil, true, err
@@ -60,7 +60,9 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	if prepared == nil {
 		return nil, nil, true, nil
 	}
-	payload, err := storage.EncodeEntityTransaction(prepared.Namespace(), prepared.LogicalID(), prepared.Operations(), prepared.Mode())
+	// The prepared commit owns an immutable private snapshot; encoding reads it
+	// rather than duplicating a detached public Operations copy.
+	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {

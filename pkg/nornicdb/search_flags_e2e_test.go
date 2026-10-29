@@ -126,7 +126,7 @@ func TestSearchFlagsE2E_BenchmarkScenario(t *testing.T) {
 
 	dbName := db.defaultDatabaseName()
 
-	// State after the async boot orchestrator runs EnsureSearchIndexesBuilt
+	// State after the async boot orchestrator runs EnsureSearchIndexes
 	// for the default database. With both flags off, the service must be
 	// created, marked ready (so handlers don't see perpetual building), and
 	// have zero docs in BM25 / zero embeddings — no build should run.
@@ -167,14 +167,14 @@ func TestSearchFlagsE2E_BenchmarkScenario(t *testing.T) {
 // real-world report: NornicDB started with both flags off, two databases
 // (default `nornic` and an existing `d3_demo` with prior data on disk), and
 // observed that the default DB stayed silent but `d3_demo` still indexed
-// 432 nodes. The race: a write event firing between getOrCreateSearchService
-// and EnsureSearchIndexesBuilt's MarkReadyDisabled call would observe
+// 432 nodes. The race: a write event firing between GetOrCreateSearchService
+// and EnsureSearchIndexes's MarkReadyDisabled call would observe
 // progress.Ready=false and call startSearchIndexBuild → BuildIndexes →
 // iterate every node from disk.
 //
 // This test reproduces the race by simulating an indexNodeFromEvent firing
 // for a non-default DB before the boot orchestrator gets there. The fix
-// (MarkReadyDisabled inside getOrCreateSearchService for both-off case)
+// (MarkReadyDisabled inside GetOrCreateSearchService for both-off case)
 // must prevent any BuildIndexes work from running.
 func TestSearchFlagsE2E_MultiDB_NoRaceWithBootOrchestrator(t *testing.T) {
 	cfg := DefaultConfig()
@@ -187,7 +187,7 @@ func TestSearchFlagsE2E_MultiDB_NoRaceWithBootOrchestrator(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	// Race window simulation: fire an indexNodeFromEvent for a non-default
-	// DB immediately. With the fix, getOrCreateSearchService inside the
+	// DB immediately. With the fix, GetOrCreateSearchService inside the
 	// event handler creates the service and marks it ready-disabled BEFORE
 	// the pendingFlush goroutine can call startSearchIndexBuild.
 	for i := 0; i < 20; i++ {

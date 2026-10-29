@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/jsontext"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,9 +15,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
-// Open authority requires v4 framing so old readers refuse it. A clean stop
-// seals its span as a v3 checkpoint, which old readers already understand.
-const walFormatVersionPropertyEpoch uint8 = 4
+// Property authority controls use the same current framing as data records.
+// A clean stop seals their byte and sequence boundaries without downgrading.
+const walFormatVersionPropertyEpoch uint8 = walFormatVersionCurrent
 
 var walPropertyEpochPrefix = []byte(`{"nornic_property_epoch":1,`)
 
@@ -55,7 +54,7 @@ func decodeWALPropertyEpochFrame(entry WALEntry) (walPropertyEpochFrame, error) 
 		return frame, fmt.Errorf("wal: invalid property epoch sequence boundary: %w", err)
 	}
 	if entry.framingVersion != walFormatVersionPropertyEpoch && (frame.through == ^uint64(0) || frame.last == ^uint64(0)) {
-		return frame, fmt.Errorf("wal: unsealed property epoch requires framing version 4")
+		return frame, fmt.Errorf("wal: unsealed property epoch requires current framing version %d", walFormatVersionCurrent)
 	}
 	return frame, nil
 }
@@ -74,6 +73,7 @@ type walBufferedCommitPayload struct {
 	NodeMax         uint64            `json:"node_max,omitempty"`
 	EdgeMax         uint64            `json:"edge_max,omitempty"`
 	HasCounters     bool              `json:"has_counters,omitempty"`
+	NumericBindings []byte            `json:"numeric_bindings,omitempty"`
 	PropKeys        []WALPropKeyEntry `json:"prop_keys,omitempty"`
 	PropKeyCounters map[string]uint64 `json:"prop_key_counters,omitempty"`
 }
@@ -107,8 +107,8 @@ func (e *WALPropertyEpoch) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// This is the one reader of file-level property authority, shared by atomic,
-// historical JSON and salvage readers. Every file starts unbound. Sealed and
+// This is the one reader of file-level property authority, shared by atomic
+// and salvage readers. Every file starts unbound. Sealed and
 // active segments carry their own complete header, so retention cannot make a
 // segment depend on an earlier file. Headers do not consume operation sequences.
 func withWALPropertyEpochs(visit func(WALEntry) error) func(WALEntry) error {
@@ -339,48 +339,22 @@ func (w *WAL) writeRetainedPropertyEpochLocked(writer *bufio.Writer, previous **
 	return n, err
 }
 
-// Seal a historical JSON active file before appending atomic headers or bodies.
-// Format inspection happens once per opened file, never on steady append.
-// Recognizing an atomic format does not establish its last dictionary epoch.
+// Check the active file's format once per open before appending. Recognizing
+// a nonempty atomic log does not establish its last dictionary epoch.
 func (w *WAL) prepareEpochFormatLocked() error {
 	if w.propertyEpochFormatChecked || w.file == nil {
 		return nil
 	}
-	file, err := os.Open(walActivePath(w.config.Dir))
+	if err := validateWALFileVersion(walActivePath(w.config.Dir), false); err != nil {
+		return err
+	}
+	info, err := os.Stat(walActivePath(w.config.Dir))
 	if err != nil {
 		return err
 	}
-	var header [4]byte
-	n, readErr := file.Read(header[:])
-	_ = file.Close()
-	if readErr != nil && readErr != io.EOF {
-		return readErr
+	if info.Size() == 0 {
+		w.propertyEpochKnown = true
 	}
-	if n == 0 {
-		w.propertyEpochKnown, w.propertyEpochFormatChecked = true, true
-		return nil
-	}
-	if n == 4 && binary.LittleEndian.Uint32(header[:]) == walMagic {
-		w.propertyEpochFormatChecked = true
-		return nil
-	}
-	var last uint64
-	count := int64(0)
-	if err := visitWALEntriesWithLogger(walActivePath(w.config.Dir), w.walLog, func(entry WALEntry) error {
-		last = entry.Sequence
-		count++
-		return nil
-	}); err != nil {
-		return err
-	}
-	if count == 0 {
-		if err := w.file.Truncate(0); err != nil {
-			return err
-		}
-		w.writer.Reset(w.file)
-		w.propertyEpochKnown, w.propertyEpochFormatChecked = true, true
-		return nil
-	}
-	w.segmentEntries = count
-	return w.rotateSegmentLocked(last)
+	w.propertyEpochFormatChecked = true
+	return nil
 }

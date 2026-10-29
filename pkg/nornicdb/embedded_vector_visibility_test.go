@@ -32,7 +32,7 @@ func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 	db, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	svc, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil)
+	svc, err := db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.True(t, svc.IsReady())
 	_, err = db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]any{"content": "bravo filler"}})

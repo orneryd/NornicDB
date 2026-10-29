@@ -16,7 +16,7 @@ import (
 
 func TestContinuationShortApproximateBatchDoesNotEndSearch(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 3; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
@@ -54,18 +54,9 @@ func TestContinuationShortApproximateBatchDoesNotEndSearch(t *testing.T) {
 }
 
 func TestContinuationFilteredBM25EnumeratesBeyondShortFirstBatch(t *testing.T) {
-	for _, engine := range []string{"v1", "v2"} {
-		t.Run(engine, func(t *testing.T) {
-			t.Setenv("NORNICDB_SEARCH_BM25_ENGINE", engine)
-			testContinuationFilteredBM25(t)
-		})
-	}
-}
-
-func testContinuationFilteredBM25(t *testing.T) {
 	ctx := context.Background()
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 100; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%03d", i)), Properties: map[string]any{"content": "library searchable transcript"}}
@@ -101,7 +92,7 @@ func testContinuationFilteredBM25(t *testing.T) {
 }
 
 func TestContinuationUnknownExhaustionReachesExplicitBudget(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t))
+	service := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	var depths []int
 	search := func(_ context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
@@ -116,7 +107,7 @@ func TestContinuationUnknownExhaustionReachesExplicitBudget(t *testing.T) {
 
 func TestContinuationCanDeepenBeyondFormerEngineCeiling(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 8_000; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
@@ -149,7 +140,7 @@ func TestContinuationCanDeepenBeyondFormerEngineCeiling(t *testing.T) {
 
 func TestContinuationShortExpansionDoesNotEndSearch(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 7; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
@@ -241,49 +232,47 @@ func TestContinuationHNSWShortThresholdBatchNeedsFullCoverage(t *testing.T) {
 
 func TestContinuationDefaultHNSWFinishesFinitePopulation(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
-		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) { testContinuationDefaultHNSWPopulation(t, deleted) })
+		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) {
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+			service := NewService(engine, 2, nil)
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			for i := 0; i < 6; i++ {
+				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i) / 10}}}
+				_, err := engine.CreateNode(node)
+				require.NoError(t, err)
+				require.NoError(t, service.IndexNode(node))
+			}
+			want := 6
+			if deleted {
+				_, err := service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 6})
+				require.NoError(t, err)
+				require.NoError(t, engine.DeleteNode("doc-5"))
+				require.NoError(t, service.RemoveNode("doc-5"))
+				want = 5
+			}
+			embedCalls := 0
+			embed := func(context.Context, string) ([]float32, error) { embedCalls++; return []float32{1, 0}, nil }
+			request := SearchContinuationRequest{Owner: "alice", N: 2}
+			page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 2}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+			require.NoError(t, err)
+			ids := map[string]bool{}
+			for {
+				for _, result := range page.Results {
+					id := searchResultID(result)
+					require.False(t, ids[id], "duplicate %s", id)
+					ids[id] = true
+				}
+				if !page.HasMore {
+					break
+				}
+				request.QID = page.QID
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+			}
+			require.Len(t, ids, want)
+			require.Equal(t, 1, embedCalls)
+		})
 	}
-}
-
-func testContinuationDefaultHNSWPopulation(t *testing.T, deleted bool) {
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewServiceWithDimensions(engine, 2)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	for i := 0; i < 6; i++ {
-		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i) / 10}}}
-		_, err := engine.CreateNode(node)
-		require.NoError(t, err)
-		require.NoError(t, service.IndexNode(node))
-	}
-	want := 6
-	if deleted {
-		_, err := service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 6})
-		require.NoError(t, err)
-		require.NoError(t, engine.DeleteNode("doc-5"))
-		require.NoError(t, service.RemoveNode("doc-5"))
-		want = 5
-	}
-	embedCalls := 0
-	embed := func(context.Context, string) ([]float32, error) { embedCalls++; return []float32{1, 0}, nil }
-	request := SearchContinuationRequest{Owner: "alice", N: 2}
-	page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 2}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
-	require.NoError(t, err)
-	ids := map[string]bool{}
-	for {
-		for _, result := range page.Results {
-			id := searchResultID(result)
-			require.False(t, ids[id], "duplicate %s", id)
-			ids[id] = true
-		}
-		if !page.HasMore {
-			break
-		}
-		request.QID = page.QID
-		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-		require.NoError(t, err)
-	}
-	require.Len(t, ids, want)
-	require.Equal(t, 1, embedCalls)
 }
 
 type unavailableContinuationCandidates struct{}
@@ -296,7 +285,7 @@ func TestContinuationUnavailableEmbeddingPreservesBM25Fallback(t *testing.T) {
 	for _, unavailable := range []string{"error", "empty", "retrieval"} {
 		t.Run(unavailable, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			service := NewService(engine)
+			service := NewService(engine, DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			node := &storage.Node{ID: "doc", Properties: map[string]any{"content": "library transcript"}}
 			_, err := engine.CreateNode(node)
@@ -365,7 +354,7 @@ func TestContinuationChunkExhaustionSurvivesFusionAndFallback(t *testing.T) {
 
 func TestContinuationChunkDepthIsNotCappedAtOneShotLimit(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine)
+	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 600; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%04d", i))

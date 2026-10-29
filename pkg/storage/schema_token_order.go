@@ -1,12 +1,55 @@
 package storage
 
-import "sort"
+import (
+	"sort"
+	"sync"
+)
 
 type schemaTokenOrder struct {
 	labels                []string
 	relationships         []string
 	labelPositions        map[string]int
 	relationshipPositions map[string]int
+}
+
+// schemaTokenSnapshot contains only names already accepted by the schema
+// owner. Names are appended after persistence; replacement publishes a new
+// snapshot so existing readers never observe partially replaced state.
+type schemaTokenSnapshot struct {
+	labels        sync.Map
+	relationships sync.Map
+}
+
+// publishTokenSnapshotLocked runs while sm.mu is held by the schema owner.
+// On replacement it constructs a new snapshot; otherwise it appends only the
+// newly persisted names, avoiding a complete copy for each distinct token.
+func (sm *SchemaManager) publishTokenSnapshotLocked(labels, relationships []string) {
+	snapshot := sm.tokenSnapshot.Load()
+	if snapshot == nil {
+		snapshot = &schemaTokenSnapshot{}
+		labels, relationships = sm.tokenOrder.labels, sm.tokenOrder.relationships
+	}
+	for _, name := range labels {
+		snapshot.labels.Store(name, struct{}{})
+	}
+	for _, name := range relationships {
+		snapshot.relationships.Store(name, struct{}{})
+	}
+	sm.tokenSnapshot.Store(snapshot)
+}
+
+func (snapshot *schemaTokenSnapshot) knows(labels, relationships []string) bool {
+	for _, name := range labels {
+		if _, ok := snapshot.labels.Load(name); !ok {
+			return false
+		}
+	}
+	for _, name := range relationships {
+		if _, ok := snapshot.relationships.Load(name); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func newSchemaTokenOrder(labels, relationships []string) schemaTokenOrder {
@@ -33,31 +76,15 @@ func appendTokenNames(names []string, positions map[string]int, added []string) 
 // Allocations are retained when their last entity is deleted.
 // Example: schema.RegisterTokens([]string{"Person"}, []string{"KNOWS"}).
 func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
-	// Fast path: token registration is per-node hot-path work, and the
-	// common case is that every name is already known. Checking under a
-	// SHARED lock keeps concurrent readers (constraint validation, unique-
-	// value tracking) from serializing behind the write lock, which only
-	// the first sight of a name ever needs.
-	sm.mu.RLock()
-	allKnown := len(sm.tokenOrder.labelPositions) > 0 && len(sm.tokenOrder.relationshipPositions) > 0
-	if allKnown {
-		for _, name := range labels {
-			if _, ok := sm.tokenOrder.labelPositions[name]; !ok {
-				allKnown = false
-				break
-			}
-		}
+	if len(labels) == 0 && len(relationships) == 0 {
+		return nil
 	}
-	if allKnown {
-		for _, name := range relationships {
-			if _, ok := sm.tokenOrder.relationshipPositions[name]; !ok {
-				allKnown = false
-				break
-			}
-		}
-	}
-	sm.mu.RUnlock()
-	if allKnown {
+	// Known names do not depend on an unrelated token's pending persistence.
+	// The second load detects schema replacement while checking the snapshot;
+	// additions leave previously published names valid even before they commit.
+	if snapshot := sm.tokenSnapshot.Load(); snapshot != nil &&
+		snapshot.knows(labels, relationships) &&
+		sm.tokenSnapshot.Load() == snapshot {
 		return nil
 	}
 
@@ -78,7 +105,41 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 			return err
 		}
 	}
+	sm.publishTokenSnapshotLocked(sm.tokenOrder.labels[labelCount:], sm.tokenOrder.relationships[relationshipCount:])
 	return nil
+}
+
+// RegisterEdgeTokens validates a batch and registers its relationship types in
+// first-seen order. A batch of one type needs just one token lookup.
+func (sm *SchemaManager) RegisterEdgeTokens(edges []*Edge) error {
+	if len(edges) == 0 {
+		return nil
+	}
+	if edges[0] == nil {
+		return ErrInvalidData
+	}
+	first := edges[0].Type
+	for i := 1; i < len(edges); i++ {
+		edge := edges[i]
+		if edge == nil {
+			return ErrInvalidData
+		}
+		if edge.Type == first {
+			continue
+		}
+		names := make([]string, len(edges))
+		for j := 0; j < i; j++ {
+			names[j] = first
+		}
+		for j, next := range edges[i:] {
+			if next == nil {
+				return ErrInvalidData
+			}
+			names[i+j] = next.Type
+		}
+		return sm.RegisterTokens(nil, names)
+	}
+	return sm.RegisterTokens(nil, []string{first})
 }
 
 // OrderTokens returns a copy of in-use names ordered by durable token position.

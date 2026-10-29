@@ -206,7 +206,7 @@ func optimalKForBenchmark(n int) int {
 // TestKMeansCandidateGen_Integration tests k-means candidate generation in a real scenario.
 func TestKMeansCandidateGen_Integration(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 
 	// Enable clustering
 	manager, _ := gpu.NewManager(nil)

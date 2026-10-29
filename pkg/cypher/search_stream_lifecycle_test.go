@@ -19,7 +19,7 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 					_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 					require.NoError(t, err)
 				}
-				svc := search.NewService(store)
+				svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				require.NoError(t, svc.BuildIndexes(context.Background()))
 				registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1, MaxStreamsPerOwner: 1})

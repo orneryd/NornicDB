@@ -68,13 +68,28 @@ func TestRecoveryEncoderFormatEquivalence(t *testing.T) {
 				require.NoError(t, err)
 				current, err = marshalWALRecoveryPayload(destination, source)
 				require.NoError(t, err)
-				assertRecoveryEncodedEqual(t, source, legacy, current)
-				var oldJSON, newJSON map[string]json.RawMessage
-				require.NoError(t, json.Unmarshal(legacy, &oldJSON))
-				require.NoError(t, json.Unmarshal(current, &newJSON))
-				delete(oldJSON, "_nornicdb_data")
-				delete(newJSON, "_nornicdb_data")
-				require.Equal(t, oldJSON, newJSON, "legacy JSON projection and encoding marker")
+				if _, typed := prepareRecoveryPayload(source); typed {
+					serializer, _, headered, err := splitSerializationHeader(current)
+					require.NoError(t, err)
+					require.True(t, headered)
+					require.Equal(t, serializerIDMsgpack, serializer)
+					// The wire format changes, but every decoded entity field and
+					// property type must match the previous lossless authority.
+					typeOf := reflect.TypeOf(source)
+					if typeOf.Kind() == reflect.Ptr {
+						typeOf = typeOf.Elem()
+					}
+					want, got := reflect.New(typeOf).Interface(), reflect.New(typeOf).Interface()
+					require.NoError(t, decodeRecoveryPayload(legacy, want))
+					require.NoError(t, decodeRecoveryPayload(current, got))
+					require.Equal(t, want, got, "typed records retain all previous recovery semantics")
+				} else {
+					assertRecoveryEncodedEqual(t, source, legacy, current)
+					var oldJSON, newJSON map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(legacy, &oldJSON))
+					require.NoError(t, json.Unmarshal(current, &newJSON))
+					require.Equal(t, oldJSON, newJSON, "control record JSON is unchanged")
+				}
 			}
 			after, err := json.Marshal(source)
 			require.NoError(t, err)

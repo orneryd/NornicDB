@@ -14,7 +14,7 @@ func TestDbRetrieveContinuationGeneratedExecutionMatrix(t *testing.T) {
 	contract.Run(t, func(t *testing.T, _ int, _ contract.Policy) contract.Fixture {
 		ctx := context.Background()
 		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "matrix")
-		service := search.NewServiceWithDimensions(engine, 2)
+		service := search.NewService(engine, 2, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		exec := NewStorageExecutor(engine)
 		exec.SetSearchService(service)

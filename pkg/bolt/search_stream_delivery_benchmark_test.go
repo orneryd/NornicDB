@@ -26,7 +26,7 @@ func BenchmarkBoltContinuationDelivery(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			svc := search.NewService(store)
+			svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 			b.Cleanup(func() { _ = svc.Close() })
 			registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1})
 			if err != nil {

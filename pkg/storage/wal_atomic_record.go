@@ -45,12 +45,6 @@ func buildAtomicRecord(payload []byte, version uint8) ([]byte, int64) {
 	return record, alignedRecordLen
 }
 
-// buildAtomicRecordV2 builds a v2 record (JSON payload with base64 Data).
-// Retained for tests and legacy-compat callers.
-func buildAtomicRecordV2(payload []byte) ([]byte, int64) {
-	return buildAtomicRecord(payload, walFormatVersion)
-}
-
 // writeAtomicRecord writes a single WAL record in the atomic format directly to w:
 //
 //	[magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
@@ -100,12 +94,6 @@ func writeAtomicRecord(w io.Writer, payload []byte, version uint8) (int64, error
 	return alignedRecordLen, nil
 }
 
-// writeAtomicRecordV2 writes a v2 record directly to w. Retained for tests and
-// legacy-compat callers.
-func writeAtomicRecordV2(w io.Writer, payload []byte) (int64, error) {
-	return writeAtomicRecord(w, payload, walFormatVersion)
-}
-
 // writeAtomicRecordBufio writes a single WAL record to w, using a single Write
 // when w is a *bufio.Writer so that a record is never split across buffer flushes.
 // This prevents recovery from seeing a partial last record after a clean close.
@@ -126,10 +114,4 @@ func writeAtomicRecordBufio(w io.Writer, payload []byte, version uint8) (int64, 
 		return 0, io.ErrShortWrite
 	}
 	return alignedRecordLen, nil
-}
-
-// writeAtomicRecordV2Bufio writes a v2 record to w. Retained for tests and
-// legacy-compat callers.
-func writeAtomicRecordV2Bufio(w io.Writer, payload []byte) (int64, error) {
-	return writeAtomicRecordBufio(w, payload, walFormatVersion)
 }

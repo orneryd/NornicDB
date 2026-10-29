@@ -16,7 +16,7 @@ func TestOpenRecoversAcceptedEntityWALInBothWriteModes(t *testing.T) {
 			walDir := filepath.Join(dir, "wal")
 			wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, SyncMode: "immediate"})
 			require.NoError(t, err)
-			payload, err := storage.EncodeEntityTransaction("nornic", "application-startup", []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "nornic:accepted", Labels: []string{"AcceptedStartup"}, Properties: map[string]any{"value": int64(42)}}}}, storage.CommitModeImplicit)
+			payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Namespace: "nornic", LogicalID: "application-startup", Operations: []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "nornic:accepted", Labels: []string{"AcceptedStartup"}, Properties: map[string]any{"value": int64(42)}}}}, Mode: storage.CommitModeImplicit})
 			require.NoError(t, err)
 			require.NoError(t, wal.AppendWithDatabase(storage.OpEntityCommit, map[string]any{"payload": payload}, "nornic"))
 			require.NoError(t, wal.Close())

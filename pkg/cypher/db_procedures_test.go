@@ -368,7 +368,7 @@ func TestDbStatsQueryCollectionLifecycle(t *testing.T) {
 	var querySeen bool
 	for _, row := range result.Rows {
 		data := row[1].(map[string]interface{})
-		querySeen = querySeen || data["query"] == RedactLiterals("RETURN 530 AS value")
+		querySeen = querySeen || data["query"] == "RETURN 530 AS value"
 	}
 	require.True(t, querySeen, "retrieval must contain an actually executed query")
 	_, err = exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
@@ -396,7 +396,7 @@ func TestDbStatsCollectionBoundsAndClones(t *testing.T) {
 	_, err = transactionExecutor.Execute(ctx, "RETURN $value AS value", map[string]interface{}{"value": "other-sensitive-parameter"})
 	require.NoError(t, err)
 	started := time.Now()
-	generation := exec.queryStatistics.start("RETURN 1", started)
+	generation := exec.queryStatistics.start("RETURN 1", started, false)
 	for invocation := 0; invocation < 101; invocation++ {
 		exec.queryStatistics.record(generation, "RETURN 1", started, time.Duration(invocation+1)*time.Microsecond, true)
 	}
@@ -452,7 +452,7 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 			for invocation := 0; invocation < 32; invocation++ {
 				query := fmt.Sprintf("RETURN %d", worker)
 				started := time.Now()
-				generation := exec.queryStatistics.start(query, started)
+				generation := exec.queryStatistics.start(query, started, false)
 				exec.queryStatistics.record(generation, query, started, time.Microsecond, true)
 				if _, err := exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"}); err != nil {
 					failures <- err
@@ -480,7 +480,7 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	data = result.Rows[0][1].(map[string]interface{})
 	require.Equal(t, int64(1), data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"])
 	started := time.Now()
-	generation := exec.queryStatistics.start("RETURN stale", started)
+	generation := exec.queryStatistics.start("RETURN stale", started, false)
 	// A query that started before stop and clear is not recorded after them.
 	_, err = exec.callQueryStatistics(ctx, "stop", nil)
 	require.NoError(t, err)
@@ -488,11 +488,11 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	require.NoError(t, err)
 	exec.queryStatistics.record(generation, "RETURN stale", started, time.Microsecond, true)
 	exec.queryStatistics.record(generation, "RETURN failed", started, time.Microsecond, false)
-	require.Zero(t, exec.queryStatistics.start(strings.Repeat("x", 65537), started))
+	require.Zero(t, exec.queryStatistics.start(strings.Repeat("x", 65537), started, false))
 	exec.queryStatistics.mu.Lock()
 	exec.queryStatistics.deadline = started.Add(-time.Second)
 	exec.queryStatistics.mu.Unlock()
-	require.Zero(t, exec.queryStatistics.start("RETURN expired", started))
+	require.Zero(t, exec.queryStatistics.start("RETURN expired", started, false))
 	result, err = exec.callQueryStatistics(ctx, "retrieve", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
@@ -525,7 +525,7 @@ func TestDbStatsSharedCollectorNamespaceIsolation(t *testing.T) {
 	result, err = consumer.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	require.Equal(t, RedactLiterals("RETURN 530 AS sharedValue"), result.Rows[0][1].(map[string]interface{})["query"])
+	require.Equal(t, "RETURN 530 AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
 	result, err = other.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)

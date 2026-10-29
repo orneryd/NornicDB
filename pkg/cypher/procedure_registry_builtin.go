@@ -383,11 +383,11 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerAdminBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTxlogEntries(ctx, args)
+				return e.callDBTxlog(ctx, args, txlogBySequence)
 			})
 		registerAdminBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING, limit = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTxlogByTxID(ctx, args)
+				return e.callDBTxlog(ctx, args, txlogByID)
 			})
 		registerBuiltInProcedure("db.temporal.assertNoOverlap", "db.temporal.assertNoOverlap(label :: STRING, keyProp :: STRING, validFromProp :: STRING, validToProp :: STRING, keyValue :: ANY, newValidFrom :: ANY, newValidTo :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER) :: (ok :: BOOLEAN)", localization.CypherProcedureMetadata("db.temporal.assertNoOverlap"), ProcedureModeRead, 7, 9, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

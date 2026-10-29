@@ -120,7 +120,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		// The commit's positional counts are covered by the lock its
 		// helper takes: without the helper's call they are not. The commit
 		// itself lives in pkg/storage/badger_transaction_publication.go
-		// (CommitContextWithPublication); the edit is anchored where the
+		// (PublishCommit); the edit is anchored where the
 		// helper runs, just before the commit's own Badger commit.
 		name:  "commit count lock helper not called",
 		file:  "pkg/storage/badger_transaction_publication.go",

@@ -57,7 +57,7 @@ func TestTypedNumericVectorProcedures(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Endpoint"}})
 	require.NoError(t, err)
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "NUMERIC_VECTOR", Properties: map[string]interface{}{"xs": []float64{3, 1, 3}}}))
-	service := search.NewServiceWithDimensions(store, 3)
+	service := search.NewService(store, 3, nil)
 	service.FixVectorDimensions()
 	exec.SetSearchService(service)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })

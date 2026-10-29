@@ -1,12 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -23,22 +20,15 @@ const (
 	EntityUpdateEdge
 )
 
-const EntityTransactionVersion uint16 = 1
+// EntityTransactionVersion identifies the current semantic transaction format.
+const EntityTransactionVersion uint16 = 2
 
-type EntityTransactionChange struct {
-	Type                 EntityCommandKind
-	Data                 []byte
-	NamedProperties      []byte
-	EmbedMeta            []byte
-	UpdatedAtUnixNs      int64
-	VisibilitySuppressed bool
-}
+// EntityTransactionEnvelope identifies a decoded semantic transaction.
 type EntityTransactionEnvelope struct {
 	Mode        EntityCommitMode
 	Version     uint16
 	Namespace   string
 	LogicalTxID string
-	Changes     []EntityTransactionChange
 }
 
 type entityWriter interface {
@@ -48,16 +38,13 @@ type entityWriter interface {
 	DeleteEdge(EdgeID) error
 }
 
-// DecodeEntityChange shares the existing semantic payload codecs and legacy
-// direct-command deletion contract. It never imports numeric dictionary IDs.
+// DecodeEntityChange decodes one current direct replication command. It never
+// imports numeric dictionary IDs.
 func DecodeEntityChange(kind EntityCommandKind, data []byte) (Operation, error) {
-	return decodeEntityChange(kind, data, true)
-}
-func decodeEntityChange(kind EntityCommandKind, data []byte, legacyAllowed bool) (Operation, error) {
 	var op Operation
 	switch kind {
 	case EntityCreateNode, EntityUpdateNode:
-		node, err := decodeNodePayload(data, legacyAllowed)
+		node, err := DecodeNodePayload(data)
 		if err != nil {
 			return op, localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
 		}
@@ -68,7 +55,7 @@ func decodeEntityChange(kind EntityCommandKind, data []byte, legacyAllowed bool)
 			op.Type = OpUpdateNode
 		}
 	case EntityCreateEdge, EntityUpdateEdge:
-		edge, err := decodeEdgePayload(data, legacyAllowed)
+		edge, err := DecodeEdgePayload(data)
 		if err != nil {
 			return op, localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
 		}
@@ -79,15 +66,11 @@ func decodeEntityChange(kind EntityCommandKind, data []byte, legacyAllowed bool)
 			op.Type = OpUpdateEdge
 		}
 	case EntityDeleteNode:
-		var req struct{ NodeID string }
-		if err := decodeCommandPayload(data, &req, legacyAllowed); err != nil || req.NodeID == "" {
-			req.NodeID = string(data)
-		}
 		op.Type = OpDeleteNode
-		op.NodeID = NodeID(req.NodeID)
+		op.NodeID = NodeID(data)
 	case EntityDeleteEdge:
 		var req struct{ EdgeID string }
-		if err := decodeCommandPayload(data, &req, legacyAllowed); err != nil {
+		if err := DecodeCommandPayload(data, &req); err != nil {
 			return op, localizedError(localization.ReplicationStorageDecodeDeleteEdgeFailed(err), err)
 		}
 		op.Type = OpDeleteEdge
@@ -115,74 +98,6 @@ func ApplyEntityChange(target entityWriter, op Operation, updateNode func(*Node)
 	default:
 		return fmt.Errorf("not an entity operation: %s", op.Type)
 	}
-}
-
-// This new command format has one strict version; only the existing leaf
-// payload decoder retains historical direct-command compatibility.
-func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operation, error) {
-	var envelope EntityTransactionEnvelope
-	if err := decodeCommandPayload(data, &envelope, false); err != nil {
-		return envelope, nil, err
-	}
-	if !envelope.Mode.valid() {
-		return envelope, nil, ErrInvalidData
-	}
-	if envelope.Version != EntityTransactionVersion {
-		return envelope, nil, errors.New("unsupported entity transaction version")
-	}
-	if envelope.Namespace == "" || envelope.LogicalTxID == "" || len(envelope.Changes) == 0 {
-		return envelope, nil, errors.New("entity transaction requires namespace, logical ID and changes")
-	}
-	ops := make([]Operation, len(envelope.Changes))
-	sameNamespace := func(id string) bool {
-		ns, _, ok := ParseDatabasePrefix(id)
-		return ok && ns == envelope.Namespace
-	}
-	for i, change := range envelope.Changes {
-		op, err := decodeEntityChange(change.Type, change.Data, false)
-		if err != nil {
-			return envelope, nil, err
-		}
-		if op.Node != nil || op.Edge != nil {
-			properties, err := DecodeNamedProperties(change.NamedProperties)
-			if err != nil {
-				return envelope, nil, err
-			}
-			if op.Node != nil {
-				op.Node.Properties = properties
-				op.Node.EmbedMeta, err = DecodeNamedMetadata(change.EmbedMeta)
-				if err != nil {
-					return envelope, nil, err
-				}
-				op.Node.VisibilitySuppressed = change.VisibilitySuppressed
-			} else {
-				op.Edge.Properties = properties
-				if change.UpdatedAtUnixNs != 0 {
-					op.Edge.UpdatedAt = time.Unix(0, change.UpdatedAtUnixNs)
-				}
-				op.Edge.VisibilitySuppressed = change.VisibilitySuppressed
-			}
-		}
-
-		if op.Node != nil {
-			if !sameNamespace(string(op.Node.ID)) {
-				return envelope, nil, ErrCrossNamespaceTransaction
-			}
-		}
-		if op.Type == OpDeleteNode && !sameNamespace(string(op.NodeID)) {
-			return envelope, nil, ErrCrossNamespaceTransaction
-		}
-		if op.Edge != nil {
-			if !sameNamespace(string(op.Edge.ID)) || !sameNamespace(string(op.Edge.StartNode)) || !sameNamespace(string(op.Edge.EndNode)) {
-				return envelope, nil, ErrCrossNamespaceTransaction
-			}
-		}
-		if op.Type == OpDeleteEdge && !sameNamespace(string(op.EdgeID)) {
-			return envelope, nil, ErrCrossNamespaceTransaction
-		}
-		ops[i] = op
-	}
-	return envelope, ops, nil
 }
 
 // EntityImagePolicy selects the interpretation of one transaction node update.
@@ -228,21 +143,21 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
 // notifications. State-machine drivers use Submit and its physical boundary.
 func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
-	receipt, err := SubmitAcceptedEntityTransaction(context.Background(), engine, data, nil)
+	envelope, operations, err := DecodeEntityTransaction(data)
+	if err != nil {
+		return err
+	}
+	receipt, err := SubmitAcceptedEntityTransaction(context.Background(), engine, envelope, operations, nil)
 	if err != nil {
 		return err
 	}
 	return receipt.Wait(context.Background())
 }
 
-func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, data []byte, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	envelope, ops, err := DecodeEntityTransaction(data)
-	if err != nil {
-		return nil, err
-	}
-	return submitDecodedEntityTransaction(ctx, engine, envelope, ops, settle)
-}
-func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
+// SubmitAcceptedEntityTransaction applies an already-decoded transaction and
+// returns the commit receipt. DecodeEntityTransaction validates the wire image
+// before callers publish it to replication or recovery logs.
+func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
 	tx, err := BeginEntityTransaction(engine, envelope.Mode)
 	if err != nil {
 		return nil, err
@@ -254,28 +169,10 @@ func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope
 	if err = tx.SetDeferredConstraintValidation(true); err != nil {
 		return nil, err
 	}
-	applied, err := tx.PrepareLogicalCommitReceipt(envelope.LogicalTxID)
-	if err != nil {
-		return nil, err
-	}
-	if applied {
-		prepared, err := tx.PrepareEntityCommit(ctx, envelope.LogicalTxID)
-		if err != nil {
-			return nil, err
-		}
-		route, found := EntityCommitSubmitterFor(engine)
-		if !found {
-			prepared.Abort()
-			return nil, ErrInvalidData
-		}
-		return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
-	}
-	for _, op := range ops {
-		if err = ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
-			return nil, err
-		}
-	}
-	prepared, err := tx.PrepareEntityCommit(ctx, envelope.LogicalTxID)
+	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
+		LogicalID:  envelope.LogicalTxID,
+		Operations: ops,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -289,90 +186,4 @@ func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope
 		prepared.Abort()
 	}
 	return receipt, err
-}
-
-// EncodeEntityTransactionChange reuses the existing node/edge payload codecs
-// for structural fields/vectors while the existing storage value codec owns
-// dictionary-independent named properties. Legacy direct command bytes stay
-// unchanged: only this new envelope carries the named-value field.
-func EncodeEntityTransactionChange(op Operation) (EntityTransactionChange, error) {
-	var change EntityTransactionChange
-	var err error
-	switch op.Type {
-	case OpCreateNode, OpUpdateNode:
-		if op.Node == nil {
-			return change, ErrInvalidData
-		}
-		node := *op.Node
-		change.NamedProperties, err = EncodeNamedProperties(node.Properties)
-		if err != nil {
-			return change, err
-		}
-		change.EmbedMeta, err = EncodeNamedProperties(node.EmbedMeta)
-		if err != nil {
-			return change, err
-		}
-		change.VisibilitySuppressed = node.VisibilitySuppressed
-		node.Properties = nil
-		change.Data, err = EncodeNodePayload(&node)
-		change.Type = EntityCreateNode
-		if op.Type == OpUpdateNode {
-			change.Type = EntityUpdateNode
-		}
-	case OpCreateEdge, OpUpdateEdge:
-		if op.Edge == nil {
-			return change, ErrInvalidData
-		}
-		edge := *op.Edge
-		change.NamedProperties, err = EncodeNamedProperties(edge.Properties)
-		if err != nil {
-			return change, err
-		}
-		if !edge.UpdatedAt.IsZero() {
-			change.UpdatedAtUnixNs = edge.UpdatedAt.UnixNano()
-		}
-		change.VisibilitySuppressed = edge.VisibilitySuppressed
-		edge.Properties = nil
-		change.Data, err = EncodeEdgePayload(&edge)
-		change.Type = EntityCreateEdge
-		if op.Type == OpUpdateEdge {
-			change.Type = EntityUpdateEdge
-		}
-	case OpDeleteNode:
-		change.Type = EntityDeleteNode
-		change.Data, err = EncodeCommandPayload(struct{ NodeID string }{string(op.NodeID)})
-	case OpDeleteEdge:
-		change.Type = EntityDeleteEdge
-		change.Data, err = EncodeCommandPayload(struct{ EdgeID string }{string(op.EdgeID)})
-	default:
-		return change, fmt.Errorf("not an entity operation: %s", op.Type)
-	}
-	return change, err
-}
-
-// EncodeEntityTransaction creates the strict semantic record shared by WAL
-// and peer application. Existing direct-command codecs remain unchanged.
-func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes ...EntityCommitMode) ([]byte, error) {
-	envelope := EntityTransactionEnvelope{Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID}
-	if len(modes) > 1 {
-		return nil, ErrInvalidData
-	}
-	if len(modes) == 1 {
-		if !modes[0].valid() {
-			return nil, ErrInvalidData
-		}
-		envelope.Mode = modes[0]
-	}
-	for _, op := range ops {
-		change, err := EncodeEntityTransactionChange(op)
-		if err != nil {
-			return nil, err
-		}
-		envelope.Changes = append(envelope.Changes, change)
-	}
-	var data bytes.Buffer
-	if err := gob.NewEncoder(&data).Encode(envelope); err != nil {
-		return nil, err
-	}
-	return data.Bytes(), nil
 }

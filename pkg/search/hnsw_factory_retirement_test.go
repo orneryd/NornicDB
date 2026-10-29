@@ -13,7 +13,7 @@ import (
 
 func factoryRetirementService(t *testing.T, fileBacked bool) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+	svc := NewService(newNamespacedEngine(t), 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	if fileBacked {
 		vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)

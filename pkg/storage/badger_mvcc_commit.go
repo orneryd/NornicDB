@@ -233,7 +233,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			err = w.write(func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil {
-					err = b.writeEdgeAdjacencyTombstoneInTxn(txn, op.OldEdge, version)
+					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, nil, version)
 				}
 				if old := states.committedEdges[op.EdgeID]; err == nil && retainsHistory && old != nil {
 					err = heads.archiveEdge(txn, op.EdgeID, old)
