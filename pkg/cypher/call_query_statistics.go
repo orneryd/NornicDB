@@ -73,7 +73,7 @@ func (e *StorageExecutor) ShareQueryStatisticsFrom(source *StorageExecutor) {
 	}
 	e.queryStatistics = source.queryStatistics
 	if source.queryStatistics != nil && source.queryStatistics.registry != nil {
-		e.queryStatistics = source.queryStatistics.registry.forDatabase(e.currentDatabaseName())
+		e.queryStatistics = source.queryStatistics.registry.forDatabase(e.databaseName())
 	}
 }
 

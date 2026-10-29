@@ -16,7 +16,7 @@ import (
 // out of the context too, so the procedure reads the view, not the
 // transaction. On any other database the call runs as it is.
 func (e *StorageExecutor) systemProcedureScope(ctx context.Context) (context.Context, *StorageExecutor) {
-	if !strings.EqualFold(e.currentDatabaseName(), "system") {
+	if !strings.EqualFold(e.databaseName(), "system") {
 		return ctx, e
 	}
 	return withoutTransactionStorage{ctx}, e.cloneWithStorage(systemGraphView{Engine: e.storage})

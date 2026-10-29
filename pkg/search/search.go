@@ -876,8 +876,8 @@ type Service struct {
 	mutationLanes        [64]sync.Mutex
 	nodeMutationMu       sync.Mutex
 	mutationReservations mutationReservations
-	pendingNodeMutations map[storage.NodeID]uint64
-	pendingEdgeMutations map[storage.EdgeID]uint64
+	nodeMutations        mutationRegistry[storage.NodeID]
+	edgeMutations        mutationRegistry[storage.EdgeID]
 	// refreshRetry, when set, receives a refresh whose storage read failed
 	// (SetRefreshRetry).
 	refreshRetry atomic.Pointer[RefreshRetryOwner]
@@ -2923,28 +2923,6 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	return s.indexNodeOwned(node, nil)
 }
 
-// IndexNodeWithMutation applies a previously reserved index mutation. A newer
-// reservation (a later refresh) makes this mutation a no-op.
-// Population and checkpoint restoration must not be overtaken by a live
-// mutation; their snapshots may contain older node state. During a build
-// the write is handed to the build (build_write_queue.go), which installs
-// it only if the reservation is still current when its turn comes.
-func (s *Service) IndexNodeWithMutation(node *storage.Node, mutation NodeMutation) error {
-	if node == nil || mutation.nodeID != node.ID {
-		return nil
-	}
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
-		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingNodeMutations, mutation.nodeID, mutation.generation)
-	}}); queued || err != nil {
-		if err != nil {
-			s.DiscardNodeMutation(mutation)
-		}
-		return err
-	}
-	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(s, mutation.service, mutation.nodeID, mutation.generation, &s.pendingNodeMutations, func() error { return s.indexNodeOwned(node, nil) })
-}
-
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
 // current, when set, is the temporal decision made at the call.
 func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
@@ -3587,8 +3565,11 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	delete(s.nodeChunkSpans, nodeIDStr)
 }
 
-// RemoveNode removes a node from all search indexes.
-// Also removes all chunk embeddings (for nodes with multiple chunks).
+// RemoveNode removes a node from all search indexes. Also removes all chunk
+// embeddings (for nodes with multiple chunks).
+//
+// A payload removal for rebuilds and offline sinks, like IndexNode; live
+// writers use RefreshNode (TestLiveIndexWritersRefreshFromStorage).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// Like IndexNode: during a build the removal is handed to the build.
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
@@ -3599,21 +3580,43 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	return nil
 }
 
-// RemoveNodeWithMutation applies a previously reserved removal, unless a newer
-// index or removal has superseded it. Like IndexNodeWithMutation, during a
-// build the removal is handed to the build.
-func (s *Service) RemoveNodeWithMutation(mutation NodeMutation) error {
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(mutation.nodeID), valid: func() bool {
-		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingNodeMutations, mutation.nodeID, mutation.generation)
+// applyReservedNodeIndex installs a reserved node write. Population and
+// checkpoint restoration must not be overtaken by a live mutation; their
+// snapshots may contain older node state. During a build the write is handed to
+// the build (build_write_queue.go), which installs it only if the reservation
+// is still current when its turn comes.
+func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutation) error {
+	applyMutation := mutation.mutation
+	if node == nil || applyMutation.id != node.ID {
+		return nil
+	}
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
+		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
-			s.DiscardNodeMutation(mutation)
+			applyMutation.discard()
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(s, mutation.service, mutation.nodeID, mutation.generation, &s.pendingNodeMutations, func() error {
-		s.removeNodeOwned(mutation.nodeID)
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(node, nil) })
+}
+
+// applyReservedNodeRemoval is applyReservedNodeIndex for a removal: during a
+// build the removal is handed to the build.
+func (s *Service) applyReservedNodeRemoval(mutation NodeMutation) error {
+	applyMutation := mutation.mutation
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
+		return claimReservedIndexMutation(applyMutation)
+	}}); queued || err != nil {
+		if err != nil {
+			applyMutation.discard()
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return applyReservedIndexMutation(applyMutation, func() error {
+		s.removeNodeOwned(applyMutation.id)
 		return nil
 	})
 }
@@ -3659,23 +3662,43 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	return s.indexEdgeOwned(edge)
 }
 
-// indexEdgeWithMutation applies a reserved relationship write. The
+// applyReservedEdgeIndex applies a reserved relationship write. The
 // relationship index has its own loader; during a build its update is ordered
 // in the build sequence too (relationship-search writes), and the vector part
 // is handed to the build, which applies it after the stream's copy. Both are
 // installed only while the reservation is current.
-func (s *Service) indexEdgeWithMutation(edge *storage.Edge, mutation EdgeMutation) error {
+func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
+	applyMutation := mutation.mutation
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: func() bool {
-		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingEdgeMutations, mutation.edgeID, mutation.generation)
+		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
-			s.discardEdgeMutation(mutation)
+			applyMutation.discard()
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(s, mutation.service, mutation.edgeID, mutation.generation, &s.pendingEdgeMutations, func() error { return s.indexEdgeOwned(edge) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexEdgeOwned(edge) })
+}
+
+// applyReservedEdgeRemoval is applyReservedEdgeIndex for a removal.
+func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
+	applyMutation := mutation.mutation
+	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(applyMutation.id), relationship: true}, mutation)
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
+		return claimReservedIndexMutation(applyMutation)
+	}}); queued || err != nil {
+		if err != nil {
+			applyMutation.discard()
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return applyReservedIndexMutation(applyMutation, func() error {
+		s.removeEdgeOwned(applyMutation.id)
+		return nil
+	})
 }
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
@@ -3781,24 +3804,6 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	defer s.buildMu.RUnlock()
 	s.removeEdgeOwned(edgeID)
 	return nil
-}
-
-// removeEdgeWithMutation is indexEdgeWithMutation for a removal.
-func (s *Service) removeEdgeWithMutation(mutation EdgeMutation) error {
-	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(mutation.edgeID), relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(mutation.edgeID), valid: func() bool {
-		return claimReservedIndexMutation(mutation.service, &mutation.service.pendingEdgeMutations, mutation.edgeID, mutation.generation)
-	}}); queued || err != nil {
-		if err != nil {
-			s.discardEdgeMutation(mutation)
-		}
-		return err
-	}
-	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(s, mutation.service, mutation.edgeID, mutation.generation, &s.pendingEdgeMutations, func() error {
-		s.removeEdgeOwned(mutation.edgeID)
-		return nil
-	})
 }
 
 // removeEdgeOwned is RemoveEdge for a caller holding buildMu.

@@ -117,6 +117,9 @@ func (s *procedureStatementStats) Value(key interface{}) interface{} {
 // statement summary. Replace their hand-built summary with the successful
 // nested statements' counters, including iterator/export/custom bodies.
 func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
+	var release func()
+	e, release = e.bindExecutionReadScope(ctx)
+	defer release()
 	totals := &procedureStatementStats{Context: ctx}
 	result, err := proc.Handler(totals, e, query, args)
 	if err == nil && (totals.stats != nil || totals.committed != nil) {

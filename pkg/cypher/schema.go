@@ -25,11 +25,22 @@ import (
 // Schema DDL and introspection commands must be rejected on composite roots —
 // callers must target a specific constituent via USE <composite>.<alias>.
 func isCompositeRoot(engine storage.Engine) bool {
-	type compositeChecker interface {
-		IsComposite() bool
-	}
-	if cc, ok := engine.(compositeChecker); ok {
-		return cc.IsComposite()
+	for engine != nil {
+		if _, native := engine.(*transactionStorageWrapper); native {
+			return false
+		}
+		if root, ok := engine.(interface{ IsComposite() bool }); ok {
+			return root.IsComposite()
+		}
+		inner, ok := engine.(storage.EngineUnwrapper)
+		if !ok {
+			return false
+		}
+		next := inner.GetInnerEngine()
+		if next == engine {
+			return false
+		}
+		engine = next
 	}
 	return false
 }
@@ -607,12 +618,15 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Tear down the matching in-memory vector data after the schema entry
 	// is gone so concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
-		e.afterSchemaCommit(context.Background(), func() {
+		if err := e.afterCommit(context.Background(), func() error {
 			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
 				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
 			}
 			e.unregisterVectorSpace(name)
-		})
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Invalidate query cache — cached SHOW INDEXES results are now stale.
@@ -2469,9 +2483,12 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	// directly from relationship properties and schema metadata.
 	// registerVectorSpace is node-vector specific; keep relationship indexes out.
 	if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
-		e.afterSchemaCommit(ctx, func() {
+		if err := e.afterCommit(ctx, func() error {
 			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
-		})
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

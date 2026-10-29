@@ -72,9 +72,7 @@ func TestCatalogRemoteRuntimeCredentials(t *testing.T) {
 				transaction := NewFabricTransaction("synthetic-terminal-identity")
 				participant, err := transaction.GetOrOpen(ParticipantKeyFromLocation(runtime), false)
 				require.NoError(t, err)
-				require.NoError(t, transaction.BindParticipantCallbacks(participant.ShardName,
-					func(*SubTransaction) error { return fmt.Errorf("synthetic commit rejection") },
-					func(*SubTransaction) error { return fmt.Errorf("synthetic rollback rejection") }))
+				require.NoError(t, transaction.BindParticipantCallbacks(participant.ShardName, ParticipantCallbacks{Commit: func(*SubTransaction) error { return fmt.Errorf("synthetic commit rejection") }, Rollback: func(*SubTransaction) error { return fmt.Errorf("synthetic rollback rejection") }}))
 				if ending == "commit" {
 					err = transaction.Commit(nil, nil)
 				} else {

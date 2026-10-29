@@ -60,7 +60,7 @@ func TestCredentialedRemoteHTTPClientErrorsAreRedacted(t *testing.T) {
 		t.Fatal("follow-up engine construction failed")
 	}
 	t.Cleanup(func() { _ = followupEngine.Close() })
-	tx, err := followupEngine.BeginCypherTx(context.Background())
+	tx, err := followupEngine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 	if err != nil {
 		t.Fatal("explicit transaction did not open")
 	}

@@ -2074,7 +2074,7 @@ func TestRunSearchRequestBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}, res.Columns)
-	require.NotNil(t, exec.searchService)
+	require.NotNil(t, exec.search())
 }
 
 func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {

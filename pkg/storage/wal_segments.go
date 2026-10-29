@@ -42,101 +42,113 @@ func walActivePath(walDir string) string {
 	return filepath.Join(walDir, "wal.log")
 }
 
-func loadWALManifest(walDir string) (*WALManifest, error) {
-	manifestPath := walManifestPath(walDir)
-	file, err := os.Open(manifestPath)
-	var manifest WALManifest
-	if err == nil {
-		defer file.Close()
-		if err := json.NewDecoder(file).Decode(&manifest); err != nil {
+type walManifestAccess uint8
+
+const (
+	walReadManifest walManifestAccess = iota
+	walPublishManifest
+)
+
+// accessWALManifest owns the manifest document, version and filesystem lifecycle.
+// Reads recover only an unlisted tail. Publications preserve the same indented
+// JSON bytes and atomically replace a synced temporary file. No format changes.
+func accessWALManifest(walDir string, access walManifestAccess, manifest *WALManifest) (*WALManifest, error) {
+	path := walManifestPath(walDir)
+	switch access {
+	case walReadManifest:
+		manifest = &WALManifest{}
+		file, err := os.Open(path)
+		if err == nil {
+			defer file.Close()
+			if err := json.NewDecoder(file).Decode(manifest); err != nil {
+				return nil, err
+			}
+		} else if !os.IsNotExist(err) {
 			return nil, err
 		}
-	} else if !os.IsNotExist(err) {
-		return nil, err
+	case walPublishManifest:
+		if manifest == nil {
+			return nil, fmt.Errorf("wal: manifest is nil")
+		}
+	default:
+		return nil, fmt.Errorf("wal: invalid manifest access: %d", access)
 	}
 	if manifest.Version == 0 {
 		manifest.Version = walManifestVersion
 	}
-	// A rotation renames the active file before publishing its manifest. A
-	// crash in that interval leaves an unlisted newest segment on disk. Merge
-	// only an unlisted tail: older unlisted files can be leftovers from
-	// compaction and must not resurrect an intentionally retired segment.
-	listed := make(map[string]bool, len(manifest.Segments))
-	last := manifest.RetiredThrough
-	for _, segment := range manifest.Segments {
-		listed[segment.Path] = true
-		_, end, ok := parseSegmentFilename(segment.Path)
-		if !ok {
-			end = segment.LastSeq
+	if access == walReadManifest {
+		// A rotation renames the active file before publishing its manifest. A
+		// crash in that interval leaves an unlisted newest segment on disk. Merge
+		// only an unlisted tail: older unlisted files can be leftovers from
+		// compaction and must not resurrect an intentionally retired segment.
+		listed := make(map[string]bool, len(manifest.Segments))
+		last := manifest.RetiredThrough
+		for _, segment := range manifest.Segments {
+			listed[segment.Path] = true
+			_, end, ok := parseSegmentFilename(segment.Path)
+			if !ok {
+				end = segment.LastSeq
+			}
+			if end > last {
+				last = end
+			}
 		}
-		if end > last {
-			last = end
+		scanned, err := scanSegmentsFromDir(walDir)
+		if err != nil {
+			return nil, err
 		}
-	}
-	scanned, err := scanSegmentsFromDir(walDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, segment := range scanned {
-		if listed[segment.Path] {
-			continue
+		for _, segment := range scanned {
+			if listed[segment.Path] {
+				continue
+			}
+			if segment.LastSeq <= manifest.RetiredThrough {
+				continue
+			}
+			if segment.FirstSeq > last {
+				manifest.Segments = append(manifest.Segments, segment)
+				last = segment.LastSeq
+			} else if segment.LastSeq > last {
+				return nil, fmt.Errorf("wal: unlisted segment %q overlaps the manifest", segment.Path)
+			}
 		}
-		if segment.LastSeq <= manifest.RetiredThrough {
-			continue
-		}
-		if segment.FirstSeq > last {
-			manifest.Segments = append(manifest.Segments, segment)
-			last = segment.LastSeq
-		} else if segment.LastSeq > last {
-			return nil, fmt.Errorf("wal: unlisted segment %q overlaps the manifest", segment.Path)
-		}
+		sort.Slice(manifest.Segments, func(i, j int) bool {
+			return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
+		})
+		return manifest, nil
 	}
-	sort.Slice(manifest.Segments, func(i, j int) bool {
-		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
-	})
-	return &manifest, nil
-}
-
-func writeWALManifest(walDir string, manifest *WALManifest) error {
-	if manifest == nil {
-		return fmt.Errorf("wal: manifest is nil")
-	}
-	if manifest.Version == 0 {
-		manifest.Version = walManifestVersion
-	}
-
 	segmentDir := walSegmentsDir(walDir)
 	if err := os.MkdirAll(segmentDir, 0755); err != nil {
-		return err
+		return nil, err
 	}
-
-	tmpPath := walManifestPath(walDir) + ".tmp"
+	tmpPath := path + ".tmp"
 	file, err := os.Create(tmpPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
 		file.Close()
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-
 	if err := file.Sync(); err != nil {
 		file.Close()
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-	file.Close()
-
-	if err := os.Rename(tmpPath, walManifestPath(walDir)); err != nil {
+	if err := file.Close(); err != nil {
 		os.Remove(tmpPath)
-		return err
+		return nil, err
 	}
-
-	return syncDir(segmentDir)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := syncDir(segmentDir); err != nil {
+		return nil, err
+	}
+	return manifest, nil
 }
 
 func scanSegmentsFromDir(walDir string) ([]WALSegment, error) {
@@ -226,7 +238,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 	if err == nil && !info.IsDir() {
 		return nil, fmt.Errorf("WAL path %q is not a directory", walDir)
 	}
-	manifest, err := loadWALManifest(walDir)
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +271,7 @@ func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
 // VisitWALEntriesAfterFromDir visits WAL entries after the given sequence in
 // segment order without retaining the complete WAL in memory.
 func VisitWALEntriesAfterFromDir(walDir string, afterSeq uint64, visit func(WALEntry) error) error {
-	manifest, err := loadWALManifest(walDir)
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}

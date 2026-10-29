@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,7 +15,7 @@ import (
 // capabilities rather than the concrete transport implementation.
 type remoteCypherEngine interface {
 	QueryCypher(context.Context, string, map[string]interface{}, storage.RemoteAccessMode) ([]string, [][]interface{}, error)
-	BeginCypherTx(context.Context) (storage.RemoteCypherTx, error)
+	BeginCypherTx(context.Context, storage.RemoteAccessMode) (storage.RemoteCypherTx, error)
 	Close() error
 }
 
@@ -30,80 +31,129 @@ type RemoteFragmentExecutor struct {
 	mu          sync.RWMutex
 }
 
-// remoteParticipant is a remote sub-transaction, which ends once: after
-// RollbackParticipants rolled it back early, the transaction's COMMIT,
-// ROLLBACK and Close report that outcome instead of ending it again.
+// remoteCompletion records one terminal RPC. Its result is immutable after
+// done closes; commit and cleanup have distinct outcomes.
+type remoteCompletion struct {
+	done     chan struct{}
+	err      error
+	panicked any
+}
+
+// remoteParticipant owns one commit or rollback, plus at most one cleanup
+// rollback after a failed commit. Cleanup never changes the commit's outcome.
 type remoteParticipant struct {
 	tx        storage.RemoteCypherTx
+	write     bool
 	mu        sync.Mutex
-	ended     bool
-	committed bool
-	done      chan struct{} // closed when the end that ran has returned
-	err       error         // the outcome of the end that ran, set before done closes
+	committed bool // primary operation requested commit
+	primary   *remoteCompletion
+	cleanup   *remoteCompletion
 }
 
-// end commits or rolls back the sub-transaction, the first time it is
-// called; a later call returns that outcome (once it is known) and never
-// commits a rolled-back sub-transaction. The network call holds no lock. A
-// Bolt call that ctx's deadline stopped records that: the remote server then
-// ends the sub-transaction itself, the driver having closed its connection.
-// A sub-transaction the connection doesn't end is rolled back detached from
-// ctx (rollbackDetached).
 func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	p.mu.Lock()
-	if p.ended {
-		committed, done := p.committed, p.done
+	if p.primary == nil {
+		result := &remoteCompletion{done: make(chan struct{})}
+		p.primary, p.committed = result, commit
 		p.mu.Unlock()
-		if commit && !committed {
-			return fmt.Errorf("remote sub-transaction was rolled back")
-		}
-		<-done
-		return p.err
+		return p.complete(ctx, commit, result)
 	}
-	p.ended, p.committed, p.done = true, commit, make(chan struct{})
+	primary, committed := p.primary, p.committed
 	p.mu.Unlock()
-	if independent, ok := p.tx.(interface{ OutlivesConnection() bool }); ok && !commit && independent.OutlivesConnection() {
-		return p.rollbackDetached(ctx)
+	<-primary.done
+	if commit && !committed {
+		if primary.err != nil {
+			return fmt.Errorf("remote sub-transaction rollback failed: %w", primary.err)
+		}
+		return fmt.Errorf("remote sub-transaction was rolled back")
 	}
-	var err error
-	if commit {
-		err = p.tx.Commit(ctx)
-	} else {
-		err = p.tx.Rollback(ctx)
+	if !commit && committed {
+		if primary.err == nil {
+			return nil
+		}
+		// Failed COMMIT may leave a remote session alive. ROLLBACK is cleanup,
+		// never a replay of COMMIT and never evidence that a lost write was undone.
+		p.mu.Lock()
+		result := p.cleanup
+		owner := result == nil
+		if owner {
+			result = &remoteCompletion{done: make(chan struct{})}
+			p.cleanup = result
+		}
+		p.mu.Unlock()
+		if owner {
+			return p.complete(ctx, false, result)
+		}
+		<-result.done
+		return result.err
 	}
-	if err != nil && ctx.Err() != nil {
-		err = fmt.Errorf("remote sub-transaction did not end before its deadline: %w (%w)", ctx.Err(), err)
-	}
-	p.err = err
-	close(p.done)
-	return err
+	return primary.err
 }
 
-// endWithin ends the participant within storage.RemoteRequestTimeout.
+// complete is the sole terminal RPC runner. A transport panic publishes its
+// result before rethrowing on the waiting owner, so other finalizers can finish.
+func (p *remoteParticipant) complete(ctx context.Context, commit bool, result *remoteCompletion) error {
+	run := func(workCtx context.Context) {
+		defer close(result.done)
+		defer func() {
+			if cause := recover(); cause != nil {
+				result.panicked = cause
+				if commit {
+					result.err = fmt.Errorf("%w: remote commit panicked: %v", ErrCommitOutcomeUnknown, cause)
+				} else {
+					result.err = fmt.Errorf("remote rollback panicked: %v", cause)
+				}
+			}
+		}()
+		if commit {
+			result.err = p.tx.Commit(workCtx)
+		} else {
+			result.err = p.tx.Rollback(workCtx)
+		}
+		if result.err != nil && workCtx.Err() != nil {
+			result.err = fmt.Errorf("remote sub-transaction did not end before its deadline: %w (%w)", workCtx.Err(), result.err)
+		}
+	}
+	independent, hasLifetime := p.tx.(interface{ OutlivesConnection() bool })
+	if !commit && hasLifetime && independent.OutlivesConnection() {
+		go func() {
+			detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), storage.RemoteRequestTimeout)
+			defer cancel()
+			run(detached)
+		}()
+		select {
+		case <-result.done:
+		case <-ctx.Done():
+			return fmt.Errorf("remote sub-transaction did not end before its deadline: %w; its rollback continues", ctx.Err())
+		}
+	} else {
+		run(ctx)
+	}
+	if result.panicked != nil {
+		panic(result.panicked)
+	}
+	return result.err
+}
+
+// commitOutcome observes the original terminal result, independently of cleanup.
+func (p *remoteParticipant) commitOutcome() string {
+	p.mu.Lock()
+	result, commit := p.primary, p.committed
+	p.mu.Unlock()
+	if result == nil || !commit {
+		return "rolledback"
+	}
+	<-result.done
+	if result.err == nil {
+		return "committed"
+	}
+	return StateUnknown
+}
+
 func (p *remoteParticipant) endWithin(ctx context.Context, commit bool) error {
 	ctx, cancel := context.WithTimeout(ctx, storage.RemoteRequestTimeout)
 	defer cancel()
 	return p.end(ctx, commit)
-}
-
-// rollbackDetached rolls back a sub-transaction that outlives its connection
-// (the HTTP transaction API's), whose rollback must reach the server: it runs
-// detached from ctx, bounded by storage.RemoteRequestTimeout. end returns by
-// ctx's deadline even while it runs; its outcome is recorded when it ends,
-// and every later end of the participant (Close included) waits for it.
-func (p *remoteParticipant) rollbackDetached(ctx context.Context) error {
-	go func() {
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storage.RemoteRequestTimeout)
-		defer cancel()
-		p.err = p.tx.Rollback(rollbackCtx)
-		close(p.done)
-	}()
-	select {
-	case <-p.done:
-		return p.err
-	case <-ctx.Done():
-		return fmt.Errorf("remote sub-transaction did not end before its deadline: %w; its rollback continues", ctx.Err())
-	}
 }
 
 // NewRemoteFragmentExecutor creates a remote executor.
@@ -121,7 +171,7 @@ func NewRemoteFragmentExecutor() *RemoteFragmentExecutor {
 // back concurrently, so ctx's deadline bounds the whole call and one that
 // doesn't respond doesn't hold up the others. A rollback error (a deadline
 // included) is recorded on its participant, which reports it when the
-// transaction ends; the first one is returned.
+// transaction ends; the returned error retains every rollback failure.
 func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error {
 	r.mu.RLock()
 	participants := make([]*remoteParticipant, 0, len(r.txHandles))
@@ -139,12 +189,7 @@ func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error
 		}()
 	}
 	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Execute runs a Cypher query against a remote NornicDB instance.
@@ -177,25 +222,25 @@ func (r *RemoteFragmentExecutor) ExecuteRows(ctx context.Context, loc *LocationR
 	return resultRows(r.Execute(ctx, loc, query, params, authToken, mode))
 }
 
-// Close closes all cached remote engines.
+// Close ends cached remote participants and engines, retaining every cleanup error.
 func (r *RemoteFragmentExecutor) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var lastErr error
+	var cleanupErrors []error
 	for key, handle := range r.txHandles {
 		if err := handle.end(context.Background(), false); err != nil {
-			lastErr = fmt.Errorf("failed to rollback remote tx handle '%s': %w", observability.RedactText(key), err)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to rollback remote tx handle '%s': %w", observability.RedactText(key), err))
 		}
 		delete(r.txHandles, key)
 	}
 	for key, engine := range r.engineCache {
 		if err := engine.Close(); err != nil {
-			lastErr = fmt.Errorf("failed to close remote engine '%s': %w", observability.RedactText(key.uri+"|"+key.database), err)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to close remote engine '%s': %w", observability.RedactText(key.uri+"|"+key.database), err))
 		}
 		delete(r.engineCache, key)
 	}
-	return lastErr
+	return errors.Join(cleanupErrors...)
 }
 
 // remoteEngineIdentity keeps admitted credential fields distinct and exact.
@@ -283,7 +328,21 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	if !hasSub || sub == nil {
 		return engine.QueryCypher(ctx, query, params, mode)
 	}
-	handle, err := r.getOrCreateTxHandle(ctx, sub, engine)
+	tx, ok := FabricTransactionFromContext(ctx)
+	if !ok {
+		return nil, nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
+	}
+	uncertain := unresolvedRemoteMode(ctx)
+	if mode == storage.RemoteAccessWrite && !uncertain {
+		if _, err := tx.GetOrOpen(sub.ShardName, true); err != nil {
+			return nil, nil, err
+		}
+	}
+	sessionMode := mode
+	if uncertain || tx.WriteShard() == sub.ShardName {
+		sessionMode = storage.RemoteAccessWrite
+	}
+	handle, err := r.getOrCreateTxHandle(ctx, sub, engine, sessionMode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -295,21 +354,21 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	if reporter, ok := handle.tx.(storage.RemoteCypherMode); ok {
 		write, known = reporter.ResolvedWriteMode()
 	}
-	if write || !known && unresolvedRemoteMode(ctx) {
-		tx, ok := FabricTransactionFromContext(ctx)
-		if !ok || tx == nil {
-			return nil, nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
-		}
+	if write && mode == storage.RemoteAccessRead && !uncertain {
+		return nil, nil, fmt.Errorf("remote read participant '%s' reported a write", sub.ShardName)
+	}
+	if uncertain && (write || !known) {
 		if _, err := tx.GetOrOpen(sub.ShardName, true); err != nil {
 			return nil, nil, err
 		}
 	}
+
 	return columns, rows, nil
 }
 
-func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine remoteCypherEngine) (*remoteParticipant, error) {
+func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine remoteCypherEngine, mode storage.RemoteAccessMode) (result *remoteParticipant, resultErr error) {
 	r.mu.RLock()
-	if handle, ok := r.txHandles[sub.ShardName]; ok {
+	if handle, ok := r.txHandles[sub.ShardName]; ok && (handle.write || mode == storage.RemoteAccessRead) {
 		r.mu.RUnlock()
 		return handle, nil
 	}
@@ -318,16 +377,29 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
-		return handle, nil
+		if handle.write || mode == storage.RemoteAccessRead {
+			return handle, nil
+		}
+		// The accepted READ-to-WRITE transition ends the empty read session.
+		if err := handle.endWithin(context.WithoutCancel(ctx), false); err != nil {
+			return nil, err
+		}
+		delete(r.txHandles, sub.ShardName)
 	}
-	tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(ctx))
+	tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(ctx), mode)
 	if err != nil {
 		return nil, err
 	}
-	handle := &remoteParticipant{tx: tx}
+	handle := &remoteParticipant{tx: tx, write: mode == storage.RemoteAccessWrite}
+	registered := false
+	defer func() {
+		if !registered {
+			resultErr = errors.Join(resultErr, handle.endWithin(context.WithoutCancel(ctx), false))
+		}
+	}()
+
 	fabricTx, ok := FabricTransactionFromContext(ctx)
 	if !ok || fabricTx == nil {
-		_ = handle.end(ctx, false)
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
 	// The sub-transaction ends with its transaction, after the statement or
@@ -335,12 +407,23 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	// keeps the transaction owner's lifetime and values, not the statement's
 	// cancellation; endWithin bounds the remote terminal request.
 	terminalCtx := fabricTx.BindContext(ctx)
-	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, true) }
+	commitFn := func(participant *SubTransaction) error { return handle.endWithin(terminalCtx, participant.IsWrite) }
 	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
-	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
-		_ = handle.end(ctx, false)
+	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, ParticipantCallbacks{Commit: commitFn, Rollback: rollbackFn, Outcome: handle.commitOutcome}); err != nil {
 		return nil, err
 	}
 	r.txHandles[sub.ShardName] = handle
+	registered = true
 	return handle, nil
+}
+
+// RunInStatement enlists issued storage in its owning statement before transport.
+func (r *RemoteFragmentExecutor) RunInStatement(begin context.Context, tx *FabricTransaction, shard string, engine *storage.RemoteEngine, ctx context.Context, query string, params map[string]interface{}, mode storage.RemoteAccessMode) ([]string, [][]interface{}, error) {
+	sub, err := tx.GetOrOpen(shard, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx = WithFabricTransaction(WithSubTransaction(ctx, sub), tx)
+	ctx = WithTransactionLifetime(ctx, tx.BindContext(begin))
+	return r.executeRemoteQuery(ctx, engine, query, params, mode)
 }

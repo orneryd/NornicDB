@@ -106,7 +106,7 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 					tx, err := engine.BeginTransaction()
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
-					require.NoError(t, tx.SetDeferredConstraintValidation(true))
+					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: []string{"Forbidden"}}, ClientNodeEdits))
 					if !corruptEndpoint {
 						// Relabeling also reads adjacency for counters, so inject corruption after staging.
@@ -187,7 +187,7 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 					tx, err := engine.BeginTransaction()
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
-					require.NoError(t, tx.SetDeferredConstraintValidation(true))
+					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: labels}, ClientNodeEdits))
 					err = tx.Commit()
 					if allowed {
@@ -249,7 +249,7 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					tx, err := engine.BeginTransaction()
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
-					require.NoError(t, tx.SetDeferredConstraintValidation(true))
+					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 					require.NoError(t, tx.UpdateGraphNode(&Node{ID: anchor, Labels: []string{"Forbidden"}}, ClientNodeEdits))
 					if moveEndpoint {
 						if outgoing {

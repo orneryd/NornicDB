@@ -115,6 +115,18 @@ func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, para
 }
 
 func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
+	member := e.membership(ctx)
+	if member.storage != nil && (member.transaction == nil || member.transaction.controller != e) {
+		ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
+	}
+	if member.statement != nil {
+		ctx = &compositeContext{Context: ctx, statement: member.statement, storage: member.storage}
+	}
+	if member.transaction != nil && e.txContext == nil && bareTransactionCommand(cypher) == "" && !transactionScriptShape(cypher) {
+		e = e.cloneWithStorage(e.storage)
+		e.txContext = member.transaction
+	}
+
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
@@ -150,7 +162,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Every rejection of the caller's statement fails its explicit transaction,
 	// including errors before parsing, routing or the system statement policy.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
-		defer func() { e.failTransaction(ctx, retErr) }()
+		defer func() {
+			if cause := recover(); cause != nil {
+				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
+				panic(cause)
+			}
+			e.failTransaction(ctx, retErr)
+		}()
 	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
@@ -433,24 +451,18 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if cypher == "" {
 		return shellResult, nil
 	}
-	if err := clientTransactionCommand(ctx, cypher); err != nil {
-		return nil, err
-	}
-	// Only BEGIN can start a script; avoid its allocating classifier for
-	// ordinary statements while admitting them through the same owner.
-	if bareTransactionCommand(cypher) == "" && (!startsWithKeywordFold(cypher, "BEGIN") || !transactionScriptShape(cypher)) {
-		// Neo4j parses a statement before it checks it against its
-		// transaction, so a rejected USE clause (USE before an
-		// administration command among them) is the SyntaxError in an
-		// explicit transaction too.
-		if startsWithUseClause(cypher) {
-			if _, _, _, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); err != nil {
-				return nil, err
-			}
-		}
-		if err := e.admitTransactionStatement(ctx, cypher); err != nil {
+	// Parse a selected graph before transaction type admission, preserving
+	// the public SyntaxError ordering for invalid USE statements.
+	if startsWithUseClause(cypher) {
+		if _, _, _, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); err != nil {
 			return nil, err
 		}
+	}
+	control, err := e.admitTransactionStatement(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	if !control {
 		routed, err := e.routeAdministrationStatement(ctx, cypher)
 		if err != nil {
 			return nil, err
@@ -459,6 +471,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return routed.executeRouted(ctx, cypher, params)
 		}
 	}
+
 	// A cached per-database executor is shared by every auto-commit client of
 	// its database. A bare transaction command must not open a transaction on
 	// it: any later statement (or one-statement script) would then run inside
@@ -537,7 +550,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		// in the reference catalogs).
 		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "fabric"))
-		inExplicitTx := e.txContext != nil && e.txContext.active
 		// As on one database, and as Neo4j compiles a statement, its
 		// variable scopes are checked before it plans, enlists a participant
 		// or runs any part: a CALL scope clause naming a variable the query
@@ -569,20 +581,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 		}
 
-		var result *ExecuteResult
-		var execErr error
-		// When an explicit transaction is active on a composite route, execute through
-		// the same FabricTransaction so many-read/one-write constraints are enforced
-		// across all statements in the session.
-		if inExplicitTx {
-			if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
-				result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
-			} else {
-				result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true)
-			}
-		} else {
-			result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true)
-		}
+		// The gateway alone selects the existing coordinator or rejects a native owner.
+		result, execErr := e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true, preparedFabric)
 		if execErr != nil {
 			return nil, execErr
 		}
@@ -673,12 +673,15 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// embedded caller that already owns an active transaction keeps running
 	// the script on itself, where handleBegin fails as before.
 	if transactionScriptShape(cypher) {
+		// Script execution precedes ordinary query routing, so install the
+		// same bound parameter values before its inner statements execute.
+		ctx = withQueryParams(ctx, normalizeQueryParameters(params))
 		if e.txContext != nil && e.txContext.active {
 			if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		} else {
-			scriptExec := e.cloneForStorage(e.storage)
+			scriptExec := e.cloneWithStorage(e.storage, selectedDatabaseStorage)
 			scriptExec.txContext = nil
 			if result, err := scriptExec.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 				return result, err
@@ -702,7 +705,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 		}
 		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
-			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
+			e.txContext.running = runningTransactions.begin(ctx, e.databaseName())
 		}
 		return result, err
 	}
@@ -872,6 +875,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
 	if modeErr != nil {
 		return nil, modeErr
+	}
+	if state := e.resolvedStatementModeOf(ctx); state != nil {
+		var release func()
+		e, release = e.bindResolvedStatementMode(state)
+		defer release()
 	}
 	if finishMode != nil {
 		defer func() {

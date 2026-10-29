@@ -35,7 +35,7 @@ func ValidateWALFormat(dir string, mode WALFormatValidation) error {
 	if mode != WALValidateCurrent && mode != WALValidateV4Upgrade {
 		return fmt.Errorf("wal: unknown validation mode %d", mode)
 	}
-	manifest, err := loadWALManifest(dir)
+	manifest, err := accessWALManifest(dir, walReadManifest, nil)
 	if err != nil {
 		return fmt.Errorf("wal: read manifest: %w", err)
 	}

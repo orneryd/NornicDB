@@ -28,7 +28,7 @@ func TestRemoteDynamicModeUsesBoltSuccessType(t *testing.T) {
 			engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), Database: "nornic"})
 			require.NoError(t, err)
 			defer func() { require.NoError(t, engine.Close()) }()
-			tx, err := engine.BeginCypherTx(context.Background())
+			tx, err := engine.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 			require.NoError(t, err)
 			_, _, err = tx.QueryCypher(context.Background(), "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", map[string]interface{}{"body": tc.body})
 			require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestRemotePeriodicCoordinatorMetadataBolt(t *testing.T) {
 				engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), Database: "nornic"})
 				require.NoError(t, err)
 				defer engine.Close()
-				tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(context.Background()))
+				tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(context.Background()), storage.RemoteAccessWrite)
 				require.NoError(t, err)
 				defer tx.Rollback(context.Background())
 				if clearMetadata {

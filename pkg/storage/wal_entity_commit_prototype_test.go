@@ -28,7 +28,7 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.SetDeferredConstraintValidation(true))
+	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 	zone, err := time.LoadLocation("Europe/London")
 	require.NoError(t, err)
 	vector := make([]float32, 16000)

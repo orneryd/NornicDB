@@ -45,6 +45,10 @@ type BadgerTransaction struct {
 	commitReleaseAcceptedAuthority func()
 	mu                             sync.Mutex
 
+	// writeAdmission decides whether the transaction may write, before its
+	// first write (SetWriteAdmission); nil once it admitted, or without one.
+	writeAdmission func() error
+
 	// commitCtx is the caller's context while CommitContext runs: commit-time
 	// constraint validation polls it, so a terminated or abandoned statement
 	// stops before anything is written instead of validating to the end
@@ -506,7 +510,7 @@ func (tx *BadgerTransaction) Namespace() string {
 // writes instead of waiting for the first prefixed mutation. Returns an
 // error if the transaction is already pinned to a different namespace.
 //
-// SetNamespace deliberately does not call ensureLifecycleActiveLocked
+// SetNamespace deliberately does not call ensureOperationAllowedLocked
 // before the namespace bind: lifecycle expiration is meaningless for a
 // transaction that has not yet registered against any namespace. We only
 // require Status==active.
@@ -595,11 +599,20 @@ func (tx *BadgerTransaction) pinEdgeNamespaceLocked(edge *Edge) error {
 	return nil
 }
 
-// ensureLifecycleActiveLocked validates the native lifecycle. The accepted
-// coordinator alone may continue after the client has detached; it still runs
-// every storage expiry/status check under the same transaction mutex.
-func (tx *BadgerTransaction) ensureLifecycleActiveLocked(acceptedCoordinator ...bool) error {
-	if (len(acceptedCoordinator) == 0 || !acceptedCoordinator[0]) && tx.clientDetached.Load() {
+type transactionOperation uint8
+
+const (
+	transactionRead transactionOperation = iota
+	transactionDataWrite
+	transactionSchemaWrite
+	transactionCoordinatorCommit
+)
+
+// ensureOperationAllowedLocked owns lifecycle and operation admission. Only an
+// accepted commit continuation may proceed after client detachment. Data and
+// schema writes retain their exclusion and claim a writer before staging.
+func (tx *BadgerTransaction) ensureOperationAllowedLocked(operation transactionOperation) error {
+	if operation != transactionCoordinatorCommit && tx.clientDetached.Load() {
 		return ErrTransactionClosed
 	}
 	if tx.Status != TxStatusActive {
@@ -614,48 +627,64 @@ func (tx *BadgerTransaction) ensureLifecycleActiveLocked(acceptedCoordinator ...
 		}
 	}
 
-	if tx.snapshotReaderInfo.StartTime.IsZero() || tx.engine == nil {
-		return nil
+	if !tx.snapshotReaderInfo.StartTime.IsZero() && tx.engine != nil {
+		graceful, hard := tx.engine.evaluateSnapshotReader(tx.snapshotReaderInfo)
+		if hard {
+			tx.closeLocked(TxStatusRolledBack, true, ErrMVCCSnapshotHardExpired)
+			return ErrMVCCSnapshotHardExpired
+		}
+		if graceful {
+			tx.closeLocked(TxStatusRolledBack, true, ErrMVCCSnapshotGracefulCancel)
+			return ErrMVCCSnapshotGracefulCancel
+		}
 	}
-	graceful, hard := tx.engine.evaluateSnapshotReader(tx.snapshotReaderInfo)
-	if hard {
-		tx.closeLocked(TxStatusRolledBack, true, ErrMVCCSnapshotHardExpired)
-		return ErrMVCCSnapshotHardExpired
-	}
-	if graceful {
-		tx.closeLocked(TxStatusRolledBack, true, ErrMVCCSnapshotGracefulCancel)
-		return ErrMVCCSnapshotGracefulCancel
+	switch operation {
+	case transactionDataWrite:
+		if tx.schemaTransaction {
+			return mixedSchemaAndDataError(false)
+		}
+		return tx.admitWriteLocked()
+	case transactionSchemaWrite:
+		if len(tx.operations) > 0 {
+			return mixedSchemaAndDataError(true)
+		}
+		if err := tx.admitWriteLocked(); err != nil {
+			return err
+		}
+		tx.schemaTransaction = true
 	}
 	return nil
 }
 
-// SetDeferredConstraintValidation controls per-operation constraint checks.
-// When enabled, constraints are enforced at commit time only.
-func (tx *BadgerTransaction) SetDeferredConstraintValidation(deferValidation bool) error {
+// TransactionValidationSetting selects one independent native validation policy.
+type TransactionValidationSetting uint8
+
+const (
+	// DeferredConstraintValidation defers constraint checks until commit.
+	DeferredConstraintValidation TransactionValidationSetting = iota
+	// SkipCreateCommitHeadReload skips only the commit-time head reload for a
+	// minted/UUID-shaped create; stored-inclusive identity checks remain required.
+	SkipCreateCommitHeadReload
+)
+
+// SetValidationSetting changes one policy without resetting the other. For
+// example, tx.SetValidationSetting(DeferredConstraintValidation, true) defers
+// constraints; tx.SetValidationSetting(SkipCreateCommitHeadReload, true) selects
+// the minted-create optimization. Closed transactions reject either request.
+func (tx *BadgerTransaction) SetValidationSetting(setting TransactionValidationSetting, enabled bool) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
-
-	tx.deferConstraintValidation = deferValidation
-	return nil
-}
-
-// SetSkipCreateExistenceCheck retains its public name for compatibility. A
-// stored-inclusive existence read is required for every ID the caller did not
-// mint (CreateMintedNode); when enabled, UUID-shaped creates skip only the
-// later commit-time head reload.
-func (tx *BadgerTransaction) SetSkipCreateExistenceCheck(skip bool) error {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return err
+	switch setting {
+	case DeferredConstraintValidation:
+		tx.deferConstraintValidation = enabled
+	case SkipCreateCommitHeadReload:
+		tx.skipCreateExistenceCheck = enabled
+	default:
+		return fmt.Errorf("invalid transaction validation setting: %d", setting)
 	}
-
-	tx.skipCreateExistenceCheck = skip
 	return nil
 }
 
@@ -666,7 +695,7 @@ func (tx *BadgerTransaction) SetSkipCreateExistenceCheck(skip bool) error {
 func (tx *BadgerTransaction) SetImplicit(implicit bool) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	tx.commitMode = CommitModeExplicit
@@ -783,7 +812,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return "", err
 	}
 
@@ -879,7 +908,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(node *Node, policy EntityImagePolic
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
 
@@ -1320,7 +1349,7 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
 
@@ -1407,7 +1436,7 @@ func (tx *BadgerTransaction) recordNodeDeletionLocked(nodeID NodeID, result node
 func (tx *BadgerTransaction) IncidentEdges(nodeID NodeID) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
@@ -1511,7 +1540,7 @@ func (tx *BadgerTransaction) bulkCreateEdges(edges []*Edge, minted bool) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
 	if len(edges) == 0 {
@@ -1736,7 +1765,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if edge.ID == "" {
 		return ErrInvalidID
 	}
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
 	if err := tx.materializeDeferredEdgeLocked(edge.ID); err != nil {
@@ -1911,7 +1940,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
 
@@ -2008,35 +2037,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 // reject every committed value as "not yet visible" — which manifests as
 // lost updates under the Read-Modify-Write retry loop in DB.Update.
 func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
-	return tx.getNode(nodeID, visibleRead)
-}
-
-func (tx *BadgerTransaction) getNode(nodeID NodeID, v readVisibility) (*Node, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
-		return nil, err
-	}
-
-	// A node deleted while relationships still connect it is still their
-	// endpoint (DeleteGraphNode with RejectConnected).
-	if node, connected := tx.connectedDeletes[nodeID]; connected {
-		return copyNode(node), nil
-	}
-	// Check deleted
-	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, ErrNotFound
-	}
-
-	// Check pending
-	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return copyNode(node), nil
-	}
-
-	return tx.getCommittedNodeReadLocked(nodeID, true, v)
+	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: visibleRead}})
 }
 
 // GetQueryNode implements QueryNodeReader inside the
@@ -2049,32 +2050,14 @@ func (tx *BadgerTransaction) getNode(nodeID NodeID, v readVisibility) (*Node, er
 // never carry vectors, and an update reconciles embeddings against the stored
 // node (reconcileManagedEmbeddingsLocked), not the caller's copy.
 func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
-		return nil, err
-	}
-	var node *Node
-	var err error
-	if connected, exists := tx.connectedDeletes[nodeID]; exists {
-		node = copyNodeForCaller(connected)
-	} else if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, ErrNotFound
-	} else if pending, exists := tx.pendingNodes[nodeID]; exists {
-		node = copyNodeForCaller(pending)
-	} else {
-		node, err = tx.getCommittedNodeReadLocked(nodeID, false, visibleRead)
-	}
-	// Snapshot scan caches hold complete bodies, including suppressed nodes.
-	// Every query point read must apply the scan's visibility decision before
-	// a caller can project or admit an endpoint from any cache or overlay.
-	if err == nil && tx.engine.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
-		return nil, ErrNotFound
-	}
-	return node, err
+	// Query visibility belongs to this capability. The common point-read owner
+	// invokes the completion policy before releasing the transaction lock.
+	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, func(tx *BadgerTransaction, node *Node, _ transactionNodeRead, err error) (*Node, error) {
+		if err == nil && tx.engine.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
+			return nil, ErrNotFound
+		}
+		return node, err
+	}, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}})
 }
 
 // GetNodeProjected implements ProjectedNodeReader inside the transaction: it
@@ -2085,30 +2068,7 @@ func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 // writes, deletes, connected deletes and the MVCC snapshot all apply exactly
 // as in GetNode.
 func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string) (*Node, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
-		return nil, err
-	}
-
-	// A node deleted while relationships still connect it is still their
-	// endpoint (DeleteGraphNode with RejectConnected).
-	if node, connected := tx.connectedDeletes[nodeID]; connected {
-		return projectCachedNodeForRead(node, properties, true), nil
-	}
-	// Check deleted
-	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, ErrNotFound
-	}
-	// Check pending
-	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return projectCachedNodeForRead(node, properties, true), nil
-	}
-
-	return tx.getCommittedNodeProjectedLocked(nodeID, properties)
+	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}, properties: properties, projected: true})
 }
 
 // getCommittedNodeProjectedLocked is getCommittedNodeLocked for a projected
@@ -2196,7 +2156,7 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if tx.ensureLifecycleActiveLocked() != nil || tx.pinNamespaceFromIDLocked(string(id)) != nil {
+	if tx.ensureOperationAllowedLocked(transactionRead) != nil || tx.pinNamespaceFromIDLocked(string(id)) != nil {
 		return false, false
 	}
 	if _, connected := tx.connectedDeletes[id]; connected {
@@ -2232,96 +2192,63 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 // readTS is bound to the namespace's actual sequence rather than the
 // pre-pin sequence-0 placeholder.
 func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
-	return tx.getEdge(edgeID, visibleRead)
+	return readTransactionEntity(tx, edgeID, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, (*BadgerTransaction).getCommittedEdgeReadLocked, nil, visibleRead)
 }
 
-func (tx *BadgerTransaction) getEdge(edgeID EdgeID, v readVisibility) (*Edge, error) {
+// ReadEdges returns the requested native transaction adjacency, including pending
+// writes and excluding pending deletions. Directional reads retain the pinned
+// snapshot or write-behind view; between reads retain the engine's current view.
+// For example, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id}
+// reads outgoing edges, while TransactionReadBetween also supplies Other.
+func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
-	if err := tx.pinNamespaceFromIDLocked(string(edgeID)); err != nil {
+	var direction EdgeDirection
+	switch request.Kind {
+	case TransactionReadOutgoing:
+		direction = Outgoing
+	case TransactionReadIncoming:
+		direction = Incoming
+	case TransactionReadBetween:
+	default:
+		return nil, ErrInvalidData
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(request.Node)); err != nil {
 		return nil, err
 	}
-
-	if _, deleted := tx.deletedEdges[edgeID]; deleted {
-		return nil, ErrNotFound
+	if request.Kind == TransactionReadBetween {
+		if err := tx.pinNamespaceFromIDLocked(string(request.Other)); err != nil {
+			return nil, err
+		}
 	}
-
-	if edge, exists := tx.pendingEdges[edgeID]; exists {
-		return copyEdge(edge), nil
+	var committed []*Edge
+	var err error
+	if request.Kind == TransactionReadBetween {
+		committed, err = tx.engine.GetEdgesBetween(request.Node, request.Other)
+	} else {
+		committed, err = tx.getCommittedAdjacentEdgesLocked(request.Node, direction)
 	}
-
-	return tx.getCommittedEdgeReadLocked(edgeID, v)
-}
-
-// GetOutgoingEdges returns outgoing edges including pending transaction writes.
-func (tx *BadgerTransaction) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
-		return nil, err
-	}
-
-	committed, err := tx.getCommittedAdjacentEdgesLocked(nodeID, Outgoing)
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingAdjacentEdgesLocked(committed, nodeID, func(edge *Edge) bool {
-		return edge.StartNode == nodeID
-	}), nil
-}
-
-// GetIncomingEdges returns incoming edges including pending transaction writes.
-func (tx *BadgerTransaction) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
-		return nil, err
-	}
-
-	committed, err := tx.getCommittedAdjacentEdgesLocked(nodeID, Incoming)
-	if err != nil {
-		return nil, err
-	}
-	return tx.mergePendingAdjacentEdgesLocked(committed, nodeID, func(edge *Edge) bool {
-		return edge.EndNode == nodeID
-	}), nil
-}
-
-// GetEdgesBetween returns edges between two nodes including pending transaction writes.
-func (tx *BadgerTransaction) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(startID)); err != nil {
-		return nil, err
-	}
-	if err := tx.pinNamespaceFromIDLocked(string(endID)); err != nil {
-		return nil, err
-	}
-
-	committed, err := tx.engine.GetEdgesBetween(startID, endID)
-	if err != nil {
-		return nil, err
-	}
-	return tx.mergePendingAdjacentEdgesLocked(committed, startID, func(edge *Edge) bool {
-		return edge.StartNode == startID && edge.EndNode == endID
+	return tx.mergePendingAdjacentEdgesLocked(committed, request.Node, func(edge *Edge) bool {
+		switch request.Kind {
+		case TransactionReadOutgoing:
+			return edge.StartNode == request.Node
+		case TransactionReadIncoming:
+			return edge.EndNode == request.Node
+		default:
+			return edge.StartNode == request.Node && edge.EndNode == request.Other
+		}
 	}), nil
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
 func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	edges, err := tx.GetEdgesBetween(startID, endID)
+	edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
 	if err != nil {
 		return nil
 	}
@@ -2355,7 +2282,7 @@ func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(edgeType string, incl
 func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	if err := tx.engine.pendingNamespaceConflict(""); err != nil {
@@ -2379,7 +2306,7 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 
@@ -2406,7 +2333,7 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 
@@ -2443,7 +2370,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	scope := tx.labelScanScopeLocked(opts.Prefix)
@@ -2643,7 +2570,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	if err := tx.engine.pendingPrefixConflict(tx.labelScanScopeLocked(opts.Prefix)); err != nil {
@@ -2825,7 +2752,7 @@ func (tx *BadgerTransaction) GetFirstNodeByLabel(label string) (*Node, error) {
 func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 
@@ -3068,7 +2995,7 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 
@@ -4391,7 +4318,7 @@ func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.2.
 		return localizedError(localization.StorageTransactionNodeChanged(string(nodeID)), ErrConflict)
 	}
-	return tx.refreshSnapshotLocked()
+	return tx.advanceSnapshotLocked(false)
 }
 
 // observedLocked reports whether the transaction has read through its
@@ -4449,15 +4376,6 @@ func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked() error {
 	return tx.validateSnapshotIsolationConflicts()
 }
 
-// refreshSnapshotLocked moves a transaction that has observed nothing to a
-// snapshot taken now, as if it had just begun: new Badger reader and writer
-// transactions, the namespaces' current MVCC versions, and empty snapshot
-// caches. The new snapshot is opened first, so a refresh turned away (a
-// restore holding reads) leaves the transaction on its current one.
-func (tx *BadgerTransaction) refreshSnapshotLocked() error {
-	return tx.advanceSnapshotLocked(false)
-}
-
 // ResumeAfterIndependentCommit advances an implicit caller's read view while
 // retaining its entire pending write set and rollback ownership. Explicit
 // transactions never enter this path. Before advancing, old pending mutations
@@ -4465,7 +4383,7 @@ func (tx *BadgerTransaction) refreshSnapshotLocked() error {
 func (tx *BadgerTransaction) ResumeAfterIndependentCommit() error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	if tx.commitMode != CommitModeImplicit {
