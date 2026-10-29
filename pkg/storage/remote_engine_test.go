@@ -382,7 +382,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		schema: NewSchemaManager(),
 	}
 	ctx := context.Background()
-	if _, _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}, RemoteAccessRead); err == nil {
+	if _, _, err := badEngine.QueryCypher(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}, RemoteAccessRead); err == nil {
 		t.Fatalf("expected marshal error")
 	}
 
@@ -395,7 +395,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		},
 		schema: NewSchemaManager(),
 	}
-	if _, _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
+	if _, _, err := badURLEngine.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected bad URL error")
 	}
 
@@ -403,7 +403,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	eDoErr := makeEngineWithTransport(t, "http://host", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("network down")
 	})
-	if _, _, err := eDoErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
+	if _, _, err := eDoErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected network error")
 	}
 
@@ -415,7 +415,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, _, err := eReadErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
+	if _, _, err := eReadErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected read body error")
 	}
 
@@ -427,7 +427,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
+	if _, _, err := eDecodeErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected decode error")
 	}
 
@@ -441,7 +441,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header: make(http.Header),
 		}, nil
 	})
-	if _, _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil || !strings.Contains(err.Error(), "bad statement") {
+	if _, _, err := eCypherErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil || !strings.Contains(err.Error(), "bad statement") {
 		t.Fatalf("expected cypher error, got: %v", err)
 	}
 
@@ -456,7 +456,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	_, rows, err := eOK.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead)
+	_, rows, err := eOK.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating basic auth remote engine: %v", err)
 	}
-	if _, _, err := eBasic.transport.query(ctx, "RETURN 1", nil, RemoteAccessRead); err != nil {
+	if _, _, err := eBasic.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err != nil {
 		t.Fatalf("unexpected error from basic auth query: %v", err)
 	}
 }
@@ -597,86 +597,7 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 		if err := json.NewDecoder(req.Body).Decode(&txReq); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		stmt := txReq.Statements[0].Statement
-		params := txReq.Statements[0].Parameters
-
-		switch {
-		case strings.HasPrefix(stmt, "CREATE (n"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "n1", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"name": "Alice"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": params["id"], "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": params["id"]}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "SET n += $props RETURN count(n)"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(0)}}, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
-		case strings.Contains(stmt, "MERGE (a)-[r"):
-			if params["start"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{map[string]interface{}{"id": "e1"}}}, nil)}, nil
-		case strings.Contains(stmt, "WHERE r.id = $id RETURN r LIMIT 1"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": params["id"], "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": params["id"]}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "SET r += $props RETURN count(r)"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(0)}}, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN n LIMIT 1"):
-			if strings.Contains(stmt, "`Missing`") {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "first", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "first"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "RETURN n"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "n1", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n1"}}},
-				{map[string]interface{}{"id": "n2", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n2"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r]->() RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e1", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e1"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE n.id = $id RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e2", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e2"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE a.id = $start AND b.id = $end RETURN r LIMIT 1"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e3", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e3"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE a.id = $start AND b.id = $end RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e4", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e4"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r:`KNOWS`]->() RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e5", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e5"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(2)}}, nil)}, nil
-		case strings.Contains(stmt, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(3)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN count(n)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(7)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(8)}}, nil)}, nil
-		default:
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-		}
+		return remoteEngineMethodReplyHTTPServed(txReq.Statements[0].Statement, txReq.Statements[0].Parameters), nil
 	})
 
 	if _, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}); err != nil {
@@ -1127,131 +1048,49 @@ func TestRemoteEngineHTTPQueryBatch(t *testing.T) {
 	}
 }
 
+// TestRemoteEngineHTTPExplicitTxLifecycle runs both ends of an explicit
+// transaction over the shared explicit-transaction wire.
 func TestRemoteEngineHTTPExplicitTxLifecycle(t *testing.T) {
-	var opened bool
-	var executed bool
-	var committed bool
-	var rolledBack bool
-	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx"):
-			opened = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[],"errors":[],"commit":"http://remote.example/db/remote_db/tx/1/commit"}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1"):
-			executed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[{"columns":["n"],"data":[{"row":[1]}]}],"errors":[]}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1/commit"):
-			committed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1"):
-			rolledBack = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		default:
-			return &http.Response{
-				StatusCode: 404,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		}
-	})
-	tx, err := engine.BeginCypherTx(context.Background())
-	if err != nil {
-		t.Fatalf("BeginCypherTx failed: %v", err)
-	}
-	cols, rows, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil)
-	if err != nil {
-		t.Fatalf("QueryCypher failed: %v", err)
-	}
-	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || len(rows[0]) != 1 {
-		t.Fatalf("unexpected query result: cols=%v rows=%v", cols, rows)
-	}
-	if err := tx.Commit(context.Background()); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-	if !opened || !executed || !committed || rolledBack {
-		t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v", opened, executed, committed, rolledBack)
-	}
-}
-
-func TestRemoteEngineHTTPExplicitTxRollbackLifecycle(t *testing.T) {
-	var opened bool
-	var executed bool
-	var committed bool
-	var rolledBack bool
-	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx"):
-			opened = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[],"errors":[],"commit":"http://remote.example/db/remote_db/tx/2/commit"}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2"):
-			executed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[{"columns":["n"],"data":[{"row":[1]}]}],"errors":[]}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2/commit"):
-			committed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2"):
-			rolledBack = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		default:
-			return &http.Response{
-				StatusCode: 404,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		}
-	})
-	tx, err := engine.BeginCypherTx(context.Background())
-	if err != nil {
-		t.Fatalf("BeginCypherTx failed: %v", err)
-	}
-	if _, _, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil); err != nil {
-		t.Fatalf("QueryCypher failed: %v", err)
-	}
-	if err := tx.Rollback(context.Background()); err != nil {
-		t.Fatalf("Rollback failed: %v", err)
-	}
-	if !opened || !executed || committed || !rolledBack {
-		t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v", opened, executed, committed, rolledBack)
+	// The commit ends the transaction and the rollback ends it instead. Each
+	// lifecycle keeps the transaction number it always used and its own ledger,
+	// so neither sees the other's requests.
+	for _, testCase := range []struct {
+		name       string
+		txID       string
+		beginMode  RemoteAccessMode
+		commit     bool
+		wantCommit bool
+		wantRoll   bool
+	}{
+		{name: "commit ends the transaction", txID: "1", beginMode: RemoteAccessWrite, commit: true, wantCommit: true},
+		{name: "rollback ends the transaction", txID: "2", beginMode: RemoteAccessWrite, wantRoll: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var ledger remoteTxWire
+			engine := makeEngineWithTransport(t, "http://remote.example", newRemoteExplicitTxWire(t, testCase.txID, &ledger))
+			tx, err := engine.BeginCypherTx(context.Background(), testCase.beginMode)
+			if err != nil {
+				t.Fatalf("BeginCypherTx failed: %v", err)
+			}
+			cols, rows, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil)
+			if err != nil {
+				t.Fatalf("QueryCypher failed: %v", err)
+			}
+			if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || len(rows[0]) != 1 || rows[0][0] != int64(1) {
+				t.Fatalf("unexpected query result: cols=%v rows=%v", cols, rows)
+			}
+			if testCase.commit {
+				if err := tx.Commit(context.Background()); err != nil {
+					t.Fatalf("Commit failed: %v", err)
+				}
+			} else if err := tx.Rollback(context.Background()); err != nil {
+				t.Fatalf("Rollback failed: %v", err)
+			}
+			if !ledger.opened || !ledger.executed || ledger.committed != testCase.wantCommit || ledger.rolledBack != testCase.wantRoll {
+				t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v",
+					ledger.opened, ledger.executed, ledger.committed, ledger.rolledBack)
+			}
+		})
 	}
 }
 
@@ -1294,7 +1133,7 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)
 	}
 
-	tx, err := engine.BeginCypherTx(nilCtx)
+	tx, err := engine.BeginCypherTx(nilCtx, RemoteAccessWrite)
 	if err != nil {
 		t.Fatalf("BeginCypherTx with nil context failed: %v", err)
 	}
@@ -1317,7 +1156,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 		engine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &errReadCloser{}}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "read failed") {
 			t.Fatalf("expected body read error, got: %v", err)
 		}
@@ -1331,7 +1170,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"commit":`)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "remote tx open decode failed") {
 			t.Fatalf("expected decode error, got: %v", err)
 		}
@@ -1347,7 +1186,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "InvalidSyntax") {
 			t.Fatalf("expected open payload error, got: %v", err)
 		}
@@ -1361,7 +1200,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[],"commit":"   "}`)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "empty commit URL") {
 			t.Fatalf("expected empty commit URL error, got: %v", err)
 		}
@@ -1408,7 +1247,7 @@ func TestRemoteEngineHTTPQueryCypher_EmptyResultsBranches(t *testing.T) {
 		t.Fatalf("expected empty result set, got cols=%v rows=%v", cols, rows)
 	}
 
-	tx, err := engine.BeginCypherTx(context.Background())
+	tx, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 	if err != nil {
 		t.Fatalf("BeginCypherTx failed: %v", err)
 	}

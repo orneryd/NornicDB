@@ -16,7 +16,7 @@ import (
 func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
@@ -37,7 +37,7 @@ func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)

@@ -48,13 +48,15 @@ func TestXhighNestedDiscardedRefreshes(t *testing.T) {
 	t.Setenv("NORNICDB_SEARCH_RESULT_CACHE_ENABLED", "false")
 	ctx := context.Background()
 	t.Run("reserved_public_write", func(t *testing.T) {
-		_, service, _ := xhighNestedService(t)
+		engine, service, _ := xhighNestedService(t)
+		_, err := engine.CreateNode(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}})
+		require.NoError(t, err)
 		older := service.ReserveNodeMutation("source")
 		middle := service.ReserveNodeMutation("source")
 		latest := service.ReserveNodeMutation("source")
 		service.DiscardNodeMutation(middle)
 		service.DiscardNodeMutation(latest)
-		require.NoError(t, service.IndexNodeWithMutation(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
+		require.NoError(t, service.RefreshNodeWithMutation(older))
 		assert.Equal(t, 1, service.EmbeddingCount(), "two abandoned writes cannot suppress the older valid write")
 	})
 	t.Run("node_refresh_failures", func(t *testing.T) {

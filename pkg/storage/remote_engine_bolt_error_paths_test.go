@@ -35,7 +35,7 @@ func TestBoltTransport_ErrorPathsWithoutServer(t *testing.T) {
 	err = bt.queryBatch(ctx, []remoteStatement{{Statement: "CREATE (n:Tmp)", Parameters: nil}})
 	require.Error(t, err)
 
-	_, err = (&RemoteEngine{transport: bt}).BeginCypherTx(ctx)
+	_, err = (&RemoteEngine{transport: bt}).BeginCypherTx(ctx, RemoteAccessWrite)
 	require.Error(t, err)
 }
 

@@ -50,7 +50,7 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.SetSkipCreateExistenceCheck(true))
+				require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 				return tx
 			}
 			hiddenConflict := func(err error) bool {

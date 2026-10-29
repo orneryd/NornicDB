@@ -37,7 +37,7 @@ func TestRecoveryErrorStorePopulation(t *testing.T) {
 					case "invalid_manifest":
 						snapshot = ""
 						if setup = os.Mkdir(wal, 0755); setup == nil {
-							setup = writeWALManifest(wal, &WALManifest{Version: walManifestVersion, Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: "../invalid.wal"}}})
+							_, setup = accessWALManifest(wal, walPublishManifest, &WALManifest{Version: walManifestVersion, Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: "../invalid.wal"}}})
 						}
 					case "truncated_stream":
 						setup = os.WriteFile(snapshot, []byte(streamSnapshotMagic), 0600)

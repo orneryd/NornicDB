@@ -26,8 +26,16 @@ def main():
     runtime, hooks = home / "runtime", home / "hooks"
     runtime.mkdir(parents=True, exist_ok=True)
     hooks.mkdir(parents=True, exist_ok=True)
-    for name in ["code_intelligence.py", "duplicate_check_cache.py", "graphify_local.py", "pr_duplicates.py", "code-intelligence-hook.sh", "requirements-code-intelligence.txt"]:
+    for name in ["code_intelligence.py", "duplicate_check_cache.py", "duplicate_ownership.py", "graphify_local.py", "pr_duplicates.py", "code-intelligence-hook.sh", "requirements-code-intelligence.txt"]:
         shutil.copy2(source / name, runtime / name)
+    binding_runtime = runtime / "go_owner_bindings"
+    binding_runtime.mkdir(exist_ok=True)
+    binding_sources = {p.name: p for p in (source / "go_owner_bindings").glob("*.go") if not p.name.endswith("_test.go")}
+    for name, path in binding_sources.items():
+        shutil.copy2(path, binding_runtime / name)
+    for path in binding_runtime.glob("*.go"):
+        if path.name not in binding_sources:
+            path.unlink()
     shutil.copy2(source / "code-intelligence-global-hook.sh", runtime / "code-intelligence-global-hook.sh")
     previous = config("--get", "core.hooksPath").stdout.strip()
     if previous and Path(previous).expanduser().absolute() != hooks:

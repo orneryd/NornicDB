@@ -12,7 +12,19 @@ import (
 // the actual resolved handler before any action, also on marked remote peers.
 // Native explicit transactions retain v1.4.3's accepted, folded semantics.
 func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, procedure string) error {
+	member := e.membership(ctx)
 	_, distributed := fabric.FabricTransactionFromContext(ctx)
+	distributed = distributed || member.statement != nil
+	if member.transaction != nil {
+		coordinatorOwned := member.transaction.coordinatorOwned
+		if _, ok := member.transaction.tx.(*fabric.FabricTransaction); ok {
+			coordinatorOwned = true
+		}
+		if coordinatorOwned {
+			return localizedStatusError("Neo.ClientError.Transaction.TransactionTypeNotSupported", "PeriodicRequiresAutocommit", localization.CypherTransactionsQueryInTransactionUnsupported("CALL "+procedure))
+		}
+	}
+
 	coordinatorOwned := storage.CoordinatorOwnsTransaction(ctx)
 	if e.txContext != nil {
 		_, composite := e.txContext.tx.(*fabric.FabricTransaction)
@@ -44,7 +56,7 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 		}
 		store = wrapper.underlying
 	}
-	batch := e.cloneForStorage(store)
+	batch := e.cloneWithStorage(store, selectedDatabaseStorage)
 	batch.txContext = nil
 	ctx = periodicBatchContext{Context: ctx}
 	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})

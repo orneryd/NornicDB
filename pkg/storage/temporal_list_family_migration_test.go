@@ -130,7 +130,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				tx, err := reopened.BeginTransaction()
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
-				require.NoError(t, tx.SetDeferredConstraintValidation(true))
+				require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 				_, err = tx.CreateNode(&Node{ID: "test:transaction", Labels: []string{c.Label}, Properties: probe})
 				require.NoError(t, err)
 				require.Error(t, tx.Commit())
@@ -188,7 +188,7 @@ func tlfStageMixedTx(t *testing.T, inner *BadgerEngine, c Constraint, id string,
 	tx, err := inner.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.SetDeferredConstraintValidation(true))
+	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 	_, err = tx.CreateNode(&Node{ID: NodeID("test:" + id), Labels: []string{c.Label}, Properties: properties})
 	require.NoError(t, err)
 	return tx

@@ -39,8 +39,10 @@ class HookTests(unittest.TestCase):
         self.git("init", "-b", "main")
         (self.root / "scripts").mkdir()
         (self.root / ".githooks").mkdir()
-        for name in ["graphify_local.py", "pr_duplicates.py", "code_intelligence.py", "duplicate_check_cache.py", "code-intelligence-hook.sh", "install-git-hooks.sh", "install_code_intelligence_global.py", "code-intelligence-global-hook.sh", "requirements-code-intelligence.txt"]:
+        for name in ["graphify_local.py", "pr_duplicates.py", "duplicate_ownership.py", "code_intelligence.py", "duplicate_check_cache.py", "code-intelligence-hook.sh", "install-git-hooks.sh", "install_code_intelligence_global.py", "code-intelligence-global-hook.sh", "requirements-code-intelligence.txt"]:
             shutil.copy2(SCRIPTS / name, self.root / "scripts" / name)
+        shutil.copytree(SCRIPTS / "go_owner_bindings", self.root / "scripts/go_owner_bindings",
+                        ignore=shutil.ignore_patterns("*_test.go"))
         for name in ["pre-commit", "post-merge", "post-rewrite", "reference-transaction"]:
             shutil.copy2(SCRIPTS.parent / ".githooks" / name, self.root / ".githooks" / name)
         (self.root / "candidate.py").write_text("# baseline\n")

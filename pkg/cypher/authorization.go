@@ -526,7 +526,7 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 			database = authorization.database
 		}
 		if database == "" {
-			database = e.currentDatabaseName()
+			database = e.databaseName()
 		}
 	}
 	var manager DatabaseManagerInterface

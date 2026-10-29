@@ -90,7 +90,7 @@ func TestCompositeEngineLabelRoutingConsumerContract(t *testing.T) {
 	assert.Equal(t, 2, len(composite.labelRouting))
 
 	// The statement view clones label keys but keeps the configured slices shared.
-	view := composite.WithConstituentAccess(nil)
+	view := composite.WithConstituentAccess(nil, nil)
 	assert.Equal(t, []string{"db2"}, sortedAliases(view.labelRouting.Select([]string{"person"}).Aliases))
 	view.SetLabelRouting("Order", []string{"db1"})
 	assert.Equal(t, 2, len(composite.labelRouting), "the view must not write new label keys into the source table")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -85,10 +86,14 @@ func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
 // for use in implicit transaction execution. It routes writes through the transaction
 // (for atomicity/rollback) and reads through the underlying engine (for performance).
 type transactionStorageWrapper struct {
+	statement           atomic.Pointer[compositeStatement]
+	resolvedMode        atomic.Pointer[resolvedStatementMode]
+	readScope           atomic.Pointer[executionReadScope]
+	owner               *TransactionContext
 	tx                  *storage.BadgerTransaction
 	underlying          storage.Engine // For read operations not supported by transaction
 	schema              *storage.SchemaManager
-	schemaCommitActions []func()
+	commitActions       []func() error
 	namespace           string
 	separator           string
 	namespacePrefix     string
@@ -561,9 +566,9 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit fun
 
 func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetOutgoingEdges(nodeID)
+		return w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadOutgoing, Node: nodeID})
 	}
-	edges, err := w.tx.GetOutgoingEdges(w.prefixNodeID(nodeID))
+	edges, err := w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadOutgoing, Node: w.prefixNodeID(nodeID)})
 	if err != nil {
 		return nil, err
 	}
@@ -591,9 +596,9 @@ func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answe
 
 func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetIncomingEdges(nodeID)
+		return w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadIncoming, Node: nodeID})
 	}
-	edges, err := w.tx.GetIncomingEdges(w.prefixNodeID(nodeID))
+	edges, err := w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadIncoming, Node: w.prefixNodeID(nodeID)})
 	if err != nil {
 		return nil, err
 	}
@@ -602,9 +607,9 @@ func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*
 
 func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetEdgesBetween(startID, endID)
+		return w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadBetween, Node: startID, Other: endID})
 	}
-	edges, err := w.tx.GetEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID))
+	edges, err := w.tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadBetween, Node: w.prefixNodeID(startID), Other: w.prefixNodeID(endID)})
 	if err != nil {
 		return nil, err
 	}
@@ -1139,4 +1144,35 @@ func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted 
 // WithStoreTransaction joins system-store mutations to this existing transaction.
 func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
 	return mutate(w)
+}
+
+// completeCommitActions is the sole completion owner for work admitted with the
+// native transaction. Clear the queue first: a terminal path cannot replay it.
+func (w *transactionStorageWrapper) completeCommitActions() error {
+	actions := w.commitActions
+	w.commitActions = nil
+	var result error
+	for _, action := range actions {
+		result = errors.Join(result, action())
+	}
+	return result
+}
+
+// completeInlineEmbedding consumes this native owner's recorded mutations once.
+// It does not end the transaction; its caller retains commit and rollback.
+func (e *StorageExecutor) completeInlineEmbedding(ctx context.Context, wrapper *transactionStorageWrapper) error {
+	mutated := wrapper.snapshotMutatedNodeIDs()
+	if err := e.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
+		return err
+	}
+	wrapper.clearMutatedNodeIDs(mutated)
+	return nil
+}
+
+// RecordMaterializedAccess preserves the underlying read-side access recorder.
+// Access observations are not mutations owned by the entity transaction.
+func (w *transactionStorageWrapper) RecordMaterializedAccess(entityID string) {
+	if recorder, ok := w.underlying.(materializedAccessRecorder); ok {
+		recorder.RecordMaterializedAccess(entityID)
+	}
 }

@@ -315,7 +315,10 @@ func TestWALPropertyEpochSealPlanVisitsEveryRecoveryFile(t *testing.T) {
 		require.NoError(t, err)
 		old, _ := buildAtomicRecord(payload, walFormatVersionV3)
 		require.NoError(t, os.WriteFile(segment, old, 0600))
-		require.NoError(t, writeWALManifest(dir, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}})
+			require.NoError(t, manifestErr)
+		}
 		var seen []uint64
 		wal.mu.Lock()
 		plans, err := wal.planPropertyEpochSealLocked(func(entry WALEntry) error {
@@ -355,7 +358,10 @@ func TestWALPropertyEpochSealPlanVisitsEveryRecoveryFile(t *testing.T) {
 		require.NoError(t, err)
 		activeRecord, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
 		require.NoError(t, os.WriteFile(walActivePath(dir), activeRecord, 0600))
-		require.NoError(t, writeWALManifest(dir, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{Segments: []WALSegment{{Path: filepath.Base(segment), FirstSeq: 3, LastSeq: 3}}})
+			require.NoError(t, manifestErr)
+		}
 		var seen []uint64
 		wal.mu.Lock()
 		plans, err := wal.planPropertyEpochSealLocked(func(entry WALEntry) error {
@@ -494,7 +500,10 @@ func TestWALPropertyEpochUnsealedMarker(t *testing.T) {
 			require.NoError(t, err)
 			fixtureowner.Own(t, w)
 			require.False(t, w.propertyEpochUnsealed)
-			require.NoError(t, writeWALManifest(logDir, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}}))
+			{
+				_, manifestErr := accessWALManifest(logDir, walPublishManifest, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}})
+				require.NoError(t, manifestErr)
+			}
 			w.mu.Lock()
 			require.NoError(t, w.sealPropertyEpochsLocked())
 			w.mu.Unlock()

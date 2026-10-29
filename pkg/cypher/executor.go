@@ -316,6 +316,8 @@ type StorageExecutor struct {
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
 	propertyDecayEngineKnown bool
+	resolvedMode             *resolvedStatementMode
+	readScope                *executionReadScope
 	// storedPropertyIdentity is set only on a private whole-path MERGE matcher.
 	// Its identity predicates see stored values; the statement still projects results.
 	storedPropertyIdentity bool
@@ -370,13 +372,16 @@ type StorageExecutor struct {
 	// If set, vector search can accept string queries which are embedded automatically
 	queryEmbedder *QueryEmbedderBinding
 
-	// searchService optionally provides unified search semantics for Cypher procedures.
+	// searchService is the database runtime's optional service binding. Request
+	// and transaction views share it; selected database runtimes own a fresh
+	// binding, so lazy continuation registries survive temporary views.
+	// It provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
 	// searchResolver, when set, takes its place: it resolves searchDatabase's
 	// current service on each use, so a reset or restore that replaces the
 	// service never leaves this executor with the replaced one. Read both
 	// through search().
-	searchService  *search.Service
+	searchService  *atomic.Pointer[search.Service]
 	searchResolver SearchServiceResolver
 	searchDatabase string
 
@@ -526,84 +531,119 @@ type syntaxValidationCacheShard struct {
 	dependencies map[string][]*multidb.StatementCacheScope
 }
 
-func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
-	e.ensureNodeLookupCache()
-	// Transactional clones use the lookup cache pinned to the
-	// transactionStorageWrapper. Concurrent transactions hold distinct
-	// wrappers and therefore distinct caches — that isolation prevents
-	// a peer's uncommitted node-ID mapping from leaking into this
-	// transaction's tx.badgerTx read set (and corrupting Badger SSI
-	// conflict shapes). Re-entrant Execute calls within the same
-	// transaction reuse the wrapper, so the in-tx cache survives
-	// across clauses. On successful commit, callers promote the
-	// wrapper-scoped entries back into the parent executor via
-	// promoteNodeLookupCacheTo so subsequent Execute calls still
-	// benefit from the cross-query speedup.
-	lookupCache := e.nodeLookupCache
-	lookupCacheMu := e.nodeLookupCacheLock()
-	if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
-		// Seed the wrapper-scoped cache from the parent's committed
-		// entries on first clone so subsequent Execute calls retain
-		// the cross-query speedup. Concurrent transactions still hold
-		// distinct wrappers — the seeding is a one-shot copy, not a
-		// live alias, so peer-tx writes after this point cannot leak.
-		txWrapper.ensureNodeLookupCacheLocked(e)
-		lookupCache = txWrapper.txNodeLookupCache
-		lookupCacheMu = txWrapper.txNodeLookupCacheMu
+// storageCloneScope distinguishes a selected database's local runtime state
+// from another view of the same statement/transaction storage.
+type storageCloneScope uint8
+
+const selectedDatabaseStorage storageCloneScope = 1
+
+func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...storageCloneScope) *StorageExecutor {
+	selected := len(scope) > 0 && scope[0] == selectedDatabaseStorage
+	var cloned *StorageExecutor
+	if selected {
+		cloned = NewStorageExecutor(override)
+		// A database selection owns fresh result/plan/node caches, statistics and
+		// its procedure catalog; shared compilation verdicts retain their owner.
+		if !isCompositeRoot(override) {
+			e.shareSearchFor(cloned, storageDatabaseName(override))
+		}
+		e.shellParamsMu.RLock()
+		if len(e.shellParams) > 0 {
+			cloned.shellParams = make(map[string]interface{}, len(e.shellParams))
+			for key, value := range e.shellParams {
+				cloned.shellParams[key] = value
+			}
+		}
+		e.shellParamsMu.RUnlock()
+		cloned.shellParamsByToken = cloneShellParamsByToken(e)
+	} else {
+		e.ensureNodeLookupCache()
+		// Transactional clones use the lookup cache pinned to the
+		// transactionStorageWrapper. Concurrent transactions hold distinct
+		// wrappers and therefore distinct caches — that isolation prevents
+		// a peer's uncommitted node-ID mapping from leaking into this
+		// transaction's tx.badgerTx read set (and corrupting Badger SSI
+		// conflict shapes). Re-entrant Execute calls within the same
+		// transaction reuse the wrapper, so the in-tx cache survives
+		// across clauses. On successful commit, callers promote the
+		// wrapper-scoped entries back into the parent executor via
+		// promoteNodeLookupCacheTo so subsequent Execute calls still
+		// benefit from the cross-query speedup.
+		lookupCache := e.nodeLookupCache
+		lookupCacheMu := e.nodeLookupCacheLock()
+		if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
+			// Seed the wrapper-scoped cache from the parent's committed
+			// entries on first clone so subsequent Execute calls retain
+			// the cross-query speedup. Concurrent transactions still hold
+			// distinct wrappers — the seeding is a one-shot copy, not a
+			// live alias, so peer-tx writes after this point cannot leak.
+			txWrapper.ensureNodeLookupCacheLocked(e)
+			lookupCache = txWrapper.txNodeLookupCache
+			lookupCacheMu = txWrapper.txNodeLookupCacheMu
+		}
+		cloned = &StorageExecutor{
+			parser:                       e.parser,
+			storage:                      override,
+			propertyDecayEngine:          unwrapBadgerEngine(override),
+			propertyDecayEngineKnown:     true,
+			cache:                        e.cache,
+			queryCacheMaxEntries:         e.queryCacheMaxEntries,
+			queryCacheTTL:                e.queryCacheTTL,
+			planCache:                    e.planCache,
+			semanticValidationCache:      e.semanticValidationCache,
+			matchSemanticValidationCache: e.matchSemanticValidationCache,
+			mergeSemanticValidationCache: e.mergeSemanticValidationCache,
+			analyzer:                     e.analyzer,
+			nodeLookupCache:              lookupCache,
+			nodeLookupCacheMu:            lookupCacheMu,
+			searchService:                e.searchService,
+			searchResolver:               e.searchResolver,
+			searchDatabase:               e.searchDatabase,
+			localizationRenderer:         e.localizationRenderer,
+			settingsResolver:             e.settingsResolver,
+			queryStatistics:              e.queryStatistics,
+			shellParams:                  e.shellParams,
+			shellParamsByToken:           cloneShellParamsByToken(e),
+			fabricRecordBindings:         e.fabricRecordBindings,
+			unwindMergeChainPlanCache:    e.unwindMergeChainPlanCache,
+			// Plan 04-03: propagate the metrics bag + database label through
+			// per-query / per-storage clones so observation chokepoints in
+			// Execute() see the same bag regardless of clone depth.
+			metrics:  e.metrics,
+			database: e.database,
+		}
 	}
-	cloned := &StorageExecutor{
-		graphIdentityScope:             e.graphIdentityScope,
-		parser:                         e.parser,
-		storage:                        override,
-		propertyDecayEngine:            unwrapBadgerEngine(override),
-		propertyDecayEngineKnown:       true,
-		txContext:                      e.txContext,
-		sharedExecutor:                 e.sharedExecutor,
-		cache:                          e.cache,
-		queryCacheMaxEntries:           e.queryCacheMaxEntries,
-		queryCacheTTL:                  e.queryCacheTTL,
-		planCache:                      e.planCache,
-		semanticValidationCache:        e.semanticValidationCache,
-		matchSemanticValidationCache:   e.matchSemanticValidationCache,
-		mergeSemanticValidationCache:   e.mergeSemanticValidationCache,
-		fabricPlanCache:                e.fabricPlanCache,
-		analyzer:                       e.analyzer,
-		nodeLookupCache:                lookupCache,
-		nodeLookupCacheMu:              lookupCacheMu,
-		deferFlush:                     e.deferFlush,
-		queryEmbedder:                  e.queryEmbedder,
-		searchService:                  e.searchService,
-		searchResolver:                 e.searchResolver,
-		searchDatabase:                 e.searchDatabase,
-		inferenceManager:               e.inferenceManager,
-		localizationRenderer:           e.localizationRenderer,
-		settingsResolver:               e.settingsResolver,
-		queryStatistics:                e.queryStatistics,
-		onNodeMutated:                  e.onNodeMutated,
-		inlineEmbeddingTextOptions:     e.inlineEmbeddingTextOptions,
-		inlineEmbeddingChunkSize:       e.inlineEmbeddingChunkSize,
-		inlineEmbeddingChunkOverlap:    e.inlineEmbeddingChunkOverlap,
-		defaultEmbeddingDimensions:     e.defaultEmbeddingDimensions,
-		dbManager:                      e.dbManager,
-		shellParams:                    e.shellParams,
-		shellParamsByToken:             cloneShellParamsByToken(e),
-		vectorRegistry:                 e.vectorRegistry,
-		vectorIndexSpaces:              e.vectorIndexSpaces,
-		fabricRecordBindings:           e.fabricRecordBindings,
-		hotPathTraceState:              e.hotPathTraceState,
-		unwindMergeChainPlanCache:      e.unwindMergeChainPlanCache,
-		allowLocalAPOCImportFileAccess: e.allowLocalAPOCImportFileAccess,
-		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
-		allowRemoteAPOCURLAccess:       e.allowRemoteAPOCURLAccess,
-		apocRemoteURLAllowlist:         append([]string(nil), e.apocRemoteURLAllowlist...),
-		apocRemoteHTTPClient:           e.apocRemoteHTTPClient,
-		apocRemoteHostResolver:         e.apocRemoteHostResolver,
-		apocLocalFileAccessRoot:        e.apocLocalFileAccessRoot,
-		// Plan 04-03: propagate the metrics bag + database label through
-		// per-query / per-storage clones so observation chokepoints in
-		// Execute() see the same bag regardless of clone depth.
-		metrics:  e.metrics,
-		database: e.database,
+	cloned.graphIdentityScope = e.graphIdentityScope
+	cloned.resolvedMode = e.resolvedMode
+	cloned.readScope = e.readScope
+	cloned.txContext = e.txContext
+	cloned.sharedExecutor = e.sharedExecutor
+	cloned.deferFlush = e.deferFlush
+	cloned.inferenceManager = e.inferenceManager
+	cloned.onNodeMutated = e.onNodeMutated
+	cloned.inlineEmbeddingTextOptions = e.inlineEmbeddingTextOptions
+	cloned.inlineEmbeddingChunkSize = e.inlineEmbeddingChunkSize
+	cloned.inlineEmbeddingChunkOverlap = e.inlineEmbeddingChunkOverlap
+	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
+	cloned.dbManager = e.dbManager
+	cloned.vectorRegistry = e.vectorRegistry
+	cloned.vectorIndexSpaces = e.vectorIndexSpaces
+	cloned.fabricPlanCache = e.fabricPlanCache
+	cloned.hotPathTraceState = e.hotPathTraceState
+	if !selected {
+		cloned.log.Store(e.log.Load())
+		cloned.slowQueryThreshold = e.slowQueryThreshold
+		cloned.executionElapsed = e.executionElapsed
+	}
+	cloned.allowLocalAPOCImportFileAccess = e.allowLocalAPOCImportFileAccess
+	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
+	cloned.allowRemoteAPOCURLAccess = e.allowRemoteAPOCURLAccess
+	cloned.apocRemoteURLAllowlist = append([]string(nil), e.apocRemoteURLAllowlist...)
+	cloned.apocRemoteHTTPClient = e.apocRemoteHTTPClient
+	cloned.apocRemoteHostResolver = e.apocRemoteHostResolver
+	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
+	if !selected || e.queryEmbedder != nil {
+		cloned.queryEmbedder = e.queryEmbedder
 	}
 	cloned.UseStatementCaches(e.StatementCaches())
 	cloned.statementCacheScope = e.statementCacheScope
@@ -764,7 +804,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		nodeLookupCache:                make(map[string]*storage.Node, 1000),
 		nodeLookupCacheMu:              &sync.RWMutex{},
 		shellParams:                    make(map[string]interface{}),
-		searchService:                  nil, // Lazy initialization - will be set via SetSearchService() to reuse DB's cached service
+		searchService:                  &atomic.Pointer[search.Service]{}, // Shared by views of this database runtime.
 		vectorRegistry:                 vectorspace.NewIndexRegistry(),
 		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:              &hotPathTraceState{},
@@ -779,7 +819,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
-	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
+	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.databaseName())
 	ensureBuiltInProceduresRegistered()
 	_ = exec.loadPersistedProcedures(context.Background())
 	return exec
@@ -1142,7 +1182,10 @@ func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
 // SetSearchService sets the unified search service used by Cypher procedures.
 // When set, db.index.vector.queryNodes will delegate to search.Service.
 func (e *StorageExecutor) SetSearchService(svc *search.Service) {
-	e.searchService = svc
+	if e.searchService == nil {
+		e.searchService = &atomic.Pointer[search.Service]{}
+	}
+	e.searchService.Store(svc)
 }
 
 // SearchServiceResolver returns a database's current search service, or nil
@@ -1163,7 +1206,10 @@ func (e *StorageExecutor) search() *search.Service {
 	if e.searchResolver != nil {
 		return e.searchResolver(e.searchDatabase)
 	}
-	return e.searchService
+	if e.searchService == nil {
+		return nil
+	}
+	return e.searchService.Load()
 }
 
 // keepUnmanagedSearchService keeps a service a procedure created because the
@@ -1172,10 +1218,21 @@ func (e *StorageExecutor) search() *search.Service {
 // has no search does not: it never shares a service the database's owner
 // cannot reach, and the service (which starts no worker until it is built)
 // lives for this statement only.
-func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) {
-	if e.searchResolver == nil {
-		e.SetSearchService(svc)
+func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) *search.Service {
+	if e.searchResolver != nil {
+		return svc
 	}
+	if e.searchService == nil {
+		e.searchService = &atomic.Pointer[search.Service]{}
+	}
+	if e.searchService.CompareAndSwap(nil, svc) {
+		return svc
+	}
+	bound := e.searchService.Load()
+	if bound != svc {
+		_ = svc.Close()
+	}
+	return bound
 }
 
 // shareSearchFor gives target the search of database: the resolver, for the
@@ -1187,7 +1244,7 @@ func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database strin
 		target.searchDatabase = database
 		return
 	}
-	target.searchService = e.searchService
+	target.SetSearchService(e.search())
 	target.searchResolver = e.searchResolver
 	target.searchDatabase = e.searchDatabase
 }
@@ -1425,7 +1482,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	}
 	// Fabric owns this statement's lifetime. Actual writes have already passed
 	// the resolved execution gate; conditional reads must not open a second tx.
-	if _, fabricOwned := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); fabricOwned {
+	if e.membership(ctx).statement != nil {
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 
@@ -1473,6 +1530,19 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
+	}
+
+	if member := e.membership(ctx); member.owned() {
+		target := e
+		if member.storage != nil {
+			target = e.cloneWithStorage(member.storage)
+			ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
+		}
+		result, err := execute(ctx, target)
+		if err == nil && inlineEmbeddingEnabled && member.storage != nil {
+			err = target.completeInlineEmbedding(ctx, member.storage)
+		}
+		return result, err
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)
@@ -1526,11 +1596,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 
 	// Defer constraint validation to commit for implicit transactions.
 	// This avoids duplicate per-operation checks and improves write throughput.
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
+	if err := tx.SetValidationSetting(storage.DeferredConstraintValidation, true); err != nil {
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
-	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
+	if err := tx.SetValidationSetting(storage.SkipCreateCommitHeadReload, true); err != nil {
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
@@ -1591,6 +1661,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := e.cloneWithStorage(txWrapper)
+	if state := e.resolvedStatementModeOf(ctx); state != nil {
+		var release func()
+		txExec, release = txExec.bindResolvedStatementMode(state)
+		defer release()
+	}
 
 	// Execute the query
 	result, execErr := execute(txCtx, txExec)
@@ -1619,7 +1694,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() {
+	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() && len(txWrapper.commitActions) == 0 {
 		_ = tx.Rollback()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: "no mutations"}, dbName)
@@ -1628,7 +1703,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	}
 
 	if inlineEmbeddingEnabled {
-		if err := txExec.applyInlineEmbeddingMutations(txCtx, txWrapper.snapshotMutatedNodeIDs()); err != nil {
+		if err := txExec.completeInlineEmbedding(txCtx, txWrapper); err != nil {
 			tx.Rollback()
 			txExec.invalidateNodeLookupCache()
 			if wal != nil && walSeqStart > 0 {
@@ -1676,7 +1751,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// same wire shape.
 		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
 	}
+	completionErr := txWrapper.completeCommitActions()
 	txExec.refreshSearchAfterCommit(txWrapper)
+	if completionErr != nil {
+		return result, completionErr
+	}
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
 	// attached exactly as on the durable path: the write-behind ACK carries
@@ -1894,8 +1973,8 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
-		return txWrapper
+	if member := e.membership(ctx); member.storage != nil {
+		return member.storage
 	}
 	return e.storage
 }

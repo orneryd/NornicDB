@@ -212,7 +212,7 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	require.ErrorIs(t, engine.withUpdate(noop), ErrStorageRestoring)
 	tx.mu.Lock()
-	err = tx.refreshSnapshotLocked()
+	err = tx.advanceSnapshotLocked(false)
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	require.Same(t, snapshot, tx.snapshotTx, "the transaction keeps its snapshot")

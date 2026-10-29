@@ -59,7 +59,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 	// Recheck client ownership under the same mutex as the state transition.
 	// Only the private accepted-commit continuation may publish a detached tx.
-	if err := tx.ensureLifecycleActiveLocked(prepare != nil); err != nil {
+	operation := transactionRead
+	if prepare != nil {
+		operation = transactionCoordinatorCommit
+	}
+	if err := tx.ensureOperationAllowedLocked(operation); err != nil {
 		return err
 	}
 	// The engine's write barrier is held through publication, before listener

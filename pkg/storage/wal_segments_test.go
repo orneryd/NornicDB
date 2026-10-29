@@ -64,7 +64,10 @@ func TestReadWALEntriesFromDir_RejectsManifestPathTraversal(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, writeWALManifest(dir, manifest))
+	{
+		_, manifestErr := accessWALManifest(dir, walPublishManifest, manifest)
+		require.NoError(t, manifestErr)
+	}
 
 	_, err := ReadWALEntriesFromDir(dir)
 	require.Error(t, err)
@@ -73,7 +76,7 @@ func TestReadWALEntriesFromDir_RejectsManifestPathTraversal(t *testing.T) {
 
 func TestWALManifestHelpers(t *testing.T) {
 	t.Run("load missing manifest returns empty default", func(t *testing.T) {
-		manifest, err := loadWALManifest(t.TempDir())
+		manifest, err := accessWALManifest(t.TempDir(), walReadManifest, nil)
 		require.NoError(t, err)
 		require.Equal(t, walManifestVersion, manifest.Version)
 		require.Empty(t, manifest.Segments)
@@ -88,10 +91,13 @@ func TestWALManifestHelpers(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, writeWALManifest(dir, manifest))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, manifest)
+			require.NoError(t, manifestErr)
+		}
 		require.Equal(t, walManifestVersion, manifest.Version)
 
-		loaded, err := loadWALManifest(dir)
+		loaded, err := accessWALManifest(dir, walReadManifest, nil)
 		require.NoError(t, err)
 		require.Equal(t, walManifestVersion, loaded.Version)
 		require.Len(t, loaded.Segments, 2)
@@ -100,7 +106,7 @@ func TestWALManifestHelpers(t *testing.T) {
 	})
 
 	t.Run("write rejects nil manifest", func(t *testing.T) {
-		err := writeWALManifest(t.TempDir(), nil)
+		_, err := accessWALManifest(t.TempDir(), walPublishManifest, nil)
 		require.ErrorContains(t, err, "manifest is nil")
 	})
 
@@ -110,21 +116,21 @@ func TestWALManifestHelpers(t *testing.T) {
 		require.NoError(t, os.MkdirAll(segmentsDir, 0o755))
 		require.NoError(t, os.WriteFile(walManifestPath(dir), []byte("{bad-json"), 0o644))
 
-		_, err := loadWALManifest(dir)
+		_, err := accessWALManifest(dir, walReadManifest, nil)
 		require.Error(t, err)
 	})
 
 	t.Run("write returns mkdir error when segments path is a file", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(walSegmentsDir(dir), []byte("not-dir"), 0o644))
-		err := writeWALManifest(dir, &WALManifest{Version: walManifestVersion})
+		_, err := accessWALManifest(dir, walPublishManifest, &WALManifest{Version: walManifestVersion})
 		require.Error(t, err)
 	})
 
 	t.Run("write returns rename error when manifest path is a directory", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.MkdirAll(walManifestPath(dir), 0o755))
-		err := writeWALManifest(dir, &WALManifest{Version: walManifestVersion})
+		_, err := accessWALManifest(dir, walPublishManifest, &WALManifest{Version: walManifestVersion})
 		require.Error(t, err)
 	})
 }

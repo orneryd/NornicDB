@@ -424,20 +424,24 @@ func TestMergeStandaloneRelationshipPath(t *testing.T) {
 
 func TestMergeStandaloneRelationshipPathInTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	transaction, err := base.BeginTransaction()
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	// Use the canonical public owner, which pins namespace and constructs its
+	// native adapter together. The old hand-built adapter omitted that scope.
+	_, err := exec.Execute(context.Background(), "BEGIN", nil)
 	require.NoError(t, err)
-	defer transaction.Rollback()
-	txStore := &transactionStorageWrapper{
-		tx: transaction, underlying: base, separator: ":",
-		mutatedNodeIDs: make(map[string]struct{}),
-	}
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(txStore, "test"))
+	t.Cleanup(func() {
+		if exec.HasActiveTransaction() {
+			_, err := exec.Execute(context.Background(), "ROLLBACK", nil)
+			require.NoError(t, err)
+		}
+	})
 	for run := 0; run < 2; run++ {
 		_, err := exec.Execute(context.Background(), "MERGE (a:SM {id: 10})-[:R]->(a)", nil)
 		require.NoError(t, err)
 	}
-	require.NoError(t, transaction.Commit())
-	store := storage.NewNamespacedEngine(base, "test")
+	_, err = exec.Execute(context.Background(), "COMMIT", nil)
+	require.NoError(t, err)
 	nodes, err := store.AllNodes()
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)

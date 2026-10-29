@@ -1177,7 +1177,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	for key, expected := range wantTemporal {
 		require.Equal(t, expected, edges[0].Properties[key])
 	}
-	transaction, err := remote.BeginCypherTx(context.Background())
+	transaction, err := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 	require.NoError(t, err)
 	defer transaction.Rollback(context.Background())
 	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RP) RETURN n", nil)
@@ -1263,7 +1263,7 @@ func TestRemoteHTTPPinnedNeo4j(t *testing.T) {
 	require.NotEmpty(t, edges[0].ID)
 	require.Equal(t, nodes[0].ID, edges[0].StartNode)
 	require.NotEmpty(t, edges[0].EndNode)
-	transaction, err := remote.BeginCypherTx(context.Background())
+	transaction, err := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 	require.NoError(t, err)
 	defer transaction.Rollback(context.Background())
 	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RemoteHTTPParitySource) RETURN {node:n,k:1} AS m, n, [n,1] AS mixed", nil)

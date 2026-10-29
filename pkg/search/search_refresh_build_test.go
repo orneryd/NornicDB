@@ -47,6 +47,6 @@ func TestRefreshesDuringBuildInstallOnlyTheNewest(t *testing.T) {
 	require.False(t, svc.HasRelationshipVectorEntries("REL", "v"), "a superseded relationship refresh resurrected a deleted vector")
 	svc.nodeMutationMu.Lock()
 	defer svc.nodeMutationMu.Unlock()
-	require.Empty(t, svc.pendingNodeMutations, "a reservation outlived the build")
-	require.Empty(t, svc.pendingEdgeMutations, "a reservation outlived the build")
+	require.Empty(t, svc.nodeMutations.pending, "a reservation outlived the build")
+	require.Empty(t, svc.edgeMutations.pending, "a reservation outlived the build")
 }
