@@ -291,9 +291,11 @@ func splitPipelineClausesAllowingProcedureCalls(ctx context.Context, cypher stri
 // cachedPipelineClauses computes the split of a text once, for both
 // callers: without procedure calls as clauses, a text with a CALL of its own
 // is unsupported, and any other text splits the same way. Callers get their
-// own copy of the clause list.
+// own copy of the clause list. Cancellation is recorded in the statement's
+// existing failure slot so dispatch can distinguish it from unsupported text.
 func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bool) pipelineClauseSplit {
-	if ctx.Err() != nil {
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
 		return pipelineClauseSplit{}
 	}
 	key := semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25")
@@ -302,12 +304,14 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	pipelineClauseSplits.RUnlock()
 	if !cached {
 		split = parsePipelineClauses(ctx, cypher)
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			recordExpressionFailure(ctx, err)
 			return pipelineClauseSplit{}
 		}
 		pipelineClauseSplits.Lock()
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
 			pipelineClauseSplits.Unlock()
+			recordExpressionFailure(ctx, err)
 			return pipelineClauseSplit{}
 		}
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
