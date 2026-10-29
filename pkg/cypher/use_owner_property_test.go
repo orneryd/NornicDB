@@ -372,8 +372,8 @@ func (f *usePropertyFixture) checkTransaction(ctx context.Context, statement use
 		return fmt.Errorf("writer %q != %q; participants %v", tx.WriteShard(), wantWriter, tx.Participants())
 	}
 	if ordinary {
-		if exec.currentDatabaseName() != physical {
-			return fmt.Errorf("ordinary transaction selected %q != %q", exec.currentDatabaseName(), physical)
+		if exec.databaseName() != physical {
+			return fmt.Errorf("ordinary transaction selected %q != %q", exec.databaseName(), physical)
 		}
 		if (local.OperationCount() > 0) != statement.writes {
 			return fmt.Errorf("ordinary write operations %d disagree with owner/body", local.OperationCount())

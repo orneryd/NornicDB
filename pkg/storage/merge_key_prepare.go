@@ -161,7 +161,7 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 		}
 		return nil
 	}
-	return tx.refreshSnapshotLocked()
+	return tx.advanceSnapshotLocked(false)
 }
 
 // mergeAdmissionHolder reads key's committed holder, outside the transaction

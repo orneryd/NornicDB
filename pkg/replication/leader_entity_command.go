@@ -37,7 +37,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		defer tx.Rollback()
 		if err = tx.SetNamespace(namespace); err == nil {
-			err = tx.SetDeferredConstraintValidation(true)
+			err = tx.SetValidationSetting(storage.DeferredConstraintValidation, true)
 		}
 		if err == nil {
 			for _, op := range ops {

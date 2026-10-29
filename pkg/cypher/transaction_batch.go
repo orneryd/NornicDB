@@ -14,6 +14,9 @@ func (e *StorageExecutor) executeTransactionBatch(ctx context.Context, clause st
 			return nil, transactionalCallContextError("transactional CALL cannot follow statement writes")
 		}
 		base = e.cloneWithStorage(outer.underlying)
+		// This admitted child batch owns its commit. Do not rejoin the outer
+		// implicit transaction through context after selecting its base engine.
+		ctx = periodicBatchContext{Context: ctx}
 	}
 	changed := false
 	result, err := base.executeWithImplicitTransactionCallback(ctx, clause, upperASCII(clause), func(batchCtx context.Context, batchExec *StorageExecutor) (*ExecuteResult, error) {

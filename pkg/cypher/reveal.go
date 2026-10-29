@@ -11,6 +11,43 @@ type revealScopeKey struct{}
 
 type revealScopeState struct {
 	engine *storage.BadgerEngine
+	reveal bool
+}
+
+// executionReadScope binds the live storage read lease to its issued executor
+// and transaction storage, just as composite membership and mode observation do.
+// A procedure's fresh context must not recursively acquire its owner's mutex.
+type executionReadScope struct {
+	context context.Context
+	engine  *storage.BadgerEngine
+	reveal  bool
+}
+
+func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
+	scope := e.readScope
+	if scope == nil {
+		if wrapper := membershipOfStorage(e.storage).storage; wrapper != nil {
+			scope = wrapper.readScope.Load()
+		}
+	}
+	if scope != nil && scope.engine == e.propertyDecayEngine {
+		return scope
+	}
+	return nil
+}
+
+func (e *StorageExecutor) bindExecutionReadScope(ctx context.Context) (*StorageExecutor, func()) {
+	scope, _ := ctx.Value(revealScopeKey{}).(*revealScopeState)
+	if scope == nil {
+		return e, func() {}
+	}
+	bound := e.cloneWithStorage(e.storage)
+	bound.readScope = &executionReadScope{context: ctx, engine: scope.engine, reveal: scope.reveal}
+	if wrapper, ok := bound.storage.(*transactionStorageWrapper); ok {
+		previous := wrapper.readScope.Swap(bound.readScope)
+		return bound, func() { wrapper.readScope.Store(previous) }
+	}
+	return bound, func() {}
 }
 
 // hasRevealCall detects the presence of reveal(...) in the query text.
@@ -68,6 +105,7 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
+	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be, reveal: reveal})
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
@@ -83,7 +121,6 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 			return ctx, func() {}, nil
 		}
 	}
-	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be})
 	return ctx, cleanup, nil
 }
 

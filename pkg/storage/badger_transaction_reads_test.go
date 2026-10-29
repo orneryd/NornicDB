@@ -519,11 +519,11 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	out, err := tx.GetOutgoingEdges("test:alice")
+	out, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-2"}, edgeIDs(out))
 	out[0].Type = "CALLER_MUTATION"
-	out, err = tx.GetOutgoingEdges("test:alice")
+	out, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Equal(t, "KNOWS", out[0].Type, "mutating returned edge data must not corrupt the transaction snapshot cache")
 
@@ -532,7 +532,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	updated.EndNode = "test:dave"
 	updated.Type = "MENTIONS"
 	require.NoError(t, tx.UpdateEdge(updated))
-	out, err = tx.GetOutgoingEdges("test:alice")
+	out, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.NoError(t, err)
 	var foundUpdated *Edge
 	for _, edge := range out {
@@ -550,7 +550,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 		Type: "MENTIONS", Properties: map[string]any{},
 	}))
 	require.NoError(t, tx.DeleteEdge("test:e-knows-1"))
-	out, err = tx.GetOutgoingEdges("test:alice")
+	out, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-2", "test:e-new"}, edgeIDs(out))
 
@@ -559,7 +559,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 		ID: "test:e-other", StartNode: "test:bob", EndNode: "test:dave",
 		Type: "REFERS",
 	}))
-	out, err = tx.GetOutgoingEdges("test:alice")
+	out, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-2", "test:e-new"}, edgeIDs(out),
 		"alice's outgoing must not include bob→dave")
@@ -571,12 +571,12 @@ func TestTxReads_GetIncomingEdges(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	in, err := tx.GetIncomingEdges("test:carol")
+	in, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:carol"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-follows", "test:e-knows-2"}, edgeIDs(in))
 
 	// alice has no incoming edges.
-	in, err = tx.GetIncomingEdges("test:alice")
+	in, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Empty(t, in)
 
@@ -585,7 +585,7 @@ func TestTxReads_GetIncomingEdges(t *testing.T) {
 		ID: "test:e-incoming", StartNode: "test:dave", EndNode: "test:alice",
 		Type: "MENTIONS",
 	}))
-	in, err = tx.GetIncomingEdges("test:alice")
+	in, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:alice"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-incoming"}, edgeIDs(in))
 }
@@ -597,12 +597,12 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// alice→bob has exactly one edge.
-	got, err := tx.GetEdgesBetween("test:alice", "test:bob")
+	got, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-1"}, edgeIDs(got))
 
 	// bob→alice has none (directed).
-	got, err = tx.GetEdgesBetween("test:bob", "test:alice")
+	got, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:bob", Other: "test:alice"})
 	require.NoError(t, err)
 	require.Empty(t, got)
 
@@ -612,7 +612,7 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 		ID: "test:e-knows-3", StartNode: "test:alice", EndNode: "test:bob",
 		Type: "RIVALS",
 	}))
-	got, err = tx.GetEdgesBetween("test:alice", "test:bob")
+	got, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-3"}, edgeIDs(got))
 }

@@ -487,7 +487,7 @@ func (tx *BadgerTransaction) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, 
 func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, true, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {

@@ -209,29 +209,37 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 	if session == nil {
 		return nil, fmt.Errorf("transaction session is not available")
 	}
+	var terminalErr error
+	var notify, resumeIdle bool
 	session.mu.Lock()
-	if m.expiredLocked(session) {
+	defer func() {
+		// A panicking operation still releases its lease. Resume the paused idle
+		// timer at its existing deadline rather than granting a new lifetime.
+		if resumeIdle && !session.closed && session.idleTimer != nil {
+			session.idleTimer.Reset(session.Expires.Sub(m.nowFunc()))
+		}
 		session.mu.Unlock()
+		m.notifyTerminalError(session, terminalErr, notify)
+	}()
+	if m.expiredLocked(session) {
 		return nil, fmt.Errorf("transaction session has expired or closed")
 	}
 	if session.terminalErr != nil {
 		err := session.terminalErr
-		session.mu.Unlock()
 		return nil, err
 	}
 	if session.idleTimer != nil {
 		session.idleTimer.Stop()
+		resumeIdle = true
 	}
 
 	result, err := session.Executor.Execute(ctx, query, params)
 	m.touchLocked(session)
+	resumeIdle = false
 	if err != nil {
-		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
-		session.mu.Unlock()
-		m.notifyTerminalError(session, terminalErr, notify)
+		terminalErr, notify = m.rememberTerminalErrorLocked(session, err)
 		return result, terminalErr
 	}
-	session.mu.Unlock()
 	return result, nil
 }
 
@@ -239,25 +247,23 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 	if session == nil {
 		return nil, fmt.Errorf("transaction session is not available")
 	}
+	var terminalErr error
+	var notify bool
 	session.mu.Lock()
+	defer func() { session.mu.Unlock(); m.notifyTerminalError(session, terminalErr, notify) }()
 	if m.expiredLocked(session) {
-		session.mu.Unlock()
 		return nil, fmt.Errorf("transaction session has expired or closed")
 	}
 	commitCtx, admissionErr := txphase.CommitContext(ctx)
 	if admissionErr != nil {
 		_, _ = m.endLocked(ctx, session, "ROLLBACK")
-		session.mu.Unlock()
 		return nil, admissionErr
 	}
 	result, err := m.endLocked(commitCtx, session, "COMMIT")
 	if err != nil {
-		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
-		session.mu.Unlock()
-		m.notifyTerminalError(session, terminalErr, notify)
+		terminalErr, notify = m.rememberTerminalErrorLocked(session, err)
 		return nil, terminalErr
 	}
-	session.mu.Unlock()
 	return result, nil
 }
 
@@ -312,8 +318,18 @@ func (m *Manager) endLocked(ctx context.Context, session *Session, command strin
 	executor := session.Executor
 	done := make(chan terminalResult, 1)
 	go func() {
-		result, err := executor.Execute(cypher.WithTransactionControl(cleanup), command, nil)
-		done <- terminalResult{result, err}
+		outcome := terminalResult{}
+		defer func() {
+			if cause := recover(); cause != nil {
+				if err, ok := cause.(error); ok {
+					outcome.err = fmt.Errorf("transaction rollback panicked: %w", err)
+				} else {
+					outcome.err = fmt.Errorf("transaction rollback panicked: %v", cause)
+				}
+			}
+			done <- outcome
+		}()
+		outcome.result, outcome.err = executor.Execute(cypher.WithTransactionControl(cleanup), command, nil)
 	}()
 	select {
 	case outcome := <-done:

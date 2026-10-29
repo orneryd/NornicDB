@@ -217,7 +217,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
 	}
 	if err := tx.pinNamespaceFromIDLocked(string(startID)); err != nil {

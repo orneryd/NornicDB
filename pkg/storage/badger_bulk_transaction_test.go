@@ -186,7 +186,7 @@ func TestTransactionEdgeIDChecks(t *testing.T) {
 	require.NoError(t, tx.DeleteEdge(existing.ID))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: existing.ID, StartNode: nodes[1].ID, EndNode: nodes[0].ID, Type: "R"}))
 	// Generated IDs skip the read when the transaction asks for it.
-	require.NoError(t, tx.SetSkipCreateExistenceCheck(true))
+	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:550e8400-e29b-41d4-a716-446655440000", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R"}))
 	// Moving an edge to a missing endpoint is not found.
 	err = tx.UpdateEdge(&Edge{ID: "test:550e8400-e29b-41d4-a716-446655440000", StartNode: "test:missing", EndNode: nodes[0].ID, Type: "R"})

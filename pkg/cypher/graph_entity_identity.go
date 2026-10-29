@@ -115,7 +115,7 @@ func (e *StorageExecutor) graphIdentityExecutor(ctx context.Context) *StorageExe
 	if engine == nil {
 		return e
 	}
-	return e.cloneForStorage(engine)
+	return e.cloneWithStorage(engine, selectedDatabaseStorage)
 }
 
 func (e *StorageExecutor) graphReadArguments(ctx context.Context, args []interface{}, nodeCount int) (*StorageExecutor, []interface{}) {
@@ -306,7 +306,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 // native arguments, graph scans, adjacency and their computed maps.
 func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
 	view := graphIdentityView(e.storage, e.graphIdentityScope)
-	graph := e.cloneForStorage(view)
+	graph := e.cloneWithStorage(view, selectedDatabaseStorage)
 	input := append([]interface{}(nil), args...)
 	if len(input) > 0 {
 		if items, ok := cypherListValue(input[0]); ok && len(items) > 0 {

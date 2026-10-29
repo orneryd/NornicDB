@@ -31,7 +31,7 @@ func (l *headerBoundaryLocal) CachedResultColumns(_ context.Context, query strin
 	return resultmetadata.Unknown()
 }
 
-func (l *headerBoundaryLocal) ExecuteQuery(ctx context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	if l.omit {
 		return nil, nil, nil
 	}
@@ -40,10 +40,6 @@ func (l *headerBoundaryLocal) ExecuteQuery(ctx context.Context, _ string, _ stor
 		return nil, nil, err
 	}
 	return result.Columns, result.Rows, nil
-}
-
-func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, db string, engine storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
-	return l.ExecuteQuery(ctx, db, engine, query, params)
 }
 
 func TestResultHeaderFabricBoundary(t *testing.T) {

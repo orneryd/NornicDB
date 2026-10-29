@@ -29,26 +29,10 @@ func WithTransactionControl(ctx context.Context) context.Context {
 	return context.WithValue(ctx, transactionStatementOriginKey{}, false)
 }
 
-// clientTransactionCommand is Neo4j's SyntaxError for a client statement that
-// is a bare BEGIN, COMMIT or ROLLBACK (optionally followed by TRANSACTION):
-// Cypher has no transaction statements, and a client statement runs on an
-// executor the client doesn't own for longer than the statement, so it must
-// not leave that executor inside a transaction. The one-statement script form
-// (BEGIN … COMMIT in one text) and embedded callers without a client mark keep
-// working.
-func clientTransactionCommand(ctx context.Context, query string) error {
-	if ctx.Value(transactionStatementOriginKey{}) != true {
-		return nil
-	}
-	if word := bareTransactionCommand(query); word != "" {
-		message := localization.CypherTransactionsCommandNotStatement(word)
-		return localizedError(message, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message.Fallback))
-	}
-	return nil
-}
-
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
+	controller     *StorageExecutor
+	outsideStorage storage.Engine
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
 	tx               interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
@@ -231,10 +215,12 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 		e.txContext = &TransactionContext{
+			controller: e, outsideStorage: e.storage,
 			tx:     fabricTx,
 			engine: engine,
 			active: true,
 		}
+		e.storage = &transactionOwnedStorage{Engine: e.storage, owner: e.txContext}
 		return &ExecuteResult{
 			Columns: []string{"status"},
 			Rows:    [][]interface{}{{"Transaction started"}},
@@ -277,11 +263,12 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	// constraint fails with ConstraintValidationFailed (and fails the
 	// transaction), not the COMMIT (#700). COMMIT checks again under the
 	// constraint keys' locks, against what other writers committed since.
-	if err := tx.SetDeferredConstraintValidation(false); err != nil {
+	if err := tx.SetValidationSetting(storage.DeferredConstraintValidation, false); err != nil {
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}
 	txCtx := &TransactionContext{
+		controller: e, outsideStorage: e.storage,
 		tx:     tx,
 		engine: e.storage,
 		active: true,
@@ -298,6 +285,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		txCtx.database = dbName
 	}
 	e.txContext = txCtx
+	e.storage = e.transactionStorageFor(tx)
 
 	return &ExecuteResult{
 		Columns: []string{"status"},
@@ -372,6 +360,9 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		_, localTx := e.txContext.tx.(*storage.BadgerTransaction)
 		e.txContext.active = false
 		runningTransactions.end(e.txContext.running)
+		if e.txContext.outsideStorage != nil {
+			e.storage = e.txContext.outsideStorage
+		}
 		e.txContext = nil
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
@@ -381,12 +372,11 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		}
 		return nil, failure
 	}
+	var completionErr error
 	if e.txContext.storageWrapper != nil {
 		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
 		txExec.promoteNodeLookupCacheTo(e)
-		for _, action := range e.txContext.storageWrapper.schemaCommitActions {
-			action()
-		}
+		completionErr = e.txContext.storageWrapper.completeCommitActions()
 		txExec.refreshSearchAfterCommit(e.txContext.storageWrapper)
 	}
 
@@ -396,6 +386,9 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	}
 	e.txContext.active = false
 	runningTransactions.end(e.txContext.running)
+	if e.txContext.outsideStorage != nil {
+		e.storage = e.txContext.outsideStorage
+	}
 	e.txContext = nil
 
 	result := &ExecuteResult{
@@ -407,7 +400,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 			"receipt": receipt,
 		}
 	}
-	return result, nil
+	return result, completionErr
 }
 
 // commitFailureWroteNothing reports whether a failed COMMIT left nothing of
@@ -419,9 +412,12 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 //     raised while its writes are staged in the one Badger transaction, which
 //     is then discarded.
 //
-// A fabric transaction may fail after some constituents committed, so its
-// failures are never marked.
+// The Fabric coordinator ends readers before its sole writer and explicitly
+// marks failures that committed no writes. Unknown write outcomes remain unmarked.
 func commitFailureWroteNothing(localTx bool, err error) bool {
+	if errors.Is(err, fabric.ErrCommitKeptNothing) {
+		return true
+	}
 	if !localTx {
 		return false
 	}
@@ -463,6 +459,9 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 
 	e.txContext.active = false
 	runningTransactions.end(e.txContext.running)
+	if e.txContext.outsideStorage != nil {
+		e.storage = e.txContext.outsideStorage
+	}
 	e.txContext = nil
 
 	if err != nil {
@@ -479,11 +478,6 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 // Uses the same transactionStorageWrapper pattern as implicit transactions,
 // routing writes through the transaction for atomicity and rollback support.
 func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
-	if inlineEmbeddingEnabled {
-		cypher = parsedCypher
-		upperQuery = upperASCII(cypher)
-	}
 
 	if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
 		// Shared USE syntax selects Fabric routing; its statement contract supplies
@@ -495,6 +489,12 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		}
 		// Non-fabric-shaped queries still run on the scoped engine in explicit tx session.
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
+
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	if inlineEmbeddingEnabled {
+		cypher = parsedCypher
+		upperQuery = upperASCII(cypher)
 	}
 
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
@@ -513,16 +513,19 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		txWrapper != nil &&
 		txWrapper.tx == tx {
 		txExec := e.cloneWithStorage(txWrapper)
+		if state := e.resolvedStatementModeOf(ctx); state != nil {
+			var release func()
+			txExec, release = txExec.bindResolvedStatementMode(state)
+			defer release()
+		}
 		result, err := txExec.executeQueryAgainstStorage(ctx, cypher, upperQuery)
 		if err != nil {
 			return result, err
 		}
 		if inlineEmbeddingEnabled {
-			mutated := txWrapper.snapshotMutatedNodeIDs()
-			if err := txExec.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
+			if err := txExec.completeInlineEmbedding(ctx, txWrapper); err != nil {
 				return nil, err
 			}
-			txWrapper.clearMutatedNodeIDs(mutated)
 		}
 		return result, nil
 	}
@@ -537,6 +540,11 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// This is thread-safe and allows getStorage() to automatically use the transaction
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := e.cloneWithStorage(txWrapper)
+	if state := e.resolvedStatementModeOf(ctx); state != nil {
+		var release func()
+		txExec, release = txExec.bindResolvedStatementMode(state)
+		defer release()
+	}
 
 	// Execute the query - getStorage() will automatically use the transaction wrapper
 	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
@@ -544,11 +552,9 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		return result, err
 	}
 	if inlineEmbeddingEnabled {
-		mutated := txWrapper.snapshotMutatedNodeIDs()
-		if err := txExec.applyInlineEmbeddingMutations(txCtx, mutated); err != nil {
+		if err := txExec.completeInlineEmbedding(txCtx, txWrapper); err != nil {
 			return nil, err
 		}
-		txWrapper.clearMutatedNodeIDs(mutated)
 	}
 	return result, nil
 }
@@ -570,6 +576,7 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
 	wrapper.initNamespacePrefix()
+	wrapper.owner = e.txContext
 	e.txContext.storageWrapper = wrapper
 	return wrapper
 }

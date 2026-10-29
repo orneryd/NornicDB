@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCacheKeyIncludesAuthContext(t *testing.T) {
@@ -103,15 +105,11 @@ func TestRemoteFragmentExecutor_ExplicitTxHandleLifecycle(t *testing.T) {
 			defer func() { _ = re.Close() }()
 			loc := &LocationRemote{URI: srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
 			tx := NewFabricTransaction(tc.transactionID)
-			sub, err := tx.GetOrOpen(ParticipantKeyFromLocation(loc), true)
-			if err != nil {
-				t.Fatalf("GetOrOpen failed: %v", err)
-			}
-			ctx := WithSubTransaction(WithFabricTransaction(context.Background(), tx), sub)
-			if _, err := re.Execute(ctx, loc, "RETURN 1 AS n", nil, "Bearer tok", storage.RemoteAccessRead); err != nil {
+			if _, err := re.Execute(participantContext(t, tx, loc, true), loc, "RETURN 1 AS n", nil, "Bearer tok", storage.RemoteAccessRead); err != nil {
 				t.Fatalf("remote execute failed: %v", err)
 			}
 			wantCommit, wantRollback := int32(0), int32(1)
+			var err error
 			if tc.commit {
 				err = tx.Commit(nil, nil)
 				wantCommit, wantRollback = 1, 0
@@ -217,87 +215,83 @@ func TestRemoteExecutionFailureBoundaries(t *testing.T) {
 	}
 }
 
+// Both real HTTP and failed cleanup cases share one Close lifecycle owner:
+// every participant/engine ends, every failure survives, and Close is idempotent.
 func TestRemoteFragmentExecutor_CloseWithTxHandles(t *testing.T) {
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant/tx"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"results": []any{},
-				"errors":  []any{},
-				"commit":  srv.URL + "/db/tenant/tx/99/commit",
-			})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant/tx/99"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"results": []any{
-					map[string]any{
-						"columns": []string{"x"},
-						"data":    []any{map[string]any{"row": []any{1}}},
-					},
-				},
-				"errors": []any{},
-			})
-		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/db/tenant/tx/99"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant/tx/99/commit"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
-		default:
-			http.NotFound(w, r)
+	for _, fails := range []bool{false, true} {
+		name := "clean_cleanup"
+		if fails {
+			name = "retained_cleanup_failures"
 		}
-	}))
-	defer srv.Close()
-
-	re := NewRemoteFragmentExecutor()
-	loc := &LocationRemote{URI: srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
-	tx := NewFabricTransaction("tx-close-test")
-	participant := ParticipantKeyFromLocation(loc)
-	sub, _ := tx.GetOrOpen(participant, true)
-	ctx := WithSubTransaction(WithFabricTransaction(context.Background(), tx), sub)
-
-	_, err := re.Execute(ctx, loc, "RETURN 1 AS x", nil, "tok", storage.RemoteAccessRead)
-	if err != nil {
-		t.Fatalf("execute failed: %v", err)
-	}
-
-	// Close should rollback open tx handles and close engines.
-	err = re.Close()
-	if err != nil {
-		t.Fatalf("close failed: %v", err)
+		t.Run(name, func(t *testing.T) {
+			re := NewRemoteFragmentExecutor()
+			var handleErr, engineErr error
+			var verifyCompletion func()
+			if fails {
+				handleErr = errors.New("remote tx handle rollback failed")
+				engineErr = errors.New("remote engine close failed")
+				handle := &countingRemoteTx{rollbackErr: handleErr}
+				engineCloses := 0
+				remote := newRemoteQueryEngineFixture(t, &LocationRemote{URI: "bolt://remote.invalid:7687", DBName: "nornic", AuthMode: "oidc_forwarding"}, &cleanupFailRemoteEngine{count: &engineCloses, closeErr: engineErr})
+				re.txHandles["handle"] = &remoteParticipant{tx: handle}
+				key := remote.install(t, re)
+				verifyCompletion = func() {
+					require.Equal(t, 1, handle.rollbacks)
+					require.Equal(t, 1, engineCloses)
+					re.mu.RLock()
+					_, cached := re.engineCache[key]
+					re.mu.RUnlock()
+					require.False(t, cached, "Close released the exact cached engine")
+				}
+			} else {
+				server := newRemoteTxServer(t, "tenant", "99", 1)
+				loc := server.location("tenant")
+				tx := NewFabricTransaction("tx-close-test")
+				result, err := re.Execute(participantContext(t, tx, loc, true), loc, "RETURN 1 AS x", nil, "tok", storage.RemoteAccessRead)
+				require.NoError(t, err)
+				require.Equal(t, 1, result.RowCount(), "the actual statement returned its row")
+			}
+			err := re.Close()
+			if fails {
+				require.Error(t, err)
+				require.ErrorIs(t, err, handleErr, "the participant's failure survives")
+				require.ErrorIs(t, err, engineErr, "the engine's failure survives")
+			} else {
+				require.NoError(t, err)
+			}
+			if verifyCompletion != nil {
+				verifyCompletion()
+			}
+			require.Empty(t, re.txHandles)
+			require.Empty(t, re.engineCache)
+			require.NoError(t, re.Close(), "completed cleanup is not repeated")
+			if verifyCompletion != nil {
+				verifyCompletion()
+			}
+		})
 	}
 }
 
+// A statement whose context has no fabric transaction cannot bind its remote
+// participant, so it fails naming the missing context and releases the handle
+// it opened.
 func TestRemoteFragmentExecutor_GetOrCreateTxHandle_MissingFabricTx(t *testing.T) {
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant/tx"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"results": []any{},
-				"errors":  []any{},
-				"commit":  srv.URL + "/db/tenant/tx/5/commit",
-			})
-		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/db/tenant/tx/5"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
+	server := newRemoteTxServer(t, "tenant", "5", nil)
 	re := NewRemoteFragmentExecutor()
 	defer func() { _ = re.Close() }()
 
-	loc := &LocationRemote{URI: srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
-	sub := &SubTransaction{ShardName: "test-shard", State: "open"}
+	loc := server.location("tenant")
 	// Context with SubTransaction but WITHOUT FabricTransaction → should error.
-	ctx := WithSubTransaction(context.Background(), sub)
-
+	ctx := WithSubTransaction(context.Background(), &SubTransaction{ShardName: "test-shard", State: "open"})
 	_, err := re.Execute(ctx, loc, "RETURN 1 AS x", nil, "tok", storage.RemoteAccessRead)
 	if err == nil {
 		t.Fatal("expected error for missing fabric transaction context")
 	}
 	if !strings.Contains(err.Error(), "fabric transaction context is missing") {
 		t.Fatalf("expected missing fabric tx context error, got: %v", err)
+	}
+	if len(re.txHandles) != 0 {
+		t.Fatalf("the unbound participant kept a handle: %v", re.txHandles)
 	}
 }
 

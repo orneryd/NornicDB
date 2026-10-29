@@ -66,7 +66,7 @@ func TestRemoteDisplaySecretTransactionErrors(t *testing.T) {
 			_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 			check(err)
 			for _, operation := range []string{"query", "commit", "rollback"} {
-				tx, err := engine.BeginCypherTx(context.Background())
+				tx, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 				if err != nil {
 					t.Fatal("transaction open failed (details withheld)")
 				}

@@ -15,7 +15,7 @@ func TestStatementCacheFamilyFreshExecutorCacheFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("USE storage clone", func(t *testing.T) {
-		clone := base.cloneForStorage(store)
+		clone := base.cloneWithStorage(store, selectedDatabaseStorage)
 		if !clone.hasCachedValidSyntax(query, activeSyntaxValidator()) {
 			t.Error("USE clone lost warmed syntax verdict")
 		}
