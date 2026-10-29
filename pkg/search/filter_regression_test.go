@@ -174,7 +174,7 @@ func buildFilterResults(ids ...string) []indexResult {
 // an empty value list return no result (#938).
 func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsNothing(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{"Doc"}, map[string]any{"color": "blue"})
@@ -194,7 +194,7 @@ func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsNothing(t *testing.T) 
 // through when neither types nor filters are requested.
 func TestFilterByTypeAndProperties_NoFilters_ReturnsAll(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:a", []string{"X"}, map[string]any{})
@@ -209,7 +209,7 @@ func TestFilterByTypeAndProperties_NoFilters_ReturnsAll(t *testing.T) {
 // Labels contain the requested type (case-insensitive).
 func TestFilterByTypeAndProperties_TypeFilter_LabelMatch(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:person1", []string{"Person"}, map[string]any{"name": "Alice"})
@@ -229,7 +229,7 @@ func TestFilterByTypeAndProperties_TypeFilter_LabelMatch(t *testing.T) {
 // "type" string property matches (the secondary label path).
 func TestFilterByTypeAndProperties_TypeFilter_TypeProperty(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{}, map[string]any{"type": "Widget"})
@@ -242,28 +242,47 @@ func TestFilterByTypeAndProperties_TypeFilter_TypeProperty(t *testing.T) {
 	assert.Equal(t, "nornic:n1", out[0].ID)
 }
 
-// TestFilterByTypeAndProperties_PropertyFilter_ScalarMatch filters on an exact
-// scalar property value.
-func TestFilterByTypeAndProperties_PropertyFilter_ScalarMatch(t *testing.T) {
-	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
-	ctx := context.Background()
-
-	makeNode(t, eng, "nornic:prod", []string{"Svc"}, map[string]any{"env": "prod"})
-	makeNode(t, eng, "nornic:stage", []string{"Svc"}, map[string]any{"env": "staging"})
-
-	results := buildFilterResults("nornic:prod", "nornic:stage")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})
-
-	require.Len(t, out, 1)
-	assert.Equal(t, "nornic:prod", out[0].ID)
+func TestFilterByTypeAndProperties_ScalarAndTypeIntersection(t *testing.T) {
+	type nodeFixture struct{ id, label, environment string }
+	for _, tc := range []struct {
+		name    string
+		nodes   []nodeFixture
+		options SearchOptions
+		wantID  string
+	}{
+		{
+			name:    "scalar property",
+			nodes:   []nodeFixture{{"nornic:prod", "Svc", "prod"}, {"nornic:stage", "Svc", "staging"}},
+			options: SearchOptions{Filters: map[string][]string{"env": {"prod"}}},
+			wantID:  "nornic:prod",
+		},
+		{
+			name:    "type and property intersection",
+			nodes:   []nodeFixture{{"nornic:a", "Service", "prod"}, {"nornic:b", "Service", "dev"}, {"nornic:c", "Database", "prod"}},
+			options: SearchOptions{Types: []string{"service"}, Filters: map[string][]string{"env": {"prod"}}},
+			wantID:  "nornic:a",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := newFilterTestEngine(t)
+			svc := NewService(eng, DefaultVectorDimensions, nil)
+			ids := make([]string, 0, len(tc.nodes))
+			for _, node := range tc.nodes {
+				makeNode(t, eng, node.id, []string{node.label}, map[string]any{"env": node.environment})
+				ids = append(ids, node.id)
+			}
+			out := svc.filterByTypeAndProperties(context.Background(), buildFilterResults(ids...), &tc.options, map[string]bool{})
+			require.Len(t, out, 1)
+			assert.Equal(t, tc.wantID, out[0].ID)
+		})
+	}
 }
 
 // TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR keeps nodes that
 // match any of the allowed values.
 func TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{"X"}, map[string]any{"env": "prod"})
@@ -279,33 +298,12 @@ func TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR(t *testing.T) {
 	assert.Contains(t, ids, "nornic:n2")
 }
 
-// TestFilterByTypeAndProperties_CombinedTypeAndProperty applies both type and
-// property constraints in a single call and verifies the intersection.
-func TestFilterByTypeAndProperties_CombinedTypeAndProperty(t *testing.T) {
-	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
-	ctx := context.Background()
-
-	makeNode(t, eng, "nornic:a", []string{"Service"}, map[string]any{"env": "prod"})
-	makeNode(t, eng, "nornic:b", []string{"Service"}, map[string]any{"env": "dev"})
-	makeNode(t, eng, "nornic:c", []string{"Database"}, map[string]any{"env": "prod"})
-
-	results := buildFilterResults("nornic:a", "nornic:b", "nornic:c")
-	out := svc.filterByTypeAndProperties(ctx, results,
-		&SearchOptions{Types: []string{"service"}, Filters: map[string][]string{"env": {"prod"}}},
-		map[string]bool{})
-
-	// Only "nornic:a" is a Service AND env=prod.
-	require.Len(t, out, 1)
-	assert.Equal(t, "nornic:a", out[0].ID)
-}
-
 // TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter:
 // {"filters":{"collection":[], "env":["prod"]}} returns nothing; the empty
 // "collection" list matches no node whatever "env" allows (#938).
 func TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:keep", []string{"Svc"}, map[string]any{"env": "prod"})
@@ -325,7 +323,7 @@ func TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter(t 
 // that all have empty value lists match nothing (#938).
 func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsNothing(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:x", []string{"A"}, map[string]any{})
@@ -342,7 +340,7 @@ func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsNothing(t *testing.T) 
 // indexResult scores are not mutated by the filtering pass.
 func TestFilterByTypeAndProperties_ScorePreserved(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{"X"}, map[string]any{"env": "prod"})
@@ -359,7 +357,7 @@ func TestFilterByTypeAndProperties_ScorePreserved(t *testing.T) {
 // when a filter/type constraint forces a storage fetch per candidate.
 func TestFilterByTypeAndProperties_OrphanedID_Skipped(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:real", []string{"X"}, map[string]any{})
@@ -377,7 +375,7 @@ func TestFilterByTypeAndProperties_OrphanedID_Skipped(t *testing.T) {
 // TestFilterByTypeAndProperties_EmptyInput returns nil/empty without errors.
 func TestFilterByTypeAndProperties_EmptyInput(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	out := svc.filterByTypeAndProperties(ctx, nil, &SearchOptions{Types: []string{"X"}, Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})

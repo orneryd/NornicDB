@@ -9,7 +9,7 @@ import (
 func TestVectorEntryInventoryUsesEscapedMain(t *testing.T) {
 	for _, alias := range []string{nodeNamedVectorKey("other", "v"), nodePropertyVectorKey("other", "p"), nodeChunkVectorKey("other", 1)} {
 		t.Run(alias, func(t *testing.T) {
-			svc := NewServiceWithDimensions(newNamespacedEngine(t), vectorOwnerDims)
+			svc := NewService(newNamespacedEngine(t), vectorOwnerDims, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			mainKey := nodeMainVectorKey(alias)
 			chunkKey := nodeChunkVectorKey(alias, 1)

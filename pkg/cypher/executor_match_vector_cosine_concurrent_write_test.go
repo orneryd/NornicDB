@@ -49,7 +49,7 @@ func TestMatchVectorCosineFastPath_CandidateCountDuringConcurrentWrites(t *testi
 		require.NoError(t, err)
 	}
 
-	searchService := search.NewServiceWithDimensions(ns, 3)
+	searchService := search.NewService(ns, 3, nil)
 	t.Cleanup(func() { require.NoError(t, searchService.Close()) })
 	exec.SetSearchService(searchService)
 	require.NoError(t, searchService.BuildIndexes(ctx))

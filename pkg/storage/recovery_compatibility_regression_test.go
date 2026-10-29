@@ -49,17 +49,19 @@ func TestRecoveryReadsLegacySnapshotFormats(t *testing.T) {
 	assert.Equal(t, n, visitor.nodes[0])
 }
 
-func TestRecoverySidecarKeepsLegacyProjectionAndRejectsInvalidExtensions(t *testing.T) {
+func TestRecoveryWALUsesTypedPayloadAndRejectsInvalidEncodings(t *testing.T) {
 	n, _ := recoveryFieldFixture()
-	source := WALNodeData{Node: n, TxID: "legacy-tx"}
+	source := WALNodeData{Node: n, TxID: "typed-tx"}
 	raw, err := marshalWALRecoveryPayload(nil, source)
 	require.NoError(t, err)
-	var old WALNodeData
-	require.NoError(t, json.Unmarshal(raw, &old))
-	assert.Equal(t, n.ID, old.Node.ID)
-	assert.Equal(t, n.Labels, old.Node.Labels)
-	assert.Equal(t, "legacy-tx", old.TxID)
-	assert.Equal(t, float64(9007199254740992), old.Node.Properties["integer"], "old readers retain their previous JSON semantics")
+	serializer, _, headered, err := splitSerializationHeader(raw)
+	require.NoError(t, err)
+	require.True(t, headered)
+	require.Equal(t, serializerIDMsgpack, serializer)
+	var decoded WALNodeData
+	require.NoError(t, decodeRecoveryPayload(raw, &decoded))
+	assert.Equal(t, "typed-tx", decoded.TxID)
+	assertRecoveryNodeFields(t, n, decoded.Node)
 	for _, raw := range []string{`{"_nornicdb_encoding":"future","_nornicdb_data":"AQ=="}`, `{"_nornicdb_encoding":"storage-msgpack-v1"}`, `{"_nornicdb_encoding":"storage-msgpack-v1","_nornicdb_data":"AQ=="}`, `{"node":`} {
 		var target WALNodeData
 		assert.Error(t, decodeRecoveryPayload([]byte(raw), &target), raw)
@@ -229,7 +231,10 @@ func TestRecoveryCodecPointerAndNilPayloads(t *testing.T) {
 	for _, source := range []any{n, e, &WALNodeData{Node: n}, &WALEdgeData{Edge: e}, &WALDeleteData{OldNode: n, OldEdge: e}, &WALBulkNodesData{Nodes: []*Node{n}}, &WALBulkEdgesData{Edges: []*Edge{e}}, &WALBulkDeleteNodesData{OldNodes: []*Node{n}}, &WALBulkDeleteEdgesData{OldEdges: []*Edge{e}}} {
 		raw, err := marshalWALRecoveryPayload(nil, source)
 		require.NoError(t, err)
-		assert.Contains(t, string(raw), walRecoveryEncoding)
+		serializer, _, headered, err := splitSerializationHeader(raw)
+		require.NoError(t, err)
+		assert.True(t, headered)
+		assert.Equal(t, serializerIDMsgpack, serializer)
 	}
 	for _, source := range []any{(*Node)(nil), (*Edge)(nil), (*WALNodeData)(nil), (*WALEdgeData)(nil), (*WALDeleteData)(nil), (*WALBulkNodesData)(nil), (*WALBulkEdgesData)(nil), (*WALBulkDeleteNodesData)(nil), (*WALBulkDeleteEdgesData)(nil)} {
 		raw, err := marshalWALRecoveryPayload(nil, source)

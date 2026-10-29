@@ -129,13 +129,15 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 	var image *Edge
 	var publicationOps []Operation
 
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	publish := func() {
 		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpCreateEdge, Edge: image}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, schema, publicationOps)
+		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
@@ -382,13 +384,15 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 		defer order.release()
 	}
 	var publicationOps []Operation
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	publish := func() {
 		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpUpdateEdge, Edge: image, OldEdge: oldEdge}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, schema, publicationOps)
+		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
@@ -624,13 +628,15 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 
 	var publicationOps []Operation
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(id))
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	publish := func() {
 		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationOps, true, true)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpDeleteEdge, EdgeID: id, OldEdge: edge}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, schema, publicationOps)
+		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())

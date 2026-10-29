@@ -42,3 +42,10 @@ view checks `view.Err` and passes `view.Text` with `antlr.AcceptedSource`. The
 request source retains original spelling; syntax cache identity includes the
 explicit stage, entry and dialect. Cancellation remains synchronous through the
 owned ANTLR character/token stream interfaces; the third-party runtime is unchanged.
+
+Dynamic USE selectors also retain each argument's original byte extent through
+`antlr.UseReference.Arguments` and `fabric.UseClause.Arguments`. Each `UseArgument`
+contains `Text` and a half-open `Span`: `original[Span.Start:Span.End] == Text`.
+The existing `Args` strings remain available to routing consumers. Obtain these
+products through `ReadUseReference` or `fabric.ReadUseClause` with the appropriate
+source stage; do not reconstruct argument positions by searching repeated text.

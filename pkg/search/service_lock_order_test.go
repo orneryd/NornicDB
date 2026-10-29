@@ -58,7 +58,7 @@ func serviceLockDump(t *testing.T, why string) {
 // All operations are production operations; locks only stage their ordinary
 // overlap. A policy update holds indexMu, and ClearVectorIndex holds pipelineMu.
 func TestServiceClearVersusQuantization(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	// Let policy preflight read the current configuration and join any build
 	// before staging the admission/publication overlap under the service lock.
 	svc.pipelineMu.Lock()
@@ -119,7 +119,7 @@ func TestServiceClearVersusQuantization(t *testing.T) {
 // Gate it at those real boundaries, then queue a normal persistence retirement
 // while its Count holds mu. Its second RLock must not deadlock on that writer.
 func TestServicePipelineDimensionsVersusClose(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	svc.indexMu.Lock()
 	queried := make(chan error, 1)
 	go func() { _, err := svc.getOrCreateVectorPipeline(context.Background()); queried <- err }()
@@ -178,7 +178,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 	for _, closeService := range []bool{false, true} {
 		t.Run(fmt.Sprintf("close=%t", closeService), func(t *testing.T) {
 			engine := &serviceLockBuildEngine{Engine: newTestMemoryEngine(t)}
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			defer svc.Close()
 			svc.SetPersistenceEnabled(true)

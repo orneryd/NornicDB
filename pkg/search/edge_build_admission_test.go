@@ -99,7 +99,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 			}
 			edge := &storage.Edge{ID: "nornic:x", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
 			require.NoError(t, engine.CreateEdge(edge))
-			svc := NewServiceWithDimensions(engine, 3)
+			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { release(); _ = svc.Close() })
 			// Fixed dimensions: with open ones the stream's stored edge chooses
 			// them first, so a live edge vector waits for it

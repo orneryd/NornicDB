@@ -201,7 +201,7 @@ func TestVectorEntryOwnerInMemory(t *testing.T) {
 						nodes[i], nodes[j] = nodes[j], nodes[i]
 					}
 				}
-				svc := NewServiceWithDimensions(engine, vectorOwnerDims)
+				svc := NewService(engine, vectorOwnerDims, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				for _, node := range nodes {
 					_, err := engine.CreateNode(cloneVectorOwnerNode(node))
@@ -244,7 +244,7 @@ func TestVectorEntryOwnerAfterPersistedReopen(t *testing.T) {
 				svc.SetPersistenceEnabled(true)
 			}
 
-			first := NewServiceWithDimensions(engine, vectorOwnerDims)
+			first := NewService(engine, vectorOwnerDims, nil)
 			configure(first)
 			require.NoError(t, first.BuildIndexes(ctx))
 			require.NotNil(t, first.vectorFileStore, "the build must use the file-backed vector store")
@@ -258,7 +258,7 @@ func TestVectorEntryOwnerAfterPersistedReopen(t *testing.T) {
 			assert.Equal(t, tc.entries, stored.Count(), "the persisted vector store must keep every node's embeddings")
 			require.NoError(t, stored.Close())
 
-			second := NewServiceWithDimensions(engine, vectorOwnerDims)
+			second := NewService(engine, vectorOwnerDims, nil)
 			t.Cleanup(func() { _ = second.Close() })
 			configure(second)
 			require.NoError(t, second.BuildIndexes(ctx))

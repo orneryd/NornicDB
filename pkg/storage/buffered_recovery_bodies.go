@@ -10,7 +10,7 @@ import (
 // It runs only during WAL recovery; ordinary in-memory flushes already own typed
 // operations. Read prior bodies before applying raw writes/deletes: node deletion
 // also needs the committed relationship bodies for adjacency/history.
-func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *bufferedCommit) error {
+func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *bufferedCommit, writes map[string][]byte, deletes map[string]bool) error {
 	states := newCommitStates(commit.ops)
 	read := func(key []byte) ([]byte, error) {
 		item, err := txn.Get(key)
@@ -60,7 +60,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if projected == nil {
 			continue
 		}
-		data := commit.writes[string(nodeKey(id))]
+		data := writes[string(nodeKey(id))]
 		if len(data) == 0 {
 			continue
 		}
@@ -68,7 +68,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err != nil {
 			return err
 		}
-		readFinal := embeddingRecordReader{txn: txn, commit: commit}
+		readFinal := embeddingRecordReader{txn: txn, stagedWrites: writes, stagedDeletes: deletes}
 		if err := restoreBufferedNodeVectors(node, id, readFinal); err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if projected == nil {
 			continue
 		}
-		data := commit.writes[string(edgeKey(id))]
+		data := writes[string(edgeKey(id))]
 		if len(data) == 0 {
 			continue
 		}

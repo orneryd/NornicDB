@@ -12,10 +12,10 @@ import (
 // of copying the term's list per removal; results, document frequencies and
 // snapshots see live documents only (#826).
 func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
-	index := NewFulltextIndexV2()
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	const n = 1000
 	for i := 0; i < n; i++ {
-		index.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared token%d", i))
+		index.Index(fmt.Sprintf("doc-%04d", i), fmt.Sprintf("shared token%d", i), nil, nil, false)
 	}
 	for i := 0; i < n; i += 2 {
 		index.Remove(fmt.Sprintf("doc-%04d", i))
@@ -42,7 +42,7 @@ func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
 	require.Empty(t, index.Search("token0", 10))
 
 	// Re-indexing a document replaces its postings.
-	index.Index("doc-0001", "replaced")
+	index.Index("doc-0001", "replaced", nil, nil, false)
 	require.Empty(t, index.Search("token1", 10))
 	require.Len(t, index.Search("replaced", 10), 1)
 
@@ -50,7 +50,7 @@ func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
 	for _, save := range []func(string) error{index.Save, index.SaveNoCopy} {
 		path := filepath.Join(t.TempDir(), "bm25")
 		require.NoError(t, save(path))
-		loaded := NewFulltextIndexV2()
+		loaded := NewFulltextIndexV2WithAnalyzer(nil)
 		require.NoError(t, loaded.Load(path))
 		require.Equal(t, index.Count(), loaded.Count())
 		loaded.mu.RLock()
@@ -66,9 +66,9 @@ func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				index := NewFulltextIndexV2()
+				index := NewFulltextIndexV2WithAnalyzer(nil)
 				for doc := 0; doc < n; doc++ {
-					index.Index(fmt.Sprintf("doc-%d", doc), "shared value")
+					index.Index(fmt.Sprintf("doc-%d", doc), "shared value", nil, nil, false)
 				}
 				b.StartTimer()
 				for doc := 0; doc < n; doc++ {
@@ -80,7 +80,7 @@ func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {
 }
 
 func TestFulltextIndexV2SnapshotDropsRemovedPostings(t *testing.T) {
-	index := NewFulltextIndexV2()
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	index.applyV2Snapshot(bm25V2Snapshot{
 		Documents:  map[string]string{"live": "kept"},
 		DocIDToNum: map[string]uint32{"live": 1},

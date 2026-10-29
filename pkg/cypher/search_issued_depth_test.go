@@ -12,7 +12,7 @@ import (
 func TestDbRetrieveContinuationIssuedDepthCompletion(t *testing.T) {
 	ctx := context.Background()
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	service := search.NewService(engine)
+	service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 1000; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%04d", i)), Properties: map[string]any{"content": "library transcript"}}

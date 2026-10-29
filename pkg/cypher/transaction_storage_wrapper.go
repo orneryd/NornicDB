@@ -815,18 +815,7 @@ func (w *transactionStorageWrapper) BulkCreateMintedEdges(edges []*storage.Edge)
 }
 
 func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bool) error {
-	var singleType [1]string
-	relationshipTypes := singleType[:0]
-	if len(edges) > 1 {
-		relationshipTypes = make([]string, 0, len(edges))
-	}
-	for _, edge := range edges {
-		if edge == nil {
-			return storage.ErrInvalidData
-		}
-		relationshipTypes = append(relationshipTypes, edge.Type)
-	}
-	if err := w.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
+	if err := w.GetSchema().RegisterEdgeTokens(edges); err != nil {
 		return err
 	}
 	var singleEdge [1]*storage.Edge

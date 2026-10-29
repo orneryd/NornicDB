@@ -20,7 +20,7 @@ func TestRetrieveWhereReadsPatternElementWhere(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	exec.SetSearchService(svc)
 	_, err := exec.Execute(ctx, `CREATE (:Doc {id: 'a'}), (b:Doc {id: 'b'}), (:Src {id: 'sa', document_id: 'a', content: 'walrus notes'}),

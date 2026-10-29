@@ -25,20 +25,20 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 				}
 				rel := &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"vec": []float32{1, 0}}}
 				require.NoError(t, store.CreateEdge(rel))
-				svc := search.NewServiceWithDimensions(store, 2)
+				svc := search.NewService(store, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				if warm {
 					require.NoError(t, svc.BuildIndexes(context.Background()))
 				}
 				entry := &dbSearchService{svc: svc}
-				entry.queueEdgeRefresh("r")
+				seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
 				_, stale := entry.drainPending()
 				rel.Properties["vec"] = []float32{0, 1}
 				require.NoError(t, store.UpdateEdge(rel))
 				require.NoError(t, svc.RefreshEdge("r"))
 				if remove {
 					require.NoError(t, store.DeleteEdge("r"))
-					entry.queueEdgeRefresh("r")
+					seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
 					_, newer := entry.drainPending()
 					require.NoError(t, svc.RefreshEdgeWithMutation(newer["r"]))
 				}

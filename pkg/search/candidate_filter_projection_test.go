@@ -22,7 +22,7 @@ type candidateFilterReadSpy struct {
 }
 
 func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
-	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
+	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	b.Cleanup(func() { require.NoError(b, service.engine.Close()) })
 	results := make([]indexResult, 1000)
 	for i := range results {
@@ -88,7 +88,7 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 			"doc-b": {ID: "doc-b", Labels: []string{"Document"}, Properties: map[string]any{"state": "draft"}},
 		},
 	}
-	service := NewService(spy)
+	service := NewService(spy, DefaultVectorDimensions, nil)
 	for _, node := range spy.lightNodes {
 		require.NoError(t, service.IndexNode(node))
 	}
@@ -129,7 +129,7 @@ func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
 			},
 		},
 	}
-	service := NewService(spy)
+	service := NewService(spy, DefaultVectorDimensions, nil)
 	for _, node := range spy.lightNodes {
 		require.NoError(t, service.IndexNode(node))
 	}

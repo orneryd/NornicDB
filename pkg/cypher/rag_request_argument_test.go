@@ -94,7 +94,7 @@ func TestRagProcedureRequestComputedOption(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(engine)
 	reranker := &countingReranker{}
-	service := search.NewService(engine)
+	service := search.NewService(engine, search.DefaultVectorDimensions, nil)
 	service.SetReranker(reranker)
 	exec.SetSearchService(service)
 	candidates := []interface{}{

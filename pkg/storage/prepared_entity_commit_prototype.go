@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -36,10 +37,24 @@ type PreparedEntityCommit struct {
 
 func (p *PreparedEntityCommit) Namespace() string { return p.namespace }
 func (p *PreparedEntityCommit) LogicalID() string { return p.logicalID }
+
+// Operations returns detached diagnostic images, including before-images and
+// cascading-deletion IDs. Encoders use EntityTransactionRequest{Prepared: p}
+// to read the immutable accepted snapshot without allocating this public copy.
 func (p *PreparedEntityCommit) Operations() []Operation {
 	ops := append([]Operation(nil), p.operations...)
 	for i := range ops {
-		ops[i].snapshotForNotification()
+		op := &ops[i]
+		op.Node = copyNode(op.Node)
+		op.Edge = copyEdge(op.Edge)
+		op.OldNode = copyNode(op.OldNode)
+		op.OldEdge = copyEdge(op.OldEdge)
+		detachPreparedPropertyMaps([]*Node{op.Node, op.OldNode}, []*Edge{op.Edge, op.OldEdge})
+		if op.DeletedEdgeIDs != nil {
+			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
+			copy(ids, op.DeletedEdgeIDs)
+			op.DeletedEdgeIDs = ids
+		}
 	}
 	return ops
 }
@@ -89,13 +104,51 @@ func (p *PreparedEntityCommit) Abort() { p.once.Do(func() { p.decide <- false; <
 
 var errPreparedEntityDiscarded = errors.New("prepared entity commit discarded")
 
-// PrepareEntityCommit runs the existing native commit pipeline up to its
-// prephysical boundary. Schema transactions retain their ordinary Commit path.
-func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID string) (*PreparedEntityCommit, error) {
+// EntityCommitRequest identifies an accepted commit and optional decoded changes.
+// Operations are staged only when LogicalID has not already been acknowledged.
+// An already-staged transaction leaves Operations nil; replay passes its existing
+// operation slice without copying it or allocating a staging callback.
+type EntityCommitRequest struct {
+	LogicalID  string
+	Operations []Operation
+}
+
+// PrepareEntityCommit observes the logical receipt once, stages new entity work,
+// and runs the native commit pipeline up to its prephysical boundary. A staging
+// error leaves cleanup with the caller. Schema transactions use ordinary Commit.
+func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request EntityCommitRequest) (*PreparedEntityCommit, error) {
+	logicalID := request.LogicalID
 	if logicalID == "" {
 		return nil, ErrInvalidID
 	}
-	applied, receiptErr := tx.PrepareLogicalCommitReceipt(logicalID)
+	applied, receiptErr := func() (bool, error) {
+		tx.mu.Lock()
+		defer tx.mu.Unlock()
+		if err := tx.ensureLifecycleActiveLocked(); err != nil {
+			return false, err
+		}
+		if tx.namespace == "" || logicalID == "" {
+			return false, ErrInvalidData
+		}
+		// The engine owns receipt observation: it reads through this
+		// transaction first, keeping the marker in this transaction's conflict
+		// set, then the buffer generations and the physical marker under its
+		// retirement exclusion. An absent receipt is staged under the key the
+		// observation already built.
+		observation, err := tx.engine.observeBufferedCommitReceipt(bufferedReceiptRead{
+			namespace: tx.namespace,
+			logicalID: logicalID,
+			native:    tx.badgerTx,
+		})
+		if err != nil {
+			return false, err
+		}
+		if observation.present {
+			return true, nil
+		}
+		tx.bufferSet(observation.key, []byte{1})
+		return false, nil
+	}()
 	if receiptErr != nil {
 		return nil, receiptErr
 	}
@@ -111,6 +164,11 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 		done <- nil
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
+	for _, op := range request.Operations {
+		if err := ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+			return nil, err
+		}
+	}
 	tx.mu.Lock()
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		tx.mu.Unlock()
@@ -123,15 +181,15 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 	finished := make(chan error, 1)
 	go func() {
 		var prepared *PreparedEntityCommit
-		err := tx.commitContextWithPreparation(ctx, func() {
+		err := tx.PublishCommit(ctx, CommitPublication{AfterPublication: func() {
 			if prepared != nil && prepared.afterPublication != nil {
 				prepared.afterPublication()
 			}
-		}, func() error {
+		}, prepare: func() error {
 			if tx.schemaRuntime != nil || tx.knowledgeSchemaDirty {
 				return ErrInvalidData
 			}
-			changes, err := tx.capturePreparedEntityChangesLocked()
+			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
 			if err != nil {
 				return err
 			}
@@ -139,11 +197,12 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 			for i := range operations {
 				operations[i].snapshotForNotification()
 			}
-			nodes, edges := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
+			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges))
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
 				if err != nil {
 					return nil, err
 				}
@@ -185,7 +244,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 			// Accepted work belongs to its terminal owner, no longer the waiter.
 			tx.commitCtx = nil
 			return nil
-		})
+		}})
 		if prepared != nil {
 			state := CommitRecoveryPending
 			if tx.Status == TxStatusCommitted {
@@ -259,3 +318,71 @@ func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *
 }
 
 func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
+
+// detachPreparedPropertyMaps completes the caller-owned diagnostic copy. Native
+// storage copies intentionally retain property values; diagnostic consumers may
+// mutate supported list/map values without changing accepted commit images.
+// This is never used by the canonical prepared encoder or commit path.
+func detachPreparedPropertyMaps(nodes []*Node, edges []*Edge) {
+	detach := func(properties map[string]any) {
+		for key, value := range properties {
+			if value != nil {
+				properties[key] = clonePreparedPropertyValue(value)
+			}
+		}
+	}
+	for _, node := range nodes {
+		if node != nil {
+			detach(node.Properties)
+			detach(node.EmbedMeta)
+		}
+	}
+	for _, edge := range edges {
+		if edge != nil {
+			detach(edge.Properties)
+		}
+	}
+}
+
+// clonePreparedPropertyValue preserves the concrete list/map types supported
+// by prepared wire images and nil containers. Scalars and strings are immutable.
+func clonePreparedPropertyValue(value any) any {
+	switch value := value.(type) {
+	case []byte:
+		return slices.Clone(value)
+	case []string:
+		return slices.Clone(value)
+	case []int:
+		return slices.Clone(value)
+	case []int32:
+		return slices.Clone(value)
+	case []int64:
+		return slices.Clone(value)
+	case []float32:
+		return slices.Clone(value)
+	case []float64:
+		return slices.Clone(value)
+	case []bool:
+		return slices.Clone(value)
+	case []any:
+		if value == nil {
+			return value
+		}
+		copied := make([]any, len(value))
+		for index, item := range value {
+			copied[index] = clonePreparedPropertyValue(item)
+		}
+		return copied
+	case map[string]any:
+		if value == nil {
+			return value
+		}
+		copied := make(map[string]any, len(value))
+		for key, item := range value {
+			copied[key] = clonePreparedPropertyValue(item)
+		}
+		return copied
+	default:
+		return value
+	}
+}

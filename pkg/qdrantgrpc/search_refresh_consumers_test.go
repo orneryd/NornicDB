@@ -56,7 +56,7 @@ func setupConsumerPoints(t *testing.T) (*PointsService, *consumerBarrierCollecti
 	t.Cleanup(func() { _ = base.Close() })
 	store, _, err := collections.Open(ctx, "test_vectors")
 	require.NoError(t, err)
-	svc := search.NewServiceWithDimensions(store, 4)
+	svc := search.NewService(store, 4, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	barrier := &consumerBarrierCollections{CollectionStore: collections, entered: make(chan struct{}), release: make(chan struct{})}
 	points.collections = barrier

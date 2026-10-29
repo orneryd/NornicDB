@@ -19,7 +19,7 @@ func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 				_, err := store.CreateNode(&storage.Node{ID: id})
 				require.NoError(t, err)
 			}
-			svc := NewService(store)
+			svc := NewService(store, DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1, MaxStreamsPerOwner: 1})
 			require.NoError(t, err)

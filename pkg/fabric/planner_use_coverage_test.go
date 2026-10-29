@@ -22,6 +22,20 @@ func collectPlannedExecs(fragment Fragment) []*FragmentExec {
 	}
 }
 
+// requireDynamicUseProduct checks routing identity and the legacy evaluator
+// projection. Original-coordinate extents have dedicated public product controls.
+func requireDynamicUseProduct(t *testing.T, use *UseClause, function string, args []string) {
+	t.Helper()
+	require.NotNil(t, use)
+	require.Empty(t, use.Name)
+	require.Equal(t, function, use.Function)
+	require.Equal(t, args, use.Args)
+	require.Len(t, use.Arguments, len(args))
+	for index, argument := range use.Arguments {
+		require.Equal(t, args[index], argument.Text)
+	}
+}
+
 func plannerUseCatalog() *Catalog {
 	catalog := NewCatalog()
 	catalog.Register("cmp", &LocationLocal{DBName: "cmp"})
@@ -41,7 +55,7 @@ func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 		exec, ok := fragment.(*FragmentExec)
 		require.True(t, ok, "expected *FragmentExec, got %T", fragment)
 		require.Empty(t, exec.GraphName)
-		require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"$g"}}, exec.Graph)
+		requireDynamicUseProduct(t, exec.Graph, "graph.byName", []string{"$g"})
 		require.Equal(t, "cmp", exec.Scope)
 		require.Equal(t, "MATCH (n) RETURN n", exec.Query)
 		require.False(t, exec.IsWrite)
@@ -78,9 +92,9 @@ func TestPlan_DynamicUseInUnionBranches(t *testing.T) {
 
 	execs := collectPlannedExecs(fragment)
 	require.Len(t, execs, 2)
-	require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"'cmp.a'"}}, execs[0].Graph)
+	requireDynamicUseProduct(t, execs[0].Graph, "graph.byName", []string{"'cmp.a'"})
 	require.Equal(t, "RETURN 1 AS x", execs[0].Query)
-	require.Equal(t, &UseClause{Function: "graph.byElementId", Args: []string{"$id"}}, execs[1].Graph)
+	requireDynamicUseProduct(t, execs[1].Graph, "graph.byElementId", []string{"$id"})
 	require.Equal(t, "RETURN 2 AS x", execs[1].Query)
 	for _, exec := range execs {
 		require.Empty(t, exec.GraphName)
@@ -102,6 +116,10 @@ func TestParseLeadingWithUse_NameStartingWithUse(t *testing.T) {
 	require.Equal(t, body, rewritten)
 }
 
+// TestPlan_DynamicUseSubqueryPositions ports the incoming PR #1525
+// importing-CALL product onto the current planner API. The static-subquery
+// sibling case already exists as TestPlan_DynamicTopLevelUseWithStaticSubquery
+// in the releasing branch, so it is not duplicated here.
 func TestPlan_DynamicUseSubqueryPositions(t *testing.T) {
 	outerTable := []struct {
 		name         string
@@ -126,7 +144,7 @@ func TestPlan_DynamicUseSubqueryPositions(t *testing.T) {
 
 				require.Equal(t, "WITH g MATCH (n) RETURN count(n) AS c", execs[1].Query)
 				require.Empty(t, execs[1].GraphName)
-				require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"g"}}, execs[1].Graph)
+				requireDynamicUseProduct(t, execs[1].Graph, "graph.byName", []string{"g"})
 				require.Equal(t, "cmp", execs[1].Scope)
 				init, ok := execs[1].Input.(*FragmentInit)
 				require.True(t, ok, "expected *FragmentInit, got %T", execs[1].Input)
@@ -134,25 +152,6 @@ func TestPlan_DynamicUseSubqueryPositions(t *testing.T) {
 
 				require.Equal(t, "RETURN g, c", execs[2].Query)
 				require.Equal(t, "cmp", execs[2].GraphName)
-			},
-		},
-		{
-			name:         "TestPlan_DynamicTopLevelUseWithStaticSubquery",
-			query:        "USE graph.byName($g) CALL { USE cmp.a RETURN 1 AS one } RETURN one",
-			importColumn: "",
-			count:        2,
-			check: func(t *testing.T, execs []*FragmentExec) {
-				// TestPlan_DynamicTopLevelUseWithStaticSubquery pins that after a dynamic
-				// top-level USE, a CALL subquery with a static USE runs on its constituent
-				// and the clauses after the subquery run on the dynamic reference.
-				require.Equal(t, "cmp.a", execs[0].GraphName)
-				require.Nil(t, execs[0].Graph)
-				require.Equal(t, "RETURN 1 AS one", execs[0].Query)
-
-				require.Equal(t, "RETURN one", execs[1].Query)
-				require.Empty(t, execs[1].GraphName)
-				require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"$g"}}, execs[1].Graph)
-				require.Equal(t, "cmp", execs[1].Scope)
 			},
 		},
 	}

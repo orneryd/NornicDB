@@ -16,6 +16,7 @@ import (
 func TestPublicationCoreHelpsEarlierOutOfOrderRegistration(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("unique_u", "L", "u"))
+	constraints := capturePublicationConstraintView(schema)
 	old := &Node{ID: "db:a", Labels: []string{"L"}, Properties: map[string]any{"u": "A"}}
 	written := CopyNode(old)
 	written.Properties["u"] = "B"
@@ -28,7 +29,7 @@ func TestPublicationCoreHelpsEarlierOutOfOrderRegistration(t *testing.T) {
 		{"repeated entity dependency", []any{NodeID("db:n"), NodeID("db:n")}, []any{NodeID("db:n"), NodeID("db:n")}},
 		// The later entity takes A only after the older entity frees it. Their
 		// IDs differ, so only the UNIQUE-value dependency establishes the order.
-		{"freed unique value across entities", appendNodePublicationKeys(nil, schema, old.ID, old, written), appendNodePublicationKeys(nil, schema, taken.ID, nil, taken)},
+		{"freed unique value across entities", appendNodePublicationKeys(nil, &constraints, old.ID, old, written), appendNodePublicationKeys(nil, &constraints, taken.ID, nil, taken)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stage publicationStage
@@ -61,6 +62,7 @@ func awaitPublicationCore(t *testing.T, done <-chan struct{}, label string) bool
 func TestPublicationCoreDisjointKeysDoNotWait(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.AddUniqueConstraint("unique_u", "L", "u"))
+	constraints := capturePublicationConstraintView(schema)
 	older := &Node{ID: "db:a", Labels: []string{"L"}, Properties: map[string]any{"u": "A"}}
 	newer := CopyNode(older)
 	newer.ID = "peer:b"
@@ -69,7 +71,7 @@ func TestPublicationCoreDisjointKeysDoNotWait(t *testing.T) {
 		older, newer []any
 	}{
 		{"different entities", []any{NodeID("db:a")}, []any{NodeID("db:b")}},
-		{"same unique value in different namespaces", appendNodePublicationKeys(nil, schema, older.ID, nil, older), appendNodePublicationKeys(nil, schema, newer.ID, nil, newer)},
+		{"same unique value in different namespaces", appendNodePublicationKeys(nil, &constraints, older.ID, nil, older), appendNodePublicationKeys(nil, &constraints, newer.ID, nil, newer)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stage publicationStage

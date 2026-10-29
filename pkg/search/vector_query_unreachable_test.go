@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
-
 	"math"
 	"strings"
 	"testing"
@@ -17,7 +16,10 @@ import (
 
 // shortApproximateCandidateGenerator is an approximate generator that never
 // reaches more than its candidates and never reports itself exhausted: an
-// HNSW graph some of whose nodes the search can't reach from the query.
+// HNSW graph some of whose nodes the search can't reach from the query. It is
+// used by the population/termination tests, both here (one request covers the
+// population) and in the adaptive overfetch tests (the context ends before the
+// widening can fill its page).
 type shortApproximateCandidateGenerator struct {
 	candidates []Candidate
 	population int
@@ -63,7 +65,7 @@ func sparseWordEmbedding(text string, dimensions int) []float32 {
 // widening running on without end.
 func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testing.T) {
 	const dimensions = 2048
-	service := NewServiceWithDimensions(newTestMemoryEngine(t), dimensions)
+	service := NewService(newTestMemoryEngine(t), dimensions, nil)
 	config := DefaultHNSWConfig()
 	config.EfConstruction, config.EfSearch, config.UseGPUBuild = 100, 50, false
 	index := NewHNSWIndex(dimensions, config)
@@ -89,7 +91,7 @@ func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testin
 }
 
 func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) {
-	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	service := NewService(newTestMemoryEngine(t), 2, nil)
 	for index, embedding := range [][]float32{{1, 0}, {0.9, 0.1}, {0.8, 0.2}} {
 		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", index+1)), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embedding}}))
 	}
@@ -107,22 +109,6 @@ func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) 
 	require.Equal(t, []string{"doc-1", "doc-2", "doc-3"}, vectorQueryHitIDs(hits))
 	// One request covers the three vectors; a wider one couldn't reach more.
 	require.Equal(t, 1, generator.calls)
-}
-
-func TestAdaptiveVectorSearchStopsWhenContextEnds(t *testing.T) {
-	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
-	generator := &shortApproximateCandidateGenerator{candidates: []Candidate{{ID: "doc-1", Score: 1}}, population: 1 << 40}
-	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
-	opts := adaptiveOverfetchTestOptions(3)
-	opts.MaxCandidateLimit = 0
-	opts.MaxOverfetchRatio = math.MaxFloat64
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, _, err := service.adaptiveVectorSearch(ctx, pipeline, []float32{1, 0}, opts, nil, nil)
-
-	require.ErrorIs(t, err, context.Canceled)
-	require.Zero(t, generator.calls)
 }
 
 func TestNextCandidateLimitSaturatesAtCeiling(t *testing.T) {

@@ -327,8 +327,8 @@ SHOW LIMITS FOR DATABASE tenant_a
    - `max_nodes`: Maximum number of nodes (0 = unlimited)
    - `max_edges`: Maximum number of edges (0 = unlimited)
    - `max_bytes`: Maximum storage size in bytes (0 = unlimited)
-     - **Enforced with exact size calculation**: The actual serialized size of each node/edge is calculated using gob encoding (matching the storage format)
-     - **No estimation**: Storage size is tracked incrementally for accurate, O(1) limit checks
+     - **Logical entity sizing**: Each node or relationship is charged by its canonical MessagePack size, not by its physical disk footprint
+     - **Incremental accounting**: Usage is tracked for O(1) limit checks
      - **Clear error messages**: When exceeded, operations fail with: "would exceed max_bytes limit (current: X bytes, limit: Y bytes, new entity: Z bytes)"
 
 2. **Query Limits**:
@@ -392,8 +392,8 @@ Commit-time quota rejection has a known rolled-back outcome and no receipt or
 indexing event. A Bolt connection remains reusable after `RESET`. An uncertain
 transport/commit failure is not a quota rejection and is not made safe to retry.
 
-Byte quotas retain the legacy gob-based logical entity accounting model; they
-are not the physical msgpack/Badger/WAL disk footprint. Empty and nil property
+Byte quotas use MessagePack logical entity accounting; they are not the
+physical Badger/WAL disk footprint. Empty and nil property
 maps have the same canonical quota size across staged writes, point reads and
 streaming initialization.
 
@@ -419,11 +419,16 @@ storage limit exceeded: database 'tenant_a' would exceed max_bytes limit
 
 **MaxBytes Implementation Details**:
 
-- Uses **exact size calculation**, not estimation
-- Calculates the actual serialized size of each node/edge using gob encoding
+- Charges the MessagePack size of each canonical logical node or relationship;
+  this is a quota measure, not the physical size of Badger files or the WAL
 - Tracks storage size incrementally (initialized lazily on first access)
 - Provides O(1) limit checks without recalculating from all entities
 - Error messages include current size, limit, and the size of the entity being created
+
+In v1.4.4 the logical quota measure changes from gob to MessagePack. Existing
+`max_bytes` settings remain unchanged, but the reported usage and remaining
+headroom can change after upgrade. Review byte limits for databases close to
+their configured quota.
 
 ### Example: MaxBytes Enforcement
 

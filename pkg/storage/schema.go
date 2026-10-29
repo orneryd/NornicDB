@@ -76,6 +76,9 @@ func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 type SchemaManager struct {
 	mu         sync.RWMutex
 	tokenOrder schemaTokenOrder
+	// Names are added to the snapshot only after successful registration; a
+	// schema replacement publishes a fresh snapshot.
+	tokenSnapshot atomic.Pointer[schemaTokenSnapshot]
 
 	// Temporal constraints (by temporalIndexCompletenessKey) created at
 	// runtime: on an empty label their history index is complete from the
@@ -93,8 +96,9 @@ type SchemaManager struct {
 	uniqueConstraintCommitOrder   uint64
 	// uniqueConstraintLockWaits maps each owner waiting for a constraint key
 	// lock to that lock, for deadlock detection (#961).
-	uniqueConstraintLockWaits map[string]*uniqueConstraintCommitLock
-	schemaMutationMu          sync.Mutex
+	uniqueConstraintLockWaits      map[string]*uniqueConstraintCommitLock
+	uniqueConstraintLockWaitShared map[string]bool
+	schemaMutationMu               sync.Mutex
 
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"

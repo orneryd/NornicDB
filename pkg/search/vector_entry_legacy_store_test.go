@@ -74,7 +74,7 @@ func TestLegacyVectorStoreIsRebuiltFromStorage(t *testing.T) {
 
 			// A current build leaves BM25 and build settings on disk, so a
 			// loadable vector store would let the reopen skip node iteration.
-			first := NewServiceWithDimensions(engine, vectorOwnerDims)
+			first := NewService(engine, vectorOwnerDims, nil)
 			configure(first)
 			require.NoError(t, first.BuildIndexes(ctx))
 			first.PersistIndexesToDisk()
@@ -98,7 +98,7 @@ func TestLegacyVectorStoreIsRebuiltFromStorage(t *testing.T) {
 				require.NoError(t, os.Remove(settingsPath))
 			}
 
-			second := NewServiceWithDimensions(engine, vectorOwnerDims)
+			second := NewService(engine, vectorOwnerDims, nil)
 			t.Cleanup(func() { _ = second.Close() })
 			configure(second)
 			require.NoError(t, second.BuildIndexes(ctx))

@@ -166,6 +166,9 @@
 - id: nornicdbcore.search_database_not_initialized
   description: El estado de búsqueda por base de datos no está disponible. Database no se traduce.
   other: 'el servicio de búsqueda no está inicializado para la base de datos {{printf "%q" .Database}}'
+- id: nornicdbcore.search_index_build_mode_invalid
+  description: Se solicitó un modo de construcción del índice de búsqueda no admitido. Mode no se traduce.
+  other: 'modo de construcción del índice de búsqueda no admitido {{.Mode}}'
 - id: nornicdbcore.inference_base_storage_unavailable
   description: La inferencia no tiene almacenamiento base. nil no se traduce.
   other: "la inferencia no está disponible: el almacenamiento base es nil"

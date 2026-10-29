@@ -42,7 +42,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 
 				engine, err := manager.GetStorage("quota")
 				require.NoError(t, err)
-				svc := search.NewServiceWithDimensions(engine, 3)
+				svc := search.NewService(engine, 3, nil)
 				require.NoError(t, svc.BuildIndexes(ctx))
 				var published atomic.Int64
 				base.OnNodeCreated(func(n *storage.Node) {
@@ -99,7 +99,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				recoveredEngine := storage.NewNamespacedEngine(recovered, "quota")
-				recoveredSearch := search.NewServiceWithDimensions(recoveredEngine, 3)
+				recoveredSearch := search.NewService(recoveredEngine, 3, nil)
 				require.NoError(t, recoveredSearch.BuildIndexes(ctx))
 				verify(recoveredEngine, recoveredSearch)
 			})

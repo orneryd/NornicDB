@@ -92,7 +92,7 @@ func newCGFixture(t *testing.T, perTopic int, fileBacked bool) *cgFixture {
 
 func (f *cgFixture) open(fileBacked bool) *Service {
 	f.t.Helper()
-	svc := NewServiceWithDimensions(f.engine, 4)
+	svc := NewService(f.engine, 4, nil)
 	f.t.Cleanup(func() { _ = svc.Close() })
 	if fileBacked {
 		svc.SetFulltextIndexPath(filepath.Join(f.dir, "bm25"))

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
@@ -21,6 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// buildAtomicIntegrityPayload encodes a create_node entry with the current
+// payload codec, as an Append to the active WAL writes it.
 func buildAtomicIntegrityPayload(t *testing.T, seq uint64) []byte {
 	t.Helper()
 	entry := WALEntry{
@@ -29,7 +30,8 @@ func buildAtomicIntegrityPayload(t *testing.T, seq uint64) []byte {
 		Data:      mustMarshal(WALNodeData{Node: &Node{ID: NodeID(prefixTestID(fmt.Sprintf("ic-%d", seq)))}}),
 	}
 	entry.Checksum = crc32Checksum(entry.Data)
-	payload, err := json.Marshal(entry)
+	var buf bytes.Buffer
+	payload, err := processWALEntryPayload(walPayloadEncode, &buf, &entry, nil, 0)
 	require.NoError(t, err)
 	return payload
 }
@@ -113,7 +115,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
 		header := make([]byte, 9)
 		binary.LittleEndian.PutUint32(header[0:4], walMagic)
-		header[4] = walFormatVersion
+		header[4] = walFormatVersionCurrent
 		binary.LittleEndian.PutUint32(header[5:9], walMaxEntrySize+1)
 		require.NoError(t, os.WriteFile(path, header, 0o644))
 
@@ -127,7 +129,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wal.log")
 		header := make([]byte, 9)
 		binary.LittleEndian.PutUint32(header[0:4], walMagic)
-		header[4] = walFormatVersion
+		header[4] = walFormatVersionCurrent
 		binary.LittleEndian.PutUint32(header[5:9], 32)
 		require.NoError(t, os.WriteFile(path, header, 0o644))
 
@@ -140,7 +142,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("missing trailer is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecordV2(&buf, payload)
+		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		record := buf.Bytes()
 		require.Greater(t, len(record), 8)
@@ -157,10 +159,10 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("invalid magic after good record is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecordV2(&buf, payload)
+		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		// Append malformed header-like bytes with wrong magic.
-		_, err = buf.Write([]byte{0x00, 0x01, 0x02, 0x03, walFormatVersion, 0, 0, 0, 0})
+		_, err = buf.Write([]byte{0x00, 0x01, 0x02, 0x03, walFormatVersionCurrent, 0, 0, 0, 0})
 		require.NoError(t, err)
 
 		path := filepath.Join(t.TempDir(), "wal.log")
@@ -341,7 +343,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		sizeBefore := statBefore.Size()
 
 		// Truncate WAL
-		err = wal.TruncateAfterSnapshot(snapshot.Sequence)
+		err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// WAL should be empty or near-empty (only entries after snapshot)
@@ -384,12 +386,12 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		}
 
 		// Truncate WAL (should keep entries after snapshot)
-		err = wal.TruncateAfterSnapshot(snapshotSeq)
+		err = wal.ManageSnapshot(snapshotSeq, WALSnapshotTruncate)
 		require.NoError(t, err)
 
 		// Read remaining entries
 		walPath := filepath.Join(walDir, "wal.log")
-		entries, err := ReadWALEntries(walPath)
+		entries, err := ReadWALEntries(walPath, nil)
 		require.NoError(t, err)
 
 		// Should have ~50 entries (from after snapshot)
@@ -429,7 +431,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 
 			// Truncate WAL
-			require.NoError(t, wal.TruncateAfterSnapshot(snapshot.Sequence))
+			require.NoError(t, wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
 
 			// Add more nodes after truncation
 			for i := 101; i <= 150; i++ {
@@ -898,7 +900,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal.Close()
 
 		// Truncate should return error
-		err = wal.TruncateAfterSnapshot(100)
+		err = wal.ManageSnapshot(100, WALSnapshotTruncate)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWALClosed)
 	})
@@ -950,7 +952,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			b.StartTimer()
 
 			// Benchmark truncation
-			wal.TruncateAfterSnapshot(snapshot.Sequence)
+			wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 
 			b.StopTimer()
 			walEngine.Close()

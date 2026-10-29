@@ -38,11 +38,11 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 
 	// Older bulk writers persisted the edge body and head without these keys.
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
-		outgoingKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, head.Version)
+		outgoingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, startID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}
-		incomingKey, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, head.Version)
+		incomingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, endID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}
@@ -131,11 +131,11 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 			created, err := engine.loadEdgeMVCCHead(edgeID)
 			require.NoError(t, err)
 			require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
-				out, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, created.Version)
+				out, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, startID, edgeID, created.Version)
 				if err != nil {
 					return err
 				}
-				in, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, created.Version)
+				in, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, endID, edgeID, created.Version)
 				if err != nil {
 					return err
 				}
@@ -200,11 +200,11 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 
 	// Drop the adjacency keys so the repair has something to restore.
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
-		outgoingKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, head.Version)
+		outgoingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, startID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}
-		incomingKey, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, head.Version)
+		incomingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, endID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}
@@ -246,14 +246,14 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 
 	// Adjacency must be restored for the legacy-keyed edge.
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
-		outgoingKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, startID, edgeID, head.Version)
+		outgoingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, startID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}
 		if _, err := txn.Get(outgoingKey); err != nil {
 			return err
 		}
-		incomingKey, err := engine.mvccIncomingAdjacencyKeyString(txn, endID, edgeID, head.Version)
+		incomingKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, endID, edgeID, head.Version)
 		if err != nil {
 			return err
 		}

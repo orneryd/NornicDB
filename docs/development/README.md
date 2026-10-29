@@ -7,6 +7,7 @@ Use this section for contributor setup, standards, and test workflows.
 - Local setup: [setup.md](setup.md)
 - Coding standards: [code-style.md](code-style.md)
 - Test strategy and commands: [testing.md](testing.md)
+- Full-text index Go API: [fulltext-index-api.md](fulltext-index-api.md)
 
 ## Contributor Workflow
 

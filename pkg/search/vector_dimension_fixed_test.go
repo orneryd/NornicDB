@@ -17,7 +17,7 @@ import (
 // list (page offsets) indexed before any embedding can't make the index
 // 2-dimensional and reject every embedding after it.
 func TestFixedVectorDimensionsIgnoreNumericListProperties(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	svc.FixVectorDimensions()
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "source", Labels: []string{"Source"},
 		Properties: map[string]interface{}{"page_starts": []interface{}{int64(0), int64(30)}, "page_ends": []interface{}{int64(30), int64(200)}}}))
@@ -38,7 +38,7 @@ func TestFixedVectorDimensionsIgnoreNumericListProperties(t *testing.T) {
 // Without an embedder the first vector-shaped value still sets an empty
 // index's dimension (a database storing its own vectors).
 func TestUnfixedVectorDimensionsFollowFirstVector(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	svc := NewService(newTestMemoryEngine(t), 4, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "own", Labels: []string{"V"},
 		Properties: map[string]interface{}{"embedding": []interface{}{1.0, 0.5}}}))
 	require.Equal(t, 2, svc.vectorIndex.GetDimensions())
@@ -53,7 +53,7 @@ func TestVectorDimensionReadersAndFirstIndex(t *testing.T) {
 	require.Equal(t, 0, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"name": "x"}}))
 	require.Equal(t, 3, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"v": []float32{1, 2, 3}}}))
 
-	service := NewService(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
+	service := NewService(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	service.mu.Lock()
 	service.vectorIndex = nil
@@ -80,14 +80,14 @@ func TestBuildIndexesUnfixedDimensionsFollowFirstStoredVector(t *testing.T) {
 	_, err = engine.CreateNode(&storage.Node{ID: "z-point", Labels: []string{"Point"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}})
 	require.NoError(t, err)
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, 2, svc.VectorIndexDimensions())
 	require.Equal(t, 1, svc.EmbeddingCount(), "the stored 2-dimension vector is indexed")
 }
 
 func TestFixedDimensionsRejectExplicitEmbeddingsBeforeMutation(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc := NewService(newNamespacedEngine(t), 4, nil)
 	svc.FixVectorDimensions()
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "point", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}))
 	for _, node := range []*storage.Node{
@@ -102,7 +102,7 @@ func TestFixedDimensionsRejectExplicitEmbeddingsBeforeMutation(t *testing.T) {
 func TestAdoptingCollectionDimensionsUpdatesClusterBackend(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 1024)
+	svc := NewService(newNamespacedEngine(t), 1024, nil)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(10)
 	for i := 0; i < 20; i++ {
@@ -123,14 +123,14 @@ func TestAdoptingCollectionDimensionsUpdatesClusterBackend(t *testing.T) {
 // it), an unfixed one holding vectors only theirs, and a service with vector
 // search off every dimension.
 func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
-	fixed := NewServiceWithDimensions(newTestMemoryEngine(t), 8)
+	fixed := NewService(newTestMemoryEngine(t), 8, nil)
 	fixed.FixVectorDimensions()
 	require.True(t, fixed.AdmitsVectorDimensions(8))
 	require.False(t, fixed.AdmitsVectorDimensions(4))
 	require.ErrorIs(t, fixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
 	require.True(t, fixed.AdmitsVectorDimensions(0), "a write without vectors has nothing to reject")
 
-	unfixed := NewServiceWithDimensions(newTestMemoryEngine(t), 8)
+	unfixed := NewService(newTestMemoryEngine(t), 8, nil)
 	require.True(t, unfixed.AdmitsVectorDimensions(4), "the first vector sets an empty index's dimension")
 	require.NoError(t, unfixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}))
 	require.True(t, unfixed.AdmitsVectorDimensions(4))
@@ -150,7 +150,7 @@ func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
 
 	// A file-backed store holding vectors decides the dimension, as it does
 	// for IndexNode, even when the in-memory index is empty and unfixed.
-	stored := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	stored := NewService(newTestMemoryEngine(t), 4, nil)
 	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = vfs.Close() })
@@ -168,7 +168,7 @@ func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
 // unfixed service whose last vector was removed therefore neither adopts a
 // new dimension nor reports success for a vector it cannot store.
 func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 8)
+	svc := NewService(newTestMemoryEngine(t), 8, nil)
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -198,7 +198,7 @@ func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
 // Qdrant write of another dimension.
 func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
 	_ = t.TempDir()
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.vectorIndex.Add("live", []float32{1, 0}))
 	// Persistence enabled after live ingestion began: the next index
@@ -271,7 +271,7 @@ func TestRetiringFileStoreHoldsServiceLock(t *testing.T) {
 		{"Close", func(s *Service) { _ = s.Close() }},
 	} {
 		t.Run(retire.name, func(t *testing.T) {
-			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+			svc := NewService(newTestMemoryEngine(t), 2, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)

@@ -17,7 +17,7 @@ import (
 func TestVectorQueriesWhileNodesAreIndexed(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "n0", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 
 	var wg sync.WaitGroup

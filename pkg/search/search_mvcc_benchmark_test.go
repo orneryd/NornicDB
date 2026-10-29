@@ -90,7 +90,7 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 		}
 	}
 
-	svc := NewServiceWithDimensions(engine, dimensions)
+	svc := NewService(engine, dimensions, nil)
 	if err := svc.BuildIndexes(ctx); err != nil {
 		tb.Fatal(err)
 	}

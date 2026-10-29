@@ -154,32 +154,7 @@ func (db *DB) indexRelationshipFromEvent(edge *storage.Edge) {
 	if edge == nil {
 		return
 	}
-	db.queueRelationshipRefresh(edge.ID)
-}
-
-// removeRelationshipFromEvent queues a refresh of a deleted relationship in
-// its database's search service, which drops its relationship search entry
-// and any vectors indexed from its properties.
-func (db *DB) removeRelationshipFromEvent(edgeID storage.EdgeID) {
-	db.queueRelationshipRefresh(edgeID)
-}
-
-// queueRelationshipRefresh queues the refresh unless the database's service
-// indexes nothing for relationships (vector and relationship search both off).
-// Storage events don't create a service.
-func (db *DB) queueRelationshipRefresh(edgeID storage.EdgeID) {
-	dbName, local, ok := splitQualifiedID(string(edgeID))
-	if !ok {
-		return
-	}
-	db.searchServicesMu.RLock()
-	entry := db.searchServices[dbName]
-	db.searchServicesMu.RUnlock()
-	if entry == nil || entry.svc == nil || (!entry.svc.VectorEnabled() && !entry.svc.RelationshipSearchEnabled()) {
-		return
-	}
-	entry.queueEdgeRefresh(local)
-	db.scheduleQueuedRefreshes(entry)
+	db.queueSearchRefreshEvent(searchRelationshipChange, string(edge.ID))
 }
 
 // relationshipSearchService is dbName's search service if it exists and

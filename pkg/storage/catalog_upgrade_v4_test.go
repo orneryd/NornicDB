@@ -61,7 +61,7 @@ func catalogV4Run(b *BadgerEngine, ctx context.Context) error {
 		return err
 	}
 	defer lease.finish()
-	return b.migrateV3ToV4(ctx)
+	return b.migrateV3ToV4(ctx, false)
 }
 func catalogV4Node(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 	t.Helper()

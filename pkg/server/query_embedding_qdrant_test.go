@@ -6,6 +6,7 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -34,7 +35,7 @@ func TestQdrantRecommendKeepsProviderSnapshot(t *testing.T) {
 			// A new collection may still have an asynchronous index build running.
 			collectionStorage, _, err := server.qdrantCollectionStore.Open(ctx, collection)
 			require.NoError(t, err)
-			_, err = server.db.EnsureSearchIndexesBuilt(ctx, collection, collectionStorage)
+			_, err = server.db.EnsureSearchIndexes(ctx, collection, collectionStorage, nornicdb.SearchIndexBuildWait)
 			require.NoError(t, err)
 			old := &nativeRequestEmbedder{}
 			replacement := &nativeRequestEmbedder{axis: 1}

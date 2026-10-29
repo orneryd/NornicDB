@@ -18,7 +18,7 @@ import (
 func TestGRPCContinuationGeneratedExecutionMatrix(t *testing.T) {
 	contract.Run(t, func(t *testing.T, _ int, _ contract.Policy) contract.Fixture {
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "matrix")
-		service := search.NewServiceWithDimensions(engine, 2)
+		service := search.NewService(engine, 2, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		rpc, err := NewService(Config{DefaultDatabase: "matrix", OwnerFromContext: func(context.Context) string { return "matrix" }}, nil, nil, service)
 		require.NoError(t, err)

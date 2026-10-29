@@ -31,7 +31,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			vector[0] = 1
 			_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			requireIndexed(t, svc, 1, "seed")
 			backup := filepath.Join(t.TempDir(), "backup.bin")
@@ -55,7 +55,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 				_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
 				require.NoError(t, err)
 			}
-			fresh, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			if !restore {
 				settleQueuedRefreshes()

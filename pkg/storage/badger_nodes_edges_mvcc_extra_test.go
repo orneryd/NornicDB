@@ -517,11 +517,11 @@ func TestBadgerEngine_MVCCAdjacencyHelperBranches(t *testing.T) {
 	require.Nil(t, engine.mvccIncomingAdjacencyPrefixString("test:missing-node"))
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		outKey, err := engine.mvccOutgoingAdjacencyKeyString(txn, "test:n1", "test:e1", version)
+		outKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, "test:n1", "test:e1", version)
 		require.NoError(t, err)
 		require.Equal(t, byte(prefixMVCCOutgoingAdj), outKey[0])
 
-		inKey, err := engine.mvccIncomingAdjacencyKeyString(txn, "test:n1", "test:e1", version)
+		inKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, "test:n1", "test:e1", version)
 		require.NoError(t, err)
 		require.Equal(t, byte(prefixMVCCIncomingAdj), inKey[0])
 		return nil
@@ -539,14 +539,12 @@ func TestBadgerEngine_MVCCAdjacencyTxnErrorBranches(t *testing.T) {
 	txn := engine.db.testTxn(true)
 	txn.Discard()
 
-	_, err := engine.mvccOutgoingAdjacencyKeyString(txn, edge.StartNode, edge.ID, version)
+	_, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, edge.StartNode, edge.ID, version)
 	require.Error(t, err)
-	_, err = engine.mvccIncomingAdjacencyKeyString(txn, edge.EndNode, edge.ID, version)
+	_, err = engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, edge.EndNode, edge.ID, version)
 	require.Error(t, err)
-	require.Error(t, engine.writeOutgoingAdjacencyMVCCVersionInTxn(txn, edge.StartNode, edge.ID, version, false))
-	require.Error(t, engine.writeIncomingAdjacencyMVCCVersionInTxn(txn, edge.EndNode, edge.ID, version, false))
-	require.Error(t, engine.writeEdgeAdjacencyLiveInTxn(txn, edge, version))
-	require.Error(t, engine.writeEdgeAdjacencyTombstoneInTxn(txn, edge, version))
+	require.Error(t, engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyOutgoing, txn, edge.StartNode, edge.ID, version, false))
+	require.Error(t, engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, edge.EndNode, edge.ID, version, false))
 	require.Error(t, engine.writeEdgeAdjacencyDeltaInTxn(txn, edge, nil, version))
 	require.Error(t, engine.writeEdgeAdjacencyDeltaInTxn(txn, nil, edge, version))
 }
@@ -593,8 +591,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 	t.Run("invalid ids and nil adjacency writes", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			require.NoError(t, engine.writeEdgeAdjacencyLiveInTxn(txn, nil, MVCCVersion{}))
-			require.NoError(t, engine.writeEdgeAdjacencyTombstoneInTxn(txn, nil, MVCCVersion{}))
+			require.NoError(t, engine.writeEdgeAdjacencyDeltaInTxn(txn, nil, nil, MVCCVersion{}))
 			return nil
 		}))
 
@@ -659,10 +656,10 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 		head2, err := engine.GetEdgeCurrentHead("test:e2")
 		require.NoError(t, err)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			return engine.writeOutgoingAdjacencyMVCCVersionInTxn(txn, "test:ghost", "test:e2", head2.Version, false)
+			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyOutgoing, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			return engine.writeIncomingAdjacencyMVCCVersionInTxn(txn, "test:ghost", "test:e2", head2.Version, false)
+			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
 
 		outgoing, err := engine.GetOutgoingEdgesVisibleAt("test:ghost", maxMVCCVersion())
@@ -714,16 +711,16 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 
 		later := MVCCVersion{CommitTimestamp: head.Version.CommitTimestamp.Add(time.Millisecond), CommitSequence: head.Version.CommitSequence + 1}
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			if _, err := engine.mvccOutgoingAdjacencyKeyString(txn, current.StartNode, current.ID, head.Version); err != nil {
+			if _, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, current.StartNode, current.ID, head.Version); err != nil {
 				return err
 			}
-			if _, err := engine.mvccIncomingAdjacencyKeyString(txn, current.EndNode, current.ID, head.Version); err != nil {
+			if _, err := engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, current.EndNode, current.ID, head.Version); err != nil {
 				return err
 			}
-			if err := engine.writeEdgeAdjacencyLiveInTxn(txn, current, head.Version); err != nil {
+			if err := engine.writeEdgeAdjacencyDeltaInTxn(txn, nil, current, head.Version); err != nil {
 				return err
 			}
-			if err := engine.writeEdgeAdjacencyTombstoneInTxn(txn, current, later); err != nil {
+			if err := engine.writeEdgeAdjacencyDeltaInTxn(txn, current, nil, later); err != nil {
 				return err
 			}
 			loaded, err := engine.loadEdgeForAdjacencyTombstoneInTxn(txn, current.ID)

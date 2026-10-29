@@ -42,7 +42,7 @@ func populationBenchEngine(b *testing.B, nodes int) *storage.MemoryEngine {
 
 func populationBenchService(b *testing.B, engine storage.Engine, dir string) *Service {
 	b.Helper()
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, populationBenchDims, "v2", nil)
+	svc := NewService(engine, populationBenchDims, nil)
 	svc.FixVectorDimensions()
 	if dir != "" {
 		svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))

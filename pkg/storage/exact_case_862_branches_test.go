@@ -209,6 +209,31 @@ func TestRewriteIndexEntryCatalogsBranches(t *testing.T) {
 	require.True(t, sameIndexKeys([][]byte{{1}}, [][]byte{{1}}))
 }
 
+func TestLogicalCommitReceiptRecognition(t *testing.T) {
+	good := bufferedCommitMarkerKey("café", "", "logical")
+	for _, tc := range []struct {
+		name  string
+		key   []byte
+		value []byte
+		want  bool
+	}{
+		{"canonical byte length", good, []byte{1}, true},
+		{"wrong value", good, []byte{2}, false},
+		{"empty value", good, nil, false},
+		{"wrong key prefix", append([]byte{0x12}, good[1:]...), []byte{1}, false},
+		{"wrong namespace length", append([]byte{0x13}, []byte("replication/4:café/logical")...), []byte{1}, false},
+		{"leading zero length", append([]byte{0x13}, []byte("replication/05:café/logical")...), []byte{1}, false},
+		{"negative length", append([]byte{0x13}, []byte("replication/-1:café/logical")...), []byte{1}, false},
+		{"empty namespace", append([]byte{0x13}, []byte("replication/0:/logical")...), []byte{1}, false},
+		{"missing logical ID", append([]byte{0x13}, []byte("replication/5:café/")...), []byte{1}, false},
+		{"missing separator", append([]byte{0x13}, []byte("replication/5:café")...), []byte{1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isLogicalCommitReceipt(tc.key, tc.value))
+		})
+	}
+}
+
 func TestLegacyPolicyMetadataTransferBranches(t *testing.T) {
 	for _, prefix := range []byte{0x11, 0x12, 0x13} {
 		t.Run(fmt.Sprintf("malformed-%02x", prefix), func(t *testing.T) {
@@ -219,6 +244,56 @@ func TestLegacyPolicyMetadataTransferBranches(t *testing.T) {
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error { _, err := txn.Get(key); return err }))
 		})
 	}
+	t.Run("buffered receipts survive alongside legacy deindex work", func(t *testing.T) {
+		engine := createTestBadgerEngine(t)
+		marker := bufferedCommitMarkerKey("test", "tx-123", "")
+		writeRawValue(t, engine, marker, nil)
+		logicalMarker := bufferedCommitMarkerKey("test", "", "logical-123")
+		writeRawValue(t, engine, logicalMarker, []byte{1})
+		work := DeindexWorkItem{WorkItemID: "deindex:test:node", TargetID: "test:node", TargetScope: "NODE", Status: "pending"}
+		value, err := msgpack.Marshal(&work)
+		require.NoError(t, err)
+		legacyKey := append([]byte{0x13}, []byte(work.WorkItemID)...)
+		writeRawValue(t, engine, legacyKey, value)
+		require.NoError(t, engine.migrateLegacyPolicyMetadata(context.Background()))
+		got, err := engine.GetDeindexWorkItem(work.WorkItemID)
+		require.NoError(t, err)
+		require.Equal(t, &work, got)
+		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+			_, err := txn.Get(marker)
+			if err != nil {
+				return err
+			}
+			logical, err := txn.Get(logicalMarker)
+			if err != nil {
+				return err
+			}
+			if err := logical.Value(func(value []byte) error {
+				if !bytes.Equal(value, []byte{1}) {
+					return fmt.Errorf("logical receipt value changed: %v", value)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			_, err = txn.Get(legacyKey)
+			if err != badger.ErrKeyNotFound {
+				return fmt.Errorf("legacy queue key remains: %v", err)
+			}
+			return nil
+		}))
+	})
+	t.Run("malformed replication-shaped queue key remains an error", func(t *testing.T) {
+		for _, suffix := range []string{"replication/4:test", "replication/0:/logical"} {
+			t.Run(suffix, func(t *testing.T) {
+				engine := createTestBadgerEngine(t)
+				key := append([]byte{0x13}, []byte(suffix)...)
+				writeRawValue(t, engine, key, []byte{1})
+				require.ErrorContains(t, engine.migrateLegacyPolicyMetadata(context.Background()), "decode legacy")
+				require.NoError(t, engine.withView(func(txn *badger.Txn) error { _, err := txn.Get(key); return err }))
+			})
+		}
+	})
 	t.Run("serialized metadata with separator bytes is not a relationship head", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		entityID := "test:entity\x00suffix"

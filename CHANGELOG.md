@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go entity commits use typed preparation, publication and encoding requests.
+  Replication encodes accepted snapshots directly; public diagnostic operation
+  images are detached. See the [transaction migration guide](docs/development/replicated-entity-commits.md#typed-go-admission-and-publication).
+
+- Persisted relationship-search vectors use MessagePack with packed float32
+  values. Authorized upgrades convert the active historical snapshot without
+  rewriting Badger records; see the [recovery format guide](docs/operations/recovery-format-compatibility.md#persisted-relationship-search-vectors).
+
 - WAL snapshots transcode eligible stored relationship properties through the shared
   frame writer, reducing temporary allocations while retaining stored visibility,
   buffered writes and recovery types. Values that normalize use the strict reader.
@@ -74,6 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
+  administration and system history, matching Neo4j collection behavior.
+- Recheck transaction detachment under the publication lock and detach returned
+  before-images so client calls cannot mutate accepted commit ownership.
+
+- Align remote composite database administration across native and ANTLR parsers,
+  preserve quoted catalog names in SHOW/DROP commands, and reject trailing input
+  before an existing database or alias can be changed.
 
 - Preserve named single-node CREATE path bindings and their node labels, properties
   and publication atomicity.

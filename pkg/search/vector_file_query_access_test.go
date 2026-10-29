@@ -312,7 +312,7 @@ func TestVectorFileQueryReadsFallBackWhenMappingFails(t *testing.T) {
 func TestVectorSearchUsesCopiedReadsWhenMappingFails(t *testing.T) {
 	_ = t.TempDir()
 	newService := func(failMapping bool) (*Service, *atomic.Int32) {
-		svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
+		svc := NewService(newTestMemoryEngine(t), 3, nil)
 		t.Cleanup(func() { require.NoError(t, svc.Close()) })
 		svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 		svc.SetPersistenceEnabled(true)

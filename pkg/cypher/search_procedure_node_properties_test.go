@@ -41,7 +41,7 @@ func TestSearchProcedureNodeProperties(t *testing.T) {
 				_, err := exec.Execute(ctx, ddl, nil)
 				require.NoError(t, err)
 			}
-			service := search.NewServiceWithDimensions(store, 2048)
+			service := search.NewService(store, 2048, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			service.EnableRelationshipSearch(nil)
 			service.StartRelationshipIndex()

@@ -36,7 +36,7 @@ Already implemented:
 - `pkg/adminimport.ImportFull` already validates an empty target for CSV full import through the unexported `ensureEmpty`.
 - `pkg/adminimport.ImportFull` already writes chunks through `storage.Engine.BulkCreateNodes` and `storage.Engine.BulkCreateEdges`.
 - `pkg/adminimport.ImportFull` already applies schema files and builds search indexes once after the load.
-- The post-import search build currently uses `search.NewService(target)`, `SetPersistenceEnabled(true)`, `SetFulltextIndexPath`, `SetVectorIndexPath`, `SetHNSWIndexPath`, then `BuildIndexes(ctx)`.
+- The post-import search build currently uses `search.NewService(target, search.DefaultVectorDimensions, nil)`, `SetPersistenceEnabled(true)`, `SetFulltextIndexPath`, `SetVectorIndexPath`, `SetHNSWIndexPath`, then `BuildIndexes(ctx)`.
 - `pkg/adminimport.ExportNeo4jCSV` already exports a namespaced database through `storage.ExportableEngine` using `AllNodes`, `AllEdges`, and `GetSchema`.
 - `pkg/storage.Engine` already exposes `BulkDeleteNodes` and `BulkDeleteEdges`, which OKF `replace` mode can use.
 - Storage IDs are generated through the normal NornicDB/admin-import ID allocation path and then namespaced by `storage.NewNamespacedEngine`. OKF import must not synthesize semantic IDs such as `okf:<bundle>:concept:<hash>`.

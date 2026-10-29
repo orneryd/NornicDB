@@ -76,10 +76,14 @@ func TestReadWALEntriesForTruncation_WrapperBranches(t *testing.T) {
 		legacy := []WALEntry{{Sequence: 1, Timestamp: time.Now().UTC(), Operation: OpCreateNode}}
 		raw, err := json.Marshal(legacy[0])
 		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(legacyPath, append(raw, '\n'), 0644))
+		legacyBytes := append(raw, '\n')
+		require.NoError(t, os.WriteFile(legacyPath, legacyBytes, 0644))
 		entries, err := readWALEntriesForTruncation(legacyPath, 0)
+		require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+		require.Empty(t, entries)
+		after, err := os.ReadFile(legacyPath)
 		require.NoError(t, err)
-		require.Len(t, entries, 1)
+		require.Equal(t, legacyBytes, after)
 
 		atomicPath := filepath.Join(dir, "atomic.log")
 		rec := buildAtomicWALRecord(t, WALEntry{Sequence: 2, Timestamp: time.Now().UTC(), Operation: OpCreateNode, Data: []byte(`{"node":{"id":"n"}}`), Checksum: crc32Checksum([]byte(`{"node":{"id":"n"}}`))})

@@ -677,21 +677,16 @@ func (n *NamespacedEngine) BulkCreateNodes(nodes []*Node) error {
 }
 
 func (n *NamespacedEngine) BulkCreateEdges(edges []*Edge) error {
+	if err := n.GetSchema().RegisterEdgeTokens(edges); err != nil {
+		return err
+	}
 	namespacedEdges := make([]*Edge, len(edges))
-	var relationshipTypes []string
 	for i, edge := range edges {
-		if edge == nil {
-			return ErrInvalidData
-		}
 		namespacedEdge := *edge
 		namespacedEdge.ID = n.PrefixEdgeID(edge.ID)
 		namespacedEdge.StartNode = n.PrefixNodeID(edge.StartNode)
 		namespacedEdge.EndNode = n.PrefixNodeID(edge.EndNode)
 		namespacedEdges[i] = &namespacedEdge
-		relationshipTypes = append(relationshipTypes, edge.Type)
-	}
-	if err := n.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
-		return err
 	}
 	return n.inner.BulkCreateEdges(namespacedEdges)
 }

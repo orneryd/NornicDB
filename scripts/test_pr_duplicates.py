@@ -377,6 +377,52 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(self.evaluate(self.field(None, rest=(0.40,) * 5)), (None, False))
         self.assertEqual(self.evaluate(self.field(0.70), semantic=False), (None, False))
 
+    def test_go_forwarders_block_even_without_a_semantic_standout(self):
+        for body in (
+            "func NewName(x int) int { return Existing(x) }",
+            "func NewName(x int) int { // why\n return Existing(x) }",
+            "func NewName(x int) int { /* why */ return Existing(x) /* note */ }",
+        ):
+            with self.subTest(body=body):
+                self.cand = pd.Candidate("c1", "NewName()", "pkg/new.go", 1, body, "", 1, 1.0, False)
+                hits = self.field(0.48, runner_up=0.46, rest=(0.45, 0.44, 0.40, 0.38))
+                finding, _ = self.evaluate(hits, min_tokens=0, owner_calls={"top": "L2"})
+                self.assertEqual(finding.matches[0].basis, "forwarder")
+
+    def test_nonwrapper_go_owner_requires_parseable_evidence(self):
+        body = "func NewName(x int) int { if x < 0 { x = -x }; return Existing(x) }"
+        self.cand = pd.Candidate("c1", "NewName()", "pkg/new.go", 1, body, "", 3, 1.0, False)
+        hits = self.field(0.70)
+        finding, _ = self.evaluate(hits, min_tokens=0, owner_calls={"top": "L2"})
+        self.assertIsNone(finding)
+        pd.go_forwarding_wrapper.cache_clear()
+        try:
+            with mock.patch.dict(sys.modules, {"tree_sitter": None}):
+                finding, _ = self.evaluate(hits, min_tokens=0, owner_calls={"top": "L2"})
+            self.assertEqual(finding.matches[0].hit.id, "top")
+        finally:
+            pd.go_forwarding_wrapper.cache_clear()
+
+    def test_related_go_roles_do_not_hide_semantic_findings(self):
+        cases = (
+            ("func TestIndex(t *testing.T) { one(); two() }",
+             "func BenchmarkIndex(b *testing.B) { for i := 0; i < b.N; i++ { one() } }", True),
+            ("func encodeThing(x Thing) []byte { return write(x) }",
+             "func decodeThing(x []byte) Thing { return read(x) }", False),
+            ("func (x *V1) Run() { common(); first(); next() }",
+             "func (x *V2) Run() { common(); second(); end() }", False),
+        )
+        for left, right, is_test in cases:
+            with self.subTest(left=left):
+                path = "pkg/example_test.go" if is_test else "pkg/example.go"
+                self.cand = pd.Candidate("c1", "Candidate()", path, 1, left, "", 3, 1.0, is_test)
+                hits = self.field(0.70)
+                hits[0].source_file, hits[0].body = path, right
+                sim = {"score": 0.3, "lexical": 0.3, "structural": 0.3, "receiverless": 0.3}
+                with mock.patch.object(pd, "similarity", return_value=sim):
+                    finding, _ = self.evaluate(hits, min_tokens=0)
+                self.assertEqual(finding.matches[0].basis, "behavior")
+
     def test_code_and_behavior_matches_count_together(self):
         finding, _ = self.evaluate(self.field(0.70) + [self.hit("copy", path="lib/copy.py")])
         self.assertEqual(finding.kind, "refactor")

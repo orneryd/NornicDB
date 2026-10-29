@@ -18,6 +18,7 @@ type writeBehindTestOptions struct {
 	// Existing callers keep the background write-behind worker by default.
 	synchronous bool
 	manualDrain bool
+	lowMemory   bool
 }
 
 func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
@@ -34,6 +35,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             opts.dataDir,
+		LowMemory:           opts.lowMemory,
 		WriteBehind:         !opts.synchronous,
 		WriteBehindInterval: interval,
 	}))

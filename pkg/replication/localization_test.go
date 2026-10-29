@@ -1,9 +1,9 @@
 package replication
 
 import (
-	"encoding/json"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -80,9 +80,7 @@ func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
 		require.NoError(t, engine.Close())
 	})
 
-	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte("{"), Timestamp: time.Now()})
-	var syntaxErr *json.SyntaxError
-	require.ErrorAs(t, err, &syntaxErr)
-	require.ErrorIs(t, err, syntaxErr)
-	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: unexpected end of JSON input")
+	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: invalid replication payload: unexpected EOF")
 }

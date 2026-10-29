@@ -32,7 +32,7 @@ func BenchmarkSearchRefreshQdrantUpsert(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	svc := search.NewServiceWithDimensions(store, 4)
+	svc := search.NewService(store, 4, nil)
 	b.Cleanup(func() { _ = svc.Close() })
 	cfg := DefaultConfig()
 	cfg.AllowVectorMutations = true

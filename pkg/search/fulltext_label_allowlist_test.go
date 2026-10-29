@@ -13,7 +13,7 @@ import (
 func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
-	service := NewService(base)
+	service := NewService(base, DefaultVectorDimensions, nil)
 	service.SetFulltextLabels([]string{"Searchable", " ", "Source", "Searchable"})
 	require.Equal(t, []string{"Searchable", "Source"}, service.FulltextLabels())
 
@@ -38,7 +38,7 @@ func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	require.Empty(t, ids(), "a node that lost its listed label is no longer a keyword hit")
 
 	require.Contains(t, service.composeBM25BuildSettings(), ";labels=Searchable,Source")
-	unset := NewService(newTestMemoryEngine(t))
+	unset := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	require.NotContains(t, unset.composeBM25BuildSettings(), "labels=")
 	require.NotEqual(t, unset.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }

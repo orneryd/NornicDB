@@ -123,7 +123,7 @@ func TestRelationshipEmbedsStorageWhenTheCopyIsOlder(t *testing.T) {
 		embedded = append(embedded, edge.Properties["reason"].(string))
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.EnableRelationshipSearch(embed)
 	rs := svc.relationshipSearch()

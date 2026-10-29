@@ -288,7 +288,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		txID:   tx.ID,
 	}
 	if wal, dbName := e.resolveWALAndDatabase(); wal != nil {
-		walSeq, walErr := wal.AppendTxBegin(dbName, tx.ID, nil)
+		walSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: tx.ID, Metadata: nil}, dbName)
 		if walErr != nil {
 			_ = tx.Rollback()
 			return nil, localizedError(localization.CypherTransactionsWALBeginFailed(walErr), walErr)
@@ -349,7 +349,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 	dbName := e.txContext.database
 
 	if err == nil && wal != nil && walSeqStart > 0 {
-		commitSeq, walErr := wal.AppendTxCommit(dbName, txID, opCount)
+		commitSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: txID, OpCount: opCount}, dbName)
 		if walErr == nil {
 			receipt, _ = storage.NewReceipt(
 				txID,
@@ -363,7 +363,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 
 	if err != nil {
 		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
+			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 		}
 		if e.txContext.fabricRemoteExe != nil {
 			_ = e.txContext.fabricRemoteExe.Close()
@@ -454,7 +454,7 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	}
 
 	if e.txContext.wal != nil && e.txContext.walSeqStart > 0 {
-		_, _ = e.txContext.wal.AppendTxAbort(e.txContext.database, e.txContext.txID, "rollback")
+		_, _ = e.txContext.wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: e.txContext.txID, Reason: "rollback"}, e.txContext.database)
 	}
 	if e.txContext.fabricRemoteExe != nil {
 		_ = e.txContext.fabricRemoteExe.Close()

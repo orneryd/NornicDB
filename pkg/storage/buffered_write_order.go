@@ -688,7 +688,7 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 				checked = make(map[NodeID]struct{})
 			}
 			checked[id] = struct{}{}
-			if _, err := tx.engine.GetStoredNode(id); errors.Is(err, ErrNotFound) {
+			if _, err := tx.engine.getNodeSnapshotForRead(id, false, storedRead, true); errors.Is(err, ErrNotFound) {
 				return errEndpointChanged
 			} else if err != nil {
 				return err

@@ -30,8 +30,8 @@ type consumerObservationBarrier struct {
 func (b *consumerObservationBarrier) open() { b.opened.Do(func() { close(b.release) }) }
 
 // newerWrite runs the newer statement while the older observation is paused.
-// If it cannot finish, the path serializes the two and cannot reorder them:
-// the probe is skipped with that finding rather than reported as a failure.
+// If it is still waiting, release the observation so the caller can verify
+// the final storage and search state after both statements complete.
 func (b *consumerObservationBarrier) newerWrite(t *testing.T, exec *StorageExecutor, query string) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -44,9 +44,8 @@ func (b *consumerObservationBarrier) newerWrite(t *testing.T, exec *StorageExecu
 		return err
 	case <-time.After(5 * time.Second):
 		b.open()
-		<-done
-		t.Skip("SERIALIZED: the newer write waits for the paused older observation")
-		return nil
+		t.Log("newer write was still waiting when the older observation was released")
+		return <-done
 	}
 }
 
@@ -79,16 +78,6 @@ func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEnti
 
 func (b consumerSuppressionBarrier) GetInnerEngine() storage.Engine { return b.Engine }
 
-func (b *consumerObservationBarrier) wait(t *testing.T, what string) {
-	t.Helper()
-	select {
-	case <-b.entered:
-	case <-time.After(5 * time.Second):
-		b.open()
-		t.Fatal(what + " did not reach its observation")
-	}
-}
-
 func consumerContent(word string) func(*storage.Node, error) bool {
 	return func(node *storage.Node, err error) bool {
 		return err == nil && node != nil && node.Properties["content"] == word
@@ -117,60 +106,69 @@ func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bo
 	require.NoError(t, err)
 	barrier := newConsumerObservationBarrier(store, observed)
 	t.Cleanup(barrier.open)
-	svc := search.NewServiceWithDimensions(barrier, 2)
+	svc := search.NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	return store, barrier, svc
 }
 
-// An older SET's committed read must not resurrect a newer DETACH DELETE.
-func TestCypherDelayedSetCannotResurrectDelete(t *testing.T) {
+// An older SET's committed read must not resurrect a newer DETACH DELETE, and
+// must not replace a newer SET's index entry.
+func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 	ctx := context.Background()
-	store, barrier, svc := newConsumerVectorStore(t, consumerContent("currentword"))
-	older := NewStorageExecutor(barrier)
-	older.SetSearchService(svc)
-	newer := NewStorageExecutor(store)
-	newer.SetSearchService(svc)
-	barrier.armed.Store(true)
-	done := make(chan error, 1)
-	go func() {
-		_, err := older.Execute(ctx, "MATCH (n:Doc) SET n.content = 'currentword'", nil)
-		done <- err
-	}()
-	barrier.wait(t, "older SET")
-	err := barrier.newerWrite(t, newer, "MATCH (n:Doc) DETACH DELETE n")
-	require.NoError(t, err)
-	barrier.open()
-	require.NoError(t, <-done)
-	_, err = store.GetNode("source")
-	require.ErrorIs(t, err, storage.ErrNotFound)
-	require.Zero(t, svc.EmbeddingCount(), "an older committed read resurrected a deleted vector")
-}
-
-// An older SET's committed read must not replace a newer SET's index entry.
-func TestCypherDelayedSetCannotOverwriteNewerSet(t *testing.T) {
-	ctx := context.Background()
-	store, barrier, svc := newConsumerVectorStore(t, consumerContent("olderword"))
-	older := NewStorageExecutor(barrier)
-	older.SetSearchService(svc)
-	newer := NewStorageExecutor(store)
-	newer.SetSearchService(svc)
-	barrier.armed.Store(true)
-	done := make(chan error, 1)
-	go func() {
-		_, err := older.Execute(ctx, "MATCH (n:Doc) SET n.content = 'olderword'", nil)
-		done <- err
-	}()
-	barrier.wait(t, "older SET")
-	err := barrier.newerWrite(t, newer, "MATCH (n:Doc) SET n.content = 'newerword'")
-	require.NoError(t, err)
-	barrier.open()
-	require.NoError(t, <-done)
-	stored, err := store.GetNode("source")
-	require.NoError(t, err)
-	require.Equal(t, "newerword", stored.Properties["content"])
-	require.Equal(t, 1, consumerHits(t, svc, "newerword"), "the stored content is not searchable")
-	require.Zero(t, consumerHits(t, svc, "olderword"), "an older committed read replaced the newer index entry")
+	cases := []struct {
+		name     string
+		observed string
+		olderSet string
+		newer    string
+		verify   func(t *testing.T, store storage.Engine, svc *search.Service)
+	}{
+		{
+			name:     "resurrect_delete",
+			observed: "currentword",
+			olderSet: "MATCH (n:Doc) SET n.content = 'currentword'",
+			newer:    "MATCH (n:Doc) DETACH DELETE n",
+			verify: func(t *testing.T, store storage.Engine, svc *search.Service) {
+				_, err := store.GetNode("source")
+				require.ErrorIs(t, err, storage.ErrNotFound)
+				require.Zero(t, svc.EmbeddingCount(), "an older committed read resurrected a deleted vector")
+			},
+		},
+		{
+			name:     "overwrite_newer_set",
+			observed: "olderword",
+			olderSet: "MATCH (n:Doc) SET n.content = 'olderword'",
+			newer:    "MATCH (n:Doc) SET n.content = 'newerword'",
+			verify: func(t *testing.T, store storage.Engine, svc *search.Service) {
+				stored, err := store.GetNode("source")
+				require.NoError(t, err)
+				require.Equal(t, "newerword", stored.Properties["content"])
+				require.Equal(t, 1, consumerHits(t, svc, "newerword"), "the stored content is not searchable")
+				require.Zero(t, consumerHits(t, svc, "olderword"), "an older committed read replaced the newer index entry")
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, barrier, svc := newConsumerVectorStore(t, consumerContent(tc.observed))
+			older := NewStorageExecutor(barrier)
+			older.SetSearchService(svc)
+			newer := NewStorageExecutor(store)
+			newer.SetSearchService(svc)
+			barrier.armed.Store(true)
+			done := make(chan error, 1)
+			go func() {
+				_, err := older.Execute(ctx, tc.olderSet, nil)
+				done <- err
+			}()
+			runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "older SET did not reach its observation")
+			err := barrier.newerWrite(t, newer, tc.newer)
+			require.NoError(t, err)
+			barrier.open()
+			require.NoError(t, <-done)
+			tc.verify(t, store, svc)
+		})
+	}
 }
 
 // Cypher vector orphan cleanup must not remove a vector indexed for a
@@ -187,7 +185,7 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('managed', 5, [1.0, 0.0]) YIELD node, score RETURN node, score", nil)
 		done <- err
 	}()
-	barrier.wait(t, "vector query")
+	runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "vector query did not reach its observation")
 	newer := &storage.Node{ID: "source", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(newer)
 	require.NoError(t, err)
@@ -210,7 +208,7 @@ func TestCypherDelayedUnsuppressCannotResurrectDelete(t *testing.T) {
 	// Search reads through the barrier too, which only unsuppress arms.
 	barrier := newConsumerObservationBarrier(store, func(node *storage.Node, err error) bool { return err == nil && node != nil })
 	t.Cleanup(barrier.open)
-	svc := search.NewService(barrier)
+	svc := search.NewService(barrier, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.BuildIndexes(ctx))
 	plain.SetSearchService(svc)
@@ -224,7 +222,7 @@ func TestCypherDelayedUnsuppressCannotResurrectDelete(t *testing.T) {
 		_, err := older.Execute(ctx, "MATCH (n:Doc) WHERE reveal(n) IS NOT NULL CALL kp.unsuppress(n)", nil)
 		done <- err
 	}()
-	barrier.wait(t, "unsuppress")
+	runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "unsuppress did not reach its observation")
 	err = barrier.newerWrite(t, plain, "MATCH (n:Doc) DETACH DELETE n")
 	require.NoError(t, err)
 	barrier.open()
@@ -258,7 +256,7 @@ func TestCypherRelationshipVisibilityRefreshesSearch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	exec := NewStorageExecutor(store)
 	exec.SetSearchService(svc)

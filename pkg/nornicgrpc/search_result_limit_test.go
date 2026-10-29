@@ -14,7 +14,7 @@ import (
 func TestGRPCContinuationResultLimitPublic(t *testing.T) {
 	contract.RunResultLimit(t, func(t *testing.T, vector bool) contract.LimitFixture {
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ceiling")
-		service := search.NewServiceWithDimensions(engine, 2)
+		service := search.NewService(engine, 2, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		var embed EmbedQueryFunc
 		if vector {

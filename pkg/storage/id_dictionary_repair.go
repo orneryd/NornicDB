@@ -318,11 +318,11 @@ func (b *BadgerEngine) restoreIDEntry(node NodeID, edge EdgeID, num uint64) erro
 	// The entry's previous pair (its reverse only when it still names this
 	// ID) goes, and the repaired pair takes its place.
 	if edge != "" {
-		d.edgePairRemoveByID(edge)
-		d.edgePairStore(edge, num, nil)
+		removeIDPair(&d.edges, edgeForwardShard, edgeReverseShard, edge, 0, idPairByString)
+		storeIDPair(&d.edges, edgeForwardShard, edgeReverseShard, edge, num, nil)
 	} else {
-		d.nodePairRemoveByID(node)
-		d.nodePairStore(node, num, nil)
+		removeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, node, 0, idPairByString)
+		storeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, node, num, nil)
 	}
 	return nil
 }

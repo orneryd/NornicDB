@@ -44,7 +44,7 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 		}
 		require.NoError(t, err)
 		engine := storage.NewNamespacedEngine(base, "nornic")
-		svc := NewServiceWithDimensions(engine, vectorOwnerDims)
+		svc := NewService(engine, vectorOwnerDims, nil)
 		svc.SetFulltextIndexPath(filepath.Join(dir, "search", "bm25"))
 		svc.SetVectorIndexPath(filepath.Join(dir, "search", "vectors"))
 		svc.SetHNSWIndexPath(filepath.Join(dir, "search", "hnsw"))

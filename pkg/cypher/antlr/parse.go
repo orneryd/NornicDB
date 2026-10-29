@@ -19,6 +19,13 @@ type ParseResult struct {
 	Errors []string
 }
 
+// compositeKeyword adapts a contextual grammar token to the shared ASCII
+// keyword owner without reserving administration words in graph expressions.
+func (p *CypherParser) compositeKeyword(word string) bool {
+	text := p.GetCurrentToken().GetText()
+	return cyphertext.KeywordEnd(text, 0, word, cyphertext.CypherWord) == len(text)
+}
+
 // Parse parses a Cypher query string using ANTLR and returns the parse tree
 func Parse(query string) (*ParseResult, error) {
 	if strings.TrimSpace(query) == "" {
@@ -135,4 +142,12 @@ func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingS
 	// the offending token, including in lexer errors before a token exists.
 	// Parse, Validate, and ParseResult share this structural diagnostic owner.
 	e.errors = append(e.errors, localization.CypherANTLRUnexpectedInput(line, column))
+}
+
+// compositeNumericNameSuffix admits a dotted numeric catalog-name component
+// that the shared lexer retains as one FLOAT token (for example tenant.1).
+// Exponent signs remain invalid name characters; execution owns catalog policy.
+func (p *CypherParser) compositeNumericNameSuffix() bool {
+	text := p.GetCurrentToken().GetText()
+	return len(text) > 1 && text[0] == '.' && cyphertext.IsDigit(text[1]) && cyphertext.NamePartEnd(text, 1) == len(text)
 }

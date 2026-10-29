@@ -219,7 +219,6 @@ index path, while `auto` preserves the existing file-backed build behavior.
 | `db.nornic.embedding.gpu.layers`             | `NORNICDB_EMBEDDING_GPU_LAYERS`             |
 | `db.nornic.embedding.warmup.interval`        | `NORNICDB_EMBEDDING_WARMUP_INTERVAL`        |
 | `db.nornic.search.min.similarity`            | `NORNICDB_SEARCH_MIN_SIMILARITY`            |
-| `db.nornic.search.bm25.engine`               | `NORNICDB_SEARCH_BM25_ENGINE`               |
 | `db.nornic.search.bm25.enabled`              | `NORNICDB_SEARCH_BM25_ENABLED`              |
 | `db.nornic.search.bm25.warming`              | `NORNICDB_SEARCH_BM25_WARMING`              |
 | `db.nornic.search.bm25.stemmer`              | `NORNICDB_SEARCH_BM25_STEMMER`              |
@@ -288,7 +287,7 @@ for equivalent gRPC and Bolt errors.
 The key metadata endpoint reports the activation contract for every setting:
 
 - **Search rebuild:** embedding provider/model/API URL/API key/dimensions/GPU
-  layers; search minimum similarity, BM25 engine/enabled/warming, vector
+  layers; search minimum similarity, BM25 enabled/warming, vector
   enabled/warming, and reranker settings. These persist and immediately rebuild
   only the affected database's search service.
 - **In-place cache update:** `db.nornic.search_result_cache.max_entries` and
@@ -767,11 +766,11 @@ database:
 
 | Variable                          | Default | Description                                                                                                                                                                                                                |
 | --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORNICDB_PERSIST_SEARCH_INDEXES` | `false` | **EXPERIMENTAL.** When `true`, save and load BM25, vector, and HNSW indexes under `DataDir/search/<dbname>/` (e.g. `bm25.gob`, `vectors`, `hnsw`). Has no effect if `NORNICDB_DATA_DIR` (or config `data_dir`) is not set. |
+| `NORNICDB_PERSIST_SEARCH_INDEXES` | `false` | **EXPERIMENTAL.** When `true`, save and load BM25, vector, and HNSW indexes under `DataDir/search/<dbname>/` (e.g. `bm25.v2`, `vectors`, `hnsw`). Has no effect if `NORNICDB_DATA_DIR` (or config `data_dir`) is not set. |
 
 **Behavior:**
 
-- Indexes are written under `data_dir/search/<database_name>/` (e.g. `bm25.gob`, `vectors`, `hnsw`).
+- Indexes are written under `data_dir/search/<database_name>/` (e.g. `bm25.v2`, `vectors`, `hnsw`).
 - After node index/remove operations, changes are persisted after a short debounce delay (configurable via `NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC`); on graceful shutdown, indexes are flushed to disk. Snapshot files are buffered and atomically replaced, so interruption leaves the previous valid snapshot available.
 - The durable storage clean-shutdown marker is written after graph writers stop and storage flushes, before search-index persistence begins. If a platform terminates the remaining search save, the next startup validates or rebuilds search snapshots without unnecessarily rebuilding storage's temporal and MVCC indexes.
 - On startup, if both index files exist and are compatible with the current format version, they are loaded and the full storage iteration is skipped; otherwise indexes are rebuilt as usual.

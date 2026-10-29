@@ -27,20 +27,43 @@ wal.DisableAutoCompaction()
 
 ### Manual Compaction
 
+Every snapshot-driven WAL operation goes through `ManageSnapshot`. The mode
+selects what happens; both modes are crash-safe and return the same errors the
+underlying file operations report.
+
 ```go
 // Create snapshot first
-snapshotSeq, err := wal.CreateSnapshot("/data/snapshots")
+snapshot, err := wal.CreateSnapshot(engine)
 if err != nil {
     log.Fatal(err)
 }
 
 // Truncate WAL entries before the snapshot
-removed, err := wal.TruncateAfterSnapshot(snapshotSeq)
+err = wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)
 if err != nil {
     log.Fatal(err)
 }
-log.Printf("Removed %d WAL entries", removed)
 ```
+
+`WALSnapshotTruncate` validates the WAL, rotates the active segment and applies
+the configured segment retention when retention is enabled
+(`RetentionMaxAge` / `RetentionMaxSegments`), and otherwise runs the plain
+truncation body that drops entries the snapshot covers.
+
+### Standalone Segment Retention
+
+`WALSnapshotRetention` applies the retention algorithm to already sealed
+segments only. It never flushes, rotates the active WAL, validates the whole
+WAL, or seals property epochs, so it is safe to call between compactions:
+
+```go
+// Drop sealed segments the snapshot covers and retention no longer keeps
+if err := wal.ManageSnapshot(snapshot.Sequence, WALSnapshotRetention); err != nil {
+    log.Fatal(err)
+}
+```
+
+A zero snapshot sequence is a no-op in this mode.
 
 ### Benefits
 
@@ -85,6 +108,13 @@ if err != nil {
 ## Restore
 
 Restore is available through the admin HTTP API or the embedded Go API. The request uses the same `path` field as backup and requires `admin` permission.
+
+For v1.4.4, make and verify a backup of the database and its matching WAL before
+starting with `--upgrade-storage`. The V4 migration converts supported old WAL
+frames and recovers acknowledged writes, retaining a protected copy of the old
+WAL. Older binaries cannot read the new frames: keep the original database
+backup and its matching WAL together for rollback until the upgrade is verified. See
+[recovery format compatibility](recovery-format-compatibility.md#v144-backup-and-restore-boundary).
 
 ### API Restore
 
@@ -241,7 +271,7 @@ spec:
 find /backups -name "nornicdb-*.backup" -mtime +7 -delete
 
 # Keep last 4 weekly backups
-find /backups/weekly -name "*.backup" -mtime +28 -delete
+find /backups/weekly -name "*.backup" -mtime -28 -delete
 ```
 
 ## Cloud Backup

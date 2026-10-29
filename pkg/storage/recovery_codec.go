@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/jsontext"
 )
@@ -52,6 +51,14 @@ func prepareRecoveryPayload(value any) (any, bool) {
 		return prepareRecoveryPayload(&payload)
 
 	case WALBulkDeleteEdgesData:
+		return prepareRecoveryPayload(&payload)
+	case walEntityCommitData:
+		return prepareRecoveryPayload(&payload)
+	case *walEntityCommitData:
+		return value, payload != nil
+	case walBufferedCommitPayload:
+		return prepareRecoveryPayload(&payload)
+	case WALBufferedCommitData:
 		return prepareRecoveryPayload(&payload)
 	case *Node:
 		if payload == nil {
@@ -146,9 +153,51 @@ func prepareRecoveryPayload(value any) (any, bool) {
 		result := *payload
 		result.OldEdges = converted
 		return &result, true
+	case *walBufferedCommitPayload:
+		if payload == nil {
+			return value, false
+		}
+		operations, changed := prepareRecoveryOperations(payload.Ops)
+		if !changed {
+			return value, true
+		}
+		result := *payload
+		result.Ops = operations
+		return &result, true
+	case *WALBufferedCommitData:
+		if payload == nil {
+			return value, false
+		}
+		operations, changed := prepareRecoveryOperations(payload.Ops)
+		if !changed {
+			return value, true
+		}
+		result := *payload
+		result.Ops = operations
+		return &result, true
 	default:
 		return value, false
 	}
+}
+
+// prepareRecoveryOperations copies only when a temporal value needs the
+// stored representation. Encoding never mutates a transaction's images.
+func prepareRecoveryOperations(ops []Operation) ([]Operation, bool) {
+	var result []Operation
+	for i, op := range ops {
+		node, oldNode := prepareRecoveryNode(op.Node), prepareRecoveryNode(op.OldNode)
+		edge, oldEdge := prepareRecoveryEdge(op.Edge), prepareRecoveryEdge(op.OldEdge)
+		if result == nil {
+			if node == op.Node && oldNode == op.OldNode && edge == op.Edge && oldEdge == op.OldEdge {
+				continue
+			}
+			result = make([]Operation, len(ops))
+			copy(result, ops[:i])
+		}
+		op.Node, op.OldNode, op.Edge, op.OldEdge = node, oldNode, edge, oldEdge
+		result[i] = op
+	}
+	return result, result != nil
 }
 
 type walRecoverySidecar struct {
@@ -158,30 +207,17 @@ type walRecoverySidecar struct {
 
 const walRecoveryEncoding = "storage-msgpack-v1"
 
-// walRecoverySidecarPrefix is json.Marshal of walRecoverySidecar up to the
-// opening quote of the base64 data, without the leading brace;
-// marshalWALRecoveryPayload writes the same bytes without the marshal.
-const walRecoverySidecarPrefix = `"_nornicdb_encoding":"` + walRecoveryEncoding + `","_nornicdb_data":"`
-
-// marshalWALRecoveryPayload retains the original JSON projection so older
-// readers still recover the same baseline data. The sidecar owns full fidelity
-// for current readers, without exposing storage extensions in client JSON.
-// With a buffer the result is the buffer's bytes, valid until it is reused;
-// without one the result is owned by the caller.
+// marshalWALRecoveryPayload uses one lossless typed representation for
+// entity-bearing records. Control records retain their compact JSON encoding.
+// With a buffer the result is valid until it is reused; without one it is
+// owned by the caller, including when the encoder is returned to its pool.
 func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) {
-	var legacy []byte
-	var err error
-	if buffer == nil {
-		legacy, err = jsontext.Marshal(value)
-	} else {
-		legacy, err = marshalJSONCompact(buffer, value)
-	}
-	if err != nil {
-		return nil, err
-	}
 	payload, typed := prepareRecoveryPayload(value)
-	if !typed || bytes.Equal(legacy, []byte("null")) {
-		return legacy, nil
+	if !typed {
+		if buffer == nil {
+			return jsontext.Marshal(value)
+		}
+		return marshalJSONCompact(buffer, value)
 	}
 	encoder := getValueEncoder()
 	defer putValueEncoder(encoder)
@@ -189,28 +225,11 @@ func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	// legacy is a JSON object: replace its closing brace with the sidecar
-	// fields, as json.Marshal(walRecoverySidecar) would spell them.
-	size := len(legacy) + len(walRecoverySidecarPrefix) + base64.StdEncoding.EncodedLen(len(encoded)) + 2
-	var result []byte
 	if buffer == nil {
-		result = make([]byte, 0, size)
-		result = append(result, legacy[:len(legacy)-1]...)
-	} else {
-		buffer.Truncate(len(legacy) - 1)
-		buffer.Grow(size - len(legacy) + 1)
-		result = buffer.AvailableBuffer()
+		return bytes.Clone(encoded), nil
 	}
-	if len(legacy) > 2 {
-		result = append(result, ',')
-	}
-	result = append(result, walRecoverySidecarPrefix...)
-	result = base64.StdEncoding.AppendEncode(result, encoded)
-	result = append(result, '"', '}')
-	if buffer == nil {
-		return result, nil
-	}
-	buffer.Write(result)
+	buffer.Reset()
+	_, _ = buffer.Write(encoded)
 	return buffer.Bytes(), nil
 }
 

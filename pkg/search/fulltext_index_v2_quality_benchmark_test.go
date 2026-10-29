@@ -42,7 +42,7 @@ func BenchmarkBM25V2QualityPaths(b *testing.B) {
 }
 
 func newBM25QualityBenchmarkIndex(documentCount int) *FulltextIndexV2 {
-	index := NewFulltextIndexV2()
+	index := NewFulltextIndexV2WithAnalyzer(nil)
 	entries := make([]FulltextBatchEntry, documentCount)
 	for document := 0; document < documentCount; document++ {
 		terms := []string{

@@ -4,12 +4,15 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -22,11 +25,80 @@ func newTxlogExecutor(t *testing.T) (*StorageExecutor, *storage.WAL) {
 	dir := t.TempDir()
 	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
+	// The store is still reachable through the executor's engine chain, so its
+	// lifetime stays owned by this test rather than the wrapper below.
 	t.Cleanup(func() { badger.Close() })
 	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { wal.Close() })
 	return NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test")), wal
+}
+
+func TestTxlogProceduresRenderTypedWALAsJSON(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	exec, wal := newTxlogExecutor(t)
+	_, err := wal.AppendWithDatabaseReturningSeq(storage.OpCreateNode, storage.WALNodeData{
+		TxID: "typed-tx", Node: &storage.Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}},
+	}, "test")
+	require.NoError(t, err)
+	require.NoError(t, wal.Sync())
+	for _, query := range []string{
+		"CALL db.txlog.entries() YIELD txId, payload RETURN txId, payload",
+		"CALL db.txlog.byTxId('typed-tx') YIELD txId, payload RETURN txId, payload",
+	} {
+		result, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		require.Equal(t, "typed-tx", result.Rows[0][0])
+		payload, ok := result.Rows[0][1].(string)
+		require.True(t, ok)
+		var decoded storage.WALNodeData
+		require.NoError(t, json.Unmarshal([]byte(payload), &decoded))
+		require.Equal(t, storage.NodeID("test:alice"), decoded.Node.ID)
+		require.Equal(t, "Alice", decoded.Node.Properties["name"])
+	}
+}
+
+func TestTxlogProceduresReadCompressedBufferedCommitByID(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour,
+	}))
+	require.NoError(t, err)
+	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = wal.Close() })
+	t.Cleanup(func() { _ = engine.Close() })
+	engine.SetBufferedCommitWAL(wal)
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.SetImplicit(true))
+	for i := 0; i < 40; i++ {
+		_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"name": "Alice"}})
+		require.NoError(t, err)
+	}
+	transactionID := tx.ID
+	require.NoError(t, tx.Commit())
+	require.True(t, tx.AcknowledgedBuffered())
+	entries, err := storage.ReadWALEntriesFromDir(wal.Config().Dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, []byte{0x28, 0xb5, 0x2f, 0xfd}, entries[0].Data[:4], "the real buffered payload is compressed")
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(engine, wal), "test"))
+	result, err := exec.Execute(context.Background(), "CALL db.txlog.byTxId($tx) YIELD txId, payload RETURN txId, payload", map[string]any{"tx": transactionID})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Equal(t, transactionID, result.Rows[0][0])
+	var payload struct {
+		TxID string              `json:"tx_id"`
+		Ops  []storage.Operation `json:"ops"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(result.Rows[0][1].(string)), &payload))
+	require.Equal(t, transactionID, payload.TxID)
+	require.Len(t, payload.Ops, 40)
 }
 
 // TestTxlogProceduresMatchTheirSignature pins db.txlog.entries and
@@ -36,13 +108,13 @@ func newTxlogExecutor(t *testing.T) (*StorageExecutor, *storage.WAL) {
 func TestTxlogProceduresMatchTheirSignature(t *testing.T) {
 	exec, wal := newTxlogExecutor(t)
 	ctx := context.Background()
-	_, err := wal.AppendTxBegin("test", "tx-1", nil)
+	_, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx-1", Metadata: nil}, "test")
 	require.NoError(t, err)
-	_, err = wal.AppendTxBegin("other", "tx-other", nil)
+	_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx-other", Metadata: nil}, "other")
 	require.NoError(t, err)
-	_, err = wal.AppendTxCommit("test", "tx-1", 0)
+	_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: "tx-1", OpCount: 0}, "test")
 	require.NoError(t, err)
-	_, err = wal.AppendTxCommit("other", "tx-other", 0)
+	_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: "tx-other", OpCount: 0}, "other")
 	require.NoError(t, err)
 	require.NoError(t, wal.Sync())
 
@@ -85,10 +157,10 @@ func TestTxlogEntriesWithoutRangeReturnsTheMostRecent(t *testing.T) {
 	exec, wal := newTxlogExecutor(t)
 	var last uint64
 	for i := 0; i < 2*txlogRecentEntries+100; i++ {
-		seq, err := wal.AppendTxBegin("test", "tx", nil)
+		seq, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx", Metadata: nil}, "test")
 		require.NoError(t, err)
 		last = seq
-		_, err = wal.AppendTxBegin("other", "tx", nil)
+		_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx", Metadata: nil}, "other")
 		require.NoError(t, err)
 	}
 	require.NoError(t, wal.Sync())
@@ -143,14 +215,14 @@ func TestTxlogProcedureErrors(t *testing.T) {
 
 	t.Run("a cancelled query stops", func(t *testing.T) {
 		exec, wal := newTxlogExecutor(t)
-		_, err := wal.AppendTxBegin("test", "tx", nil)
+		_, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx", Metadata: nil}, "test")
 		require.NoError(t, err)
 		require.NoError(t, wal.Sync())
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = exec.callDbTxlogEntries(cancelled, nil)
+		_, err = exec.callDBTxlog(cancelled, nil, txlogBySequence)
 		require.ErrorIs(t, err, context.Canceled)
-		_, err = exec.callDbTxlogByTxID(cancelled, []interface{}{"tx"})
+		_, err = exec.callDBTxlog(cancelled, []interface{}{"tx"}, txlogByID)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 

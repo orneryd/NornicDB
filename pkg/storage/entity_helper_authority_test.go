@@ -66,7 +66,7 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 				node.Properties["prepared"] = true
 				require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 			}
-			prepared, err := tx.PrepareEntityCommit(context.Background(), "helper-guard")
+			prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "helper-guard"})
 			require.NoError(t, err)
 			var abortOnce sync.Once
 			abort := func() { abortOnce.Do(prepared.Abort) }
@@ -137,7 +137,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 	require.NoError(t, err)
 	node.Properties["value"] = "prepared"
 	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
-	prepared, err := tx.PrepareEntityCommit(context.Background(), "accepted-repair")
+	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "accepted-repair"})
 	require.NoError(t, err)
 	releaseAccepted, err := prepared.RetainAcceptedAuthority()
 	require.NoError(t, err)

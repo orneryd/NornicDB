@@ -98,7 +98,7 @@ func (s *Service) composeBM25BuildSettings() string {
 	analyzer := analyzerFingerprint(s.bm25Analyzer).BuildSettings()
 	settings := fmt.Sprintf("schema=%s;format=%s;%s;props=%s",
 		bm25SettingsSchemaVersion,
-		s.currentBM25FormatVersion(),
+		bm25V2FormatVersion,
 		analyzer,
 		properties)
 	// The label allowlist joins the fingerprint only when set, so existing
@@ -181,13 +181,6 @@ func (s *Service) composeStrategyBuildSettings() string {
 		profile.SeedMaxTerms,
 		profile.SeedDocsPerTerm,
 		profile.RoutingMode)
-}
-
-func (s *Service) currentBM25FormatVersion() string {
-	if normalizeBM25Engine(s.bm25Engine) == BM25EngineV2 {
-		return bm25V2FormatVersion
-	}
-	return fulltextIndexFormatVersion
 }
 
 func (s *Service) persistSearchBuildSettings(fulltextPath, vectorPath, hnswPath string) {

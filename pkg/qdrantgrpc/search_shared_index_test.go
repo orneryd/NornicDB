@@ -33,7 +33,7 @@ func sharedSearchProvider() SearchServiceProvider {
 		defer mu.Unlock()
 		svc, ok := services[database]
 		if !ok {
-			svc = search.NewService(store)
+			svc = search.NewService(store, search.DefaultVectorDimensions, nil)
 			if err := svc.BuildIndexes(context.Background()); err != nil {
 				return nil, err
 			}
@@ -294,7 +294,7 @@ func TestSharedIndexFixedProviderDoesNotAcknowledgeLostVectors(t *testing.T) {
 	var svc *search.Service
 	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
 		if svc == nil {
-			svc = search.NewServiceWithDimensions(store, 8)
+			svc = search.NewService(store, 8, nil)
 			svc.FixVectorDimensions()
 		}
 		return svc, nil
@@ -326,7 +326,7 @@ func TestSharedIndexFixedProviderRejectsVectorWritesBeforeStoring(t *testing.T) 
 			return nil, nil
 		}
 		if svc == nil {
-			svc = search.NewServiceWithDimensions(store, 8)
+			svc = search.NewService(store, 8, nil)
 			svc.FixVectorDimensions()
 		}
 		return svc, nil
@@ -370,7 +370,7 @@ func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
 			var warmed atomic.Bool
 			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
 				if svc == nil {
-					svc = search.NewServiceWithDimensions(store, 4)
+					svc = search.NewService(store, 4, nil)
 					svc.SetLazyWarming(true, func() { require.NoError(t, svc.BuildIndexes(context.Background())); warmed.Store(true) })
 				}
 				return svc, nil
@@ -444,7 +444,7 @@ func TestSharedIndexPersistedScoresUseOriginalMagnitudes(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "vectors")
 			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
 				if svc == nil {
-					svc = search.NewServiceWithDimensions(store, 4)
+					svc = search.NewService(store, 4, nil)
 					svc.SetVectorIndexPath(path)
 					svc.SetPersistenceEnabled(true)
 					return svc, svc.BuildIndexes(ctx)
@@ -478,7 +478,7 @@ func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
 			var svc *search.Service
 			provider := func(_ string, store storage.Engine) (*search.Service, error) {
 				if svc == nil {
-					svc = search.NewServiceWithDimensionsAndBM25EngineAndOptions(store, 4, "v2", &search.ServiceOptions{VectorMemoryMaxBytes: 32})
+					svc = search.NewService(store, 4, &search.ServiceOptions{VectorMemoryMaxBytes: 32})
 					require.NoError(t, svc.BuildIndexes(ctx))
 				}
 				return svc, nil
@@ -529,7 +529,7 @@ func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 	srv := startSharedIndexServer(t, dbm, base, func(database string, store storage.Engine) (*search.Service, error) {
 		svc := services[database]
 		if svc == nil {
-			svc = search.NewServiceWithDimensions(store, 8)
+			svc = search.NewService(store, 8, nil)
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			t.Cleanup(func() { _ = svc.Close() })

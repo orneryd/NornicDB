@@ -1,9 +1,7 @@
 package nornicdb
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -47,17 +45,17 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			t.Helper()
 			switch cmd {
 			case replication.CmdCreateNode:
-				p := payload.(*storage.NodePayload)
-				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties})
+				p := payload.(*storage.Node)
+				_, err := store.CreateNode(p)
 				require.NoError(t, err)
 			case replication.CmdUpdateNode:
-				p := payload.(*storage.NodePayload)
-				require.NoError(t, store.UpdateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties}))
+				p := payload.(*storage.Node)
+				require.NoError(t, store.UpdateNode(p))
 			case replication.CmdDeleteNode:
 				require.NoError(t, store.DeleteNode(storage.NodeID(payload.(string))))
 			case replication.CmdCreateEdge:
-				p := payload.(*storage.EdgePayload)
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(p.ID), StartNode: storage.NodeID(p.StartNode), EndNode: storage.NodeID(p.EndNode), Type: p.Type, Properties: p.Properties}))
+				p := payload.(*storage.Edge)
+				require.NoError(t, store.CreateEdge(p))
 			case replication.CmdDeleteEdge:
 				require.NoError(t, store.DeleteEdge(storage.EdgeID(payload.(string))))
 			case replication.CmdDeleteByPrefix:
@@ -84,20 +82,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			require.True(t, isReplicated, "the configuration under test has no ReplicatedEngine")
 			return db, func(t *testing.T, cmd replication.CommandType, payload any) {
 				t.Helper()
-				var data []byte
-				switch p := payload.(type) {
-				case string:
-					switch cmd {
-					case replication.CmdDeleteNode:
-						data = []byte(p)
-					case replication.CmdDeleteEdge:
-						data = gobBytes(t, struct{ EdgeID string }{p})
-					case replication.CmdDeleteByPrefix:
-						data = gobBytes(t, struct{ Prefix string }{p})
-					}
-				default:
-					data = gobBytes(t, p)
-				}
+				data := searchConsumerCommandData(t, cmd, payload)
 				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: cmd, Data: data}))
 			}
 		}
@@ -124,11 +109,27 @@ func searchConsumerConfigs() []searchConsumerConfig {
 	}
 }
 
-func gobBytes(t *testing.T, payload any) []byte {
+// searchConsumerCommandData encodes the same images and delete commands used by the replication transport.
+func searchConsumerCommandData(t *testing.T, cmd replication.CommandType, payload any) []byte {
 	t.Helper()
-	var b bytes.Buffer
-	require.NoError(t, gob.NewEncoder(&b).Encode(payload))
-	return b.Bytes()
+	var data []byte
+	var err error
+	switch cmd {
+	case replication.CmdCreateNode, replication.CmdUpdateNode:
+		data, err = storage.EncodeNodePayload(payload.(*storage.Node))
+	case replication.CmdCreateEdge:
+		data, err = storage.EncodeEdgePayload(payload.(*storage.Edge))
+	case replication.CmdDeleteNode:
+		data = []byte(payload.(string))
+	case replication.CmdDeleteEdge:
+		data, err = storage.EncodeCommandPayload(struct{ EdgeID string }{payload.(string)})
+	case replication.CmdDeleteByPrefix:
+		data, err = storage.EncodeCommandPayload(struct{ Prefix string }{payload.(string)})
+	default:
+		t.Fatalf("unexpected replication command: %d", cmd)
+	}
+	require.NoError(t, err)
+	return data
 }
 
 // Every storage event and namespace reset reaches search in every production
@@ -146,20 +147,20 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			}
 			vector := make([]float32, dims)
 			vector[0] = 1
-			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
+			apply(t, replication.CmdCreateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
 
-			apply(t, replication.CmdUpdateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
+			apply(t, replication.CmdUpdateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "newword"), "node update")
-			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
+			apply(t, replication.CmdCreateNode, &storage.Node{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "bword"), "node create")
 
-			apply(t, replication.CmdCreateEdge, &storage.EdgePayload{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
+			apply(t, replication.CmdCreateEdge, &storage.Edge{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
 			settleQueuedRefreshes()
 			require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "edge create")
 			apply(t, replication.CmdDeleteEdge, "tenant:r")
@@ -170,7 +171,7 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			require.Zero(t, consumerDBHits(t, svc, "bword"), "node delete")
 
 			apply(t, replication.CmdDeleteByPrefix, "tenant:")
-			fresh, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.NotSame(t, svc, fresh, "namespace reset kept the dropped database's service")
 			require.Zero(t, fresh.FulltextDocCount(), "namespace reset kept the dropped database's documents")
@@ -208,7 +209,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 			vector[0] = 1
 			_, err := tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			requireIndexed(t, svc, 1, "seed")
 			backup := filepath.Join(t.TempDir(), "backup.bin")
@@ -238,7 +239,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 				_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
 				require.NoError(t, err)
 			}
-			fresh, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
+			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			settleQueuedRefreshes()
 			require.Equal(t, 1, fresh.FulltextDocCount(), "the tenant's index is not what storage holds")
@@ -271,7 +272,7 @@ func TestRetiredSearchGenerationIsNeverLoaded(t *testing.T) {
 	require.True(t, errors.Is(err, fs.ErrNotExist), "reset left the persisted state")
 	// The retired service writes late into its own directory.
 	require.NoError(t, os.MkdirAll(filepath.Join(base, first), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25"), []byte("stale"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25.v2"), []byte("stale"), 0o600))
 
 	_, err = db.GetOrCreateSearchService("tenant", nil)
 	require.NoError(t, err)
@@ -283,7 +284,7 @@ func TestRetiredSearchGenerationIsNeverLoaded(t *testing.T) {
 	// A late write after the next generation exists is removed when that
 	// generation is next opened, and CURRENT keeps naming it.
 	require.NoError(t, os.MkdirAll(filepath.Join(base, first), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25"), []byte("stale"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, first, "bm25.v2"), []byte("stale"), 0o600))
 	require.NoError(t, db.Close())
 	reopened := openPersistedSearchDB(t, dataDir)
 	t.Cleanup(func() { _ = reopened.Close() })
@@ -302,18 +303,18 @@ func TestLegacySearchStateLayoutBecomesTheCurrentGeneration(t *testing.T) {
 	base, err := searchPersistenceBasePath(dataDir, "tenant")
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "hnsw_ivf"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(base, "bm25"), []byte("legacy"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(base, "bm25.v2"), []byte("legacy"), 0o600))
 	db := openPersistedSearchDB(t, dataDir)
 	t.Cleanup(func() { _ = db.Close() })
 	db.searchServiceCreationMu.Lock()
 	dir, err := db.activeSearchStateDir("tenant")
 	db.searchServiceCreationMu.Unlock()
 	require.NoError(t, err)
-	data, err := os.ReadFile(filepath.Join(dir, "bm25"))
+	data, err := os.ReadFile(filepath.Join(dir, "bm25.v2"))
 	require.NoError(t, err)
 	require.Equal(t, "legacy", string(data))
 	require.DirExists(t, filepath.Join(dir, "hnsw_ivf"))
-	require.NoFileExists(t, filepath.Join(base, "bm25"))
+	require.NoFileExists(t, filepath.Join(base, "bm25.v2"))
 }
 
 // failingReadEngine fails the next reads of one node or relationship.
@@ -350,7 +351,7 @@ func TestRefreshAfterTransientReadFailureIsRetried(t *testing.T) {
 			db, _ := openConsumerDB(t, false)
 			ctx := context.Background()
 			failing := &failingReadEngine{Engine: storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant"), node: "a", edge: "r"}
-			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", failing)
+			svc, err := db.EnsureSearchIndexes(ctx, "tenant", failing, SearchIndexBuildWait)
 			require.NoError(t, err)
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}})

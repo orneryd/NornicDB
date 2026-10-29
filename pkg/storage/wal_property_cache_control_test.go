@@ -61,7 +61,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 		}
 		return err
 	}))
-	payload, err := json.Marshal(WALBufferedCommitData{
+	data := WALBufferedCommitData{
 		TxID: "conflicting-source-drain", Namespace: "binding",
 		Ops:    []Operation{{Type: OpCreateNode, Node: node}},
 		Writes: map[string][]byte{string(nodeKey(node.ID)): body},
@@ -70,7 +70,10 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 			{Namespace: "binding", Name: "beta", ID: 2},
 		},
 		PropKeyCounters: map[string]uint64{"binding": 2},
-	})
+	}
+	data.NumericBindings, err = captureWALNumericBindings(source.idDict, data.Writes, nil, nil)
+	require.NoError(t, err)
+	payload, err := json.Marshal(data)
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	assertInverse(destination)

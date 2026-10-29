@@ -58,6 +58,7 @@ const (
 	MessageNornicDBCoreSearchSystemDatabaseUnsupported       MessageID = "nornicdbcore.search_system_database_unsupported"
 	MessageNornicDBCoreSearchBaseStorageUnavailable          MessageID = "nornicdbcore.search_base_storage_unavailable"
 	MessageNornicDBCoreSearchDatabaseNotInitialized          MessageID = "nornicdbcore.search_database_not_initialized"
+	MessageNornicDBCoreSearchIndexBuildModeInvalid           MessageID = "nornicdbcore.search_index_build_mode_invalid"
 	MessageNornicDBCorePluginLoadFailed                      MessageID = "nornicdbcore.plugin_load_failed"
 	MessageNornicDBCoreInferenceBaseStorageUnavailable       MessageID = "nornicdbcore.inference_base_storage_unavailable"
 	MessageNornicDBCoreEmbedBatchFailed                      MessageID = "nornicdbcore.embed_batch_failed"
@@ -358,6 +359,12 @@ func NornicDBCoreSearchBaseStorageUnavailable() Message {
 // NornicDBCoreSearchDatabaseNotInitialized identifies missing per-database search state.
 func NornicDBCoreSearchDatabaseNotInitialized(database string) Message {
 	return Message{ID: MessageNornicDBCoreSearchDatabaseNotInitialized, Fallback: fmt.Sprintf("search service not initialized for database %q", database), Data: map[string]any{"Database": database}}
+}
+
+// NornicDBCoreSearchIndexBuildModeInvalid identifies an unknown search index
+// build mode passed to EnsureSearchIndexes.
+func NornicDBCoreSearchIndexBuildModeInvalid(mode int) Message {
+	return Message{ID: MessageNornicDBCoreSearchIndexBuildModeInvalid, Fallback: fmt.Sprintf("unsupported search index build mode %d", mode), Data: map[string]any{"Mode": mode}}
 }
 
 // NornicDBCorePluginLoadFailed identifies a plugin file in a plugins directory

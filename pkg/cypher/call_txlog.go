@@ -26,6 +26,11 @@ import (
 // time in UTC and payload its JSON data. Arguments are the procedures'
 // evaluated arguments, so parameters and variables work like literals.
 // Entries are visited one at a time; only the rows returned are kept.
+//
+// The payload's JSON comes from storage.EntryPayloadJSON, the WAL's own typed
+// display owner: a typed (MessagePack) record is decoded through the same
+// decoder recovery uses, never printed as raw bytes. A payload that cannot be
+// decoded and rendered is an error, so no row invents data.
 
 // txlogColumns are the columns both txlog procedures yield.
 var txlogColumns = []string{"txId", "db", "kind", "seq", "timestamp", "payload"}
@@ -62,119 +67,120 @@ func txlogInteger(args []interface{}, index int, name string) (int64, bool, erro
 	return value, true, nil
 }
 
-// txlogRow is the row of one WAL entry.
-func txlogRow(entry storage.WALEntry) []interface{} {
+// txlogRow is the row of one WAL entry. Its payload is the entry's documented
+// JSON; a payload that cannot be decoded and rendered fails the read instead
+// of returning a row with invented data.
+func txlogRow(entry storage.WALEntry) ([]interface{}, error) {
+	payload, err := storage.EntryPayloadJSON(entry)
+	if err != nil {
+		return nil, err
+	}
 	return []interface{}{
 		storage.GetEntryTxID(entry),
 		entry.Database,
 		string(entry.Operation),
 		int64(entry.Sequence),
 		entry.Timestamp.UTC().Format(time.RFC3339Nano),
-		string(entry.Data),
-	}
+		payload,
+	}, nil
 }
 
-// callDbTxlogEntries implements db.txlog.entries(fromSeq = null, toSeq =
-// null): the current database's entries from fromSeq (inclusive, at least 1)
-// to toSeq (inclusive; null or 0 is no upper bound). Without either it
-// returns the most recent txlogRecentEntries entries.
-func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	fromSeq, hasFrom, err := txlogInteger(args, 0, "fromSeq")
-	if err != nil {
-		return nil, err
-	}
-	toSeq, hasTo, err := txlogInteger(args, 1, "toSeq")
-	if err != nil {
-		return nil, err
-	}
-	if hasFrom && fromSeq < 1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogFromSequencePositive(), nil)
-	}
-	if hasTo && toSeq < 0 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogToSequenceNegative(), nil)
-	}
-	if !hasFrom {
-		fromSeq = 1
-	}
-	if toSeq > 0 && toSeq < fromSeq {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogSequenceOrder(), nil)
+type txlogSelection uint8
+
+const (
+	txlogBySequence txlogSelection = iota
+	txlogByID
+)
+
+// callDBTxlog owns traversal and row assembly for both txlog procedures.
+// Sequence selection uses an inclusive range (or the most recent window);
+// transaction selection returns the matching ID up to the requested limit.
+func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, selection txlogSelection) (*ExecuteResult, error) {
+	fromSeq, toSeq, limit := int64(1), int64(0), int64(0)
+	var txID string
+	recent := false
+	if selection == txlogBySequence {
+		from, hasFrom, err := txlogInteger(args, 0, "fromSeq")
+		if err != nil {
+			return nil, err
+		}
+		to, hasTo, err := txlogInteger(args, 1, "toSeq")
+		if err != nil {
+			return nil, err
+		}
+		if hasFrom && from < 1 {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogFromSequencePositive(), nil)
+		}
+		if hasTo && to < 0 {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogToSequenceNegative(), nil)
+		}
+		if hasFrom {
+			fromSeq = from
+		}
+		toSeq = to
+		if toSeq > 0 && toSeq < fromSeq {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogSequenceOrder(), nil)
+		}
+		recent = !hasFrom && !hasTo
+	} else {
+		if len(args) > 0 && args[0] != nil {
+			text, ok := args[0].(string)
+			if !ok {
+				return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("txId", "STRING", neo4jProvidedValue(args[0])), nil)
+			}
+			txID = text
+		}
+		if txID == "" {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogIDEmpty(), nil)
+		}
+		var err error
+		limit, _, err = txlogInteger(args, 1, "limit")
+		if err != nil {
+			return nil, err
+		}
 	}
 	walDir, database, err := e.txlogWAL()
 	if err != nil {
 		return nil, err
 	}
-
-	recent := !hasFrom && !hasTo
 	var rows [][]interface{}
 	err = storage.VisitWALEntriesAfterFromDir(walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if (toSeq > 0 && entry.Sequence > uint64(toSeq)) || (database != "" && entry.Database != database) {
+		if database != "" && entry.Database != database {
 			return nil
 		}
-		rows = append(rows, txlogRow(entry))
-		// Keep only the most recent window, so memory stays bounded.
+		if selection == txlogBySequence && toSeq > 0 && entry.Sequence > uint64(toSeq) {
+			return nil
+		}
+		if selection == txlogByID && storage.GetEntryTxID(entry) != txID {
+			return nil
+		}
+		row, rowErr := txlogRow(entry)
+		if rowErr != nil {
+			return rowErr
+		}
+		rows = append(rows, row)
 		if recent && len(rows) > 2*txlogRecentEntries {
 			rows = append(rows[:0], rows[len(rows)-txlogRecentEntries:]...)
 		}
+		if selection == txlogByID && limit > 0 && int64(len(rows)) >= limit {
+			return errTxlogLimitReached
+		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && !(selection == txlogByID && errors.Is(err, errTxlogLimitReached)) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
+		}
+		if selection == txlogByID {
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogFindEntriesFailed(err), err)
 		}
 		return nil, localizedError(localization.CypherSpecializedCallsTxlogReadEntriesFailed(err), err)
 	}
 	if recent && len(rows) > txlogRecentEntries {
 		rows = rows[len(rows)-txlogRecentEntries:]
-	}
-	return &ExecuteResult{Columns: txlogColumns, Rows: rows}, nil
-}
-
-// callDbTxlogByTxID implements db.txlog.byTxId(txId, limit = null): the
-// current database's entries of transaction txId, at most limit of them
-// (null, 0 or less is no limit).
-func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	var txID string
-	if len(args) > 0 && args[0] != nil {
-		text, ok := args[0].(string)
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("txId", "STRING", neo4jProvidedValue(args[0])), nil)
-		}
-		txID = text
-	}
-	if txID == "" {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogIDEmpty(), nil)
-	}
-	limit, _, err := txlogInteger(args, 1, "limit")
-	if err != nil {
-		return nil, err
-	}
-	walDir, database, err := e.txlogWAL()
-	if err != nil {
-		return nil, err
-	}
-
-	var rows [][]interface{}
-	err = storage.VisitWALEntriesAfterFromDir(walDir, 0, func(entry storage.WALEntry) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if (database != "" && entry.Database != database) || storage.GetEntryTxID(entry) != txID {
-			return nil
-		}
-		rows = append(rows, txlogRow(entry))
-		if limit > 0 && int64(len(rows)) >= limit {
-			return errTxlogLimitReached
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errTxlogLimitReached) {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogFindEntriesFailed(err), err)
 	}
 	return &ExecuteResult{Columns: txlogColumns, Rows: rows}, nil
 }

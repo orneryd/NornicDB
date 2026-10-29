@@ -41,7 +41,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 		_, err := engine.CreateNode(newNode(fmt.Sprintf("initial-%04d", i)))
 		require.NoError(t, err)
 	}
-	svc := NewServiceWithDimensions(engine, dimensions)
+	svc := NewService(engine, dimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.EnableClustering(nil, 0)
 	svc.SetMinEmbeddingsForClustering(1)
@@ -127,7 +127,7 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	const dimensions = 4
 	ctx := context.Background()
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), dimensions)
+	svc := NewService(newTestMemoryEngine(t), dimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
@@ -193,7 +193,7 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
-			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+			svc := NewService(newTestMemoryEngine(t), 4, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			svc.EnableClustering(nil, 1)
 			original := svc.clusterIndex
@@ -281,7 +281,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
 					require.NoError(t, err)
 				}
-				svc := NewServiceWithDimensions(engine, dims)
+				svc := NewService(engine, dims, nil)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				svc.EnableClustering(nil, 0)
 				svc.SetMinEmbeddingsForClustering(1)

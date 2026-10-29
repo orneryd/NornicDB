@@ -236,7 +236,7 @@ func TestWALEntryRangeAndTxIDQueries(t *testing.T) {
 	}
 	require.NoError(t, wal.Close())
 
-	after, err := ReadWALEntriesAfterFromDir(dir, 3)
+	after, err := ReadWALEntriesAfter(dir, 3, WALReadDirectory)
 	require.NoError(t, err)
 	require.Len(t, after, 3)
 	require.Equal(t, uint64(4), after[0].Sequence)

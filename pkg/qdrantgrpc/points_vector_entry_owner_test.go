@@ -20,7 +20,7 @@ func TestPointsService_SearchServiceReturnsOwningPointForAnyVectorName(t *testin
 	var shared *search.Service
 	service.searchProvider = func(_ string, st storage.Engine) (*search.Service, error) {
 		if shared == nil {
-			shared = search.NewServiceWithDimensions(st, 4)
+			shared = search.NewService(st, 4, nil)
 		}
 		return shared, nil
 	}

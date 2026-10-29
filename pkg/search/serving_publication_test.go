@@ -75,7 +75,7 @@ func servingGraph(svc *Service) *HNSWIndex {
 func TestServingPublicationReplayedBuildRaceIsServed(t *testing.T) {
 	servingTestEnv(t)
 	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	addServingNode(t, engine, svc, "far", []float32{-1, 0.1})
 	started, release := make(chan struct{}), make(chan struct{})
@@ -157,7 +157,7 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 			servingTestEnv(t)
 			awaitReplays := awaitServingReplays(t)
 			engine := newNamespacedEngine(t)
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			for i, v := range [][]float32{{1, 0.1}, {-1, -0.1}, {0.1, 1}, {-0.1, -1}} {
 				addServingNode(t, engine, svc, fmt.Sprintf("n%d", i), v)
@@ -196,7 +196,7 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 // that applies entries advances it, also when it fails part-way.
 func TestServingPublicationReplayAdvancesRevisionOnlyWhenItChangesTheGraph(t *testing.T) {
 	servingTestEnv(t)
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
+	svc := NewService(newNamespacedEngine(t), 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	revision := svc.IndexRevision()
@@ -233,8 +233,8 @@ var vectorServingAccessors = map[string]bool{
 var vectorServingHelpers = map[string]bool{"swapTransitionServingLocked": true, "invalidateHNSWLocked": true}
 
 // vectorServingConstructors allocate a Service; a Service value may appear
-// only there.
-var vectorServingConstructors = map[string]bool{"NewServiceWithDimensionsAndBM25EngineAndOptions": true}
+// only there. NewService is the sole constructor.
+var vectorServingConstructors = map[string]bool{"NewService": true}
 
 // servingListedPkg is one package as `go list -json` reports it.
 type servingListedPkg struct {
@@ -472,18 +472,29 @@ type servingScope struct {
 }
 
 func (g *servingGuard) visit(root ast.Node, scope servingScope) {
+	constructorCalls := map[ast.Node]bool{}
+	constructorUses := map[ast.Expr]bool{}
 	ownerArgs := map[ast.Expr]bool{}
 	helperCalls := map[*ast.SelectorExpr]bool{}
 	goCalls := map[*ast.CallExpr]bool{}
 	ast.Inspect(root, func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.FuncLit:
-			g.visit(x.Body, servingScope{where: scope.where, mayTouch: ownerArgs[x], constructor: scope.constructor})
+			g.visit(x.Body, servingScope{where: scope.where, mayTouch: ownerArgs[x]})
 			return false
 		case *ast.GoStmt:
 			goCalls[x.Call] = true
+		case *ast.UnaryExpr:
+			if scope.constructor && x.Op == token.AND {
+				if literal, ok := ast.Unparen(x.X).(*ast.CompositeLit); ok && types.Identical(g.info.TypeOf(literal), g.service) {
+					constructorUses[literal] = true
+				}
+			}
 		case *ast.CallExpr:
 			fn := g.callee(x)
+			if fn != nil && g.constructors[fn] {
+				constructorCalls[x] = true
+			}
 			if fn != nil && fn == g.owner {
 				for _, arg := range x.Args {
 					ownerArgs[ast.Unparen(arg)] = true
@@ -496,7 +507,7 @@ func (g *servingGuard) visit(root ast.Node, scope servingScope) {
 			}
 			// A conversion re-types storage: (*mirror)(s), unsafe.Pointer(s) or
 			// back exposes the same Service memory under another type.
-			if tv, ok := g.info.Types[x.Fun]; ok && tv.IsType() && len(x.Args) == 1 && !scope.constructor {
+			if tv, ok := g.info.Types[x.Fun]; ok && tv.IsType() && len(x.Args) == 1 {
 				from := g.info.TypeOf(x.Args[0])
 				if !types.Identical(tv.Type, from) && (g.exposesService(tv.Type) || g.exposesService(from)) {
 					g.report(scope.where, "converts Service memory to another type")
@@ -514,7 +525,7 @@ func (g *servingGuard) visit(root ast.Node, scope servingScope) {
 				g.report(scope.where, "uses %s outside an owner", fn.Name())
 			}
 		case *ast.AssignStmt:
-			if x.Tok == token.ASSIGN && !scope.constructor {
+			if x.Tok == token.ASSIGN {
 				for _, lhs := range x.Lhs {
 					if t := g.info.TypeOf(lhs); t != nil && (types.Identical(t, g.service) || types.Identical(t, types.NewPointer(g.service))) {
 						g.report(scope.where, "assigns a Service")
@@ -538,7 +549,9 @@ func (g *servingGuard) visit(root ast.Node, scope servingScope) {
 				}
 			}
 		}
-		if expr, ok := node.(ast.Expr); ok && !scope.constructor {
+		// Only the constructor's own addressed struct literal may create a
+		// Service value. Passing a Service value to it is still a copy.
+		if expr, ok := node.(ast.Expr); ok && !constructorCalls[node] && !constructorUses[expr] {
 			if tv, ok := g.info.Types[expr]; ok && !tv.IsType() && types.Identical(tv.Type, g.service) {
 				g.report(scope.where, "uses a Service value")
 			}
@@ -611,7 +624,7 @@ type Service struct {
 	hnswIndex, ivfpqIndex, gpuEmbeddingIndex, vectorPipeline *HNSWIndex
 }
 
-func NewServiceWithDimensionsAndBM25EngineAndOptions() *Service {
+func NewService(engine int, dimensions int, options any) *Service {
 	s := &Service{hnswIndex: &HNSWIndex{}}
 	s.publishVectorServing(func() { s.hnswIndex = nil }, false)
 	return s
@@ -668,6 +681,20 @@ func leakUnsafe(s *Service)                       { *(**HNSWIndex)(unsafe.Pointe
 func leakMirror(s *Service)                       { *(*servingMirror)(s) = servingMirror{} }
 func leakMirrorHolder(h *serviceHolder)           { *(*holderMirror)(h) = holderMirror{} }
 func unrelatedConversion(g *gen) *genMirror       { return (*genMirror)(g) }
+
+func (s *Service) leakConstructorArgs(m, n *Service) *Service {
+	s = NewService(1, 2, m)
+	_ = NewService(1, 2, n)
+	return s
+}
+
+func (s *Service) leakConstructorCopy(o *Service) { s = NewService(1, 2, o); *s = *o }
+
+func (s *Service) leakConstructorOptions(o *Service) { _ = NewService(1, 2, &o); _ = o; _ = *o }
+
+func leakConstructorByValue(o Service) { _ = NewService(1, 2, o) }
+
+func leakConstructorLiteral() { _ = &Service{} }
 
 var leakPackageFunc = func(s *Service) { s.hnswIndex = nil }
 var leakPackageHelper = (*Service).swapTransitionServingLocked
@@ -729,6 +756,12 @@ func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 		"leakAddress: mentions hnswIndex",
 		"leakAlias: mentions hnswIndex",
 		"leakCacheArg: mentions vectorPipeline",
+		"leakConstructorArgs: assigns a Service",
+		"leakConstructorByValue: uses a Service value",
+		"leakConstructorCopy: assigns a Service",
+		"leakConstructorCopy: uses a Service value",
+		"leakConstructorLiteral: uses a Service value",
+		"leakConstructorOptions: uses a Service value",
 		"leakCopy: assigns a Service",
 		"leakCopy: uses a Service value",
 		"leakDelayed: mentions hnswIndex",

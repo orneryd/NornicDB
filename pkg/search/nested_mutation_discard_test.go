@@ -39,7 +39,7 @@ func xhighNestedService(t *testing.T) (*storage.NamespacedEngine, *Service, *xhi
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "nesteddiscard")
 	fault := &xhighNestedFaultEngine{Engine: engine}
-	service := NewServiceWithDimensions(fault, 2)
+	service := NewService(fault, 2, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	return engine, service, fault
 }

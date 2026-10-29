@@ -32,10 +32,10 @@ func TestBufferedCommitPublicationBeforeReplayListener(t *testing.T) {
 	_, err = tx.CreateNode(&Node{ID: "test:publication", Properties: map[string]any{"v": int64(7)}})
 	require.NoError(t, err)
 	var flushErr error
-	require.NoError(t, tx.CommitContextWithPublication(context.Background(), func() {
+	require.NoError(t, tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() {
 		flushErr = engine.FlushWriteBehind()
 		published = true
-	}))
+	}}))
 	require.NoError(t, flushErr)
 	require.True(t, tx.AcknowledgedBuffered(), "the reproduction must use buffered admission")
 	require.Equal(t, []bool{true}, listenerPublication, "accounting/admission publication completes before replay listeners")
@@ -68,7 +68,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 	_, err = rejected.CreateNode(&Node{ID: "test:rejected-publication", Properties: map[string]any{"payload": strings.Repeat("x", 1<<20)}})
 	require.NoError(t, err)
 	callbackInvoked := false
-	require.ErrorIs(t, rejected.CommitContextWithPublication(context.Background(), func() { callbackInvoked = true }), memory.ErrLimitExceeded)
+	require.ErrorIs(t, rejected.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { callbackInvoked = true }}), memory.ErrLimitExceeded)
 	require.False(t, callbackInvoked)
 	require.Empty(t, observed)
 	require.Zero(t, policy.Reserved())
@@ -81,7 +81,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 	require.NoError(t, accepted.SetImplicit(true))
 	_, err = accepted.CreateNode(&Node{ID: "test:accepted-publication"})
 	require.NoError(t, err)
-	require.NoError(t, accepted.CommitContextWithPublication(context.Background(), func() { published = true }))
+	require.NoError(t, accepted.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }}))
 	require.NoError(t, engine.FlushWriteBehind())
 	require.Equal(t, []NodeID{"test:accepted-publication"}, observed)
 	require.Zero(t, policy.Reserved())

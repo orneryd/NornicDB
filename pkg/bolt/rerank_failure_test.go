@@ -29,7 +29,7 @@ func TestBoltDbRerankProviderFailuresReturnFailure(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	server, port := startBoltIntegrationServer(t, store)
-	service := search.NewService(store)
+	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	server.executor.(*cypherQueryExecutor).executor.SetSearchService(service)
 

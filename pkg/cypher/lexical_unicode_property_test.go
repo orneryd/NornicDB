@@ -108,10 +108,10 @@ func TestCredentialUnicodeOutput(t *testing.T) {
 						}
 					}
 					require.True(t, found)
-					for _, output := range outputs {
+					for boundary, output := range outputs {
 						for _, secret := range []string{"probe741928", "probe629174", "MATCH"} {
 							if strings.Contains(output, secret) {
-								t.Error("credential reached an output boundary; details withheld")
+								t.Errorf("credential reached output boundary %d; details withheld", boundary)
 							}
 						}
 					}

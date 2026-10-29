@@ -39,7 +39,7 @@ func marshal(value any, escapeHTML bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return projectJSONStrings(raw, wireJSON).bytes, nil
+	return projectJSONStrings(raw, wireJSON, false).bytes, nil
 }
 
 // Unmarshal binds a complete standard JSON value without normalizing escaped
@@ -69,7 +69,7 @@ func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
 	}
 	projection := stringProjection{bytes: raw}
 	if stage == RawInput {
-		projection = projectJSONStrings(raw, rawJSON)
+		projection = projectJSONStrings(raw, rawJSON, true)
 	}
 	projected, edits := projection.bytes, projection.edits
 	// Only validated/projected input reaches this opt-in; ordinary upstream
@@ -151,7 +151,7 @@ func (r *RawMessage) UnmarshalJSON(raw []byte) error {
 	if r == nil {
 		return errors.New("jsontext: nil RawMessage receiver")
 	}
-	*r = append((*r)[:0], projectJSONStrings(raw, opaqueJSON).bytes...)
+	*r = append((*r)[:0], projectJSONStrings(raw, opaqueJSON, false).bytes...)
 	return nil
 }
 func (r RawMessage) MarshalJSON() ([]byte, error) {

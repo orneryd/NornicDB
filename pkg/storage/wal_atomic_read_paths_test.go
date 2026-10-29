@@ -1,8 +1,8 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mustWalEntryPayload encodes an entry the way every current writer does: the
+// current frame version carrying the raw-Data payload layout.
 func mustWalEntryPayload(t *testing.T, seq uint64, op OperationType, data []byte, checksum uint32) []byte {
 	t.Helper()
 	entry := WALEntry{
@@ -20,11 +22,15 @@ func mustWalEntryPayload(t *testing.T, seq uint64, op OperationType, data []byte
 		Data:      data,
 		Checksum:  checksum,
 	}
-	payload, err := json.Marshal(entry)
+	payload, err := processWALEntryPayload(walPayloadEncode, &bytes.Buffer{}, &entry, nil, 0)
 	require.NoError(t, err)
 	return payload
 }
 
+// buildAtomicRecordRaw frames a payload with the supplied version, CRC and
+// trailer so a test can corrupt exactly one part of an otherwise readable
+// record. The current version always carries the trailer and (optionally) the
+// alignment padding.
 func buildAtomicRecordRaw(payload []byte, version byte, crc uint32, trailer uint64, includePadding bool) []byte {
 	header := make([]byte, 9)
 	binary.LittleEndian.PutUint32(header[0:4], walMagic)
@@ -61,27 +67,25 @@ func TestReadAtomicWALEntries_SkipsCorruptedEmbeddingAndReturnsOthers(t *testing
 
 	good1Data := []byte(`{"node":{"id":"n1"}}`)
 	good1Payload := mustWalEntryPayload(t, 1, OpCreateNode, good1Data, crc32Checksum(good1Data))
-	good1 := buildAtomicRecordRaw(good1Payload, 1, crc32Checksum(good1Payload), 0, false)
+	good1 := buildAtomicRecordRaw(good1Payload, walFormatVersionCurrent, crc32Checksum(good1Payload), walTrailer, true)
 
 	embData := []byte(`{"node":{"id":"n1"},"embedding":[0.1,0.2]}`)
 	embPayload := mustWalEntryPayload(t, 2, OpUpdateEmbedding, embData, crc32Checksum(embData))
-	badEmbedding := buildAtomicRecordRaw(embPayload, 1, crc32Checksum(embPayload)+1, 0, false)
+	badEmbedding := buildAtomicRecordRaw(embPayload, walFormatVersionCurrent, crc32Checksum(embPayload)+1, walTrailer, true)
 
 	good2Data := []byte(`{"node":{"id":"n2"}}`)
 	good2Payload := mustWalEntryPayload(t, 3, OpCreateNode, good2Data, crc32Checksum(good2Data))
-	good2 := buildAtomicRecordRaw(good2Payload, 1, crc32Checksum(good2Payload), 0, false)
+	good2 := buildAtomicRecordRaw(good2Payload, walFormatVersionCurrent, crc32Checksum(good2Payload), walTrailer, true)
 
 	require.NoError(t, os.WriteFile(path, append(append(good1, badEmbedding...), good2...), 0644))
 
-	f, err := os.Open(path)
-	require.NoError(t, err)
-	defer f.Close()
-
-	entries, err := readAtomicWALEntries(f, nil)
+	entries, err := ReadWALEntries(path, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, uint64(1), entries[0].Sequence)
+	require.Equal(t, good1Data, entries[0].Data)
 	require.Equal(t, uint64(3), entries[1].Sequence)
+	require.Equal(t, good2Data, entries[1].Data)
 }
 
 func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testing.T) {
@@ -89,14 +93,10 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		path := filepath.Join(t.TempDir(), "wal.log")
 		data := []byte(`{"node":{"id":"n1"}}`)
 		payload := mustWalEntryPayload(t, 1, OpCreateNode, data, crc32Checksum(data))
-		rec := buildAtomicRecordRaw(payload, walFormatVersionPropertyEpoch+1, crc32Checksum(payload), walTrailer, true)
+		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent+1, crc32Checksum(payload), walTrailer, true)
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		_, err = readAtomicWALEntries(f, nil)
+		_, err := ReadWALEntries(path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "unsupported WAL version")
 	})
@@ -105,15 +105,11 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		path := filepath.Join(t.TempDir(), "wal.log")
 		header := make([]byte, 9)
 		binary.LittleEndian.PutUint32(header[0:4], walMagic)
-		header[4] = walFormatVersion
+		header[4] = walFormatVersionCurrent
 		binary.LittleEndian.PutUint32(header[5:9], walMaxEntrySize+1)
 		require.NoError(t, os.WriteFile(path, header, 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		_, err = readAtomicWALEntries(f, nil)
+		_, err := ReadWALEntries(path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "exceeds maximum")
 	})
@@ -122,14 +118,10 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 		path := filepath.Join(t.TempDir(), "wal.log")
 		data := []byte(`{"node":{"id":"n1"}}`)
 		payload := mustWalEntryPayload(t, 1, OpCreateNode, data, crc32Checksum(data)+1)
-		rec := buildAtomicRecordRaw(payload, 2, crc32Checksum(payload), walTrailer, true)
+		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, true)
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		_, err = readAtomicWALEntries(f, nil)
+		_, err := ReadWALEntries(path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "data checksum mismatch")
 	})
@@ -157,14 +149,11 @@ func TestReadAtomicWALEntries_DetectsVersionLengthAndDataChecksumErrors(t *testi
 
 		require.NoError(t, os.WriteFile(path, append(good, badEmbedding...), 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		entries, err := readAtomicWALEntries(f, nil)
+		entries, err := ReadWALEntries(path, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 1)
 		require.Equal(t, uint64(1), entries[0].Sequence)
+		require.Equal(t, goodData, entries[0].Data)
 	})
 }
 
@@ -173,16 +162,12 @@ func TestReadAtomicWALEntries_PartialTrailerAndPaddingHandledAsTail(t *testing.T
 		path := filepath.Join(t.TempDir(), "wal.log")
 		data := []byte(`{"node":{"id":"n1"}}`)
 		payload := mustWalEntryPayload(t, 1, OpCreateNode, data, crc32Checksum(data))
-		rec := buildAtomicRecordRaw(payload, 2, crc32Checksum(payload), walTrailer, true)
-		// remove a few trailer/padding bytes to force partial tail detection
-		rec = rec[:len(rec)-3]
+		rec := buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, true)
+		// Cut inside the trailer, independent of this payload's padding length.
+		rec = rec[:9+len(payload)+4+5]
 		require.NoError(t, os.WriteFile(path, rec, 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		entries, err := readAtomicWALEntries(f, nil)
+		entries, err := ReadWALEntries(path, nil)
 		require.NoError(t, err)
 		require.Len(t, entries, 0)
 	})
@@ -191,14 +176,10 @@ func TestReadAtomicWALEntries_PartialTrailerAndPaddingHandledAsTail(t *testing.T
 		path := filepath.Join(t.TempDir(), "wal.log")
 		data := []byte(`{"node":{"id":"n1"}}`)
 		payload := mustWalEntryPayload(t, 1, OpCreateNode, data, crc32Checksum(data))
-		recNoPadding := buildAtomicRecordRaw(payload, 2, crc32Checksum(payload), walTrailer, false)
+		recNoPadding := buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, false)
 		require.NoError(t, os.WriteFile(path, recNoPadding, 0644))
 
-		f, err := os.Open(path)
-		require.NoError(t, err)
-		defer f.Close()
-
-		_, err = readAtomicWALEntries(f, nil)
+		_, err := ReadWALEntries(path, nil)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "failed to read padding")
 	})
@@ -209,14 +190,16 @@ func TestReadAtomicWALEntriesForTruncation_SkipsMalformedAndFiltersAfterSeq(t *t
 
 	good1Data := []byte(`{"node":{"id":"n1"}}`)
 	good1Payload := mustWalEntryPayload(t, 1, OpCreateNode, good1Data, crc32Checksum(good1Data))
-	good1 := buildAtomicRecordRaw(good1Payload, 2, crc32Checksum(good1Payload), walTrailer, true)
+	good1 := buildAtomicRecordRaw(good1Payload, walFormatVersionCurrent, crc32Checksum(good1Payload), walTrailer, true)
 
-	badJSONPayload := []byte(`{"sequence":2,"operation":"CREATE_NODE"`) // malformed JSON
-	badJSON := buildAtomicRecordRaw(badJSONPayload, 2, crc32Checksum(badJSONPayload), walTrailer, true)
+	// Truncated JSON header: the payload frame is intact, the entry inside it is
+	// not decodable, so truncation must salvage around it.
+	badJSONPayload := []byte(`{"seq":2,"op":"CREATE_NODE"`)
+	badJSON := buildAtomicRecordRaw(badJSONPayload, walFormatVersionCurrent, crc32Checksum(badJSONPayload), walTrailer, true)
 
 	good2Data := []byte(`{"node":{"id":"n3"}}`)
 	good2Payload := mustWalEntryPayload(t, 3, OpCreateNode, good2Data, crc32Checksum(good2Data))
-	good2 := buildAtomicRecordRaw(good2Payload, 2, crc32Checksum(good2Payload), walTrailer, true)
+	good2 := buildAtomicRecordRaw(good2Payload, walFormatVersionCurrent, crc32Checksum(good2Payload), walTrailer, true)
 
 	require.NoError(t, os.WriteFile(path, append(append(good1, badJSON...), good2...), 0644))
 
@@ -228,4 +211,5 @@ func TestReadAtomicWALEntriesForTruncation_SkipsMalformedAndFiltersAfterSeq(t *t
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, uint64(3), entries[0].Sequence)
+	require.Equal(t, good2Data, entries[0].Data)
 }

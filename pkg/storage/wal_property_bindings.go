@@ -32,7 +32,8 @@ func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, auth
 	c := bufferedCommit{
 		recovered: true, logicalTxID: data.LogicalTxID,
 		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,
-		version: data.Version, counterNodeMax: data.NodeMax,
+		numericBindings: data.NumericBindings,
+		version:         data.Version, counterNodeMax: data.NodeMax,
 		counterEdgeMax: data.EdgeMax, hasCounters: data.HasCounters,
 		writes: data.Writes,
 	}
@@ -53,6 +54,22 @@ func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, auth
 	legacy := len(data.PropertyBindings) == 0
 	ownLegacy := authority == walOwnDirectoryAtOpen &&
 		(data.PropertyDictionaryID != "" && data.PropertyDictionaryID == s.identity || data.PropertyDictionaryID == "" && (!s.foreign || s.clean))
+	if ownLegacy && len(c.numericBindings) == 0 {
+		aliases := data.numericAliases
+		if aliases == nil {
+			aliases = make(map[walNumericToken]string)
+		}
+		if err := mergeWALNumericSourceEntries(c.writes, aliases); err != nil {
+			return bufferedCommit{}, err
+		}
+		// Only the original store's startup replay may derive missing source
+		// IDs; foreign imports must supply their own complete bindings.
+		var err error
+		c.numericBindings, err = captureWALNumericBindings(b.idDict, c.writes, c.deletes, aliases)
+		if err != nil {
+			return bufferedCommit{}, fmt.Errorf("wal: bind own historical numeric IDs: %w", err)
+		}
+	}
 	if legacy && ownLegacy {
 		// The exact physical dictionary wrote these bytes. No body/value walk,
 		// read transaction or binding map is needed. Only its own staged drain

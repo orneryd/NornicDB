@@ -392,15 +392,15 @@ func edgeBetweenHeadKey(startNumID, endNumID uint64, edgeType string) []byte {
 // scanners recover the string ID without a reverse-dict lookup while the
 // KEY stays compact (8+8+type+8 bytes).
 func (b *BadgerEngine) writeEdgeBetweenIndexesInTxn(txn *badger.Txn, edge *Edge) error {
-	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.StartNode))
 	if err != nil {
 		return err
 	}
-	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.EndNode))
 	if err != nil {
 		return err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edge.ID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edge.ID))
 	if err != nil {
 		return err
 	}
@@ -494,11 +494,11 @@ func (b *BadgerEngine) setAdjacencyValuesInTxn(txn kvWriter, edge *Edge, record 
 // (allocating num IDs if missing) and returns the compact-keyed key.
 // Callers on write paths pass a txn so the allocation persists.
 func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -507,11 +507,11 @@ func (b *BadgerEngine) outgoingIndexKeyString(txn kvWriter, nodeID NodeID, edgeI
 
 // incomingIndexKeyString is the incoming-side analogue.
 func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeID EdgeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +520,7 @@ func (b *BadgerEngine) incomingIndexKeyString(txn kvWriter, nodeID NodeID, edgeI
 
 // edgeTypeIndexKeyString is the edge-type analogue.
 func (b *BadgerEngine) edgeTypeIndexKeyString(txn kvWriter, edgeType string, edgeID EdgeID) ([]byte, error) {
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(edgeID))
 	if err != nil {
 		return nil, err
 	}
@@ -579,7 +579,7 @@ func (b *BadgerEngine) incomingIndexPrefixString(nodeID NodeID) []byte {
 // labelIndexKeyString resolves the node string ID via the dict,
 // allocating a numID if missing, and returns the compact label key.
 func (b *BadgerEngine) labelIndexKeyString(txn kvWriter, label string, nodeID NodeID) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +600,7 @@ func (b *BadgerEngine) labelIndexKeyStringLookup(label string, nodeID NodeID) []
 // MVCC head key with dict-backed string ID resolution. Writers allocate
 // the numID; readers use lookup-only.
 func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -608,7 +608,7 @@ func (b *BadgerEngine) mvccNodeHeadKeyString(txn kvWriter, id NodeID) ([]byte, e
 }
 
 func (b *BadgerEngine) mvccEdgeHeadKeyString(txn kvWriter, id EdgeID) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +634,7 @@ func (b *BadgerEngine) mvccEdgeHeadKeyStringLookup(id EdgeID) []byte {
 // mvccNodeVersionKeyString / mvccEdgeVersionKeyString wrap the
 // numeric-keyed MVCC version keys.
 func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version MVCCVersion) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +642,7 @@ func (b *BadgerEngine) mvccNodeVersionKeyString(txn kvWriter, id NodeID, version
 }
 
 func (b *BadgerEngine) mvccEdgeVersionKeyString(txn kvWriter, id EdgeID, version MVCCVersion) ([]byte, error) {
-	num, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+	num, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, EdgeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -684,28 +684,28 @@ func (b *BadgerEngine) mvccEdgeVersionPrefixString(id EdgeID) []byte {
 	return mvccEdgeVersionPrefix(num)
 }
 
-func (b *BadgerEngine) mvccOutgoingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
+type mvccAdjacencyKeyDirection bool
+
+const (
+	mvccAdjacencyOutgoing mvccAdjacencyKeyDirection = false
+	mvccAdjacencyIncoming mvccAdjacencyKeyDirection = true
+)
+
+// mvccAdjacencyKeyString resolves the same dictionary identities for both
+// directions and selects the existing on-disk key encoding for each direction.
+func (b *BadgerEngine) mvccAdjacencyKeyString(direction mvccAdjacencyKeyDirection, txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
+	nodeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, nodeID)
 	if err != nil {
 		return nil, err
 	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
+	edgeNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, edgeID)
 	if err != nil {
 		return nil, err
+	}
+	if direction == mvccAdjacencyIncoming {
+		return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
 	}
 	return mvccOutgoingAdjacencyKey(nodeNum, edgeNum, version), nil
-}
-
-func (b *BadgerEngine) mvccIncomingAdjacencyKeyString(txn *badger.Txn, nodeID NodeID, edgeID EdgeID, version MVCCVersion) ([]byte, error) {
-	nodeNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	edgeNum, err := b.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, edgeID)
-	if err != nil {
-		return nil, err
-	}
-	return mvccIncomingAdjacencyKey(nodeNum, edgeNum, version), nil
 }
 
 func (b *BadgerEngine) mvccOutgoingAdjacencyPrefixString(nodeID NodeID) []byte {

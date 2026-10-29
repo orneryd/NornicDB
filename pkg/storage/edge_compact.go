@@ -246,11 +246,11 @@ func (b *BadgerEngine) encodeEdgeCompactV2(txn *badger.Txn, namespace string, ed
 // supply the namespace so property-key allocation goes to the correct
 // per-namespace bucket.
 func (b *BadgerEngine) encodeEdgeInTxn(txn kvWriter, namespace string, edge *Edge) ([]byte, error) {
-	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.StartNode))
 	if err != nil {
 		return nil, fmt.Errorf("allocating start node numID: %w", err)
 	}
-	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.EndNode))
 	if err != nil {
 		return nil, fmt.Errorf("allocating end node numID: %w", err)
 	}

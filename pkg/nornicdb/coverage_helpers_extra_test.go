@@ -123,7 +123,7 @@ func TestDBCollectSubjectRetentionRecords(t *testing.T) {
 }
 
 func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
-	entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3)}
+	entry := &dbSearchService{svc: search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3, nil)}
 	require.False(t, entry.hasPending())
 	nodes, edges := (*dbSearchService)(nil).drainPending()
 	require.Nil(t, nodes)
@@ -134,9 +134,10 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	entry.pendingFlushDelay = time.Millisecond
 	require.Equal(t, time.Millisecond, entry.flushDelay())
 
-	entry.queueRefresh("n1")
-	newest := entry.queueRefresh("n1")
-	entry.queueEdgeRefresh("e1")
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
+	newest := entry.svc.ReserveNodeMutation("n1")
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: newest})
+	seedReservedSearchRefresh(entry, "e1", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("e1")})
 	require.True(t, entry.hasPending())
 	nodes, edges = entry.drainPending()
 	require.Equal(t, map[string]search.NodeMutation{"n1": newest}, nodes, "a node keeps only its newest refresh")
@@ -328,7 +329,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 	require.Equal(t, []float32{0, 1, 0}, vec)
 
 	db = &DB{cypherExecutor: queryEmbeddingTestExecutor(t, defaultEmbedder)}
-	db.SetDbConfigResolver(func(dbName string) (int, float64, string) { return 99, 0, "" })
+	db.SetDbConfigResolver(func(dbName string) (int, float64) { return 99, 0 })
 	vec, err = db.EmbedQueryForDB(context.Background(), "tenant", "query")
 	require.ErrorIs(t, err, ErrQueryEmbeddingDimensionMismatch)
 	require.Nil(t, vec)
@@ -374,7 +375,7 @@ func TestDBSearchStatusAndDropStateBranches(t *testing.T) {
 	require.False(t, status.VectorEnabled)
 	require.False(t, status.LazyTriggerNeeded)
 
-	svc := search.NewServiceWithDimensions(base, 3)
+	svc := search.NewService(base, 3, nil)
 	svc.MarkReadyDisabled()
 	db.searchServices["tenant"] = &dbSearchService{dbName: "tenant", svc: svc}
 	status = db.GetDatabaseSearchStatus("tenant")

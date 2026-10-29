@@ -97,7 +97,9 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if !found {
 		return nil, storage.ErrInvalidData
 	}
-	payload, err := storage.EncodeEntityTransaction(prepared.Namespace(), prepared.LogicalID(), prepared.Operations(), prepared.Mode())
+	// The prepared commit owns an immutable private snapshot; encoding reads it
+	// rather than duplicating a detached public Operations copy.
+	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		return nil, err
 	}

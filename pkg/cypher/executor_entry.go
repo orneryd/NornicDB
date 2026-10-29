@@ -126,7 +126,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	defer func(original string) {
 		redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
 	}(cypher)
-	if fabric.IsAdministrationCommand(source.Text) {
+	// One classification decides both the credential context and the
+	// collected statistics: an administration command carries the caller's
+	// credentials for error redaction and is not recorded by the QUERIES
+	// collector.
+	administrative := StatementDatabase("", source.Text) == "system"
+	if administrative {
 		ctx = withStatementCredentials(ctx, cypher)
 	}
 	// The statement's context (deadlineCtx, once the database's query limits
@@ -198,7 +203,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// limit contexts after its deferred emission, so normal completion does
 	// not look like cancellation to the redactor.
 	originalCypher := cypher
-	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
+	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart, administrative)
 	var executionDuration time.Duration
 	var running runningStatement
 	var queryLimitCancel context.CancelFunc

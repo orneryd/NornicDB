@@ -416,7 +416,7 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 	}
 
 	// Ensure indexes are built (best-effort: if build fails, we still attempt search).
-	svc, buildErr := r.db.EnsureSearchIndexesBuilt(ctx, dbName, engine)
+	svc, buildErr := r.db.EnsureSearchIndexes(ctx, dbName, engine, nornicdb.SearchIndexBuildWait)
 	if svc == nil {
 		if buildErr != nil {
 			return nil, buildErr

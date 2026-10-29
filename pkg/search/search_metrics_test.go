@@ -30,7 +30,7 @@ import (
 func newTestSearchService(t *testing.T) (*Service, *prometheus.Registry, *observability.SearchMetrics) {
 	t.Helper()
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()
 	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
 	svc.AttachMetrics(bag)
@@ -80,7 +80,7 @@ func TestSearch_VectorOnlyMode(t *testing.T) {
 // still functions — the observation chokepoints no-op when metrics is nil.
 func TestSearch_NilMetricsTolerated(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.ready.Store(true)
 	// NO AttachMetrics call.
 
@@ -89,51 +89,44 @@ func TestSearch_NilMetricsTolerated(t *testing.T) {
 	_, _ = svc.Search(ctx, "test", nil, nil)
 }
 
-// TestSearch_AttachMetricsIdempotent asserts repeated AttachMetrics calls
-// re-bind the cached observers (subsequent bag overrides the previous).
-func TestSearch_AttachMetricsIdempotent(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
+// TestSearch_AttachMetricsRebindings checks replacement and detachment.
+func TestSearch_AttachMetricsRebindings(t *testing.T) {
+	cases := []struct {
+		name   string
+		detach bool
+	}{
+		{name: "replacement"},
+		{name: "detach", detach: true},
+	}
 
-	reg1 := prometheus.NewRegistry()
-	bag1 := observability.NewSearchMetrics(reg1, false, &nilSearchProbe{})
-	svc.AttachMetrics(bag1)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestMemoryEngine(t)
+			svc := NewService(engine, 4, nil)
 
-	reg2 := prometheus.NewRegistry()
-	bag2 := observability.NewSearchMetrics(reg2, false, &nilSearchProbe{})
-	svc.AttachMetrics(bag2)
+			staleReg := prometheus.NewRegistry()
+			svc.AttachMetrics(observability.NewSearchMetrics(staleReg, false, &nilSearchProbe{}))
+			var activeReg *prometheus.Registry
+			if tc.detach {
+				svc.AttachMetrics(nil)
+			} else {
+				activeReg = prometheus.NewRegistry()
+				svc.AttachMetrics(observability.NewSearchMetrics(activeReg, false, &nilSearchProbe{}))
+			}
 
-	svc.ready.Store(true)
-	ctx := context.Background()
-	_, _ = svc.Search(ctx, "test", nil, nil)
+			svc.ready.Store(true)
+			ctx := context.Background()
+			// Should not panic.
+			_, _ = svc.Search(ctx, "test", nil, nil)
 
-	// First registry must NOT see the increment (the previous bag was
-	// replaced).
-	got1 := totalCounterByMode(t, reg1, "nornicdb_search_requests_total", "bm25")
-	got2 := totalCounterByMode(t, reg2, "nornicdb_search_requests_total", "bm25")
-	assert.Equal(t, 0.0, got1, "previous bag must not see new observations")
-	assert.GreaterOrEqual(t, got2, 1.0, "active bag must see the observation")
-}
-
-// TestSearch_AttachMetricsNilClearsBindings asserts that
-// AttachMetrics(nil) cleanly detaches without leaving stale observers.
-func TestSearch_AttachMetricsNilClearsBindings(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	svc := NewServiceWithDimensions(engine, 4)
-
-	reg := prometheus.NewRegistry()
-	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
-	svc.AttachMetrics(bag)
-	svc.AttachMetrics(nil) // detach
-
-	svc.ready.Store(true)
-	ctx := context.Background()
-	// Should not panic.
-	_, _ = svc.Search(ctx, "test", nil, nil)
-
-	got := totalCounterByMode(t, reg, "nornicdb_search_requests_total", "bm25")
-	assert.Equal(t, 0.0, got,
-		"detached bag must not see observations after AttachMetrics(nil)")
+			assert.Equal(t, 0.0, totalCounterByMode(t, staleReg, "nornicdb_search_requests_total", "bm25"), "previous bag must not see new observations")
+			if activeReg != nil {
+				got2 := totalCounterByMode(t, activeReg, "nornicdb_search_requests_total", "bm25")
+				assert.GreaterOrEqual(t, got2, 1.0,
+					"active bag must see the observation")
+			}
+		})
+	}
 }
 
 func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T) {
@@ -141,7 +134,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	t.Cleanup(registry.Close)
 
-	primary := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	primary := NewService(newTestMemoryEngine(t), 4, nil)
 	t.Cleanup(func() { require.NoError(t, primary.Close()) })
 	primary.SetContinuationRegistry(registry)
 	bag := observability.NewSearchMetrics(prometheus.NewRegistry(), false, &nilSearchProbe{})
@@ -154,7 +147,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, gaugeValue(t, bag.CursorsActive))
 
-	secondary := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
+	secondary := NewService(newTestMemoryEngine(t), 4, nil)
 	t.Cleanup(func() { require.NoError(t, secondary.Close()) })
 	secondary.SetContinuationRegistry(registry)
 	secondaryStream, err := resultstream.NewProgressive([][]any{{"three"}, {"four"}}, true, 2, nil)

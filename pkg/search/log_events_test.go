@@ -18,12 +18,14 @@ func TestSearchLogEventEnglishFallbackAndAttrs(t *testing.T) {
 	var output bytes.Buffer
 	service := &Service{logger: slog.New(slog.NewTextHandler(&output, nil))}
 
-	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchBM25EngineSelectedEvent("v2"))
+	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchQueryEmbeddingFallbackEvent("http", "unavailable", "offline"))
 
 	line := output.String()
-	require.Contains(t, line, `msg="📇 Search: BM25 engine selected: v2"`)
-	require.Contains(t, line, "event_id=search.bm25_engine.selected")
-	require.Contains(t, line, "bm25_engine=v2")
+	require.Contains(t, line, `msg="query embedding failed; search fallback activated"`)
+	require.Contains(t, line, "event_id=search.query_embedding_fallback")
+	require.Contains(t, line, "transport=http")
+	require.Contains(t, line, "fallback_reason=unavailable")
+	require.Contains(t, line, "diagnostic=offline")
 }
 
 func TestSearchLogEventUsesInjectedLocalizer(t *testing.T) {
@@ -33,9 +35,9 @@ func TestSearchLogEventUsesInjectedLocalizer(t *testing.T) {
 	service := &Service{logger: slog.New(slog.NewTextHandler(&output, nil))}
 	service.SetLocalizer(manager)
 
-	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchBM25EngineSelectedEvent("v2"))
+	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchQueryEmbeddingFallbackEvent("http", "unavailable", "offline"))
 
-	require.Contains(t, output.String(), "Motor BM25 de búsqueda seleccionado: v2")
+	require.Contains(t, output.String(), "falló el embedding de la consulta; se activó la búsqueda alternativa")
 }
 
 func TestSearchOperatorEventStableIdentityAndStructuredArgs(t *testing.T) {
@@ -62,7 +64,7 @@ func TestSearchLogCatalogsAreComplete(t *testing.T) {
 	} {
 		content, err := os.ReadFile(path)
 		require.NoError(t, err)
-		require.True(t, strings.Contains(string(content), "search-log.log.bm25_engine_selected"))
+		require.True(t, strings.Contains(string(content), "search-log.log.query_embedding_fallback"))
 	}
 }
 

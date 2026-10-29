@@ -31,12 +31,12 @@ func BenchmarkTxlogEntries(b *testing.B) {
 		if i%2 == 1 {
 			database = "other"
 		}
-		if _, err := wal.AppendTxBegin(database, "tx-bench", nil); err != nil {
+		if _, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "tx-bench", Metadata: nil}, database); err != nil {
 			b.Fatal(err)
 		}
 	}
 	for i := 0; i < 10000; i++ {
-		if _, err := wal.AppendTxCommit("other", "tx-other", 1); err != nil {
+		if _, err := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: "tx-other", OpCount: 1}, "other"); err != nil {
 			b.Fatal(err)
 		}
 	}

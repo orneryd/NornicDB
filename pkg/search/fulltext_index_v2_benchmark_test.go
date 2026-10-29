@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-func bm25LegacyDiskPath(tb testing.TB) string {
+func bm25DiskPath(tb testing.TB) string {
 	tb.Helper()
-	if raw := os.Getenv("NORNICDB_PROFILE_BM25_PATH"); raw != "" {
+	if raw := os.Getenv("NORNICDB_PROFILE_BM25_V2_PATH"); raw != "" {
 		return raw
 	}
 	base := "~/src/NornicDB/data/test"
@@ -19,86 +21,50 @@ func bm25LegacyDiskPath(tb testing.TB) string {
 	if raw := os.Getenv("NORNICDB_PROFILE_DB"); raw != "" {
 		db = raw
 	}
-	return filepath.Join(base, "search", db, "bm25")
+	return filepath.Join(base, "search", db, "bm25.v2")
 }
 
-func bm25V2DiskPath(tb testing.TB) string {
+func loadBM25FromDisk(tb *testing.B) *FulltextIndexV2 {
 	tb.Helper()
-	if raw := os.Getenv("NORNICDB_PROFILE_BM25_V2_PATH"); raw != "" {
-		return raw
-	}
-	return bm25LegacyDiskPath(tb) + ".v2"
-}
-
-func loadLegacyBM25FromDisk(tb testing.TB) *FulltextIndex {
-	tb.Helper()
-	path := bm25LegacyDiskPath(tb)
+	path := bm25DiskPath(tb)
 	if _, err := os.Stat(path); err != nil {
-		tb.Skipf("bm25 disk file unavailable: %s (%v)", path, err)
+		tb.Skipf("bm25 disk fixture unavailable: %s (%v)", path, err)
 	}
-	idx := NewFulltextIndex()
+	idx := NewFulltextIndexV2WithAnalyzer(nil)
 	if err := idx.Load(path); err != nil {
-		tb.Skipf("failed to load legacy bm25 from %s: %v", path, err)
+		tb.Fatalf("failed to load bm25 from %s: %v", path, err)
 	}
 	if idx.Count() == 0 {
-		tb.Skipf("legacy bm25 index is empty: %s", path)
+		tb.Fatalf("bm25 index is empty: %s", path)
 	}
 	return idx
 }
 
-func loadV2BM25FromDisk(tb testing.TB) *FulltextIndexV2 {
-	tb.Helper()
-	path := bm25V2DiskPath(tb)
-	if _, err := os.Stat(path); err != nil {
-		tb.Skipf("bm25 v2 disk file unavailable: %s (%v)", path, err)
-	}
-	idx := NewFulltextIndexV2()
-	if err := idx.Load(path); err != nil {
-		tb.Skipf("failed to load v2 bm25 from %s: %v", path, err)
-	}
-	if idx.Count() == 0 {
-		tb.Skipf("v2 bm25 index is empty: %s", path)
-	}
-	return idx
-}
-
-func TestBM25V2_DiskTopKOverlap(t *testing.T) {
-	if os.Getenv("NORNICDB_PROFILE_USE_DISK_FIXTURE") == "" {
-		t.Skip("set NORNICDB_PROFILE_USE_DISK_FIXTURE=1 to run disk parity tests")
-	}
-	legacy := loadLegacyBM25FromDisk(t)
-	v2 := loadV2BM25FromDisk(t)
-
+func TestBM25DiskSnapshotSearchDeterministic(t *testing.T) {
 	queries := []string{
 		"where are my prescriptions",
 		"prescription refill status",
 		"drug interactions warnings",
 		"medication dosage history",
 	}
-	for _, q := range queries {
-		lr := legacy.Search(q, 20)
-		vr := v2.Search(q, 20)
-		if len(lr) == 0 || len(vr) == 0 {
-			t.Fatalf("empty results for query %q (legacy=%d v2=%d)", q, len(lr), len(vr))
-		}
-		overlap := 0
-		set := make(map[string]struct{}, len(lr))
-		for _, r := range lr {
-			set[r.ID] = struct{}{}
-		}
-		for _, r := range vr {
-			if _, ok := set[r.ID]; ok {
-				overlap++
-			}
-		}
-		if overlap < 10 {
-			t.Fatalf("insufficient top-20 overlap for query %q: overlap=%d", q, overlap)
-		}
+	index := NewFulltextIndexV2WithAnalyzer(nil)
+	for _, query := range queries {
+		index.Index(query, query, nil, nil, false)
+	}
+	path := filepath.Join(t.TempDir(), "bm25.v2")
+	require.NoError(t, index.Save(path))
+	loaded := NewFulltextIndexV2WithAnalyzer(nil)
+	require.NoError(t, loaded.Load(path))
+	for _, query := range queries {
+		results := loaded.Search(query, 20)
+		require.NotEmpty(t, results, "query %q", query)
+		require.Equal(t, index.Search(query, 20), results, "query %q", query)
+		require.Equal(t, results, loaded.Search(query, 20), "query %q", query)
 	}
 }
 
-func BenchmarkBM25Legacy_FromDisk(b *testing.B) {
-	idx := loadLegacyBM25FromDisk(b)
+func BenchmarkBM25_FromDisk(b *testing.B) {
+	idx := loadBM25FromDisk(b)
 	queries := []string{
 		"where are my prescriptions",
 		"prescription refill status",
@@ -112,59 +78,19 @@ func BenchmarkBM25Legacy_FromDisk(b *testing.B) {
 	}
 }
 
-func BenchmarkBM25V2_FromDisk(b *testing.B) {
-	idx := loadV2BM25FromDisk(b)
-	queries := []string{
-		"where are my prescriptions",
-		"prescription refill status",
-		"drug interactions warnings",
-		"medication dosage history",
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = idx.Search(queries[i%len(queries)], 40)
-	}
-}
-
-func BenchmarkBM25Legacy_LoadOnly_FromDisk(b *testing.B) {
-	path := bm25LegacyDiskPath(b)
+func BenchmarkBM25_LoadOnly_FromDisk(b *testing.B) {
+	path := bm25DiskPath(b)
 	if _, err := os.Stat(path); err != nil {
-		b.Skipf("bm25 disk file unavailable: %s (%v)", path, err)
+		b.Skipf("bm25 disk fixture unavailable: %s (%v)", path, err)
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		idx := NewFulltextIndex()
+		idx := NewFulltextIndexV2WithAnalyzer(nil)
 		if err := idx.Load(path); err != nil {
-			b.Fatalf("failed to load legacy bm25 from %s: %v", path, err)
+			b.Fatalf("failed to load bm25 from %s: %v", path, err)
 		}
 		if idx.Count() == 0 {
-			b.Fatalf("legacy bm25 index is empty: %s", path)
+			b.Fatalf("bm25 index is empty: %s", path)
 		}
 	}
-}
-
-func BenchmarkBM25V2_LoadOnly_FromDisk(b *testing.B) {
-	path := bm25V2DiskPath(b)
-	if _, err := os.Stat(path); err != nil {
-		b.Skipf("bm25 v2 disk file unavailable: %s (%v)", path, err)
-	}
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		idx := NewFulltextIndexV2()
-		if err := idx.Load(path); err != nil {
-			b.Fatalf("failed to load v2 bm25 from %s: %v", path, err)
-		}
-		if idx.Count() == 0 {
-			b.Fatalf("v2 bm25 index is empty: %s", path)
-		}
-	}
-}
-
-func BenchmarkBM25Legacy_SearchOnly_FromDisk(b *testing.B) {
-	BenchmarkBM25Legacy_FromDisk(b)
-}
-
-func BenchmarkBM25V2_SearchOnly_FromDisk(b *testing.B) {
-	BenchmarkBM25V2_FromDisk(b)
 }

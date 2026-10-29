@@ -297,7 +297,10 @@ func TestRecoverBadgerFromSnapshotAndWAL_ReplayFailureWritesUnavailableManifest(
 	dataDir := t.TempDir()
 	walDir := filepath.Join(dataDir, "wal")
 	require.NoError(t, os.MkdirAll(walDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(walDir, "wal.log"), []byte("not-json"), 0644))
+	wal, err := storage.NewWAL(walDir, nil)
+	require.NoError(t, err)
+	require.NoError(t, wal.Append(storage.OperationType("invalid-test-operation"), map[string]any{"value": true}))
+	require.NoError(t, wal.Close())
 
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.Error(t, err)

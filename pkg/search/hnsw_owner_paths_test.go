@@ -15,7 +15,7 @@ func TestHNSWConstructionEntriesReuseServiceJob(t *testing.T) {
 	for _, entry := range []string{"pipeline", "standard-strategy", "internal-wait"} {
 		t.Run(entry, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-			svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+			svc := NewService(newNamespacedEngine(t), 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
 			require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 			started, release := make(chan struct{}), make(chan struct{})

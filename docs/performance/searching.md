@@ -1431,7 +1431,7 @@ type SearchResponse struct {
 
 ```go
 // Enable detailed timing
-svc := search.NewService(storage)
+svc := search.NewService(storage, search.DefaultVectorDimensions, nil)
 svc.DebugLogging = true
 
 results, _ := svc.Search(ctx, query, embedding, opts)

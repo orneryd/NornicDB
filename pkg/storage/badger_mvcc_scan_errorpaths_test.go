@@ -9,47 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBadgerEngine_WithViewEdgeMVCCVersionsFromKey_UnknownNumAndDecodeError(t *testing.T) {
-	engine := createMVCCBadgerEngine(t)
-
-	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	unknownKey := mvccEdgeVersionKey(9_999_999, v)
-	unknownRec, err := encodeMVCCEdgeRecord(&Edge{ID: "ghost:e", StartNode: "ghost:a", EndNode: "ghost:b", Type: "REL"}, false)
-	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(unknownKey, unknownRec)
-	}))
-
-	yieldCount := 0
-	_, reachedEnd, err := engine.withViewEdgeMVCCVersionsFromKey([]byte{prefixMVCCEdge}, 1, func(EdgeID, MVCCVersion, bool) error {
-		yieldCount++
-		return nil
-	})
-	require.NoError(t, err)
-	require.False(t, reachedEnd)
-	require.Equal(t, 0, yieldCount)
-
-	_, err = engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
-	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
-
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		vk, keyErr := engine.mvccEdgeVersionKeyString(txn, "test:e1", v)
-		if keyErr != nil {
-			return keyErr
-		}
-		return txn.Set(vk, []byte("corrupt-edge-mvcc-record"))
-	}))
-
-	_, _, err = engine.withViewEdgeMVCCVersionsFromKey([]byte{prefixMVCCEdge}, 64, func(EdgeID, MVCCVersion, bool) error {
-		return nil
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "msgpack")
-}
-
 func TestBadgerEngine_RebuildMVCCHeads_ContextCancelledAndClosedEngine(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 

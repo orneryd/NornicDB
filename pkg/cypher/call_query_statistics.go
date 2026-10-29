@@ -11,8 +11,13 @@ import (
 	"time"
 )
 
+// queryStatisticsCollector is one database's QUERIES collector. Neo4j 5.26
+// owns a collector for a user database only: the system database has none,
+// so its sections return their existing columns and no rows. system reports
+// that ownership.
 type queryStatisticsCollector struct {
 	registry   *queryStatisticsRegistry
+	system     bool
 	active     atomic.Bool
 	mu         sync.Mutex
 	generation uint64
@@ -38,7 +43,7 @@ func (registry *queryStatisticsRegistry) forDatabase(name string) *queryStatisti
 	// Query collection is on from the start, as in Neo4j 5.26: a fresh
 	// database reports "collecting" and records every query until
 	// db.stats.stop('QUERIES').
-	collector := &queryStatisticsCollector{registry: registry, generation: 1}
+	collector := &queryStatisticsCollector{registry: registry, system: strings.EqualFold(name, "system"), generation: 1}
 	collector.active.Store(true)
 	registry.collectors[name] = collector
 	return collector
@@ -72,8 +77,15 @@ func (e *StorageExecutor) ShareQueryStatisticsFrom(source *StorageExecutor) {
 	}
 }
 
-func (collector *queryStatisticsCollector) start(query string, now time.Time) uint64 {
-	if collector == nil || !collector.active.Load() || len(query) > 65536 || containsFold(query, "db.stats.") {
+// start admits the statement to the collector and returns the generation its
+// record belongs to, 0 when the statement is not collected. administrative
+// is the statement's fabric.IsAdministrationCommand classification, which
+// the executor already computes for the statement; an administration
+// command is never collected (Neo4j 5.26 records none, so no credential it
+// carries reaches the collected statistics). db.stats.* statements exclude
+// themselves.
+func (collector *queryStatisticsCollector) start(query string, now time.Time, administrative bool) uint64 {
+	if collector == nil || collector.system || administrative || !collector.active.Load() || len(query) > 65536 || containsFold(query, "db.stats.") {
 		return 0
 	}
 	collector.mu.Lock()
@@ -129,6 +141,16 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	collector := e.queryStatistics
 	if collector == nil {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "StatisticsUnavailable", "query statistics collector is unavailable")
+	}
+	if collector.system {
+		columns := []string{"section", "success", "message"}
+		switch action {
+		case "retrieve":
+			columns = []string{"section", "data"}
+		case "status":
+			columns = []string{"section", "status", "data"}
+		}
+		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, nil
 	}
 	section := "QUERIES"
 	if len(arguments) > 0 {
@@ -231,9 +253,10 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 				}
 			}
 			result.Rows = append(result.Rows, []interface{}{section, map[string]interface{}{
-				// Keep the original collector key for accounting, but publish
-				// diagnostic text through the same literal policy as query logs.
-				"query":              e.redactForLog(ctx, query),
+				// The collected key is the statement as the client sent it,
+				// and retrieval publishes it unchanged: Neo4j 5.26 records
+				// ordinary numeric, string and property literals raw.
+				"query":              query,
 				"queryExecutionPlan": nil,
 				"estimatedRows":      nil,
 				"invocations":        copies,

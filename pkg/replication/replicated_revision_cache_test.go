@@ -4,6 +4,7 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,8 +20,12 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 	defer base.Close()
 	_, err = base.CreateNode(&storage.Node{ID: "library:item", Labels: []string{"Document"}})
 	require.NoError(t, err)
-	adapter, err := replication.NewStorageAdapter(base)
+	// This test covers query-cache invalidation after a replicated delete, not
+	// default path resolution, so the WAL lives in a temp dir. Using the
+	// default directory would open whatever checkout-local WAL is present.
+	adapter, err := replication.NewStorageAdapterWithWAL(base, filepath.Join(t.TempDir(), "wal"))
 	require.NoError(t, err)
+	defer adapter.Close()
 	view := storage.NewNamespacedEngine(replication.NewReplicatedEngine(base, nil, 0), "library")
 	executor := cypher.NewStorageExecutor(view, cypher.QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	read := func(want int) {

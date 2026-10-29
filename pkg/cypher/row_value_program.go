@@ -742,11 +742,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 	if !bound {
 		return e.evaluateRowValueText(n.text, values)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
-	if !ok {
-		return nil, false, rowPropertyChainTypeError(base, n.chain)
-	}
-	return value, true, nil
+	return evaluateRowPropertyResult(base, n.chain, e)
 }
 
 // rowFallbackNode is an expression no form of the row evaluator matches:
@@ -904,13 +900,17 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 	if !ok {
 		return e.evaluateRowFallback(n.text, values, rowFallbackValue)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	return evaluateRowPropertyResult(base, n.chain, e)
+}
+
+// evaluateRowPropertyResult owns the value/error contract after either a bound
+// variable or a computed expression has supplied the base of a property chain.
+func evaluateRowPropertyResult(base interface{}, chain string, e *StorageExecutor) (interface{}, bool, error) {
+	value, ok := evaluateRowPropertyChain(base, chain, e, false)
 	if !ok {
-		if err := rowPropertyChainTypeError(base, n.chain); err != nil {
-			return nil, false, err
-		}
+		return nil, false, rowPropertyChainTypeError(base, chain)
 	}
-	return value, ok, nil
+	return value, true, nil
 }
 
 // rowEndpointNode is startNode(variable) / endNode(variable).

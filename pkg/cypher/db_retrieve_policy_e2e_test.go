@@ -61,7 +61,7 @@ func TestE2E_DbRetrieve_DocumentedStrictPolicyQuery(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 
@@ -103,7 +103,7 @@ func TestE2E_DbRetrieve_FailClosedFlag(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)
 

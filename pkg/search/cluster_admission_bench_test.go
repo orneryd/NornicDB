@@ -51,7 +51,7 @@ func BenchmarkClusterAdmissionWritePath(b *testing.B) {
 					ChunkEmbeddings: [][]float32{vec},
 				}
 			}
-			svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dims)
+			svc := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dims, nil)
 			b.Cleanup(func() { _ = svc.Close() })
 			if mode.clustering {
 				svc.EnableClustering(nil, 8)

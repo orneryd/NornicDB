@@ -45,7 +45,7 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 
 	// Audit: the WAL records the sidecar write as OpUpdateEmbedding.
 	require.NoError(t, wal.Close())
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	require.NoError(t, err)
 	var sawEmbeddingUpdate bool
 	for _, entry := range entries {

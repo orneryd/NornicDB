@@ -8,34 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDisabledBM25IndexMethods(t *testing.T) {
-	idx := disabledBM25Index{}
-
-	idx.Index("doc-1", "hello world")
-	idx.Remove("doc-1")
-	idx.Clear()
-	idx.IndexBatch([]FulltextBatchEntry{{ID: "doc-2", Text: "batch text"}})
-
-	require.Nil(t, idx.Search("hello", 5))
-	require.Nil(t, idx.SearchAllowed("hello", 5, nil))
-	require.Nil(t, idx.PhraseSearch("hello world", 5))
-	require.Nil(t, idx.LexicalSeedDocIDs(3, 2))
-	require.Equal(t, 0, idx.Count())
-	require.False(t, idx.IsDirty())
-
-	doc, ok := idx.GetDocument("doc-1")
-	require.False(t, ok)
-	require.Empty(t, doc)
-	require.NoError(t, idx.Save("ignored"))
-	require.NoError(t, idx.SaveNoCopy("ignored"))
-	require.NoError(t, idx.Load("ignored"))
-}
-
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 	require.Equal(t, 0, svc.FulltextDocCount())
 
@@ -53,14 +30,13 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	svc.MarkReadyDisabled()
 	require.True(t, svc.IsReady())
 	require.Equal(t, 0, svc.FulltextDocCount())
-	require.Equal(t, "v2", svc.BM25Engine())
 }
 
 func TestPropertyVectorHelpers(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.buildInProgress.Store(true)
 	svc.nodePropVector = map[string]map[string]string{
 		"node-1": {"title": nodePropertyVectorKey("node-1", "title"), "body": nodePropertyVectorKey("node-1", "body")},
@@ -88,7 +64,7 @@ func TestPropertyVectorHelpers(t *testing.T) {
 
 	(*Service)(nil).RemovePropertyVectorIndex("body")
 
-	liveSvc := NewServiceWithDimensions(engine, 4)
+	liveSvc := NewService(engine, 4, nil)
 	liveSvc.resultCache.Put("cached", &SearchResponse{Query: "cached"})
 	liveSvc.nodePropVector = map[string]map[string]string{
 		"node-1": {"body": nodePropertyVectorKey("node-1", "body")},
@@ -114,7 +90,7 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
-	svc = NewServiceWithDimensions(engine, 2)
+	svc = NewService(engine, 2, nil)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
@@ -139,7 +115,7 @@ func TestIVFPQBackgroundPersistenceNoopBranches(t *testing.T) {
 
 func TestFilterByPropertiesDirect(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{"Doc"}, map[string]any{"color": "blue", "tag": "keep"})

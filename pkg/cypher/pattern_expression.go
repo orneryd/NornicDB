@@ -268,7 +268,7 @@ func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow)
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
+			if value, resolved := evaluateRowPropertyChain(base, chain, e, false); resolved {
 				return cypherfn.RuntimeValue(value), true
 			}
 		}
