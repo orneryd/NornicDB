@@ -410,8 +410,9 @@ func TestSmartQueryCache_TTL(t *testing.T) {
 
 	result := &ExecuteResult{Rows: [][]interface{}{{"value"}}}
 
-	// Store with very short TTL
-	cache.PutWithLabels("query", nil, result, 1*time.Millisecond, []string{"Test"})
+	// A TTL no scheduler delay can outlast between the put and the first read.
+	const ttl = time.Hour
+	cache.PutWithLabels("query", nil, result, ttl, []string{"Test"})
 
 	// Immediate hit
 	_, found := cache.Get("query", nil)
@@ -419,8 +420,12 @@ func TestSmartQueryCache_TTL(t *testing.T) {
 		t.Error("Expected cache hit immediately after put")
 	}
 
-	// Wait for TTL to expire
-	time.Sleep(5 * time.Millisecond)
+	// Age the entry past its TTL instead of sleeping through it.
+	cache.mu.Lock()
+	for _, cached := range cache.cache {
+		cached.timestamp = cached.timestamp.Add(-2 * ttl)
+	}
+	cache.mu.Unlock()
 
 	// Should be expired
 	_, found = cache.Get("query", nil)

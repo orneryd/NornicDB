@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +11,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/stretchr/testify/require"
 )
+
+// queryReaderCancellationRuns makes every run of
+// TestQueryReaderCancellationDoesNotPoisonCompilation read a statement text
+// the process has never parsed (see the test).
+var queryReaderCancellationRuns atomic.Uint64
 
 func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 	for _, parser := range []struct {
@@ -19,7 +25,13 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 		for _, version := range []string{"5", "25"} {
 			t.Run(parser.name+"/"+version, func(t *testing.T) {
 				t.Cleanup(parser.setup())
-				query := fmt.Sprintf("MATCH (n:ReaderCanceled%sVersion%s) RETURN count(n) AS count", parser.name, version)
+				// The grammar's syntax product is retained process-wide by text
+				// (antlr.ParseSyntax) and read back without lexing or parsing, so
+				// none of the 32 checks below are spent on it. A text an earlier
+				// run compiled live (-count, or any test sharing it) never cancels:
+				// each run reads a new one.
+				run := queryReaderCancellationRuns.Add(1)
+				query := fmt.Sprintf("MATCH (n:ReaderCanceled%sVersion%sRun%d) RETURN count(n) AS count", parser.name, version, run)
 				key := semanticCacheKey(query, version == "25")
 				pipelineClauseSplits.Lock()
 				delete(pipelineClauseSplits.splits, key)
