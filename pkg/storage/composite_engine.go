@@ -21,6 +21,7 @@ import (
 // This enables composite databases (similar to Neo4j Fabric) where a single database
 // view spans multiple physical databases.
 type CompositeEngine struct {
+	owner any
 	// name is the composite database's name (SetCompositeName).
 	name              string
 	accessConstituent func(string, Engine, bool) (Engine, error)
@@ -211,7 +212,7 @@ func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
 	if c.accessConstituent != nil {
-		return c.accessConstituent(c.constituentDatabase(alias, engine), engine, false)
+		return c.accessConstituent(alias, engine, false)
 	}
 	return engine, nil
 }
@@ -227,7 +228,7 @@ func (c *CompositeEngine) getConstituentForWrite(alias string) (Engine, error) {
 	if err != nil || c.accessConstituent == nil {
 		return engine, err
 	}
-	return c.accessConstituent(c.constituentDatabase(alias, engine), engine, true)
+	return c.accessConstituent(alias, engine, true)
 }
 
 // GetConstituentByAlias returns the storage engine for a specific constituent

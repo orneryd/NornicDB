@@ -191,10 +191,10 @@ LIMIT $limit
 				}
 				require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 				if tc.requireNilService {
-					require.Nil(t, exec.searchService, "query-time vector cosine fast path must not allocate a throwaway search service")
+					require.Nil(t, exec.search(), "query-time vector cosine fast path must not allocate a throwaway search service")
 				}
 				if attached != nil {
-					require.Same(t, attached, exec.searchService, "dimension mismatch should fall back to exact scoring, not replace the DB-owned search service")
+					require.Same(t, attached, exec.search(), "dimension mismatch should fall back to exact scoring, not replace the DB-owned search service")
 				}
 			}
 		})

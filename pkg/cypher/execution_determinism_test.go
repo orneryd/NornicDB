@@ -68,8 +68,8 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 	exec := solR2CacheExecutor(t)
 	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"content": "library transcript"}}))
-	exec.searchService.EnableRelationshipSearch(nil)
-	exec.searchService.StartRelationshipIndex()
+	exec.search().EnableRelationshipSearch(nil)
+	exec.search().StartRelationshipIndex()
 	seen := map[string]bool{}
 	for _, function := range cypherFunctionCatalog {
 		if function.cacheVolatility == functionStable || strings.HasPrefix(function.name, "gds.") || strings.HasPrefix(function.name, "graph.") || seen[function.name] {

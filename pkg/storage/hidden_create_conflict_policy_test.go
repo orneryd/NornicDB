@@ -308,7 +308,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.True(t, tx.EdgeCreateWasNoOp(candidate.ID))
 			_, err = tx.GetEdge(candidate.ID)
 			require.ErrorIs(t, err, ErrNotFound, "the hidden-only candidate must not enter the visible point-read overlay")
-			between, err := tx.GetEdgesBetween(candidate.StartNode, candidate.EndNode)
+			between, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: candidate.StartNode, Other: candidate.EndNode})
 			require.NoError(t, err)
 			require.Empty(t, between, "the hidden-only candidate must not enter relationship matching")
 			candidate.Properties["payload"] = "stored"

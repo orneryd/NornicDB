@@ -605,7 +605,7 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string, e
 }
 
 // writeNeo4jError writes an error in Neo4j format.
-func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, message string) {
+func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, message string, additional ...QueryError) {
 	s.errorCount.Add(1)
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
@@ -614,6 +614,7 @@ func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, messag
 			Message: message,
 		}},
 	}
+	response.Errors = append(response.Errors, additional...)
 	httpresponse.WriteJSON(w, status, response)
 }
 

@@ -67,12 +67,19 @@ func (s *Server) writeNeo4jInvalidRequestBody(w http.ResponseWriter, r *http.Req
 	s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, code, localization.InvalidRequestBody())
 }
 
-func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http.Request, err error) {
+func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http.Request, err error, cleanupErrors ...error) {
 	statusCode := http.StatusBadRequest
 	if errors.Is(err, errInvalidTransactionRequestFormat) {
 		statusCode = http.StatusOK
 	}
-	s.writeLocalizedNeo4jError(w, r, statusCode, "Neo.ClientError.Request.InvalidFormat", localization.InvalidRequestBody())
+	var additional []QueryError
+	for _, cleanupErr := range cleanupErrors {
+		if cleanupErr != nil {
+			code, message := mapSessionExecError(cleanupErr)
+			additional = append(additional, QueryError{Code: code, Message: message})
+		}
+	}
+	s.writeNeo4jError(w, statusCode, "Neo.ClientError.Request.InvalidFormat", s.localizedText(w, r, localization.InvalidRequestBody()), additional...)
 }
 
 func (s *Server) writeNeo4jInvalidJSONBody(w http.ResponseWriter, r *http.Request) {

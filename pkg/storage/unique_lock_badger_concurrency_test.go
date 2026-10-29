@@ -39,7 +39,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 		if err != nil {
 			t.Fatalf("BeginTransaction writer %d: %v", writer, err)
 		}
-		if err := tx.SetDeferredConstraintValidation(true); err != nil {
+		if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 			t.Fatalf("SetDeferredConstraintValidation writer %d: %v", writer, err)
 		}
 		for key := range badgerUniqueLockKeysPerWriter {
@@ -148,7 +148,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		if err != nil {
 			t.Fatalf("BeginTransaction revision %d: %v", index+1, err)
 		}
-		if err := tx.SetDeferredConstraintValidation(true); err != nil {
+		if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 			t.Fatalf("SetDeferredConstraintValidation revision %d: %v", index+1, err)
 		}
 		if err := tx.UpdateGraphNode(&Node{
@@ -206,7 +206,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if err != nil {
 		t.Fatalf("BeginTransaction retry: %v", err)
 	}
-	if err := retry.SetDeferredConstraintValidation(true); err != nil {
+	if err := retry.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation retry: %v", err)
 	}
 	if err := retry.UpdateGraphNode(&Node{
@@ -259,7 +259,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 			if err != nil {
 				b.Fatalf("BeginTransaction writer %d: %v", writer, err)
 			}
-			if err := tx.SetDeferredConstraintValidation(true); err != nil {
+			if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 				b.Fatalf("SetDeferredConstraintValidation writer %d: %v", writer, err)
 			}
 			for key := range badgerUniqueLockKeysPerWriter {
@@ -301,7 +301,7 @@ func seedBadgerUniqueFunctions(t testing.TB, engine *BadgerEngine) {
 	if err != nil {
 		t.Fatalf("BeginTransaction seed: %v", err)
 	}
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
+	if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation seed: %v", err)
 	}
 	for writer := range badgerUniqueLockWriters {

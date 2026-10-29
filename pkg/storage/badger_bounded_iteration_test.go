@@ -51,9 +51,9 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 		start := time.Now()
 		for i := 0; i < probes; i++ {
 			id := NodeID(fmt.Sprintf("keep:n%d", i))
-			out, err := tx.GetOutgoingEdges(id)
+			out, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: id})
 			require.NoError(t, err)
-			in, err := tx.GetIncomingEdges(id)
+			in, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: id})
 			require.NoError(t, err)
 			require.Empty(t, out)
 			require.Empty(t, in)

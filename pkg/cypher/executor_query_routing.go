@@ -10,6 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type metadataCommandPurpose uint8
@@ -83,7 +84,15 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
-	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, hasRevealCall(cypher))
+	reveal := hasRevealCall(cypher)
+	if scope := e.executionReadScopeOf(); scope != nil {
+		if reveal && !scope.reveal {
+			return nil, newSemanticError("Neo.ClientError.Statement.AccessMode", "AccessMode", "Nested reveal requires reveal in the enclosing statement")
+		}
+		ctx = storage.InheritQueryRevealScopes(ctx, scope.context)
+		reveal = reveal || scope.reveal
+	}
+	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, reveal)
 	defer cleanupReveal()
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)

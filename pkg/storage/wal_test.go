@@ -743,12 +743,15 @@ func TestWAL_InternalBranchErrors(t *testing.T) {
 
 	t.Run("loadLastSequence rejects malformed manifest segment path", func(t *testing.T) {
 		dir := t.TempDir()
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version: walManifestVersion,
-			Segments: []WALSegment{
-				{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
-			},
-		}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version: walManifestVersion,
+				Segments: []WALSegment{
+					{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
+				},
+			})
+			require.NoError(t, manifestErr)
+		}
 
 		w := &WAL{config: &WALConfig{Dir: dir}}
 		_, err := w.loadLastSequence()
@@ -1206,10 +1209,13 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		for _, seg := range []WALSegment{oldSeg, newerSeg} {
 			require.NoError(t, os.WriteFile(filepath.Join(segDir, seg.Path), []byte("segment"), 0644))
 		}
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version:  walManifestVersion,
-			Segments: []WALSegment{oldSeg, newerSeg},
-		}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version:  walManifestVersion,
+				Segments: []WALSegment{oldSeg, newerSeg},
+			})
+			require.NoError(t, manifestErr)
+		}
 
 		require.NoError(t, wal.ManageSnapshot(10, WALSnapshotRetention))
 
@@ -1219,7 +1225,7 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		_, err = os.Stat(filepath.Join(segDir, newerSeg.Path))
 		assert.NoError(t, err, "newest retained segment should remain")
 
-		manifest, err := loadWALManifest(dir)
+		manifest, err := accessWALManifest(dir, walReadManifest, nil)
 		require.NoError(t, err)
 		require.Len(t, manifest.Segments, 1)
 		assert.Equal(t, newerSeg.Path, manifest.Segments[0].Path)
@@ -1270,14 +1276,17 @@ func TestWAL_ManageSnapshotStandaloneRetention(t *testing.T) {
 		for _, seg := range segments {
 			require.NoError(t, os.WriteFile(filepath.Join(segDir, seg.Path), []byte("segment"), 0644))
 		}
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version:  walManifestVersion,
-			Segments: segments,
-		}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version:  walManifestVersion,
+				Segments: segments,
+			})
+			require.NoError(t, manifestErr)
+		}
 
 		require.NoError(t, wal.ManageSnapshot(6, WALSnapshotRetention))
 
-		manifest, loadErr := loadWALManifest(dir)
+		manifest, loadErr := accessWALManifest(dir, walReadManifest, nil)
 		require.NoError(t, loadErr)
 		var kept []string
 		for _, seg := range manifest.Segments {
@@ -1670,12 +1679,15 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		requireRecoveryStoresClosed(t)
 
 		dir := t.TempDir()
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version: walManifestVersion,
-			Segments: []WALSegment{
-				{FirstSeq: 1, LastSeq: 1, Path: "../escape.wal"},
-			},
-		}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version: walManifestVersion,
+				Segments: []WALSegment{
+					{FirstSeq: 1, LastSeq: 1, Path: "../escape.wal"},
+				},
+			})
+			require.NoError(t, manifestErr)
+		}
 		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})

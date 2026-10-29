@@ -330,15 +330,15 @@ func TestCompositeExecutor_SearchServiceNotInherited(t *testing.T) {
 	exec := NewStorageExecutor(base)
 	// Simulate having a search service on the base executor.
 	// (We can't set a real one without import cycles, but we can check
-	// the cloneForStorage behavior by verifying the field is nil on composite.)
+	// the selected-database clone policy by verifying the field is nil on composite.)
 	compositeEngine := storage.NewCompositeEngine(
 		map[string]storage.Engine{"a": newTestMemoryEngine(t)},
 		map[string]string{"a": "shard_a"},
 		map[string]string{"a": "read_write"},
 	)
-	cloned := exec.cloneForStorage(compositeEngine)
+	cloned := exec.cloneWithStorage(compositeEngine, selectedDatabaseStorage)
 	// The cloned executor for a composite engine must not inherit searchService.
-	if cloned.searchService != nil {
+	if cloned.search() != nil {
 		t.Fatal("expected searchService to be nil on composite-scoped executor")
 	}
 }

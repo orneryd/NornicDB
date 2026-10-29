@@ -58,8 +58,8 @@ func TestReservationOwnerOutstandingWorkIsBounded(t *testing.T) {
 			require.NoError(t, refresh(older), "a completed generation read storage again behind a fresh reservation")
 			later.Discard()
 			svc.nodeMutationMu.Lock()
-			nodes := len(svc.pendingNodeMutations)
-			edges := len(svc.pendingEdgeMutations)
+			nodes := len(svc.nodeMutations.pending)
+			edges := len(svc.edgeMutations.pending)
 			links := len(svc.mutationReservations.links)
 			svc.nodeMutationMu.Unlock()
 			require.Zero(t, nodes)
@@ -116,4 +116,39 @@ func TestReservationOwnerLegacyRetryNotification(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Identical IDs in separate kinds and services must retain independent ownership.
+// Tokens stay comparable so queued consumers can identify the reservation they own.
+func TestReservationRegistryDomainsAndComparableTokens(t *testing.T) {
+	var emptyNode NodeMutation
+	var emptyEdge EdgeMutation
+	require.True(t, emptyNode == NodeMutation{})
+	require.True(t, emptyEdge == EdgeMutation{})
+	require.False(t, (RefreshRetry{}).Current())
+	require.True(t, (RefreshRetry{}).Retired())
+	(RefreshRetry{}).Discard()
+
+	svc := &Service{}
+	other := &Service{}
+	node := svc.ReserveNodeMutation("same")
+	edge := svc.ReserveEdgeMutation("same")
+	foreign := other.ReserveNodeMutation("same")
+	require.True(t, node == node)
+	require.True(t, edge == edge)
+	require.False(t, node == foreign)
+	require.True(t, (RefreshRetry{Node: node}).Current())
+	require.True(t, (RefreshRetry{Edge: edge}).Current())
+	require.False(t, (RefreshRetry{Node: node}).NewerThan(RefreshRetry{Node: foreign}))
+	require.NoError(t, other.RefreshNodeWithMutation(node))
+	require.NoError(t, other.RefreshEdgeWithMutation(edge))
+
+	svc.DiscardNodeMutation(node)
+	require.True(t, (RefreshRetry{Node: node}).Retired())
+	require.True(t, (RefreshRetry{Edge: edge}).Current())
+	require.True(t, (RefreshRetry{Node: foreign}).Current())
+	(RefreshRetry{Edge: edge}).Discard()
+	(RefreshRetry{Node: foreign}).Discard()
+	require.True(t, (RefreshRetry{Edge: edge}).Retired())
+	require.True(t, (RefreshRetry{Node: foreign}).Retired())
 }

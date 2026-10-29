@@ -87,11 +87,11 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 		}
 	})
 
-	outgoing, err := reader.GetOutgoingEdges(startID)
+	outgoing, err := reader.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: startID})
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, edgeID, outgoing[0].ID)
-	incoming, err := reader.GetIncomingEdges(endID)
+	incoming, err := reader.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: endID})
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, edgeID, incoming[0].ID)

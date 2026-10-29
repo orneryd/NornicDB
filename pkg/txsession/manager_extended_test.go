@@ -14,7 +14,7 @@ import (
 )
 
 func TestSetTerminalErrorObserver(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Hour, newExecutorFactory(t))
 
 	var observed struct {
 		mu      sync.Mutex
@@ -23,6 +23,12 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	}
 
 	mgr.SetTerminalErrorObserver(func(s *Session, err error) {
+		if s.mu.TryLock() {
+			s.mu.Unlock()
+		} else {
+			t.Error("terminal observer must run outside session operation lock")
+		}
+
 		observed.mu.Lock()
 		observed.session = s
 		observed.err = err
