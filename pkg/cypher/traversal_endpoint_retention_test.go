@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
+	"unsafe"
+	"weak"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,11 @@ import (
 type endpointRetentionEngine struct {
 	*storage.NamespacedEngine
 	payloadBytes int
-	reads        atomic.Int64
+	mu           sync.Mutex
+	reads        int
+	payloads     []weak.Pointer[byte]
+	holdPayloads bool
+	heldPayloads []string
 	blocked      chan struct{}
 	release      chan struct{}
 }
@@ -28,11 +34,25 @@ func (s *endpointRetentionEngine) endpointBody(id storage.NodeID, node *storage.
 	if err != nil || node == nil || !strings.HasPrefix(string(id), "end-") {
 		return node, err
 	}
-	if s.blocked != nil && s.reads.Add(1) == 128 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	if s.blocked != nil && s.reads == 128 {
 		close(s.blocked)
+		s.mu.Unlock()
 		<-s.release
+		s.mu.Lock()
 	}
-	node.Properties["unrelated"] = strings.Repeat("x", s.payloadBytes)
+	payload := strings.Repeat("x", s.payloadBytes)
+	node.Properties["unrelated"] = payload
+	if s.blocked != nil {
+		// Observe the actual string backing allocation, not the node wrapper:
+		// a copied property map can retain the body without retaining its node.
+		s.payloads = append(s.payloads, weak.Make(unsafe.StringData(payload)))
+		if s.holdPayloads {
+			s.heldPayloads = append(s.heldPayloads, payload)
+		}
+	}
 	return node, nil
 }
 
@@ -70,13 +90,12 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, warm.Rows)
 
-			measure := func(payloadBytes int) int64 {
+			measure := func(payloadBytes int, holdPayloads bool) int64 {
 				store.payloadBytes = payloadBytes
-				store.reads.Store(0)
+				store.reads = 0
+				store.payloads = nil
+				store.holdPayloads = holdPayloads
 				store.blocked, store.release = make(chan struct{}), make(chan struct{})
-				runtime.GC()
-				var before, paused runtime.MemStats
-				runtime.ReadMemStats(&before)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				done := make(chan struct{})
@@ -89,10 +108,10 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 				defer func() {
 					close(store.release)
 					<-done
+					store.heldPayloads = nil
 					require.NoError(t, queryErr)
-					if result != nil {
-						require.Equal(t, [][]interface{}{{tc.want}}, result.Rows)
-					}
+					require.NotNil(t, result)
+					require.Equal(t, [][]interface{}{{tc.want}}, result.Rows)
 				}()
 				select {
 				case <-store.blocked:
@@ -102,15 +121,33 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 					t.Fatal("query did not reach the retained-memory checkpoint")
 				}
 				// The public query is paused with 127 endpoints already visited.
-				// Collect transient decoder bodies; retained query caches stay live.
+				// Count only this query's endpoint payload allocations that remain
+				// reachable after GC. Unrelated heap reclamation cannot subtract
+				// from this cohort, and weak references do not keep it alive.
 				runtime.GC()
-				runtime.ReadMemStats(&paused)
-				return int64(paused.HeapAlloc) - int64(before.HeapAlloc)
+				store.mu.Lock()
+				defer store.mu.Unlock()
+				require.Len(t, store.payloads, 127, "checkpoint must follow the same endpoint population")
+				var retained int64
+				for _, payload := range store.payloads {
+					if payload.Value() != nil {
+						retained += int64(payloadBytes)
+					}
+				}
+				runtime.KeepAlive(exec)
+				runtime.KeepAlive(store)
+				return retained
 			}
-			small, large := measure(1<<10), measure(256<<10)
+			small, large := measure(1<<10, false), measure(256<<10, false)
 			t.Logf("retained bytes: 1KiB properties=%d, 256KiB properties=%d", small, large)
 			require.Less(t, large, int64(8<<20), "COUNT/scalar traversal must not retain unrelated endpoint bodies")
 			require.Less(t, large-small, int64(4<<20), "working set must not scale with unrelated property size")
+			// A retaining owner must be visible to this same paused-query
+			// measurement and exceed BOTH unchanged regression limits.
+			held := measure(256<<10, true)
+			require.Equal(t, int64(127*(256<<10)), held)
+			require.Greater(t, held, int64(8<<20))
+			require.Greater(t, held-small, int64(4<<20))
 		})
 	}
 }
