@@ -16,7 +16,7 @@ type raftAcceptedOutcome struct {
 
 func (r *RaftReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = r.LifetimeContext()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -23,6 +23,9 @@ type walAcceptedEntityCommit struct {
 // Definite rejection happens before journaling; once journal I/O begins, an
 // uncertain error retains accepted ownership for recovery rather than rollback.
 func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome)) (*CommitReceipt, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if prepared == nil {
 		return nil, ErrInvalidData
 	}
@@ -37,19 +40,26 @@ func (w *WALEngine) SubmitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if len(ops) == 0 {
 		return prepared.engine.SubmitEntityCommit(ctx, prepared, settle)
 	}
-	inner, found := EntityCommitSubmitterFor(w.engine)
+	inner, found, err := EntityCommitSubmitterForWithContext(ctx, w.engine)
+	if err != nil {
+		return nil, err
+	}
 	if !found {
 		return nil, ErrInvalidData
 	}
-	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Prepared: prepared})
+	payload, err := EncodeEntityTransactionRequestWithContext(ctx, EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		return nil, err
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		releaseAuthority()
 		return nil, err
 	}
 	w.mutationMu.RLock()

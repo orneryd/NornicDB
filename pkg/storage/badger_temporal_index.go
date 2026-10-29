@@ -367,6 +367,15 @@ func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(txn *badger.Txn, n
 }
 
 func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error) {
+	return b.GetTemporalNodeAsOfInNamespaceWithContext(context.Background(), namespace, label, keyProp, keyValue, validFromProp, validToProp, asOf)
+}
+
+// GetTemporalNodeAsOfInNamespaceWithContext uses the canonical temporal readers
+// with caller cancellation, including current-body fallback preparation.
+func (b *BadgerEngine) GetTemporalNodeAsOfInNamespaceWithContext(ctx context.Context, namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return nil, err
 	}
@@ -381,7 +390,7 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 	}
 	spec, _ := splitTemporalKeySpec(constraint.Properties)
 	if spec.listBearing(keyValue) {
-		return b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, true)
+		return b.temporalListNodeAsOfInNamespace(ctx, namespace, constraint, keyValue, asOf, true)
 	}
 	target := temporalRefreshTarget{
 		constraint: constraint,
@@ -410,7 +419,7 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf, withEmbeddings: true})
+		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, at: asOf, withEmbeddings: true})
 		return err
 	})
 	if err != nil {
@@ -429,14 +438,20 @@ func qualifyTemporalNodeID(namespace string, nodeID NodeID) NodeID {
 	return NodeID(namespace + ":" + string(nodeID))
 }
 
-func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time) (*Node, error) {
-	nodes, err := b.GetNodesByLabel(constraint.Label)
+func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(ctx context.Context, namespace string, constraint Constraint, keyValue interface{}, asOf time.Time) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	nodes, err := b.GetNodesByLabelWithContext(ctx, constraint.Label)
 	if err != nil {
 		return nil, err
 	}
 	var best *Node
 	var bestStart time.Time
 	for _, candidate := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if candidate == nil {
 			continue
 		}
@@ -462,9 +477,9 @@ func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, co
 // temporalListNodeAsOfInNamespace shares the existing descending history reader
 // across list as-of/current lookups. A current hint can hide a later historical
 // holder when an upgrade merges overlapping old-format list histories.
-func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time, withEmbeddings bool) (*Node, error) {
+func (b *BadgerEngine) temporalListNodeAsOfInNamespace(ctx context.Context, namespace string, constraint Constraint, keyValue interface{}, asOf time.Time, withEmbeddings bool) (*Node, error) {
 	if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
-		node, err := b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
+		node, err := b.currentTemporalNodeByScanInNamespace(ctx, namespace, constraint, keyValue, asOf)
 		if err != nil || node == nil || !withEmbeddings {
 			return node, err
 		}
@@ -474,7 +489,7 @@ func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constra
 	var node *Node
 	err := b.withView(func(txn *badger.Txn) error {
 		var err error
-		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf, withEmbeddings: withEmbeddings})
+		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, at: asOf, withEmbeddings: withEmbeddings})
 		return err
 	})
 	return node, err
@@ -482,6 +497,15 @@ func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constra
 
 // IsCurrentTemporalNodeInNamespace reports whether the given temporal node is the live/current version.
 func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *Node, asOf time.Time) (bool, error) {
+	return b.IsCurrentTemporalNodeInNamespaceWithContext(context.Background(), namespace, node, asOf)
+}
+
+// IsCurrentTemporalNodeInNamespaceWithContext observes cancellation in temporal
+// constraint selection and each canonical current/history reader.
+func (b *BadgerEngine) IsCurrentTemporalNodeInNamespaceWithContext(ctx context.Context, namespace string, node *Node, asOf time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return false, err
 	}
@@ -500,6 +524,9 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 	qualifiedID := qualifyTemporalNodeID(namespace, node.ID)
 	matched := false
 	for _, constraint := range constraints {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		keyValue, _, _, _, ok := temporalNodeState(node, constraint)
 		if !ok {
 			continue
@@ -514,7 +541,7 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 		var err error
 		spec, _ := splitTemporalKeySpec(constraint.Properties)
 		if spec.listBearing(keyValue) {
-			current, err = b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, false)
+			current, err = b.temporalListNodeAsOfInNamespace(ctx, namespace, constraint, keyValue, asOf, false)
 		} else {
 			err = b.withView(func(txn *badger.Txn) error {
 				item, err := txn.Get(temporalCurrentKey(target.desc))
@@ -537,7 +564,7 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 				} else if err != badger.ErrKeyNotFound {
 					return err
 				}
-				current, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf})
+				current, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, at: asOf})
 				return err
 			})
 		}
@@ -545,7 +572,7 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 			return false, err
 		}
 		if current == nil && nodeMatchesTemporalLookup(node, constraint, keyValue, asOf) {
-			current, err = b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
+			current, err = b.currentTemporalNodeByScanInNamespace(ctx, namespace, constraint, keyValue, asOf)
 			if err != nil {
 				return false, err
 			}
@@ -562,6 +589,12 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 
 // IsCurrentTemporalNode reports whether the given temporal node is the live/current version.
 func (b *BadgerEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
+	return b.IsCurrentTemporalNodeWithContext(context.Background(), node, asOf)
+}
+
+// IsCurrentTemporalNodeWithContext resolves namespace and uses the same temporal
+// visibility owner with the caller's context.
+func (b *BadgerEngine) IsCurrentTemporalNodeWithContext(ctx context.Context, node *Node, asOf time.Time) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
@@ -569,7 +602,7 @@ func (b *BadgerEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, 
 	if !ok {
 		return true, nil
 	}
-	return b.IsCurrentTemporalNodeInNamespace(namespace, node, asOf)
+	return b.IsCurrentTemporalNodeInNamespaceWithContext(ctx, namespace, node, asOf)
 }
 
 func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error {
@@ -870,8 +903,12 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 }
 
 func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRefreshTarget, error) {
+	ctx := tx.validationContextLocked()
 	targets := make(map[string]temporalRefreshTarget)
 	for _, op := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode:
 			if op.Node == nil {
@@ -883,6 +920,9 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 			}
 			schema := tx.engine.GetSchemaForNamespace(dbName)
 			for _, c := range temporalConstraintsForLabels(schema, op.Node.Labels) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				target, start, ok := temporalTargetForNode(dbName, op.Node, c)
 				if !ok {
 					continue
@@ -896,6 +936,9 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				if ok {
 					schema := tx.engine.GetSchemaForNamespace(dbName)
 					for _, c := range temporalConstraintsForLabels(schema, op.OldNode.Labels) {
+						if err := ctx.Err(); err != nil {
+							return nil, err
+						}
 						target, start, ok := temporalTargetForNode(dbName, op.OldNode, c)
 						if !ok {
 							continue
@@ -910,6 +953,9 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				if ok {
 					schema := tx.engine.GetSchemaForNamespace(dbName)
 					for _, c := range temporalConstraintsForLabels(schema, op.Node.Labels) {
+						if err := ctx.Err(); err != nil {
+							return nil, err
+						}
 						target, start, ok := temporalTargetForNode(dbName, op.Node, c)
 						if !ok {
 							continue
@@ -929,6 +975,9 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 			}
 			schema := tx.engine.GetSchemaForNamespace(dbName)
 			for _, c := range temporalConstraintsForLabels(schema, op.OldNode.Labels) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				target, start, ok := temporalTargetForNode(dbName, op.OldNode, c)
 				if !ok {
 					continue

@@ -279,7 +279,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					interval, ok := spec.interval(probe)
 					require.True(t, ok)
 					scanErr := inner.withView(func(txn *badger.Txn) error {
-						return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
+						return inner.scanForTemporalOverlapInTxn(context.Background(), txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 					})
 					t.Logf("TLF_SCAN list explicit err=%v", scanErr)
 					tlfOutcome(t, scanErr, true)
@@ -533,7 +533,7 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						interval, ok := spec.interval(pair[1])
 						require.True(t, ok)
 						scanErr := inner.withView(func(txn *badger.Txn) error {
-							return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
+							return inner.scanForTemporalOverlapInTxn(context.Background(), txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 						})
 						violation := shape == "mixed" || shape == "same"
 						t.Logf("TLF_SCAN mixed explicit shape=%s err=%v", shape, scanErr)
@@ -585,7 +585,7 @@ func TestTemporalListFamilyTemporalMixedIsCurrent(t *testing.T) {
 						tlfForceScan(t, inner, engine, c)
 					}
 					asOf := pair[0]["from"].(time.Time).Add(time.Hour)
-					scanned, err := inner.currentTemporalNodeByScanInNamespace("test", c, key, asOf)
+					scanned, err := inner.currentTemporalNodeByScanInNamespace(context.Background(), "test", c, key, asOf)
 					require.NoError(t, err)
 					require.NotNil(t, scanned)
 					require.Equal(t, NodeID("test:first"), scanned.ID)

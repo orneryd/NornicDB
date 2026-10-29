@@ -110,16 +110,24 @@ func (sm *SchemaManager) HasConstraintNamed(name string) bool {
 // Only an engine that doesn't unwrap to a BadgerEngine leaves a constraint over
 // existing nodes incomplete; it is validated by label scan until a rebuild.
 func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	return MarkNewTemporalConstraintsForEngineWithContext(context.Background(), engine, schema, constraints)
+}
+
+// MarkNewTemporalConstraintsForEngineWithContext carries the caller through validation and label materialization.
+func MarkNewTemporalConstraintsForEngineWithContext(ctx context.Context, engine Engine, schema *SchemaManager, constraints []Constraint) error {
 	if engine == nil || schema == nil {
 		return nil
 	}
 	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
 	for _, c := range constraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
 		}
 		if badgerEngine == nil {
-			empty, err := labelHasNoNodes(engine, c.Label)
+			empty, err := labelHasNoNodesWithContext(ctx, engine, c.Label)
 			if err != nil {
 				return err
 			}
@@ -133,14 +141,17 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 				return err
 			}
 			defer lifecycle.finish()
-			empty, err := labelHasNoNodes(engine, c.Label)
+			empty, err := labelHasNoNodesWithContext(ctx, engine, c.Label)
 			if err != nil {
 				return err
 			}
 			if !empty {
-				if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+				if err := badgerEngine.backfillTemporalIndexForLabelWithContext(ctx, engine, c.Label); err != nil {
 					return err
 				}
+			}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			schema.markTemporalIndexCreated(c, true)
 			return nil
@@ -173,8 +184,13 @@ func engineScope(engine Engine) []string {
 // database-scoped wrapper of b), in chunks: the same per-node work as
 // RebuildTemporalIndexes, for one label instead of the whole store.
 func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+	return b.backfillTemporalIndexForLabelWithContext(context.Background(), engine, label)
+}
+
+// backfillTemporalIndexForLabelWithContext carries the caller through validation and label materialization.
+func (b *BadgerEngine) backfillTemporalIndexForLabelWithContext(ctx context.Context, engine Engine, label string) error {
 	var ids []NodeID
-	if err := StreamStoredNodesByLabelProjected(engine, label, []string{}, func(node *Node) error {
+	if err := StreamStoredLabelNodesWithContext(ctx, engine, label, []string{}, func(node *Node) error {
 		if node != nil {
 			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
 		}
@@ -185,9 +201,15 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 	asOf := time.Now().UTC()
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		part := ids[start:min(start+chunk, len(ids))]
 		if err := b.withUpdate(func(txn *badger.Txn) error {
 			for _, id := range part {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {
 					return err
@@ -196,18 +218,23 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 					return err
 				}
 			}
-			return nil
+			return ctx.Err()
 		}); err != nil {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 var errStopLabelProbe = errors.New("label has nodes")
 
 func labelHasNoNodes(engine Engine, label string) (bool, error) {
-	err := StreamStoredNodesByLabelProjected(engine, label, nil, func(node *Node) error {
+	return labelHasNoNodesWithContext(context.Background(), engine, label)
+}
+
+// labelHasNoNodesWithContext carries the caller through validation and label materialization.
+func labelHasNoNodesWithContext(ctx context.Context, engine Engine, label string) (bool, error) {
+	err := StreamStoredLabelNodesWithContext(ctx, engine, label, nil, func(node *Node) error {
 		if node == nil {
 			return nil
 		}
@@ -227,6 +254,10 @@ func labelHasNoNodes(engine Engine, label string) (bool, error) {
 // scan reads). Nodes whose entry outlived them (a rebuild racing a delete)
 // are skipped. ok is false when node has no complete key or start.
 func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node) (nodes []*Node, ok bool, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var captureErr error
 	target, _, ok := temporalTargetForNode(namespace, node, c)
 	if !ok {
 		return nil, false, nil
@@ -234,15 +265,25 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	var overlay []*Node
 	var touched map[NodeID]bool
 	err = b.withReadView(func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		overlay, touched, captureErr = captured.nodes, captured.nodesTouched, readErr
 	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
 		return err
 	})
 	for _, n := range overlay {
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
 		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
-			nodes = append(nodes, copyNode(n))
+			image, err := copyNodeWithContext(ctx, n)
+			if err != nil {
+				return nil, true, err
+			}
+			nodes = append(nodes, image)
 		}
 	}
 	return nodes, true, err

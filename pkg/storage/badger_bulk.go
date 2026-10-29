@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -17,9 +18,14 @@ import (
 // ErrAlreadyExists and nothing is written. Nodes of one call share a
 // namespace.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
-	return createBulkEntities(b, nodes, func(node *Node) string { return string(node.ID) }, func() error { return b.validateBulkNodeConstraints(nodes) }, func(tx *BadgerTransaction) error {
+	return b.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (b *BadgerEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*Node) error {
+	return createBulkEntitiesWithContext(ctx, b, nodes, func(node *Node) string { return string(node.ID) }, func() error { return b.validateBulkNodeConstraintsWithContext(ctx, nodes) }, func(tx *BadgerTransaction) error {
 		for _, node := range nodes {
-			if _, err := tx.CreateNode(node); err != nil {
+			if _, err := CreateNodeWithContext(ctx, tx, node); err != nil {
 				return err
 			}
 		}
@@ -34,6 +40,10 @@ func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 // is implicit: like the engine's other writes it leaves durability to
 // Badger's write options instead of forcing a sync per call.
 func (b *BadgerEngine) inBulkTransaction(namespace string, apply func(tx *BadgerTransaction) error) error {
+	return b.inBulkTransactionWithContext(context.Background(), namespace, apply)
+}
+
+func (b *BadgerEngine) inBulkTransactionWithContext(ctx context.Context, namespace string, apply func(tx *BadgerTransaction) error) error {
 	if err := b.EnsureNamespaceMVCC(namespace); err != nil {
 		return err
 	}
@@ -49,13 +59,20 @@ func (b *BadgerEngine) inBulkTransaction(namespace string, apply func(tx *Badger
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	return tx.CommitContext(ctx)
 }
 
 func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
+	return b.validateBulkNodeConstraintsWithContext(context.Background(), nodes)
+}
+
+func (b *BadgerEngine) validateBulkNodeConstraintsWithContext(ctx context.Context, nodes []*Node) error {
 	seen := make(map[string]struct{})
 
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
 		if !ok {
 			return localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
@@ -65,8 +82,14 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			continue
 		}
 
-		constraints := schema.GetConstraintsForLabels(node.Labels)
+		constraints, err := schema.GetConstraintsForLabelsWithContext(ctx, node.Labels)
+		if err != nil {
+			return err
+		}
 		for _, c := range constraints {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			switch c.Type {
 			case ConstraintUnique:
 				if len(c.Properties) != 1 {
@@ -90,6 +113,9 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			case ConstraintNodeKey:
 				values := make([]interface{}, len(c.Properties))
 				for i, prop := range c.Properties {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					values[i] = node.Properties[prop]
 					if values[i] == nil {
 						return &ConstraintViolationError{
@@ -142,19 +168,29 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 // any size (#703). An existing edge ID fails the call with ErrAlreadyExists,
 // a missing endpoint with ErrNotFound; nothing is written.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
-	return createBulkEntities(b, edges, func(edge *Edge) string { return string(edge.ID) }, nil, func(tx *BadgerTransaction) error { return tx.BulkCreateEdges(edges) }, func(tx *BadgerTransaction) error {
-		for _, edge := range edges {
-			if err := tx.CreateEdge(edge); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return b.BulkCreateEdgesWithContext(context.Background(), edges)
+}
+
+// BulkCreateEdgesWithContext uses the existing bulk transaction/publication owner.
+func (b *BadgerEngine) BulkCreateEdgesWithContext(ctx context.Context, edges []*Edge) error {
+	return createBulkEntitiesWithContext(ctx, b, edges, func(edge *Edge) string { return string(edge.ID) }, nil,
+		func(tx *BadgerTransaction) error { return tx.BulkCreateEdgesWithContext(ctx, edges) },
+		func(tx *BadgerTransaction) error { return tx.BulkCreateEdgesWithContext(ctx, edges) })
+}
+
+// CreateEdgeWithContext consumes the same native transaction owner as a batch;
+// physical publication, hidden-ID decisions and accounting remain there.
+func (b *BadgerEngine) CreateEdgeWithContext(ctx context.Context, edge *Edge) error {
+	return b.BulkCreateEdgesWithContext(ctx, []*Edge{edge})
 }
 
 // createBulkEntities owns capture routing, validation admission and the atomic
 // transaction boundary; each entity kind supplies only its constraints/writes.
 func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) string, validate func() error, apply func(*BadgerTransaction) error, capture func(*BadgerTransaction) error) error {
+	return createBulkEntitiesWithContext(context.Background(), b, entities, id, validate, apply, capture)
+}
+
+func createBulkEntitiesWithContext[T any](ctx context.Context, b *BadgerEngine, entities []*T, id func(*T) string, validate func() error, apply func(*BadgerTransaction) error, capture func(*BadgerTransaction) error) error {
 	var firstID string
 	if len(entities) > 0 && entities[0] != nil {
 		firstID = id(entities[0])
@@ -173,6 +209,9 @@ func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) strin
 		return nil
 	}
 	for _, entity := range entities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entity == nil {
 			return ErrInvalidData
 		}
@@ -186,13 +225,20 @@ func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) strin
 		}
 	}
 	namespace, _, _ := ParseDatabasePrefix(firstID)
-	return b.inBulkTransaction(namespace, apply)
+	return b.inBulkTransactionWithContext(ctx, namespace, apply)
 }
 
 // deleteBulkEntities owns bulk deletion routing, filtering and NotFound
 // handling. Capture retains its existing ordered input validation; ordinary
 // bulk calls omit empty and repeated IDs before invoking the same command.
 func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*BadgerTransaction, T) error) error {
+	return deleteBulkEntitiesWithContext(context.Background(), b, ids, remove)
+}
+
+func deleteBulkEntitiesWithContext[T ~string](ctx context.Context, b *BadgerEngine, ids []T, remove func(*BadgerTransaction, T) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -202,6 +248,9 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 			seen = make(map[T]struct{}, len(ids))
 		}
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if filter {
 				if _, repeated := seen[id]; repeated || id == "" {
 					continue
@@ -217,7 +266,7 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 	if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error { return apply(tx, false) }); handled {
 		return err
 	}
-	return b.inBulkTransaction(firstIDNamespace(ids), func(tx *BadgerTransaction) error { return apply(tx, true) })
+	return b.inBulkTransactionWithContext(ctx, firstIDNamespace(ids), func(tx *BadgerTransaction) error { return apply(tx, true) })
 }
 
 // ============================================================================

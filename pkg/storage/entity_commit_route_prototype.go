@@ -20,7 +20,20 @@ type EntityCommitRoute struct {
 // A journal wrapper is a routing boundary even before it exposes the capability:
 // discovering an inner native engine must never bypass that wrapper's journal.
 func EntityCommitSubmitterFor(engine Engine) (EntityCommitRoute, bool) {
+	route, found, _ := EntityCommitSubmitterForWithContext(context.Background(), engine)
+	return route, found
+}
+
+// EntityCommitSubmitterForWithContext observes pre-acceptance route discovery
+// through the same first-authoritative-owner and journal-boundary policy.
+func EntityCommitSubmitterForWithContext(ctx context.Context, engine Engine) (EntityCommitRoute, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for engine != nil {
+		if err := ctx.Err(); err != nil {
+			return EntityCommitRoute{}, false, err
+		}
 		if submitter, ok := engine.(EntityCommitSubmitter); ok {
 			native := false
 			switch engine.(type) {
@@ -34,22 +47,22 @@ func EntityCommitSubmitterFor(engine Engine) (EntityCommitRoute, bool) {
 			if forwarder, ok := engine.(EntityDirectForwarder); ok {
 				route.ForwardDirect = forwarder.ForwardEntityChanges
 			}
-			return route, true
+			return route, true, nil
 		}
 		if _, journalBoundary := engine.(*WALEngine); journalBoundary {
-			return EntityCommitRoute{}, false
+			return EntityCommitRoute{}, false, nil
 		}
 		inner, ok := engine.(EngineUnwrapper)
 		if !ok {
-			return EntityCommitRoute{}, false
+			return EntityCommitRoute{}, false, nil
 		}
 		next := inner.GetInnerEngine()
 		if next == engine {
-			return EntityCommitRoute{}, false
+			return EntityCommitRoute{}, false, nil
 		}
 		engine = next
 	}
-	return EntityCommitRoute{}, false
+	return EntityCommitRoute{}, false, nil
 }
 
 // SubmitEntityCommit owns a prepared native commit when no outer replication or

@@ -1,6 +1,9 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // mintedEntityCreator creates entities whose IDs the executor minted for the
 // create (generateID). Such an ID names no stored entity, visible or hidden,
@@ -14,33 +17,33 @@ type mintedEntityCreator interface {
 
 // createMintedNode creates node, whose ID the executor minted, through
 // store's minted create when it has one and its ordinary create otherwise.
-func createMintedNode(store storage.Engine, node *storage.Node) (storage.NodeID, error) {
+func createMintedNode(ctx context.Context, store storage.Engine, node *storage.Node) (storage.NodeID, error) {
 	if creator, ok := store.(mintedEntityCreator); ok {
-		return creator.CreateMintedNode(node)
+		return storage.CreateMintedNodeWithContext(ctx, creator, node)
 	}
-	return store.CreateNode(node)
+	return storage.CreateNodeWithContext(ctx, store, node)
 }
 
 // bulkCreateMintedNodes is createMintedNode for a batch.
-func bulkCreateMintedNodes(store storage.Engine, nodes []*storage.Node) error {
+func bulkCreateMintedNodes(ctx context.Context, store storage.Engine, nodes []*storage.Node) error {
 	if creator, ok := store.(mintedEntityCreator); ok {
-		return creator.BulkCreateMintedNodes(nodes)
+		return storage.BulkCreateMintedNodesWithContext(ctx, creator, nodes)
 	}
-	return store.BulkCreateNodes(nodes)
+	return storage.BulkCreateNodesWithContext(ctx, store, nodes)
 }
 
 // createMintedEdge is createMintedNode for a relationship.
-func createMintedEdge(store storage.Engine, edge *storage.Edge) error {
+func createMintedEdge(ctx context.Context, store storage.Engine, edge *storage.Edge) error {
 	if creator, ok := store.(mintedEntityCreator); ok {
-		return creator.CreateMintedEdge(edge)
+		return storage.CreateMintedEdgeWithContext(ctx, creator, edge)
 	}
-	return store.CreateEdge(edge)
+	return storage.CreateEdgeWithContext(ctx, store, edge)
 }
 
 // bulkCreateMintedEdges is createMintedEdge for a batch.
-func bulkCreateMintedEdges(store storage.Engine, edges []*storage.Edge) error {
+func bulkCreateMintedEdges(ctx context.Context, store storage.Engine, edges []*storage.Edge) error {
 	if creator, ok := store.(mintedEntityCreator); ok {
-		return creator.BulkCreateMintedEdges(edges)
+		return storage.BulkCreateMintedEdgesWithContext(ctx, creator, edges)
 	}
-	return store.BulkCreateEdges(edges)
+	return storage.BulkCreateEdgesWithContext(ctx, store, edges)
 }

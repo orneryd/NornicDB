@@ -17,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // ==========================================================================
@@ -141,6 +142,7 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)
+			exec.ShareInferenceManagerFrom(baseExecutor)
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
@@ -213,9 +215,9 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 	if err != nil {
 		return nil, nil, err
 	}
-	var admit sync.Once
+	var admit util.OnceCompletion
 	ctx = cypher.WithStatementAdmitted(ctx, exec, func() {
-		admit.Do(func() {
+		admit.Run(func() {
 			r.finishExecutor(dbName, engine, exec)
 			r.publishExecutor(dbName, exec)
 		})

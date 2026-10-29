@@ -200,7 +200,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			usedIndex = true
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -220,9 +220,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	}
 	if !usedIndex {
 		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(nodePat.labels[0])
+			nodes, err = storage.GetNodesByLabelWithContext(ctx, e.storage, nodePat.labels[0])
 		} else {
-			nodes, err = e.storage.AllNodes()
+			nodes, err = storage.AllNodesWithContext(ctx, e.storage)
 		}
 		if err != nil {
 			return nil, true, err

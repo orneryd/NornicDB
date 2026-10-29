@@ -72,6 +72,7 @@ func (r *hiddenNoOpFanout) Health() *replication.HealthStatus {
 	return &replication.HealthStatus{IsLeader: true}
 }
 func (r *hiddenNoOpFanout) WaitForLeader(context.Context) error { return nil }
+func (r *hiddenNoOpFanout) LifetimeContext() context.Context    { return context.Background() }
 func (r *hiddenNoOpFanout) Shutdown() error                     { return nil }
 func (r *hiddenNoOpFanout) Mode() replication.ReplicationMode   { return replication.ModeStandalone }
 func (r *hiddenNoOpFanout) NodeID() string                      { return "leader" }

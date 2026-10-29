@@ -155,7 +155,7 @@ func TestIsTerminalLifecycleError(t *testing.T) {
 
 func TestRememberTerminalErrorLocked_NilSession(t *testing.T) {
 	mgr := NewManager(time.Second, nil)
-	err, notify := mgr.rememberTerminalErrorLocked(nil, fmt.Errorf("some error"))
+	err, notify := mgr.rememberTerminalErrorLocked(nil, fmt.Errorf("some error"), false)
 	if err == nil || notify {
 		t.Fatalf("nil session should return error without notification, got err=%v notify=%v", err, notify)
 	}
@@ -164,7 +164,7 @@ func TestRememberTerminalErrorLocked_NilSession(t *testing.T) {
 func TestRememberTerminalErrorLocked_NilError(t *testing.T) {
 	mgr := NewManager(time.Second, nil)
 	session := &Session{ID: "test"}
-	err, notify := mgr.rememberTerminalErrorLocked(session, nil)
+	err, notify := mgr.rememberTerminalErrorLocked(session, nil, false)
 	if err != nil || notify {
 		t.Fatalf("nil error should return nil without notification, got err=%v notify=%v", err, notify)
 	}
@@ -174,7 +174,7 @@ func TestRememberTerminalErrorLocked_NonTerminal(t *testing.T) {
 	mgr := NewManager(time.Second, nil)
 	session := &Session{ID: "test"}
 	regularErr := fmt.Errorf("syntax error")
-	err, notify := mgr.rememberTerminalErrorLocked(session, regularErr)
+	err, notify := mgr.rememberTerminalErrorLocked(session, regularErr, false)
 	if err != regularErr || notify {
 		t.Fatalf("non-terminal error should pass through without notification, got err=%v notify=%v", err, notify)
 	}
@@ -189,7 +189,7 @@ func TestRememberTerminalErrorLocked_AlreadyTerminal(t *testing.T) {
 	firstErr := storage.ErrMVCCSnapshotGracefulCancel
 	session := &Session{ID: "test", terminalErr: firstErr}
 	secondErr := storage.ErrMVCCSnapshotHardExpired
-	err, notify := mgr.rememberTerminalErrorLocked(session, secondErr)
+	err, notify := mgr.rememberTerminalErrorLocked(session, secondErr, true)
 	if err != firstErr || notify {
 		t.Fatalf("already-terminal session should return first error without re-notification, got err=%v notify=%v", err, notify)
 	}

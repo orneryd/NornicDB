@@ -15,6 +15,11 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 	if t == nil || r == nil {
 		return
 	}
+	// Outbound reusable connections have no inbound listener context. Keep a
+	// reference to the replicator's single lifetime owner for their handlers.
+	t.resources.mu.Lock()
+	t.handlerContext = r.LifetimeContext()
+	t.resources.mu.Unlock()
 
 	type walBatchHandler interface {
 		HandleWALBatch(entries []*WALEntry) (*WALBatchResponse, error)
@@ -167,7 +172,14 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 					timeout = d
 				}
 			}
-			err := h.HandleForwardApply(&cmd, timeout)
+			var err error
+			if contextual, ok := r.(interface {
+				HandleForwardApplyWithContext(context.Context, *Command, time.Duration) error
+			}); ok {
+				err = contextual.HandleForwardApplyWithContext(ctx, &cmd, timeout)
+			} else {
+				err = h.HandleForwardApply(&cmd, timeout)
+			}
 			respPayload := forwardApplyResponse{}
 			if err != nil {
 				respPayload.Err = err.Error()

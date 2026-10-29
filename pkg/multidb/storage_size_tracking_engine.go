@@ -355,58 +355,126 @@ func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCC
 }
 
 func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+	return t.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext retains the request through managed admission.
+func (t *sizeTrackingEngine) CreateNodeWithContext(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	var id storage.NodeID
-	err := t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateNode, Node: node}}, &id, storage.CommitModeDirect)
+	err := t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpCreateNode, Node: node}}, &id, storage.CommitModeDirect)
 	return id, err
 }
 func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpUpdateNode, Node: node}}, nil, storage.CommitModeDirect)
+	return t.UpdateNodeWithContext(context.Background(), node)
+}
+
+// UpdateNodeWithContext preserves the retained managed coordinator.
+func (t *sizeTrackingEngine) UpdateNodeWithContext(ctx context.Context, node *storage.Node) error {
+	return t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpUpdateNode, Node: node}}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
+	return t.DeleteNodeWithContext(context.Background(), id)
+}
+
+// DeleteNodeWithContext retains cancellation before managed acceptance.
+func (t *sizeTrackingEngine) DeleteNodeWithContext(ctx context.Context, id storage.NodeID) error {
+	return t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
+	return t.CreateEdgeWithContext(context.Background(), edge)
+}
+
+// CreateEdgeWithContext retains request context through relationship preparation.
+func (t *sizeTrackingEngine) CreateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpUpdateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
+	return t.UpdateEdgeWithContext(context.Background(), edge)
+}
+
+// UpdateEdgeWithContext retains the existing managed update policy.
+func (t *sizeTrackingEngine) UpdateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpUpdateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
+	return t.DeleteEdgeWithContext(context.Background(), id)
+}
+
+// DeleteEdgeWithContext retains request context through managed removal.
+func (t *sizeTrackingEngine) DeleteEdgeWithContext(ctx context.Context, id storage.EdgeID) error {
+	return t.applyEntityOperationsWithContext(ctx, []storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
 }
 
 // Bulk entity operations stage one native transaction and share the ordinary
 // managed coordinator. Rejection leaves no partially committed prefix.
 func (t *sizeTrackingEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	ops := make([]storage.Operation, len(nodes))
-	for i, node := range nodes {
-		ops[i] = storage.Operation{Type: storage.OpCreateNode, Node: node}
-	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
-}
-func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	ops := make([]storage.Operation, len(edges))
-	for i, edge := range edges {
-		ops[i] = storage.Operation{Type: storage.OpCreateEdge, Edge: edge}
-	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
-}
-func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	ops := make([]storage.Operation, len(ids))
-	for i, id := range ids {
-		ops[i] = storage.Operation{Type: storage.OpDeleteNode, NodeID: id}
-	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
-}
-func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	ops := make([]storage.Operation, len(ids))
-	for i, id := range ids {
-		ops[i] = storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}
-	}
-	return t.applyEntityOperations(ops, nil, storage.CommitModeImplicit)
+	return t.BulkCreateNodesWithContext(context.Background(), nodes)
 }
 
-func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
+// BulkCreateNodesWithContext observes input collection before native staging.
+func (t *sizeTrackingEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*storage.Node) error {
+	ops := make([]storage.Operation, len(nodes))
+	for i, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ops[i] = storage.Operation{Type: storage.OpCreateNode, Node: node}
+	}
+	return t.applyEntityOperationsWithContext(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
+	return t.BulkCreateEdgesWithContext(context.Background(), edges)
+}
+
+// BulkCreateEdgesWithContext retains cancellation through the batch owner.
+func (t *sizeTrackingEngine) BulkCreateEdgesWithContext(ctx context.Context, edges []*storage.Edge) error {
+	ops := make([]storage.Operation, len(edges))
+	for i, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ops[i] = storage.Operation{Type: storage.OpCreateEdge, Edge: edge}
+	}
+	return t.applyEntityOperationsWithContext(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
+	return t.BulkDeleteNodesWithContext(context.Background(), ids)
+}
+
+// BulkDeleteNodesWithContext observes managed deletion input preparation.
+func (t *sizeTrackingEngine) BulkDeleteNodesWithContext(ctx context.Context, ids []storage.NodeID) error {
+	ops := make([]storage.Operation, len(ids))
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ops[i] = storage.Operation{Type: storage.OpDeleteNode, NodeID: id}
+	}
+	return t.applyEntityOperationsWithContext(ctx, ops, nil, storage.CommitModeImplicit)
+}
+func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
+	return t.BulkDeleteEdgesWithContext(context.Background(), ids)
+}
+
+// BulkDeleteEdgesWithContext retains the existing atomic managed batch policy.
+func (t *sizeTrackingEngine) BulkDeleteEdgesWithContext(ctx context.Context, ids []storage.EdgeID) error {
+	ops := make([]storage.Operation, len(ids))
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ops[i] = storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}
+	}
+	return t.applyEntityOperationsWithContext(ctx, ops, nil, storage.CommitModeImplicit)
+}
+
+func (t *sizeTrackingEngine) applyEntityOperationsWithContext(ctx context.Context, ops []storage.Operation, createResult *storage.NodeID, mode storage.EntityCommitMode) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(ops) == 0 {
 		return nil
 	}
@@ -414,17 +482,20 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 	if err != nil {
 		return err
 	}
-	owner := managedEntityOwnerFor(t.Engine)
+	owner, err := managedEntityOwnerForWithContext(ctx, t.Engine)
+	if err != nil {
+		return err
+	}
 	if owner.route.CheckAdmission != nil {
 		if admissionErr := owner.route.CheckAdmission(); admissionErr != nil {
 			if owner.route.ForwardDirect == nil {
 				return admissionErr
 			}
-			qualified, err := t.qualifyEntityOperations(ops, owner)
+			qualified, err := t.qualifyEntityOperationsWithContext(ctx, ops, owner)
 			if err != nil {
 				return err
 			}
-			if err := owner.route.ForwardDirect(context.Background(), qualified, mode); err != nil {
+			if err := owner.route.ForwardDirect(ctx, qualified, mode); err != nil {
 				return err
 			}
 			if createResult != nil {
@@ -439,57 +510,69 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 	if !t.runtime.requiresManaged(limits) && (!owner.found || !owner.route.RequiresSubmission) && (len(owner.writeBoundaries) == 0 || mode == storage.CommitModeDirect) && (mode == storage.CommitModeDirect || (ops[0].Type != storage.OpDeleteNode && ops[0].Type != storage.OpDeleteEdge)) {
 		if mode == storage.CommitModeDirect {
 			if createResult != nil {
-				id, err := t.Engine.CreateNode(ops[0].Node)
+				id, err := storage.CreateNodeWithContext(ctx, t.Engine, ops[0].Node)
 				*createResult = id
 				return err
 			}
-			return storage.ApplyEntityChange(t.Engine, ops[0], t.Engine.UpdateNode, t.Engine.DeleteNode)
+			return storage.ApplyEntityChangeWithContext(ctx, t.Engine, ops[0], func(node *storage.Node) error { return storage.UpdateNodeWithContext(ctx, t.Engine, node) }, t.Engine.DeleteNode)
 		}
 		switch ops[0].Type {
 		case storage.OpCreateNode:
 			nodes := make([]*storage.Node, len(ops))
 			for i, op := range ops {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				nodes[i] = op.Node
 			}
-			return t.Engine.BulkCreateNodes(nodes)
+			return storage.BulkCreateNodesWithContext(ctx, t.Engine, nodes)
 		case storage.OpCreateEdge:
 			edges := make([]*storage.Edge, len(ops))
 			for i, op := range ops {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				edges[i] = op.Edge
 			}
-			return t.Engine.BulkCreateEdges(edges)
+			return storage.BulkCreateEdgesWithContext(ctx, t.Engine, edges)
 		case storage.OpDeleteNode:
 			ids := make([]storage.NodeID, len(ops))
 			for i, op := range ops {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				ids[i] = op.NodeID
 			}
 			return t.Engine.BulkDeleteNodes(ids)
 		case storage.OpDeleteEdge:
 			ids := make([]storage.EdgeID, len(ops))
 			for i, op := range ops {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				ids[i] = op.EdgeID
 			}
-			return t.Engine.BulkDeleteEdges(ids)
+			return storage.BulkDeleteEdgesWithContext(ctx, t.Engine, ids)
 		}
 	}
 
-	prepared, settle, err := t.prepareManagedDirect(context.Background(), ops, mode)
+	prepared, settle, err := t.prepareManagedDirect(ctx, ops, mode)
 	if err != nil {
 		return err
 	}
 	if prepared != nil {
-		receipt, err := owner.route.Submitter.SubmitEntityCommit(context.Background(), prepared, settle)
+		receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 		if err != nil {
 			prepared.Abort()
 			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
 			return nornicerrors.MarkCommitRolledBack(err)
 		}
-		outcome := receipt.WaitOutcome(context.Background())
+		outcome := receipt.WaitOutcome(ctx)
 		if outcome.State == storage.CommitDiscarded {
 			return nornicerrors.MarkCommitRolledBack(outcome.Err)
 		}
 		if outcome.Err != nil {
-			return outcome.Err
+			return &storage.AcceptedCommitError{State: outcome.State, LogicalID: prepared.LogicalID(), Err: outcome.Err}
 		}
 	}
 	if createResult != nil {
@@ -501,24 +584,30 @@ func (t *sizeTrackingEngine) applyEntityOperations(ops []storage.Operation, crea
 	return nil
 }
 
-// qualifyEntityOperations uses the same namespace/token input owner as direct
-// Engine methods. It never materializes a final stored image prematurely.
-func (t *sizeTrackingEngine) qualifyEntityOperations(ops []storage.Operation, owner managedEntityOwner) ([]storage.Operation, error) {
+// qualifyEntityOperationsWithContext uses the retained namespace/token input
+// owner without materializing a final stored image prematurely.
+func (t *sizeTrackingEngine) qualifyEntityOperationsWithContext(ctx context.Context, ops []storage.Operation, owner managedEntityOwner) ([]storage.Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if owner.namespace == nil {
 		return ops, nil
 	}
 	qualified := append([]storage.Operation(nil), ops...)
 	for i := range qualified {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		op := &qualified[i]
 		var err error
 		if op.Node != nil {
-			op.Node, err = owner.namespace.NodeWriteInput(op.Node)
+			op.Node, err = owner.namespace.NodeWriteInputWithContext(ctx, op.Node)
 			if err != nil {
 				return nil, err
 			}
 		}
 		if op.Edge != nil {
-			op.Edge, err = owner.namespace.EdgeWriteInput(op.Edge)
+			op.Edge, err = owner.namespace.EdgeWriteInputWithContext(ctx, op.Edge)
 			if err != nil {
 				return nil, err
 			}
@@ -530,7 +619,7 @@ func (t *sizeTrackingEngine) qualifyEntityOperations(ops []storage.Operation, ow
 			op.EdgeID = owner.namespace.PrefixEdgeID(op.EdgeID)
 		}
 	}
-	return qualified, nil
+	return qualified, ctx.Err()
 }
 
 // prepareManagedDirect is also registered for leader raw-command admission.
@@ -542,7 +631,10 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 	if err := ctx.Err(); err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
-	owner := managedEntityOwnerFor(t.Engine)
+	owner, err := managedEntityOwnerForWithContext(ctx, t.Engine)
+	if err != nil {
+		return nil, nil, err
+	}
 	if owner.route.CheckAdmission != nil {
 		if err := owner.route.CheckAdmission(); err != nil {
 			return nil, nil, nornicerrors.MarkCommitRolledBack(err)
@@ -551,11 +643,11 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 	if !owner.found || owner.begin == nil || owner.observer == nil || owner.registry == nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(t.managedCapabilityError())
 	}
-	qualified, err := t.qualifyEntityOperations(ops, owner)
+	qualified, err := t.qualifyEntityOperationsWithContext(ctx, ops, owner)
 	if err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
-	tx, err := storage.BeginEntityTransaction(t.Engine, mode)
+	tx, err := storage.BeginEntityTransactionWithContext(ctx, t.Engine, mode)
 	if err != nil {
 		return nil, nil, nornicerrors.MarkCommitRolledBack(err)
 	}
@@ -571,10 +663,16 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 		return nil, nil, err
 	}
 	for _, op := range qualified {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		apply := func() error {
-			return storage.ApplyEntityChange(tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdate(tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) })
+			return storage.ApplyEntityChangeWithContext(ctx, tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdateWithContext(ctx, tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNodeWithContext(ctx, id, storage.CascadeEdges) })
 		}
 		for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
 			policy, next := owner.writeBoundaries[i], apply
 			apply = func() error { return policy.WithEntityChange(op, next) }
 		}
@@ -647,5 +745,9 @@ func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
 	if t.runtime == nil {
 		return ErrDatabaseNotFound
 	}
-	return t.runtime.initializeManagedUsage(ctx, managedEntityOwnerFor(t.Engine).boundary)
+	owner, err := managedEntityOwnerForWithContext(ctx, t.Engine)
+	if err != nil {
+		return err
+	}
+	return t.runtime.initializeManagedUsage(ctx, owner.boundary)
 }

@@ -1433,7 +1433,7 @@ func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 	}
 
 	// Fallback: load all but process in chunks to allow GC between
-	nodes, err := engine.AllNodes()
+	nodes, err := AllNodesWithContext(ctx, engine)
 	if err != nil {
 		return err
 	}
@@ -1548,7 +1548,7 @@ func NodeNeedsEmbedding(node *Node) bool {
 // CountNodesWithLabel counts nodes with a specific label using streaming.
 func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int64, error) {
 	if stats, ok := engine.(LabelStatsEngine); ok {
-		return stats.NodeCountByLabel(label)
+		return NodeCountByLabelWithContext(ctx, stats, label)
 	}
 
 	var count int64

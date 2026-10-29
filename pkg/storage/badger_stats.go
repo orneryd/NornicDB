@@ -242,28 +242,32 @@ func (b *BadgerEngine) Close() error {
 	// this goroutine holds while it waits for them to stop.
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
+	maintenancePause(pauseCloseIndexBackfillsStopped)
+	b.labelIndex.retired.stop()
 	b.stopDeleteCleanup()
 	b.stopChangeRetention()
 	b.stopCountDeltaFoldWorker()
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
+	var drainErr error
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
-			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
+		drainErr = b.FlushWriteBehind()
+		if drainErr != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
 		b.writeBehind.Close()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
+	suppressionErr := b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
-	// is idempotent, so the lifecycle stop under b.mu below stays as the
-	// guard for a controller installed after this point.
+	// Controller injection is part of the unpublished DB construction frame;
+	// invoke its one stop outside the engine publication lock.
 	b.mu.RLock()
 	lifecycle := b.lifecycleController
 	b.mu.RUnlock()
@@ -283,10 +287,6 @@ func (b *BadgerEngine) Close() error {
 		b.writeBarrier.Unlock()
 		return nil
 	}
-	if b.lifecycleController != nil {
-		b.lifecycleController.StopLifecycle()
-	}
-
 	b.closed = true
 	db := b.db
 	b.mu.Unlock()
@@ -299,6 +299,9 @@ func (b *BadgerEngine) Close() error {
 	// new notifications can start: BulkDeleteNodes adds them under mu only
 	// when the engine is not closed.
 	b.txnWG.Wait()
+	b.mu.RLock()
+	backgroundErr := b.retirementErr
+	b.mu.RUnlock()
 	// Deliver what is ready but undelivered (a replay queues its events for
 	// whoever retired it) before waiting for every reserved notification.
 	b.drainCommitNotifications()
@@ -306,7 +309,7 @@ func (b *BadgerEngine) Close() error {
 
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
-	b.foldRemainingCountDeltasOnClose(db)
+	countErr := b.foldRemainingCountDeltasOnClose(db)
 	b.releasePendingEmbeddingCandidates()
 	propertyErr := b.finishPropertyWALOnClose(db)
 
@@ -315,9 +318,9 @@ func (b *BadgerEngine) Close() error {
 	b.mu.Unlock()
 
 	if db == nil {
-		return nil
+		return errors.Join(backgroundErr, drainErr, suppressionErr, countErr, propertyErr)
 	}
-	return errors.Join(propertyErr, db.Close())
+	return errors.Join(backgroundErr, drainErr, suppressionErr, countErr, propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after
@@ -772,6 +775,7 @@ type StreamNodesOptions struct {
 // them, honoring prefix scoping, property projection, embedding and decay
 // options. Full scans use value prefetching; prefix scans use key-only seeks.
 func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error {
+	var captureErr error
 	if fn == nil {
 		return ErrInvalidData
 	}
@@ -784,11 +788,15 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 				return err
 			}
 			if opts.StripEmbeddings {
-				node = copyNodeWithoutEmbeddings(node)
+				var err error
+				node, err = copyNodeWithoutEmbeddingsWithContext(ctx, node)
+				if err != nil {
+					return err
+				}
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScopeWithContext(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -803,8 +811,8 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		overlay, touched, captureErr = captured.nodes, captured.nodesTouched, readErr
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -826,8 +834,11 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
-	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
+	}, readViewOptions{ctx: ctx, scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
@@ -835,10 +846,16 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return nil
 	}
 	for _, node := range overlay {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !inScope(node.ID) {
 			continue
 		}
-		projected := opts.copyResidentNode(node)
+		projected, err := opts.copyResidentNode(ctx, node)
+		if err != nil {
+			return err
+		}
 		if err := fn(projected); err != nil {
 			if err == ErrIterationStopped {
 				return nil
@@ -899,7 +916,11 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return nil
 		}
 		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
+			var err error
+			node, err = copyNodeWithoutEmbeddingsWithContext(ctx, node)
+			if err != nil {
+				return err
+			}
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -1049,7 +1070,11 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if err := fn(copyEdge(edge)); err != nil {
+		image, err := copyEdgeWithContext(ctx, edge)
+		if err != nil {
+			return err
+		}
+		if err := fn(image); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

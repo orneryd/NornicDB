@@ -119,12 +119,12 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		for _, entity := range touched {
 			switch typed := entity.(type) {
 			case *storage.Node:
-				if err := updateMutatedNode(store, typed); err != nil {
+				if err := updateMutatedNode(ctx, store, typed); err != nil {
 					return err
 				}
 				e.notifyNodeMutated(string(typed.ID))
 			case *storage.Edge:
-				if err := updateMutatedEdge(store, typed); err != nil {
+				if err := updateMutatedEdge(ctx, store, typed); err != nil {
 					return err
 				}
 				e.notifyEdgeMutated(string(typed.ID))

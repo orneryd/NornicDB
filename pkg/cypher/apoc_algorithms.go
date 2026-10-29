@@ -279,7 +279,7 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
-	graph, nodes, config, err := e.readAlgorithmGraph(procedure, args)
+	graph, nodes, config, err := e.readAlgorithmGraph(ctx, procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +342,7 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.betweenness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +413,7 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.closeness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
@@ -673,7 +673,7 @@ func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]i
 // first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
-func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
+func (e *StorageExecutor) algorithmNodes(ctx context.Context, procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {
 		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))
@@ -705,7 +705,7 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 		if label == "" {
 			return nodesInIDOrder(e.storage.GetAllNodes()), nil
 		}
-		nodes, _ := e.storage.GetNodesByLabel(label)
+		nodes, _ := storage.GetNodesByLabelWithContext(ctx, e.storage, label)
 		return nodesInIDOrder(nodes), nil
 	default:
 		return nil, typeError()

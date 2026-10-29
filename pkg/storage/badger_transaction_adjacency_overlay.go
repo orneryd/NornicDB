@@ -1,19 +1,25 @@
 package storage
 
+import "context"
+
 // pendingAdjacencyLocked indexes the transaction's incident edges on first
 // adjacency use. Writes maintain it thereafter; unrelated edges never enter a
 // node's read/DELETE working set. All access is under tx.mu.
-func (tx *BadgerTransaction) pendingAdjacencyLocked(id NodeID) map[EdgeID]*Edge {
+func (tx *BadgerTransaction) pendingAdjacencyLocked(ctx context.Context, id NodeID) (map[EdgeID]*Edge, error) {
 	if tx.pendingAdjacency == nil && len(tx.pendingEdges) == 0 {
-		return nil
+		return nil, ctx.Err()
 	}
 	if tx.pendingAdjacency == nil {
 		tx.pendingAdjacency = make(map[NodeID]map[EdgeID]*Edge)
 		for _, edge := range tx.pendingEdges {
+			if err := ctx.Err(); err != nil {
+				tx.pendingAdjacency = nil
+				return nil, err
+			}
 			tx.indexPendingEdgeLocked(edge)
 		}
 	}
-	return tx.pendingAdjacency[id]
+	return tx.pendingAdjacency[id], ctx.Err()
 }
 
 func (tx *BadgerTransaction) indexPendingEdgeLocked(edge *Edge) {
@@ -58,15 +64,21 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context, committed []*Edge, id NodeID, include func(*Edge) bool) ([]*Edge, error) {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
-		return committed
+		return committed, ctx.Err()
 	}
-	pending := tx.pendingAdjacencyLocked(id)
+	pending, err := tx.pendingAdjacencyLocked(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	// Committed adjacency is caller-owned. A rewrite shadows its former
 	// endpoints even when its new endpoints aren't in this node's index.
 	result := committed[:0]
 	for _, edge := range committed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil {
 			continue
 		}
@@ -81,9 +93,16 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, 
 		}
 	}
 	for _, edge := range pending {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
-			result = append(result, copyEdge(edge))
+			image, err := copyEdgeWithContext(ctx, edge)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, image)
 		}
 	}
-	return result
+	return result, nil
 }

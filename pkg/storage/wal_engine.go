@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -72,8 +73,14 @@ func (w *WALEngine) ListNamespaces() []string {
 
 // IsCurrentTemporalNode delegates current-version checks to the wrapped engine when supported.
 func (w *WALEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
+	return w.IsCurrentTemporalNodeWithContext(context.Background(), node, asOf)
+}
+
+// IsCurrentTemporalNodeWithContext preserves caller cancellation in the wrapped
+// engine's temporal visibility decision.
+func (w *WALEngine) IsCurrentTemporalNodeWithContext(ctx context.Context, node *Node, asOf time.Time) (bool, error) {
 	if provider, ok := w.engine.(TemporalCurrentNodeEngine); ok {
-		return provider.IsCurrentTemporalNode(node, asOf)
+		return IsCurrentTemporalNodeWithContext(ctx, provider, node, asOf)
 	}
 	return true, nil
 }
@@ -176,8 +183,13 @@ func (w *WALEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, err
 
 // GetNodesByLabelVisibleAt delegates snapshot-visible label queries when supported.
 func (w *WALEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+	return w.GetNodesByLabelVisibleAtWithContext(context.Background(), label, version)
+}
+
+// GetNodesByLabelVisibleAtWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetNodesByLabelVisibleAtWithContext(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
 	}
 	return nil, ErrNotImplemented
 }
@@ -590,6 +602,18 @@ func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
 
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
+	return w.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext carries the caller through mutation validation.
+func (w *WALEngine) CreateNodeWithContext(ctx context.Context, node *Node) (NodeID, error) {
+	if handled, err := w.tryContextEntityOperations(ctx, []Operation{{Type: OpCreateNode, Node: node}}, CommitModeDirect); handled {
+		if err != nil {
+			return "", err
+		}
+		return node.ID, nil
+	}
+
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -603,11 +627,20 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 			return "", fmt.Errorf("wal: failed to log create_node: %w", err)
 		}
 	}
-	return w.engine.CreateNode(node)
+	return CreateNodeWithContext(journalApplyContext(ctx), w.engine, node)
 }
 
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
+	return w.UpdateNodeWithContext(context.Background(), node)
+}
+
+// UpdateNodeWithContext carries the caller through mutation validation.
+func (w *WALEngine) UpdateNodeWithContext(ctx context.Context, node *Node) error {
+	if handled, err := w.tryContextEntityOperations(ctx, []Operation{{Type: OpUpdateNode, Node: node}}, CommitModeDirect); handled {
+		return err
+	}
+
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -622,7 +655,7 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 			return fmt.Errorf("wal: failed to log update_node: %w", err)
 		}
 	}
-	return w.engine.UpdateNode(node)
+	return UpdateNodeWithContext(journalApplyContext(ctx), w.engine, node)
 }
 
 // UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
@@ -730,10 +763,37 @@ func (w *WALEngine) DeleteEdge(id EdgeID) error {
 
 // BulkCreateNodes logs then executes bulk node creation.
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
+	return w.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (w *WALEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*Node) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ctx.Done() != nil && config.IsWALEnabled() {
+		operations := make([]Operation, len(nodes))
+		for i, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if node == nil {
+				return ErrInvalidData
+			}
+			operations[i] = Operation{Type: OpCreateNode, Node: node}
+		}
+		if handled, err := w.tryContextEntityOperations(ctx, operations, CommitModeImplicit); handled {
+			return err
+		}
+	}
+
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
 	for _, entity := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entity != nil {
 			initializeCreationTimes(&entity.CreatedAt, &entity.UpdatedAt)
 		}
@@ -743,6 +803,9 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 		dbName := w.getDatabaseName()
 		cloned := make([]*Node, 0, len(nodes))
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if node == nil {
 				cloned = append(cloned, nil)
 				continue
@@ -760,7 +823,7 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 			return fmt.Errorf("wal: failed to log bulk_create_nodes: %w", err)
 		}
 	}
-	return w.engine.BulkCreateNodes(nodes)
+	return BulkCreateNodesWithContext(journalApplyContext(ctx), w.engine, nodes)
 }
 
 // BulkCreateEdges logs then executes bulk edge creation.
@@ -893,13 +956,23 @@ func (w *WALEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 // GetNodesByLabel delegates to underlying engine.
 func (w *WALEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	return w.engine.GetNodesByLabel(label)
+	return w.GetNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
+	return GetNodesByLabelWithContext(ctx, w.engine, label)
 }
 
 // StreamNodesByLabelProjected delegates projected label scans to the underlying engine.
 func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return w.StreamNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) StreamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	if reader, ok := w.engine.(ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
+		return StreamNodesByLabelProjectedWithContext(ctx, reader, label, properties, visit)
 	}
 	return ErrNotImplemented
 }
@@ -908,8 +981,13 @@ func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []strin
 // engine when available. This keeps LIMIT + label paths fast without forcing
 // full node materialization.
 func (w *WALEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+	return w.ForEachNodeIDByLabelWithContext(context.Background(), label, visit)
+}
+
+// ForEachNodeIDByLabelWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) ForEachNodeIDByLabelWithContext(ctx context.Context, label string, visit func(NodeID) bool) error {
 	if lookup, ok := w.engine.(LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, visit)
+		return ForEachNodeIDByLabelWithContext(ctx, lookup, label, visit)
 	}
 	ids, err := NodeIDsByLabel(w.engine, label, 0)
 	if err != nil {
@@ -925,42 +1003,73 @@ func (w *WALEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) 
 
 // GetFirstNodeByLabel delegates to underlying engine.
 func (w *WALEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	return w.engine.GetFirstNodeByLabel(label)
+	return w.GetFirstNodeByLabelWithContext(context.Background(), label)
+}
+
+// GetFirstNodeByLabelWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetFirstNodeByLabelWithContext(ctx context.Context, label string) (*Node, error) {
+	return GetFirstNodeByLabelWithContext(ctx, w.engine, label)
 }
 
 // GetNodesByLabelInScope delegates a scoped label read (ScopedLabelNodeReader).
 func (w *WALEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return getNodesByLabelInScope(w.engine, scope, label)
+	return w.GetNodesByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetNodesByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetNodesByLabelInScopeWithContext(ctx context.Context, scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScopeWithContext(ctx, w.engine, scope, label)
 }
 
 // GetFirstNodeByLabelInScope delegates a scoped first-node read (ScopedLabelNodeReader).
 func (w *WALEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
-	return getFirstNodeByLabelInScope(w.engine, scope, label)
+	return w.GetFirstNodeByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetFirstNodeByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetFirstNodeByLabelInScopeWithContext(ctx context.Context, scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScopeWithContext(ctx, w.engine, scope, label)
 }
 
 // StreamNodesByLabelProjectedInScope delegates a scoped projected label scan (ScopedLabelNodeReader).
 func (w *WALEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return streamNodesByLabelProjectedInScope(w.engine, scope, label, properties, visit)
+	return w.StreamNodesByLabelProjectedInScopeWithContext(context.Background(), scope, label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) StreamNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScopeWithContext(ctx, w.engine, scope, label, properties, visit)
 }
 
 // GetNodesByLabelVisibleAtInScope delegates a scoped snapshot label read (ScopedLabelNodeReader).
 func (w *WALEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return getNodesByLabelVisibleAtInScope(w.engine, scope, label, version)
+	return w.GetNodesByLabelVisibleAtInScopeWithContext(context.Background(), scope, label, version)
+}
+
+// GetNodesByLabelVisibleAtInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetNodesByLabelVisibleAtInScopeWithContext(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScopeWithContext(ctx, w.engine, scope, label, version)
 }
 
 // BatchGetNodes delegates to underlying engine.
 func (w *WALEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	return w.engine.BatchGetNodes(ids)
+	return w.BatchGetNodesWithContext(context.Background(), ids)
+}
+
+// BatchGetNodesWithContext delegates to the canonical contextual batch owner.
+func (w *WALEngine) BatchGetNodesWithContext(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	return BatchGetNodesWithContext(ctx, w.engine, ids)
 }
 
 // BatchGetNodesWithoutEmbeddings forwards a batched embedding-free read
 // without materializing vectors in the WAL wrapper.
 func (w *WALEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
-	reader, ok := w.engine.(BatchNodeWithoutEmbeddingsReader)
-	if !ok {
-		return nil, ErrNotImplemented
-	}
-	return reader.BatchGetNodesWithoutEmbeddings(ids)
+	return w.BatchGetNodesWithoutEmbeddingsWithContext(context.Background(), ids)
+}
+
+// BatchGetNodesWithoutEmbeddingsWithContext delegates without loading vectors.
+func (w *WALEngine) BatchGetNodesWithoutEmbeddingsWithContext(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	return batchNodesWithContext(ctx, w.engine, ids, true)
 }
 
 // BatchGetNodesWithoutEmbeddingsSupported reports the wrapped engine's real
@@ -971,12 +1080,22 @@ func (w *WALEngine) BatchGetNodesWithoutEmbeddingsSupported() bool {
 
 // GetOutgoingEdges delegates to underlying engine.
 func (w *WALEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetOutgoingEdges(nodeID)
+	return w.GetOutgoingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetOutgoingEdgesWithContext forwards the same read with the caller lifetime.
+func (w *WALEngine) GetOutgoingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetOutgoingEdgesWithContext(ctx, w.engine, nodeID)
 }
 
 // GetIncomingEdges delegates to underlying engine.
 func (w *WALEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return w.engine.GetIncomingEdges(nodeID)
+	return w.GetIncomingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetIncomingEdgesWithContext forwards the same read with the caller lifetime.
+func (w *WALEngine) GetIncomingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetIncomingEdgesWithContext(ctx, w.engine, nodeID)
 }
 
 // GetAdjacentEdges delegates to the inner engine when it implements the
@@ -984,18 +1103,12 @@ func (w *WALEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 // in reads (it only logs), so a forwarded call sees the same data as the
 // pair of single-direction methods.
 func (w *WALEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	if inner, ok := w.engine.(AdjacentEdgesEngine); ok {
-		return inner.GetAdjacentEdges(nodeID)
-	}
-	out, err := w.engine.GetOutgoingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	in, err := w.engine.GetIncomingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return out, in, nil
+	return w.GetAdjacentEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetAdjacentEdgesWithContext preserves the inner provider's single read cut.
+func (w *WALEngine) GetAdjacentEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
+	return GetAdjacentEdgesWithContext(ctx, w.engine, nodeID)
 }
 
 // GetEdgesBetween delegates to underlying engine.
@@ -1009,8 +1122,11 @@ func (w *WALEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
 }
 
 // AllNodes delegates to underlying engine.
-func (w *WALEngine) AllNodes() ([]*Node, error) {
-	return w.engine.AllNodes()
+func (w *WALEngine) AllNodes() ([]*Node, error) { return w.AllNodesWithContext(context.Background()) }
+
+// AllNodesWithContext carries the caller through full materialization.
+func (w *WALEngine) AllNodesWithContext(ctx context.Context) ([]*Node, error) {
+	return AllNodesWithContext(ctx, w.engine)
 }
 
 // AllEdges delegates to underlying engine.
@@ -1087,10 +1203,15 @@ func (w *WALEngine) NodeCountByPrefix(prefix string) (int64, error) {
 }
 
 func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
+	return w.NodeCountByLabelWithContext(context.Background(), label)
+}
+
+// NodeCountByLabelWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) NodeCountByLabelWithContext(ctx context.Context, label string) (int64, error) {
 	if stats, ok := w.engine.(LabelStatsEngine); ok {
-		return stats.NodeCountByLabel(label)
+		return NodeCountByLabelWithContext(ctx, stats, label)
 	}
-	nodes, err := w.engine.GetNodesByLabel(label)
+	nodes, err := GetNodesByLabelWithContext(ctx, w.engine, label)
 	if err != nil {
 		return 0, err
 	}
@@ -1126,7 +1247,12 @@ func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
 }
 
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	return namespaceLabelCount(w.engine, namespace, label)
+	return w.NodeCountByLabelInNamespaceWithContext(context.Background(), namespace, label)
+}
+
+// NodeCountByLabelInNamespaceWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) NodeCountByLabelInNamespaceWithContext(ctx context.Context, namespace, label string) (int64, error) {
+	return namespaceLabelCountWithContext(ctx, w.engine, namespace, label)
 }
 
 // EdgeCount delegates to underlying engine.
@@ -1168,7 +1294,7 @@ func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 func (w *WALEngine) Close() error {
 	// Seal admission before draining registered native frames. Registration uses
 	// the same WAL mutex, so no pending frame can appear after this cut.
-	_ = w.wal.Close()
+	walErr := w.wal.Close()
 	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
@@ -1179,7 +1305,7 @@ func (w *WALEngine) Close() error {
 	})
 	// A snapshot worker may have been waiting behind an accepted mutation lease.
 	w.DisableAutoCompaction()
-	return w.engine.Close()
+	return errors.Join(walErr, w.engine.Close())
 }
 
 // GetWAL returns the underlying WAL for direct access.

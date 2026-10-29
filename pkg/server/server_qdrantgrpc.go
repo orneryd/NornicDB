@@ -25,9 +25,9 @@ func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) aut
 
 func (s *Server) startQdrantGRPC() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.qdrantGRPCServer != nil && s.qdrantGRPCServer.IsRunning() {
+	provider := s.qdrantGRPCServer
+	s.mu.Unlock()
+	if provider != nil && provider.IsRunning() {
 		return nil
 	}
 
@@ -137,7 +137,7 @@ func (s *Server) startQdrantGRPC() error {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
 	}
 
-	rerankEnabled := searchSvc.RerankerAvailable(context.Background())
+	rerankEnabled := searchSvc.RerankerAvailable(s.shutdown.workContext)
 	nornicSearchSvc, err := nornicgrpc.NewService(
 		nornicgrpc.Config{
 			DefaultDatabase:  dbName,
@@ -179,12 +179,17 @@ func (s *Server) startQdrantGRPC() error {
 		return fmt.Errorf("qdrant grpc: failed to register nornic search service: %w", err)
 	}
 
+	s.mu.Lock()
+	if s.closed.Load() {
+		s.mu.Unlock()
+		return ErrServerClosed
+	}
+	s.qdrantGRPCServer = grpcServer
+	s.qdrantCollectionStore = grpcServer.CollectionStore()
+	s.mu.Unlock()
 	if err := grpcServer.Start(); err != nil {
 		return fmt.Errorf("qdrant grpc: failed to start: %w", err)
 	}
-
-	s.qdrantGRPCServer = grpcServer
-	s.qdrantCollectionStore = grpcServer.CollectionStore()
 
 	s.logEvent(context.Background(), slog.LevelInfo, localization.ServerQdrantGRPCEnabledEvent(dbName, grpcServer.Addr()))
 	return nil
@@ -214,11 +219,18 @@ func parsePermissionString(v string) (auth.Permission, bool) {
 
 func (s *Server) stopQdrantGRPC() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.qdrantGRPCServer != nil {
-		s.qdrantGRPCServer.Stop()
-		s.qdrantGRPCServer = nil
+	provider := s.qdrantGRPCServer
+	s.mu.Unlock()
+	// RPC callbacks can acquire Server.mu too. Keep it released while the
+	// provider waits for their actual completion.
+	if provider != nil {
+		provider.Stop()
+		s.shutdown.addError(provider.WaitStopped(context.Background()))
 	}
-	s.qdrantCollectionStore = nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.qdrantGRPCServer == provider {
+		s.qdrantGRPCServer = nil
+		s.qdrantCollectionStore = nil
+	}
 }

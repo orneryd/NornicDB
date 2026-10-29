@@ -106,6 +106,14 @@ func (a *analysis) report() *Report {
 		names[a.p.funcName(fn)] = fn
 	}
 	for _, name := range collection.SortedKeys(acquisitions) {
+		if canonical := acquisitions[name].variantOf; canonical != "" {
+			if names[name] == nil {
+				continue
+			}
+			if names[canonical] == nil {
+				r.Violations = append(r.Violations, "stale: acquisition variant "+name+" has no canonical owner "+canonical)
+			}
+		}
 		r.Acquisitions = append(r.Acquisitions, NamedReason{name, acquisitions[name].reason})
 		if names[name] == nil {
 			r.Violations = append(r.Violations, "stale: acquisition "+name+" does not exist")

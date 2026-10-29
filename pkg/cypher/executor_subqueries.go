@@ -271,7 +271,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				}
 				// Indexed IN-list path for batched correlated lookups.
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}

@@ -16,6 +16,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 const (
@@ -49,7 +50,7 @@ type EmbedWorker struct {
 	readiness chan struct{}
 	// Debounced external-trigger state (write-lull signaling).
 	triggerMu            sync.Mutex
-	triggerDebounceTimer *time.Timer
+	triggerDebounceTimer *util.OwnedTimer
 	triggerDebounceSeq   atomic.Uint64
 
 	// Callback after embedding a node (for search index update)
@@ -66,6 +67,7 @@ type EmbedWorker struct {
 	parked    atomic.Int64
 	inFlight  atomic.Int64
 	closed    atomic.Bool // Set to true when Close() is called
+	resetting atomic.Bool // seals timer enrollment during worker generation replacement
 	// restoreHolds counts the restores holding the worker (holdForRestore);
 	// while one does, it claims no nodes and doesn't scan the store.
 	restoreHolds atomic.Int32
@@ -80,7 +82,7 @@ type EmbedWorker struct {
 	loggedSkip map[string]bool
 
 	// Debounce state for k-means clustering trigger
-	clusterDebounceTimer   *time.Timer
+	clusterDebounceTimer   *util.OwnedTimer
 	clusterDebounceMu      sync.Mutex
 	pendingClusterCount    int  // Accumulated count for debounced callback
 	clusterDebounceRunning bool // Whether a debounce timer is active
@@ -341,10 +343,14 @@ func (ew *EmbedWorker) Trigger() {
 
 	seq := ew.triggerDebounceSeq.Add(1)
 	ew.triggerMu.Lock()
+	if ew.closed.Load() || ew.resetting.Load() {
+		ew.triggerMu.Unlock()
+		return
+	}
 	if ew.triggerDebounceTimer != nil {
 		ew.triggerDebounceTimer.Stop()
 	}
-	ew.triggerDebounceTimer = time.AfterFunc(delay, func() {
+	ew.triggerDebounceTimer = util.AfterFuncOwned(ew.ctx, delay, ew.retainTimerWork, func() {
 		if ew.closed.Load() {
 			return
 		}
@@ -557,7 +563,8 @@ func (ew *EmbedWorker) Reset() {
 		ew.mu.Unlock()
 		return
 	}
-	// Mark as resetting to prevent Trigger() from sending during reset
+	// Seal timer enrollment before stopping either scheduler generation.
+	ew.resetting.Store(true)
 	wasRunning := ew.inFlight.Load() > 0
 	ew.mu.Unlock()
 
@@ -573,6 +580,15 @@ func (ew *EmbedWorker) Reset() {
 		ew.triggerDebounceTimer = nil
 	}
 	ew.triggerMu.Unlock()
+
+	ew.clusterDebounceMu.Lock()
+	if ew.clusterDebounceTimer != nil {
+		ew.clusterDebounceTimer.Stop()
+		ew.clusterDebounceTimer = nil
+	}
+	ew.clusterDebounceRunning = false
+	ew.pendingClusterCount = 0
+	ew.clusterDebounceMu.Unlock()
 
 	// Wait synchronously for previous workers to exit before reusing the WaitGroup.
 	// This avoids "WaitGroup is reused before previous Wait has returned" panics
@@ -609,6 +625,7 @@ func (ew *EmbedWorker) Reset() {
 	// Restart worker
 	ew.wg.Add(1)
 	go ew.worker()
+	ew.resetting.Store(false)
 
 	_ = wasRunning // suppress unused warning
 	fmt.Println("✅ Embed worker reset complete, starting fresh scan")
@@ -617,7 +634,6 @@ func (ew *EmbedWorker) Reset() {
 // Close gracefully shuts down the worker.
 func (ew *EmbedWorker) Close() {
 	ew.lifecycleMu.Lock()
-	defer ew.lifecycleMu.Unlock()
 
 	ew.closed.Store(true)
 
@@ -638,6 +654,9 @@ func (ew *EmbedWorker) Close() {
 	ew.clusterDebounceMu.Unlock()
 
 	ew.cancel()
+	// Admission is permanently sealed. Join actual callbacks outside the host
+	// lifecycle lock so a callback can observe/refuse a concurrent Start/Reset.
+	ew.lifecycleMu.Unlock()
 	// Do NOT close trigger channel: Trigger() can still race and send, which would panic.
 	// Context cancellation is enough to stop workers.
 	// Wait synchronously for worker shutdown to complete.
@@ -653,6 +672,9 @@ func (ew *EmbedWorker) Close() {
 func (ew *EmbedWorker) scheduleClusteringDebounced(processedCount int) {
 	ew.clusterDebounceMu.Lock()
 	defer ew.clusterDebounceMu.Unlock()
+	if ew.closed.Load() || ew.resetting.Load() {
+		return
+	}
 
 	// Accumulate the count
 	ew.pendingClusterCount += processedCount
@@ -676,7 +698,7 @@ func (ew *EmbedWorker) scheduleClusteringDebounced(processedCount int) {
 
 	// Schedule new timer
 	ew.clusterDebounceRunning = true
-	ew.clusterDebounceTimer = time.AfterFunc(delay, func() {
+	ew.clusterDebounceTimer = util.AfterFuncOwned(ew.ctx, delay, ew.retainTimerWork, func() {
 		ew.clusterDebounceMu.Lock()
 		count := ew.pendingClusterCount
 		ew.pendingClusterCount = 0
@@ -1735,4 +1757,15 @@ func (ew *EmbedWorker) Enqueue(nodeID string) {
 	ew.nodeUpdatesPending.Store(true)
 	ew.mu.Unlock()
 	ew.Trigger()
+}
+
+// retainTimerWork runs under the matching scheduler mutex. Close/Reset seal
+// admission before crossing both scheduler mutexes, then wait on this same
+// worker group. A Stop which loses to the callback cannot discharge its credit.
+func (ew *EmbedWorker) retainTimerWork() (func(), bool) {
+	if ew.closed.Load() || ew.resetting.Load() {
+		return func() {}, false
+	}
+	ew.wg.Add(1)
+	return ew.wg.Done, true
 }

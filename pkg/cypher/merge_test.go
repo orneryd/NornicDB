@@ -121,7 +121,7 @@ func TestMergeNode_FindMergeNodeIgnoresStaleCacheEntry(t *testing.T) {
 		Properties: map[string]interface{}{"name": "Alice"},
 	})
 
-	found, err := exec.findMergeNode(store, labels, props)
+	found, err := exec.findMergeNode(context.Background(), store, labels, props)
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, storage.NodeID("actual-person"), found.ID)
@@ -665,7 +665,7 @@ func TestFindMergeNode_UsesPropertyIndexLookup(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, schema.PropertyIndexInsert("OriginalText", "textKey", nodeID, "k-1"))
 
-	found, err := exec.findMergeNode(store, []string{"OriginalText"}, map[string]interface{}{"textKey": "k-1"})
+	found, err := exec.findMergeNode(context.Background(), store, []string{"OriginalText"}, map[string]interface{}{"textKey": "k-1"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.NodeID("orig-idx-1"), found.ID)
@@ -691,7 +691,7 @@ func TestFindMergeNode_UsesUniqueConstraintLookupWithoutScan(t *testing.T) {
 	noScanStore := &noScanMergeLookupEngine{Engine: store}
 	exec := NewStorageExecutor(noScanStore)
 
-	found, err := exec.findMergeNode(noScanStore, []string{"Function"}, map[string]interface{}{"uid": "content-entity:e_hot"})
+	found, err := exec.findMergeNode(context.Background(), noScanStore, []string{"Function"}, map[string]interface{}{"uid": "content-entity:e_hot"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.NodeID("function-1"), found.ID)
@@ -707,7 +707,7 @@ func TestFindMergeNode_IgnoresNonComparableUniqueLookupValue(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	require.NotPanics(t, func() {
-		found, err := exec.findMergeNode(store, []string{"Function"}, map[string]interface{}{"uid": []string{"bad"}})
+		found, err := exec.findMergeNode(context.Background(), store, []string{"Function"}, map[string]interface{}{"uid": []string{"bad"}})
 		require.NoError(t, err)
 		require.Nil(t, found)
 	})
@@ -727,7 +727,7 @@ func TestFindMergeNode_RequiresFullMultiLabelMatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	found, err := exec.findMergeNode(store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	found, err := exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
 	require.NoError(t, err)
 	require.Nil(t, found)
 
@@ -740,7 +740,7 @@ func TestFindMergeNode_RequiresFullMultiLabelMatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	found, err = exec.findMergeNode(store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
+	found, err = exec.findMergeNode(context.Background(), store, []string{"FileChunk", "Node"}, map[string]interface{}{"id": "chunk-1"})
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, dualID, found.ID)

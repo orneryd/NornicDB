@@ -186,7 +186,7 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	var execErr error
 	switch cmd.Type {
 	case CmdCommitTransaction:
-		if cmd.accepted != nil && cmd.accepted.owner == a.engine {
+		if cmd.accepted != nil && cmd.accepted.targetsEngine(a.engine) {
 			execErr = cmd.accepted.apply()
 			break
 		}

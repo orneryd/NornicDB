@@ -1107,6 +1107,109 @@ func TestServerStartStop(t *testing.T) {
 	}
 }
 
+func TestServerStartStopConcurrentRequests(t *testing.T) {
+	server, auth := setupTestServer(t)
+	stopWithTimeout := func(server *Server) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return server.Stop(ctx)
+	}
+
+	// Stop before Start closes the lifecycle permanently and a later Start
+	// must not publish a request context that no Stop call will consume.
+	require.NoError(t, stopWithTimeout(server))
+	require.ErrorIs(t, server.Start(), ErrServerClosed)
+
+	newServer := func(port int) *Server {
+		config := *server.config
+		config.Address = "127.0.0.1"
+		config.Port = port
+		startedServer, err := New(server.db, auth, &config)
+		require.NoError(t, err)
+		t.Cleanup(func() { stopTestServer(t, startedServer) })
+		return startedServer
+	}
+	requestLoop := func(target string, gate <-chan struct{}, stop <-chan struct{}, first chan<- struct{}) func() {
+		var requests sync.WaitGroup
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			<-gate
+			client := &http.Client{Timeout: time.Second}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				response, err := client.Get(target)
+				if err == nil {
+					_, _ = io.Copy(io.Discard, response.Body)
+					_ = response.Body.Close()
+					select {
+					case first <- struct{}{}:
+					default:
+					}
+				} else {
+					select {
+					case <-stop:
+						return
+					case <-time.After(time.Millisecond):
+					}
+				}
+			}
+		}()
+		return requests.Wait
+	}
+
+	// Race Start and Stop while clients are attempting requests against the
+	// listener. Either operation may win, but the lifecycle must remain safe.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := probe.Addr().(*net.TCPAddr).Port
+	require.NoError(t, probe.Close())
+	racingServer := newServer(port)
+	gate := make(chan struct{})
+	stopRequests := make(chan struct{})
+	firstRequest := make(chan struct{}, 1)
+	waitRequests := requestLoop(fmt.Sprintf("http://127.0.0.1:%d/not-found", port), gate, stopRequests, firstRequest)
+	startResult := make(chan error, 1)
+	stopResult := make(chan error, 1)
+	go func() {
+		<-gate
+		startResult <- racingServer.Start()
+	}()
+	go func() {
+		<-gate
+		stopResult <- stopWithTimeout(racingServer)
+	}()
+	close(gate)
+	startErr := <-startResult
+	if startErr != nil {
+		require.ErrorIs(t, startErr, ErrServerClosed)
+	}
+	require.NoError(t, <-stopResult)
+	close(stopRequests)
+	waitRequests()
+
+	// Also stop after Start has returned while requests are actively arriving.
+	servingServer := newServer(0)
+	require.NoError(t, servingServer.Start())
+	servingGate := make(chan struct{})
+	servingStop := make(chan struct{})
+	servingRequest := make(chan struct{}, 1)
+	waitServingRequests := requestLoop("http://"+servingServer.Addr()+"/not-found", servingGate, servingStop, servingRequest)
+	close(servingGate)
+	select {
+	case <-servingRequest:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not accept a concurrent request")
+	}
+	require.NoError(t, stopWithTimeout(servingServer))
+	close(servingStop)
+	waitServingRequests()
+}
+
 func TestServerStatsConcurrentWithStart(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.config.Port = 0

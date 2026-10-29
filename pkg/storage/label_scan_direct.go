@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -19,9 +20,12 @@ const labelScanMaxBuffered = 1024
 // that exists, walking scope's node records once ("" is every database)
 // instead of looking each record up. read's order is the records' key order;
 // an error from read stops the walk and is returned.
-func readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
+func readNodeRecordsInOnePass(ctx context.Context, txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
 	wanted := make(map[NodeID]struct{}, len(ids))
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		wanted[id] = struct{}{}
 	}
 	prefix := []byte{prefixNode}
@@ -31,6 +35,9 @@ func readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read 
 	records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer records.Close()
 	for records.Rewind(); records.Valid() && len(wanted) > 0; records.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		item := records.Item()
 		nodeID := NodeID(item.Key()[1:])
 		if _, ok := wanted[nodeID]; !ok {
@@ -48,16 +55,16 @@ func readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read 
 // scope ("" is every database), by the stored node and label counts. Above
 // that share a single pass over the node records costs less than a label
 // index walk with one record lookup per node.
-func (b *BadgerEngine) labelCoversScope(scope, label string) bool {
+func (b *BadgerEngine) labelCoversScope(ctx context.Context, scope, label string) bool {
 	var total, labelled int64
 	var err error
 	if scope == "" {
 		total = b.nodeCount.Load()
-		labelled, err = b.NodeCountByLabel(label)
+		labelled, err = b.NodeCountByLabelWithContext(ctx, label)
 	} else {
 		if total, err = b.NodeCountByPrefix(scope); err == nil {
 			namespace, _, _ := strings.Cut(scope, ":")
-			labelled, err = b.NodeCountByLabelInNamespace(namespace, label)
+			labelled, err = b.NodeCountByLabelInNamespaceWithContext(ctx, namespace, label)
 		}
 	}
 	return err == nil && total > 0 && labelled*2 >= total

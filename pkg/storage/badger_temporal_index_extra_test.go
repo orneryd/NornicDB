@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -62,19 +63,19 @@ func TestCurrentTemporalNodeByScanInNamespace_FindsLatest(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := engine.currentTemporalNodeByScanInNamespace("scan", constraint, "k", v2.Add(time.Hour))
+	got, err := engine.currentTemporalNodeByScanInNamespace(context.Background(), "scan", constraint, "k", v2.Add(time.Hour))
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, NodeID("scan:v2"), got.ID, "highest valid_from <= asOf wins")
 
 	// asOf before v1 → no match.
-	got, err = engine.currentTemporalNodeByScanInNamespace("scan", constraint, "k",
+	got, err = engine.currentTemporalNodeByScanInNamespace(context.Background(), "scan", constraint, "k",
 		time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Nil(t, got)
 
 	// Different key → no match.
-	got, err = engine.currentTemporalNodeByScanInNamespace("scan", constraint, "different_key", v2)
+	got, err = engine.currentTemporalNodeByScanInNamespace(context.Background(), "scan", constraint, "different_key", v2)
 	require.NoError(t, err)
 	require.Nil(t, got)
 }

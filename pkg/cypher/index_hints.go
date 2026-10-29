@@ -35,6 +35,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -333,6 +334,11 @@ func (ctx *IndexHintContext) ShouldForceScan(variable, label string) bool {
 //   - nil, nil if index doesn't exist (fall back to scan)
 //   - nil, error if lookup fails
 func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
+	return ApplyIndexHintWithContext(context.Background(), store, schema, hint, propertyValue)
+}
+
+// ApplyIndexHintWithContext keeps index candidate preparation in the caller lifetime.
+func ApplyIndexHintWithContext(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, hint IndexHint, propertyValue interface{}) ([]*storage.Node, error) {
 	if hint.Type != HintIndex {
 		return nil, nil // Not an index hint
 	}
@@ -343,11 +349,17 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// Try to use the property index for O(1) lookup
-	nodeIDs := propertyIndexLookup(store, schema, hint.Label, hint.Property, propertyValue)
+	nodeIDs, err := propertyIndexLookup(ctx, store, schema, hint.Label, hint.Property, propertyValue)
+	if err != nil {
+		return nil, err
+	}
 	if nodeIDs != nil {
 		// Index exists and was used! Get the actual nodes.
 		var result []*storage.Node
 		for _, nodeID := range nodeIDs {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			node, err := store.GetNode(nodeID)
 			if err == nil && node != nil {
 				result = append(result, node)
@@ -357,7 +369,7 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// No index found - fall back to label scan with property filter
-	nodes, err := store.GetNodesByLabel(hint.Label)
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, store, hint.Label)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +377,9 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	// Filter by property value
 	var result []*storage.Node
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if val, ok := node.Properties[hint.Property]; ok {
 			if compareValues(val, propertyValue) {
 				result = append(result, node)

@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // constituentForElementID resolves a qualified identity before a local read.
 // A qualified ID never falls back to another database with the same local ID.
 // qualified is true even when its database is unavailable or the kind differs.
@@ -92,17 +94,24 @@ func edgesFromDatabase(edges []*Edge, database string) []*Edge {
 	return edges
 }
 
-func nodesFromDatabase(nodes []*Node, database string) []*Node {
+func nodesFromDatabaseWithContext(ctx context.Context, nodes []*Node, database string) ([]*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node != nil && node.Database == "" {
-			copy := append([]*Node(nil), nodes...)
-			for i, value := range copy {
-				copy[i] = nodeFromDatabase(value, database)
+			projected := make([]*Node, 0, len(nodes))
+			err := materializedValuesWithContext(ctx, nodes, func(value *Node) { projected = append(projected, nodeFromDatabase(value, database)) })
+			if err != nil {
+				return nil, err
 			}
-			return copy
+			return projected, ctx.Err()
 		}
 	}
-	return nodes
+	return nodes, ctx.Err()
 }
 
 func nodePairDatabase(start, end NodeID) string {

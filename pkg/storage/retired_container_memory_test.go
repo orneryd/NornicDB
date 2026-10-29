@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -50,10 +51,10 @@ func TestRetiredStorageStringsCollectible(t *testing.T) {
 		},
 		"snapshot_edge_order": func(key string) any {
 			owner := &BadgerTransaction{}
-			owner.cacheSnapshotEdgeByIDLocked(&Edge{ID: EdgeID(key), StartNode: "test:a", EndNode: "test:b", Type: "R"})
+			owner.cacheSnapshotEdgeByIDLockedWithContext(context.Background(), &Edge{ID: EdgeID(key), StartNode: "test:a", EndNode: "test:b", Type: "R"})
 			require.Contains(t, owner.snapshotEdgeByID, EdgeID(key))
 			for i := 0; i < maxSnapshotEdgeCacheEntries; i++ {
-				owner.cacheSnapshotEdgeByIDLocked(&Edge{ID: EdgeID(fmt.Sprintf("test:keep%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "R"})
+				owner.cacheSnapshotEdgeByIDLockedWithContext(context.Background(), &Edge{ID: EdgeID(fmt.Sprintf("test:keep%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "R"})
 			}
 			require.NotContains(t, owner.snapshotEdgeByID, EdgeID(key))
 			return owner

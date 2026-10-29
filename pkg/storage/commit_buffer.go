@@ -12,6 +12,7 @@ package storage
 // lock, so they never wait for the flush.
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -896,28 +897,45 @@ func (w *WriteBehindBuffer) unlockPendingWrites() {
 // trackPendingValues indexes these (label, property) pairs of buffered
 // nodes by value from now on, including the nodes already buffered.
 func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
+	_ = w.trackPendingValuesWithContext(context.Background(), pairs)
+}
+
+func (w *WriteBehindBuffer) trackPendingValuesWithContext(ctx context.Context, pairs []pendingPropertyKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(pairs) == 0 {
-		return
+		return nil
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.pendingIndex == nil {
-		w.pendingIndex = newPendingNodeIndex()
-		// Pending indexes share entity visibility until locked retirement.
-		nodes, _ := w.allNodesOverlayLocked()
+	index := w.pendingIndex
+	if index == nil {
+		index = newPendingNodeIndex()
+		nodes, _, err := w.allNodesOverlayLockedWithContext(ctx)
+		if err != nil {
+			return err
+		}
 		for _, node := range nodes {
-			w.pendingIndex.add(node)
+			if err := index.addWithContext(ctx, node); err != nil {
+				return err
+			}
 		}
 	}
 	for _, pair := range pairs {
-		w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
-			node, _ := w.nodeLocked(id)
-			return node
-		})
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := index.trackWithContext(ctx, pair.label, pair.property, func(id NodeID) *Node { node, _ := w.nodeLocked(id); return node }); err != nil {
+			return err
+		}
+		// Publish only complete pairs. A canceled later pair may keep earlier pairs.
+		w.pendingIndex = index
 		if !slices.Contains(w.trackedPairs, pair) {
 			w.trackedPairs = append(w.trackedPairs, pair)
 		}
 	}
+	return nil
 }
 
 // KeyCandidates returns the newest buffered version of every unflushed node
@@ -926,13 +944,21 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
 func (w *WriteBehindBuffer) ensurePendingValueTracked(label, property string) {
+	_ = w.ensurePendingValueTrackedWithContext(context.Background(), label, property)
+}
+
+func (w *WriteBehindBuffer) ensurePendingValueTrackedWithContext(ctx context.Context, label, property string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	pair := pendingPropertyKey{label: label, property: property}
 	w.mu.RLock()
 	tracked := slices.Contains(w.trackedPairs, pair)
 	w.mu.RUnlock()
 	if !tracked {
-		w.trackPendingValues([]pendingPropertyKey{pair})
+		return w.trackPendingValuesWithContext(ctx, []pendingPropertyKey{pair})
 	}
+	return ctx.Err()
 }
 
 func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
@@ -943,17 +969,28 @@ func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey inter
 }
 
 func (w *WriteBehindBuffer) keyCandidatesLocked(label, property string, valueKey interface{}) []*Node {
+	nodes, _ := w.keyCandidatesLockedWithContext(context.Background(), label, property, valueKey)
+	return nodes
+}
+
+func (w *WriteBehindBuffer) keyCandidatesLockedWithContext(ctx context.Context, label, property string, valueKey interface{}) ([]*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if w == nil || w.pendingIndex == nil {
-		return nil // nothing unflushed (the index is released once empty)
+		return nil, nil // nothing unflushed (the index is released once empty)
 	}
 	ids := w.pendingIndex.byValue[pendingValueKey{label: label, property: property, value: valueKey}]
 	out := make([]*Node, 0, len(ids))
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node, ok := w.newestNodeLocked(id); ok {
 			out = append(out, node)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // newestNodeLocked is the newest buffered version of id across the unapplied
@@ -1087,19 +1124,31 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 // Keep closure-backed selection behind the nil check: captured result locals
 // otherwise escape at function entry even when an empty overlay returns early.
 func (w *WriteBehindBuffer) labelOverlayLocked(label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched, _ := w.labelOverlayLockedWithContext(context.Background(), label, prefixes...)
+	return nodes, touched
+}
+
+func (w *WriteBehindBuffer) labelOverlayLockedWithContext(ctx context.Context, label string, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	if w == nil {
-		return nil, nil
+		return nil, nil, ctx.Err()
 	}
-	return w.selectLabelOverlayLocked(label, prefixes...)
+	return w.selectLabelOverlayLockedWithContext(ctx, label, prefixes...)
 }
 
 func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched, _ := w.selectLabelOverlayLockedWithContext(context.Background(), label, prefixes...)
+	return nodes, touched
+}
+
+func (w *WriteBehindBuffer) selectLabelOverlayLockedWithContext(ctx context.Context, label string, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err := w.visitEntityOverlayLocked(ctx, bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.nodesByLabel[label]
 		for i := len(ids) - 1; i >= 0; i-- {
-			emit(string(ids[i]))
+			if !emit(string(ids[i])) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[NodeID(id)] = true
@@ -1107,7 +1156,7 @@ func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string, prefixes ...s
 			out = append(out, state.node)
 		}
 	}, prefixes...)
-	return out, touched
+	return out, touched, err
 }
 
 // TypeOverlay is LabelOverlay for buffered edges of edgeType.
@@ -1118,15 +1167,22 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 }
 
 func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
+	edges, touched, _ := w.typeOverlayLockedWithContext(context.Background(), edgeType, prefixes...)
+	return edges, touched
+}
+
+func (w *WriteBehindBuffer) typeOverlayLockedWithContext(ctx context.Context, edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
 	if w == nil {
-		return nil, nil
+		return nil, nil, ctx.Err()
 	}
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err := w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.edgesByType[edgeType]
 		for i := len(ids) - 1; i >= 0; i-- {
-			emit(string(ids[i]))
+			if !emit(string(ids[i])) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[EdgeID(id)] = true
@@ -1134,7 +1190,7 @@ func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...strin
 			out = append(out, state.edge)
 		}
 	}, prefixes...)
-	return out, touched
+	return out, touched, err
 }
 
 // LookupNode resolves the newest buffered version of id, if the buffer has
@@ -1181,18 +1237,30 @@ func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 }
 
 func (w *WriteBehindBuffer) allNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched, _ := w.allNodesOverlayLockedWithContext(context.Background(), prefixes...)
+	return nodes, touched
+}
+
+func (w *WriteBehindBuffer) allNodesOverlayLockedWithContext(ctx context.Context, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	if w == nil {
-		return nil, nil
+		return nil, nil, ctx.Err()
 	}
-	return w.selectAllNodesOverlayLocked(prefixes...)
+	return w.selectAllNodesOverlayLockedWithContext(ctx, prefixes...)
 }
 
 func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched, _ := w.selectAllNodesOverlayLockedWithContext(context.Background(), prefixes...)
+	return nodes, touched
+}
+
+func (w *WriteBehindBuffer) selectAllNodesOverlayLockedWithContext(ctx context.Context, prefixes ...string) ([]*Node, map[NodeID]bool, error) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err := w.visitEntityOverlayLocked(ctx, bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.nodes {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[NodeID(id)] = true
@@ -1200,7 +1268,7 @@ func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(prefixes ...string) ([]*
 			out = append(out, state.node)
 		}
 	}, prefixes...)
-	return out, touched
+	return out, touched, err
 }
 
 // AllEdgesOverlay is AllNodesOverlay for buffered edges.
@@ -1211,18 +1279,30 @@ func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 }
 
 func (w *WriteBehindBuffer) allEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
+	edges, touched, _ := w.allEdgesOverlayLockedWithContext(context.Background(), prefixes...)
+	return edges, touched
+}
+
+func (w *WriteBehindBuffer) allEdgesOverlayLockedWithContext(ctx context.Context, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
 	if w == nil {
-		return nil, nil
+		return nil, nil, ctx.Err()
 	}
-	return w.selectAllEdgesOverlayLocked(prefixes...)
+	return w.selectAllEdgesOverlayLockedWithContext(ctx, prefixes...)
 }
 
 func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
+	edges, touched, _ := w.selectAllEdgesOverlayLockedWithContext(context.Background(), prefixes...)
+	return edges, touched
+}
+
+func (w *WriteBehindBuffer) selectAllEdgesOverlayLockedWithContext(ctx context.Context, prefixes ...string) ([]*Edge, map[EdgeID]bool, error) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err := w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.edges {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[EdgeID(id)] = true
@@ -1230,7 +1310,7 @@ func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(prefixes ...string) ([]*
 			out = append(out, state.edge)
 		}
 	}, prefixes...)
-	return out, touched
+	return out, touched, err
 }
 
 // LabelCountDelta sums the derived label-count deltas of every buffered
@@ -1238,6 +1318,11 @@ func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(prefixes ...string) ([]*
 // applies the same deltas to the persisted counters when it lands the
 // generation, so reads see committed counts + this delta.
 func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
+	n, _ := w.LabelCountDeltaWithContext(context.Background(), label)
+	return n
+}
+
+func (w *WriteBehindBuffer) LabelCountDeltaWithContext(ctx context.Context, label string) (int64, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	var total int64
@@ -1246,7 +1331,13 @@ func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
 			return
 		}
 		for _, c := range buf.commits {
+			if ctx.Err() != nil {
+				return
+			}
 			for key, delta := range c.labelDeltas {
+				if ctx.Err() != nil {
+					return
+				}
 				if key.label == label {
 					total += delta
 				}
@@ -1255,16 +1346,24 @@ func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
 	}
 	sum(w.active)
 	for i := len(w.draining) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if w.draining[i].IsApplied() {
 			continue
 		}
 		sum(w.draining[i])
 	}
-	return total
+	return total, ctx.Err()
 }
 
 // LabelCountDeltaInNamespace is LabelCountDelta restricted to namespace.
 func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) int64 {
+	n, _ := w.LabelCountDeltaInNamespaceWithContext(context.Background(), namespace, label)
+	return n
+}
+
+func (w *WriteBehindBuffer) LabelCountDeltaInNamespaceWithContext(ctx context.Context, namespace, label string) (int64, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	var total int64
@@ -1273,6 +1372,9 @@ func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) 
 			return
 		}
 		for _, c := range buf.commits {
+			if ctx.Err() != nil {
+				return
+			}
 			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
 				total += delta
 			}
@@ -1280,12 +1382,15 @@ func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) 
 	}
 	sum(w.active)
 	for i := len(w.draining) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		if w.draining[i].IsApplied() {
 			continue
 		}
 		sum(w.draining[i])
 	}
-	return total
+	return total, ctx.Err()
 }
 
 // EdgeTypeCountDelta sums the derived edge-type count deltas of every
@@ -1381,22 +1486,29 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 }
 
 func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
-	if w == nil {
-		return nil, nil, false
-	}
-	return w.selectEdgeAdjacencyOverlayLocked(nodeID, outgoing)
+	live, suppressed, nodeDeleted, _ = w.edgeAdjacencyOverlayLockedWithContext(context.Background(), nodeID, outgoing)
+	return
 }
 
-func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
+func (w *WriteBehindBuffer) edgeAdjacencyOverlayLockedWithContext(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
+	if w == nil {
+		return nil, nil, false, ctx.Err()
+	}
+	return w.selectEdgeAdjacencyOverlayLockedWithContext(ctx, nodeID, outgoing)
+}
+
+func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLockedWithContext(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
 	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err = w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.incomingByNode[nodeID]
 		if outgoing {
 			ids = buf.outgoingByNode[nodeID]
 		}
 		for _, id := range ids {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		// Both replacements and tombstones shadow the committed identity.
@@ -1409,7 +1521,10 @@ func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outg
 			live = append(live, edge)
 		}
 	})
-	return live, suppressed, nodeDeleted
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return live, suppressed, nodeDeleted, nil
 }
 
 // EdgesBetweenOverlay returns the buffered live edges from source to target
@@ -1423,16 +1538,26 @@ func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*
 }
 
 func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
-	live, suppressed, _ = w.edgeAdjacencyOverlayLocked(source, true)
+	live, suppressed, sourceDeleted, targetDeleted, _ = w.edgesBetweenOverlayLockedWithContext(context.Background(), source, target)
+	return
+}
+
+func (w *WriteBehindBuffer) edgesBetweenOverlayLockedWithContext(ctx context.Context, source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool, err error) {
+	live, suppressed, sourceDeleted, err = w.edgeAdjacencyOverlayLockedWithContext(ctx, source, true)
+	if err != nil {
+		return nil, nil, false, false, err
+	}
 	filtered := live[:0]
 	for _, e := range live {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, false, false, err
+		}
 		if e.EndNode == target {
 			filtered = append(filtered, e)
 		}
 	}
-	sourceDeleted = w.entityStateLocked(bufferedNodeEntity, string(source)).deleted
 	targetDeleted = w.entityStateLocked(bufferedNodeEntity, string(target)).deleted
-	return filtered, suppressed, sourceDeleted, targetDeleted
+	return filtered, suppressed, sourceDeleted, targetDeleted, nil
 }
 
 // EdgeCountDelta is the buffered total edge-count delta: creates minus

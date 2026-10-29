@@ -213,8 +213,40 @@ func writeSearchStateToken(path, token string) error {
 // with discard, its persisted files are removed, loaded service or not. The
 // next use creates the next generation, from storage when discarded.
 func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) {
+	db.searchServicesMu.Lock()
+	if db.searchClosing {
+		db.searchServicesMu.Unlock()
+		return
+	}
+	db.bgWg.Add(1)
+	db.searchServicesMu.Unlock()
+	defer db.bgWg.Done()
+	for {
+		db.searchServiceCreationMu.Lock()
+		db.searchServicesMu.RLock()
+		retiring, done := db.searchRetiring, db.searchRetirementDone
+		db.searchServicesMu.RUnlock()
+		if !retiring {
+			break
+		}
+		db.searchServiceCreationMu.Unlock()
+		<-done
+	}
+	// This is a lifetime state, not a generation or origin transition.
+	db.searchServicesMu.Lock()
+	db.searchRetiring = true
+	db.searchRetirementDone = make(chan struct{})
+	retirementDone := db.searchRetirementDone
+	constructing, constructionDone := db.searchConstructing, db.searchConstructionDone
+	db.searchServicesMu.Unlock()
+	// Preserve the creation fence's original order: admitted preparation
+	// publishes before Reset retires that generation. Foreign resolvers run
+	// without the native fence, and the phase refuses later constructors.
+	db.searchServiceCreationMu.Unlock()
+	if constructing != 0 {
+		<-constructionDone
+	}
 	db.searchServiceCreationMu.Lock()
-	defer db.searchServiceCreationMu.Unlock()
 	var retired []*dbSearchService
 	db.searchServicesMu.Lock()
 	if db.searchGenerations == nil {
@@ -233,8 +265,17 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 		}
 	}
 	db.searchServicesMu.Unlock()
+	// All native generation publication remains fenced by the retiring phase.
+	// No host fence spans cancellation callbacks or the actual lifetime join.
+	db.searchServiceCreationMu.Unlock()
 	for _, entry := range retired {
-		entry.retire()
+		if entry.svc != nil {
+			entry.svc.BeginShutdown()
+		}
+	}
+	var retirementErr error
+	for _, entry := range retired {
+		retirementErr = errors.Join(retirementErr, entry.retire())
 	}
 	// Creation binds a service to its registry epoch before publication.
 	// Keep epoch retirement under the same creation fence as state retirement,
@@ -247,13 +288,26 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 			registry.DiscardDatabase(name)
 		}
 	}
+	db.searchServiceCreationMu.Lock()
+	defer func() {
+		db.searchServicesMu.Lock()
+		db.searchRetiring = false
+		close(retirementDone)
+		db.searchServicesMu.Unlock()
+		db.searchServiceCreationMu.Unlock()
+		db.recordBackgroundError(retirementErr)
+	}()
+
 	if !discard || db.searchStateRoot() == "" {
 		return
 	}
 	for _, name := range names {
-		if path, err := searchPersistenceBasePath(db.config.Database.DataDir, name); err == nil {
-			_ = security.RemoveAllRootedPath(path)
+		path, err := searchPersistenceBasePath(db.config.Database.DataDir, name)
+		if err != nil {
+			retirementErr = errors.Join(retirementErr, err)
+			continue
 		}
+		retirementErr = errors.Join(retirementErr, security.RemoveAllRootedPath(path))
 	}
 }
 
@@ -284,7 +338,7 @@ func (db *DB) searchStateNamesLocked() []string {
 // retire ends an entry that is no longer its database's current one: its
 // service is closed (its build, persistence and maintenance stop), and no
 // refresh is retried or flushed for it again.
-func (e *dbSearchService) retire() {
+func (e *dbSearchService) retire() error {
 	e.pendingMu.Lock()
 	e.retired = true
 	for key, retry := range e.refreshRetries {
@@ -300,8 +354,9 @@ func (e *dbSearchService) retire() {
 	clear(e.pendingEdgeOps)
 	e.pendingMu.Unlock()
 	if e.svc != nil {
-		_ = e.svc.Close()
+		return e.svc.Close()
 	}
+	return nil
 }
 
 func (e *dbSearchService) isRetired() bool {

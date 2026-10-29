@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -20,6 +21,7 @@ const (
 // for materializers with no user callbacks; it permits current body-cache reads,
 // validated as one group, with a strict snapshot retry if a cache changes.
 type readViewOptions struct {
+	ctx       context.Context // admission only; never retained as a view lifetime
 	scopeKind readScopeKind
 	nodeIDs   []NodeID
 	longLived bool
@@ -195,12 +197,24 @@ func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), rea
 func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
 	switch opts.scopeKind {
 	case readPrefixScope:
-		return b.pendingPrefixConflict(opts.scope)
+		return b.pendingPrefixConflictWithContext(opts.ctx, opts.scope)
 	case readNodeIDsScope:
 		if b.pendingNamespaceConflict("") == nil {
 			return nil
 		}
+		// The retained owner decides whether any DROP is pending. Do not
+		// interpret its publication counter at a second read boundary.
+		if opts.ctx != nil {
+			if err := opts.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		for _, id := range opts.nodeIDs {
+			if opts.ctx != nil {
+				if err := opts.ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if id != "" {
 				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 					return err

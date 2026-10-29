@@ -11,6 +11,7 @@ package storagecensus
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/token"
 	"go/types"
 	"os"
@@ -19,11 +20,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/callgraph"
-	"golang.org/x/tools/go/callgraph/cha"
-	"golang.org/x/tools/go/callgraph/vta"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // Module is the import path prefix of the analysed module.
@@ -31,11 +29,13 @@ const Module = "github.com/orneryd/nornicdb/"
 
 // program is the type-checked module as SSA, with its call graph.
 type program struct {
-	root  string // absolute module root
-	fset  *token.FileSet
-	ssa   *ssa.Program
-	funcs []*ssa.Function // every function with a body in the module, sorted
-	cg    *callgraph.Graph
+	loaded *workcensus.Program // canonical function/target/source-site queries
+	root   string              // absolute module root
+	fset   *token.FileSet
+	ssa    *ssa.Program
+	funcs  []*ssa.Function // every function with a body in the module, sorted
+	cg     *callgraph.Graph
+	names  map[*ssa.Function]string // immutable domain report names after SSA build
 }
 
 // load type-checks every package of the module rooted at root for
@@ -49,38 +49,12 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports |
-			packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo,
-		Dir:        abs,
-		BuildFlags: []string{"-tags=noui,nolocalllm"},
-		// The canonical portable target must not inherit host-enabled cgo:
-		// a macOS compiler cannot assemble Linux/amd64 runtime C bindings.
-		Env:     append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"),
-		Overlay: overlay,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
+	loaded, err := workcensus.LoadProgram(workcensus.Config{Dir: abs, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, LoadMode: packages.NeedTypesSizes, Env: append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"), Overlay: overlay})
 	if err != nil {
 		return nil, err
 	}
-	var errs []string
-	packages.Visit(pkgs, nil, func(p *packages.Package) {
-		for _, e := range p.Errors {
-			errs = append(errs, fmt.Sprintf("%s: %s", p.PkgPath, relPos(abs, e.Pos)+e.Msg))
-		}
-	})
-	if len(errs) > 0 {
-		sort.Strings(errs)
-		if len(errs) > 20 {
-			errs = append(errs[:20], fmt.Sprintf("... and %d more", len(errs)-20))
-		}
-		return nil, fmt.Errorf("the module does not type-check:\n  %s", strings.Join(errs, "\n  "))
-	}
-	prog, _ := ssautil.Packages(pkgs, ssa.InstantiateGenerics)
-	prog.Build()
-	all := ssautil.AllFunctions(prog)
-	p := &program{root: abs, fset: prog.Fset, ssa: prog}
-	for fn := range all {
+	p := &program{loaded: loaded, root: loaded.Root, fset: loaded.FileSet, ssa: loaded.SSA, cg: loaded.CallGraph}
+	for _, fn := range loaded.Functions {
 		// A generic function is analysed in its instantiations, not as
 		// written (its calls through type parameters resolve only there).
 		top := fn
@@ -94,20 +68,9 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 			p.funcs = append(p.funcs, fn)
 		}
 	}
+	p.funcs = loaded.IncludeSyntheticFunctions(p.funcs)
 	sort.Slice(p.funcs, func(i, j int) bool { return p.funcName(p.funcs[i]) < p.funcName(p.funcs[j]) })
-	p.cg = vta.CallGraph(all, cha.CallGraph(prog))
 	return p, nil
-}
-
-// relPos is a go/packages error position relative to the module root.
-func relPos(root, pos string) string {
-	if pos == "" || pos == "-" {
-		return ""
-	}
-	if rel, err := filepath.Rel(root, pos); err == nil {
-		pos = filepath.ToSlash(rel)
-	}
-	return pos + ": "
 }
 
 // inModule reports whether fn belongs to a package of the module (a closure
@@ -134,12 +97,19 @@ func inModule(fn *ssa.Function) bool {
 // the module, receiver type and name ("pkg/storage.BadgerEngine.CreateNode",
 // "pkg/storage.BadgerEngine.UpdateNode$1" for a closure).
 func (p *program) funcName(fn *ssa.Function) string {
+	if name, ok := p.names[fn]; ok {
+		return name
+	}
 	s := strings.ReplaceAll(fn.String(), Module, "")
 	if strings.HasPrefix(s, "(") {
 		if end := strings.Index(s, ")"); end > 0 {
 			s = strings.TrimPrefix(s[1:end], "*") + s[end+1:]
 		}
 	}
+	if p.names == nil {
+		p.names = map[*ssa.Function]string{}
+	}
+	p.names[fn] = s
 	return s
 }
 

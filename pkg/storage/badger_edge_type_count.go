@@ -3,6 +3,8 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -477,22 +479,25 @@ func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
 // has drained every writer, so the count mutexes are uncontended, and it
 // writes through the raw database handle because the engine is already
 // marked closed.
-func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
+func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) error {
 	if db == nil {
-		return
+		return nil
 	}
 	view := func(fn func(txn *badger.Txn) error) error { return db.View(fn) }
 	run := func(fn func(txn *badger.Txn) error) error { return db.Update(fn) }
 	b.labelCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(view, run, countDeltaKindLabel, labelCountKey, "", ""); err != nil && b.log != nil {
-		b.log.Warn("failed to fold label-count deltas at close", "error", err)
-	}
+	labelErr := b.foldCountDeltasOn(view, run, countDeltaKindLabel, labelCountKey, "", "")
 	b.labelCountWriteMu.Unlock()
 	b.edgeTypeCountWriteMu.Lock()
-	if err := b.foldCountDeltasOn(view, run, countDeltaKindEdgeType, edgeTypeCountKey, "", ""); err != nil && b.log != nil {
-		b.log.Warn("failed to fold edge-type-count deltas at close", "error", err)
-	}
+	edgeErr := b.foldCountDeltasOn(view, run, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 	b.edgeTypeCountWriteMu.Unlock()
+	if labelErr != nil {
+		labelErr = fmt.Errorf("label-count final fold: %w", labelErr)
+	}
+	if edgeErr != nil {
+		edgeErr = fmt.Errorf("edge-type-count final fold: %w", edgeErr)
+	}
+	return errors.Join(labelErr, edgeErr)
 }
 
 // decrementEdgeTypeCounts applies a batch of negative deltas (DeleteByPrefix).
@@ -810,15 +815,26 @@ func (b *BadgerEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error
 // edgePositionalLabelDeltaKeys returns the (namespace, label, type) delta keys
 // an endpoint's labels contribute at one position (start or end).
 func edgePositionalLabelDeltaKeys(namespace, edgeType string, labels []string) []namespaceEdgeTypeLabel {
-	unique := uniqueLabels(labels)
+	keys, _ := edgePositionalLabelDeltaKeysWithContext(context.Background(), namespace, edgeType, labels)
+	return keys
+}
+
+func edgePositionalLabelDeltaKeysWithContext(ctx context.Context, namespace, edgeType string, labels []string) ([]namespaceEdgeTypeLabel, error) {
+	unique, err := uniqueLabelsWithContext(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
 	if len(unique) == 0 {
-		return nil
+		return nil, nil
 	}
 	keys := make([]namespaceEdgeTypeLabel, 0, len(unique))
 	for _, label := range unique {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType})
 	}
-	return keys
+	return keys, nil
 }
 
 // adjustEdgeTypeLabelCountsForEdgeInTxn applies one edge's positional
@@ -970,16 +986,31 @@ func (tx *BadgerTransaction) bufferAdjustEdgeTypeLabelCount(sub byte, namespace,
 
 // bufferEdgePositionalLabelDeltas buffers one edge's positional label
 // contributions with the given sign.
-func (tx *BadgerTransaction) bufferEdgePositionalLabelDeltas(namespace, edgeType string, startLabels, endLabels []string, sign int64) {
+func (tx *BadgerTransaction) bufferEdgePositionalLabelDeltasWithContext(ctx context.Context, namespace, edgeType string, startLabels, endLabels []string, sign int64) error {
 	if sign == 0 || edgeType == "" {
-		return
+		return ctx.Err()
 	}
-	for _, key := range edgePositionalLabelDeltaKeys(namespace, edgeType, startLabels) {
+	start, err := edgePositionalLabelDeltaKeysWithContext(ctx, namespace, edgeType, startLabels)
+	if err != nil {
+		return err
+	}
+	end, err := edgePositionalLabelDeltaKeysWithContext(ctx, namespace, edgeType, endLabels)
+	if err != nil {
+		return err
+	}
+	for _, key := range start {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, key.namespace, key.label, key.edgeType, sign)
 	}
-	for _, key := range edgePositionalLabelDeltaKeys(namespace, edgeType, endLabels) {
+	for _, key := range end {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, key.namespace, key.label, key.edgeType, sign)
 	}
+	return nil
 }
 
 // nodeLabelsTxVisibleLocked returns a node's labels as this transaction
@@ -1004,13 +1035,16 @@ func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, err
 // adjacency direction of a node as the transaction sees storage
 // (incidentEdgesLocked): the positional counters count every stored
 // relationship, hidden ones too. The caller must hold tx.mu.
-func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing bool) (map[string]int64, error) {
-	edges, err := tx.incidentEdgesLocked(nodeID)
+func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(ctx context.Context, nodeID NodeID, outgoing bool) (map[string]int64, error) {
+	edges, err := tx.incidentEdgesLocked(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	types := make(map[string]int64)
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if outgoing && edge.StartNode != nodeID || !outgoing && edge.EndNode != nodeID {
 			continue
 		}
@@ -1024,33 +1058,51 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 // bufferNodeLabelChangeEdgeTypeDeltasLocked buffers the positional
 // (label, type) deltas a node's relabel implies across its tx-visible
 // incident edges. The caller must hold tx.mu.
-func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(nodeID NodeID, added, removed []string) error {
+func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(ctx context.Context, nodeID NodeID, added, removed []string) error {
 	addedUnique := uniqueLabels(added)
 	removedUnique := uniqueLabels(removed)
 	if len(addedUnique) == 0 && len(removedUnique) == 0 {
 		return nil
 	}
-	outTypes, err := tx.incidentEdgeTypesTxLocked(nodeID, true)
+	outTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, true)
 	if err != nil {
 		return err
 	}
-	inTypes, err := tx.incidentEdgeTypesTxLocked(nodeID, false)
+	inTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, false)
 	if err != nil {
 		return err
 	}
 	for edgeType, multiplicity := range outTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, label := range addedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, multiplicity)
 		}
 		for _, label := range removedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, -multiplicity)
 		}
 	}
 	for edgeType, multiplicity := range inTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, label := range addedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, multiplicity)
 		}
 		for _, label := range removedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, -multiplicity)
 		}
 	}

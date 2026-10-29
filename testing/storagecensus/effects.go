@@ -2,6 +2,7 @@ package storagecensus
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/token"
 	"go/types"
 	"os"
@@ -36,7 +37,9 @@ type req struct {
 	guards []typeGuard
 }
 
-func (r req) id() string { return r.space + "|" + r.origin + "|" + guardID(r.guards) }
+func (r req) id() string {
+	return fmt.Sprintf("%s|%s|%t|%s", r.space, r.origin, r.later, guardID(r.guards))
+}
 
 // pend is a write whose key a function receives (a parameter, or a variable
 // a closure captures): its callers resolve it. covered records that an
@@ -61,20 +64,21 @@ type summary struct {
 
 // analysis is one census run over a program.
 type analysis struct {
-	p           *program
-	k           *keys
-	sums        map[*ssa.Function]*summary
-	writes      map[string]write
-	acq         *acquirer
-	bodyMarks   map[ssa.Instruction]bool
-	bodyChains  map[ssa.Instruction]map[string][]string
-	bodyWriters map[*ssa.Function]bool
-	bodyVia     map[*ssa.Function]ssa.Instruction // why a function is in bodyWriters
-	paramCovers map[parameterCoverKey]cover       // see paramCover
-	syncMemo    map[*ssa.Parameter]int
-	syncClosure map[*ssa.MakeClosure]bool
-	siteCallees map[ssa.CallInstruction][]*ssa.Function
-	callers     map[*ssa.Function]map[*ssa.Function]bool
+	p              *program
+	k              *keys
+	sums           map[*ssa.Function]*summary
+	writes         map[string]write
+	acq            *acquirer
+	bodyMarks      map[ssa.Instruction]bool
+	bodyChains     map[ssa.Instruction]map[string][]string
+	bodyWriters    map[*ssa.Function]bool
+	bodyVia        map[*ssa.Function]ssa.Instruction // why a function is in bodyWriters
+	paramCovers    map[parameterCoverKey]cover       // see paramCover
+	syncMemo       map[*ssa.Parameter]int
+	syncClosure    map[*ssa.MakeClosure]bool
+	callbackFrames map[*ssa.MakeClosure]*workcensus.CallbackFrameProof
+	siteCallees    map[ssa.CallInstruction][]*ssa.Function
+	callers        map[*ssa.Function]map[*ssa.Function]bool
 }
 
 // badgerWrite reports whether a call writes Badger and returns the
@@ -87,6 +91,11 @@ func badgerWrite(c *ssa.CallCommon) (key ssa.Value, whole string, ok bool) {
 	} else if callee := c.StaticCallee(); callee != nil {
 		fn, _ = callee.Object().(*types.Func)
 	}
+	bound := c.StaticCallee() != nil && len(c.StaticCallee().FreeVars) > 0
+	return badgerWriteTarget(c, fn, bound)
+}
+
+func badgerWriteTarget(c *ssa.CallCommon, fn *types.Func, bound bool) (key ssa.Value, whole string, ok bool) {
 	if fn == nil || fn.Pkg() == nil || !strings.HasPrefix(fn.Pkg().Path(), "github.com/dgraph-io/badger/") {
 		return nil, "", false
 	}
@@ -95,7 +104,7 @@ func badgerWrite(c *ssa.CallCommon) (key ssa.Value, whole string, ok bool) {
 		recv = types.TypeString(sig.Recv().Type(), func(*types.Package) string { return "" })
 	}
 	args := c.Args
-	if !c.IsInvoke() && len(args) > 0 && recv != "" {
+	if !c.IsInvoke() && !bound && len(args) > 0 && recv != "" {
 		args = args[1:]
 	}
 	switch {
@@ -107,6 +116,62 @@ func badgerWrite(c *ssa.CallCommon) (key ssa.Value, whole string, ok bool) {
 		return nil, "badger.DB." + fn.Name(), true
 	}
 	return nil, "", false
+}
+
+type physicalWrite struct {
+	key    ssa.Value
+	whole  string
+	guards []typeGuard
+}
+
+func (a *analysis) physicalWrites(site ssa.CallInstruction) []physicalWrite {
+	if key, whole, ok := badgerWrite(site.Common()); ok {
+		return []physicalWrite{{key: key, whole: whole}}
+	}
+	// A wrapper's method can belong to a local interface while the shared
+	// graph resolves its concrete export-only dependency effect.
+	var out []physicalWrite
+	if a.p.loaded != nil {
+		for _, target := range a.p.loaded.CallTargets(site) {
+			object, _ := target.Object().(*types.Func)
+			if key, whole, ok := badgerWriteTarget(site.Common(), object, len(target.FreeVars) > 0); ok {
+				guards, possible := dispatchGuards(site, object)
+				functionGuards, functionPossible := functionDispatchGuards(site, target)
+				possible = possible && functionPossible
+				guards = combineGuards(guards, functionGuards)
+				if possible {
+					out = append(out, physicalWrite{key: key, whole: whole, guards: guards})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// This supplies attribution only. Coverage is checked in the actual effect
+// frame, never borrowed from the source anchor.
+func (a *analysis) effectOrigins(fn *ssa.Function, ins ssa.Instruction) []ssa.Instruction {
+	if ins.Pos().IsValid() && (fn.Syntax() != nil || fn.Pkg != nil) || a.p.loaded == nil {
+		return []ssa.Instruction{ins}
+	}
+	var out []ssa.Instruction
+	for _, site := range a.p.loaded.SourceCallSites(fn) {
+		out = append(out, site)
+	}
+	if len(out) == 0 {
+		out = a.p.loaded.SourceReferences(fn)
+	}
+	if len(out) == 0 {
+		out = []ssa.Instruction{ins} // retain an unanchored known effect too
+	}
+	return out
+}
+
+func (a *analysis) effectWhere(at *ssa.Function, where ssa.Instruction, chain []string) string {
+	if !where.Pos().IsValid() && len(chain) > 0 {
+		return chainFunc(chain)
+	}
+	return a.p.funcName(at) + " " + a.p.pos(where.Pos())
 }
 
 // entryKey is the key of a badger.Entry value: NewEntry's first argument,
@@ -222,7 +287,10 @@ func (a *analysis) resolve(shape keyShape, origin string, chain []string, covere
 		return // a nil key is never written
 	}
 	if shape.whole != "" {
-		w := write{Space: shape.whole, Class: "whole-store", Origin: origin, Func: chainFunc(chain), Where: a.p.funcName(at) + " " + a.p.pos(where.Pos())}
+		w := write{Space: shape.whole, Class: "whole-store", Origin: origin, Func: chainFunc(chain), Where: a.effectWhere(at, where, chain)}
+		if origin == "-" {
+			w.Why = "known physical effect has no visible source invocation or reference"
+		}
 		a.writes[w.Origin+"|"+w.Where+"|"+w.Space] = w
 		if !covered.has(shape.whole) {
 			s.add(req{space: shape.whole, class: "whole-store", origin: origin, chain: chain, later: later, guards: guards})
@@ -243,7 +311,7 @@ func (a *analysis) resolve(shape keyShape, origin string, chain []string, covere
 	if name != "" && class == "" {
 		why = "key space " + name + " has no class (spaceClasses)"
 	}
-	w := write{Space: name, Class: class, Origin: origin, Func: chainFunc(chain), Where: a.p.funcName(at) + " " + a.p.pos(where.Pos()), Why: why}
+	w := write{Space: name, Class: class, Origin: origin, Func: chainFunc(chain), Where: a.effectWhere(at, where, chain), Why: why}
 	if name == "" || class == "" {
 		w.Space, w.Class = "", "unclassified"
 	}
@@ -298,6 +366,9 @@ func chainFunc(chain []string) string {
 // summarize recomputes fn's summary from its instructions and the current
 // summaries of what it calls and the closures it makes.
 func (a *analysis) summarize(fn *ssa.Function) *summary {
+	// Lifetime/effect witnesses can depend on summaries which grow during this
+	// fixed point. Keep recursion memoization local to one recomputation.
+	a.paramCovers, a.syncMemo, a.syncClosure = nil, nil, nil
 	s := &summary{reqs: map[string]req{}, pends: map[string]pend{}}
 	name := a.p.funcName(fn)
 	if exemptOwners[name] != "" || exemptOwners[outer(name)] != "" {
@@ -308,16 +379,24 @@ func (a *analysis) summarize(fn *ssa.Function) *summary {
 			switch ins := ins.(type) {
 			case ssa.CallInstruction:
 				c := ins.Common()
-				if key, whole, ok := badgerWrite(c); ok {
-					origin := a.p.pos(ins.Pos())
-					chain := []string{name + " " + origin}
+				if effects := a.physicalWrites(ins); len(effects) > 0 {
 					covered := a.acq.covers(fn, ins)
-					if whole != "" {
-						a.resolve(keyShape{whole: whole, param: -1, free: -1}, origin, chain, covered, false, fn, ins, s)
-						continue
+					_, later := ins.(*ssa.Go)
+					if later {
+						covered = 0
 					}
-					for _, shape := range a.k.shapes(key, 0) {
-						a.resolve(shape, origin, chain, covered, false, fn, ins, s)
+					for _, source := range a.effectOrigins(fn, ins) {
+						origin := a.p.pos(source.Pos())
+						chain := []string{a.p.funcName(source.Parent()) + " " + origin}
+						for _, effect := range effects {
+							if effect.whole != "" {
+								a.resolve(keyShape{whole: effect.whole, param: -1, free: -1}, origin, chain, covered, later, fn, ins, s, effect.guards)
+								continue
+							}
+							for _, shape := range a.k.shapes(effect.key, 0) {
+								a.resolve(shape, origin, chain, covered, later, fn, ins, s, effect.guards)
+							}
+						}
 					}
 					continue
 				}
@@ -379,9 +458,14 @@ func (a *analysis) summarize(fn *ssa.Function) *summary {
 // captured variables by bindings (a closure).
 func (a *analysis) transfer(fn *ssa.Function, at ssa.Instruction, callee *ssa.Function, cs *summary, args, bindings []ssa.Value, s *summary, extra cover) {
 	covered := a.acq.covers(fn, at) | extra
+	if _, constructed := at.(*ssa.MakeClosure); constructed {
+		// Construction is not execution. The callback may be invoked after a
+		// hold present here releases; use only its actual invocation coverage.
+		covered = extra
+	}
 	step := a.p.funcName(fn) + " " + a.p.pos(at.Pos())
 	for _, r := range cs.reqs {
-		guards, possible := transferGuards(r.guards, args)
+		guards, possible := transferGuards(r.guards, args, bindings, at)
 		if !possible {
 			continue
 		}
@@ -393,7 +477,7 @@ func (a *analysis) transfer(fn *ssa.Function, at ssa.Instruction, callee *ssa.Fu
 		s.add(r)
 	}
 	for _, p := range cs.pends {
-		guards, possible := transferGuards(p.guards, args)
+		guards, possible := transferGuards(p.guards, args, bindings, at)
 		if !possible {
 			continue
 		}
@@ -458,8 +542,18 @@ func (a *analysis) closureParamShapes(s keyShape, closure, maker *ssa.Function) 
 // writes are checked where it runs, as an entry point of its own.
 func (a *analysis) transferLater(fn *ssa.Function, mc *ssa.MakeClosure, closure *ssa.Function, cs *summary, s *summary) {
 	step := a.p.funcName(fn) + " " + a.p.pos(mc.Pos())
+	for _, r := range cs.reqs {
+		guards, possible := transferGuards(r.guards, nil, mc.Bindings, mc)
+		if !possible {
+			continue
+		}
+		r.guards = guards
+		r.later = true
+		r.chain = append([]string{step}, r.chain...)
+		s.add(r)
+	}
 	for _, p := range cs.pends {
-		guards, possible := transferGuards(p.guards, nil)
+		guards, possible := transferGuards(p.guards, nil, mc.Bindings, mc)
 		if !possible {
 			continue
 		}

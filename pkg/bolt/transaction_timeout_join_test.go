@@ -57,7 +57,7 @@ func TestBoltTimeoutResponseJoinsCleanupAndFailsClosedOnCleanupFailure(t *testin
 				rollbackErr:     tt.rollbackErr,
 				rollbackPanic:   tt.rollbackPanic,
 			}
-			port := startControlledTransactionServer(t, executor)
+			port := startControlledTransactionServer(t, executor, rollbackShutdownCheck(t, tt.rollbackErr, tt.rollbackPanic))
 			conn := openBoltTestConn(t, port)
 			beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(100)})
 			select {

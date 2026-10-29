@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -46,6 +47,12 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 	require.Equal(t, EdgeID("r"), in[0].ID)
 	require.NotSame(t, rows[0], out[0])
 	require.Equal(t, EdgeID("test:r"), rows[0].ID)
+	out, in, err = GetAdjacentEdgesWithContext(context.Background(), NewNamespacedEngine(decorated, "test"), "hub")
+	require.NoError(t, err)
+	require.Equal(t, 2, decorated.calls, "promoted contextual methods must not bypass the immediate override")
+	require.Equal(t, EdgeID("r"), out[0].ID)
+	require.Equal(t, EdgeID("r"), in[0].ID)
+
 	failure := errors.New("incoming read failed")
 	for _, namespaced := range []bool{false, true} {
 		d := &adjacencyDirectionalFailure{Engine: b, rows: rows, failure: failure}
@@ -87,7 +94,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 		return n
 	}
 
-	reader, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	reader, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.NotNil(t, reader.view)
 	defer reader.view.Close()
@@ -111,7 +118,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	require.Equal(t, int64(2), current[0].Properties["v"])
 	_, _, err = b.GetAdjacentEdges("test:hub")
 	require.NoError(t, err)
-	cached, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	cached, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, cached.view)
 	require.Zero(t, activeReads())

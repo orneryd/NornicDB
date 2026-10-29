@@ -1,6 +1,10 @@
 package multidb
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 type storedEntityObserverInitializer interface {
 	InitializeStoredEntityObserver(string, func(storage.StoredEntitySnapshot) (storage.StoredEntityObserver, error), storage.StoredEntityReadBoundary) error
@@ -28,6 +32,13 @@ func (m *DatabaseManager) initializeStorageUsage(database string, owner storedEn
 // initializeStorageUsage captures no manager metadata lock. Registered native
 // initialization may run from an internal writer whose caller owns that lock.
 func (runtime *managedDatabaseRuntime) initializeStorageUsage(trackBytes bool, boundaries ...storage.StoredEntityReadBoundary) error {
+	return runtime.initializeStorageUsageWithContext(context.Background(), trackBytes, boundaries...)
+}
+
+func (runtime *managedDatabaseRuntime) initializeStorageUsageWithContext(ctx context.Context, trackBytes bool, boundaries ...storage.StoredEntityReadBoundary) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// The first actual initialization captures its decorated reader. Later manager
 	// views reuse it rather than replacing an installed namespace fault/policy seam.
 	runtime.boundaryOnce.Do(func() {
@@ -48,7 +59,7 @@ func (runtime *managedDatabaseRuntime) initializeStorageUsage(trackBytes bool, b
 		trackBytes := trackBytes || info.sizeInitialized
 		if !info.usageInitialized || (trackBytes && !info.sizeInitialized) {
 			var actual storageUsage
-			err := snapshot.ForEach(func(entry storage.StoredEntitySnapshotEntry) error {
+			err := snapshot.ForEachWithContext(ctx, func(entry storage.StoredEntitySnapshotEntry) error {
 				// Initial population is unsigned presence; commit deltas remain
 				// signed before/after images in the existing fold below.
 				switch entry.Kind {
@@ -64,7 +75,7 @@ func (runtime *managedDatabaseRuntime) initializeStorageUsage(trackBytes bool, b
 				if err != nil {
 					return err
 				}
-				delta, err := storageChangesUsage(runtime.namespace, []storage.StoredEntityChange{change}, true)
+				delta, err := storageChangesUsageWithContext(ctx, runtime.namespace, []storage.StoredEntityChange{change}, true)
 				if err != nil {
 					return err
 				}

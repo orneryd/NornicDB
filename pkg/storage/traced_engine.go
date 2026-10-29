@@ -43,12 +43,17 @@ func (t *TracedEngine) getCtx() context.Context {
 func (t *TracedEngine) GetInnerEngine() Engine { return t.Engine }
 
 func (t *TracedEngine) CreateNode(node *Node) (NodeID, error) {
+	return t.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext carries the caller through mutation validation.
+func (t *TracedEngine) CreateNodeWithContext(ctx context.Context, node *Node) (NodeID, error) {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.CreateNode",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	return t.Engine.CreateNode(node)
+	return CreateNodeWithContext(ctx, t.Engine, node)
 }
 
 func (t *TracedEngine) GetNode(id NodeID) (*Node, error) {
@@ -61,12 +66,17 @@ func (t *TracedEngine) GetNode(id NodeID) (*Node, error) {
 }
 
 func (t *TracedEngine) UpdateNode(node *Node) error {
+	return t.UpdateNodeWithContext(context.Background(), node)
+}
+
+// UpdateNodeWithContext carries the caller through mutation validation.
+func (t *TracedEngine) UpdateNodeWithContext(ctx context.Context, node *Node) error {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.UpdateNode",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	return t.Engine.UpdateNode(node)
+	return UpdateNodeWithContext(ctx, t.Engine, node)
 }
 
 func (t *TracedEngine) DeleteNode(id NodeID) error {
@@ -115,12 +125,17 @@ func (t *TracedEngine) DeleteEdge(id EdgeID) error {
 }
 
 func (t *TracedEngine) GetNodesByLabel(label string) ([]*Node, error) {
+	return t.GetNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.GetNodesByLabel",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	return t.Engine.GetNodesByLabel(label)
+	return GetNodesByLabelWithContext(ctx, t.Engine, label)
 }
 
 func (t *TracedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
@@ -151,12 +166,17 @@ func (t *TracedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 }
 
 func (t *TracedEngine) AllNodes() ([]*Node, error) {
+	return t.AllNodesWithContext(context.Background())
+}
+
+// AllNodesWithContext carries the caller through full materialization.
+func (t *TracedEngine) AllNodesWithContext(ctx context.Context) ([]*Node, error) {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.AllNodes",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	return t.Engine.AllNodes()
+	return AllNodesWithContext(ctx, t.Engine)
 }
 
 func (t *TracedEngine) AllEdges() ([]*Edge, error) {
@@ -169,6 +189,11 @@ func (t *TracedEngine) AllEdges() ([]*Edge, error) {
 }
 
 func (t *TracedEngine) BulkCreateNodes(nodes []*Node) error {
+	return t.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (t *TracedEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*Node) error {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.BulkCreateNodes",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
@@ -177,7 +202,7 @@ func (t *TracedEngine) BulkCreateNodes(nodes []*Node) error {
 		),
 	)
 	defer span.End()
-	return t.Engine.BulkCreateNodes(nodes)
+	return BulkCreateNodesWithContext(ctx, t.Engine, nodes)
 }
 
 func (t *TracedEngine) BulkCreateEdges(edges []*Edge) error {
@@ -193,7 +218,13 @@ func (t *TracedEngine) BulkCreateEdges(edges []*Edge) error {
 }
 
 func (t *TracedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.BatchGetNodes",
+	return t.BatchGetNodesWithContext(t.getCtx(), ids)
+}
+
+// BatchGetNodesWithContext keeps the batch trace on the caller's lifetime and
+// delegates preparation to the shared contextual dispatcher.
+func (t *TracedEngine) BatchGetNodesWithContext(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
+	ctx, span := otel.Tracer("nornicdb/storage").Start(ctx, "nornicdb.storage.BatchGetNodes",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("kind", "node"),
@@ -201,5 +232,5 @@ func (t *TracedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 		),
 	)
 	defer span.End()
-	return t.Engine.BatchGetNodes(ids)
+	return BatchGetNodesWithContext(ctx, t.Engine, ids)
 }

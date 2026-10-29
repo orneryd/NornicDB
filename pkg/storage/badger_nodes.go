@@ -19,13 +19,19 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
-	return b.createNodeWithWriteContext(node, nil)
+	return b.CreateNodeWithContext(context.Background(), node)
 }
 
-func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext) (NodeID, error) {
+// CreateNodeWithContext retains the canonical entity write and publication owner.
+func (b *BadgerEngine) CreateNodeWithContext(ctx context.Context, node *Node) (NodeID, error) {
+	return b.createNodeWithWriteContext(ctx, node, nil)
+}
+
+func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Node, inherited *entityWriteContext) (NodeID, error) {
+
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
-			_, err := tx.CreateNode(node)
+			_, err := CreateNodeWithContext(ctx, tx, node)
 			return err
 		}); handled {
 			if err != nil {
@@ -94,7 +100,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 		if getErr != badger.ErrKeyNotFound {
 			return getErr
 		}
-		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
+		if err := b.validateNodeConstraintsInTxn(ctx, txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
 		data, embeddingsSeparate, err := b.writeCreatedNode(txn, txn, key, node)
@@ -447,12 +453,20 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
-func (b *BadgerEngine) UpdateNode(node *Node) error { return b.updateNodeWithWriteContext(node, nil) }
+func (b *BadgerEngine) UpdateNode(node *Node) error {
+	return b.UpdateNodeWithContext(context.Background(), node)
+}
 
-func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityWriteContext) error {
+// UpdateNodeWithContext carries validation context into the retained write owner.
+func (b *BadgerEngine) UpdateNodeWithContext(ctx context.Context, node *Node) error {
+	return b.updateNodeWithWriteContext(ctx, node, nil)
+}
+
+func (b *BadgerEngine) updateNodeWithWriteContext(ctx context.Context, node *Node, inherited *entityWriteContext) error {
+
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
-			return ApplyNodeUpdate(tx, node)
+			return ApplyNodeUpdateWithContext(ctx, tx, node)
 		}); handled {
 			return err
 		}
@@ -540,7 +554,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 		if err == badger.ErrKeyNotFound {
 			// Node doesn't exist - do an insert (upsert behavior)
 			wasInsert = true
-			if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
+			if err := b.validateNodeConstraintsInTxn(ctx, txn, node, schema, dbName, node.ID); err != nil {
 				return err
 			}
 			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
@@ -607,7 +621,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 		// them from storage too (#963).
 		dropStaleCarriedEmbeddings(b, existingNode, node)
 
-		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
+		if err := b.validateNodeConstraintsInTxn(ctx, txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
 
@@ -804,7 +818,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		var err error
-		result, err = b.executeNodeDeletion(txn, id, nil)
+		result, err = b.executeNodeDeletion(context.Background(), txn, id, nil)
 		return err
 	}, publish, keys, notification, write.stagePublication)
 

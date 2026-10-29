@@ -171,7 +171,7 @@ func (s *Session) releaseIncomingReservations() {
 		s.connCancel()
 	}
 	if s.conn != nil {
-		_ = s.conn.Close()
+		s.closeConnection()
 	}
 	if s.messageReaderDone != nil {
 		<-s.messageReaderDone

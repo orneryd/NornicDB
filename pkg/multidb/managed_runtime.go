@@ -98,7 +98,7 @@ func (runtime *managedDatabaseRuntime) initializeManagedUsage(ctx context.Contex
 		return nil
 	}
 	trackBytes := limits != nil && limits.Storage.MaxBytes > 0
-	return runtime.initializeStorageUsage(trackBytes, boundary)
+	return runtime.initializeStorageUsageWithContext(ctx, trackBytes, boundary)
 }
 
 // ResetManagedEntityUsage is called by the successful physical graph replacement

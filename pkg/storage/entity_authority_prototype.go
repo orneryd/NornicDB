@@ -9,40 +9,71 @@ import (
 // entityCommitKeys projects the typed identity domain for the canonical
 // commit-lock registry. Endpoint and relationship identities never become labels.
 func entityCommitKeys(nodes []NodeID, edges []EdgeID, endpoints []NodeID) []uniqueConstraintLockKey {
+	keys, _ := entityCommitKeysWithContext(context.Background(), nodes, edges, endpoints)
+	return keys
+}
+func entityCommitKeysWithContext(ctx context.Context, nodes []NodeID, edges []EdgeID, endpoints []NodeID) ([]uniqueConstraintLockKey, error) {
 	keys := make([]uniqueConstraintLockKey, 0, len(nodes)+len(edges)+len(endpoints))
 	for _, id := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id)})
 	}
 	for _, id := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 2, entityID: string(id)})
 	}
 	for _, id := range endpoints {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, uniqueConstraintLockKey{entityKind: 1, entityID: string(id), shared: true})
 	}
-	return keys
+	return keys, ctx.Err()
 }
 
-func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []EdgeID, []NodeID) {
+func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked(ctx context.Context) ([]NodeID, []EdgeID, []NodeID, error) {
 	nodes := make([]NodeID, 0, len(tx.pendingNodes)+len(tx.deletedNodes)+len(tx.pendingAdjacency))
 	edges := make([]EdgeID, 0, len(tx.pendingEdges)+len(tx.deletedEdges))
 	endpoints := make([]NodeID, 0, len(tx.pendingAdjacency)+2*len(tx.pendingEdges))
 	for id := range tx.pendingNodes {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		nodes = append(nodes, id)
 	}
 	for id := range tx.deletedNodes {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		nodes = append(nodes, id)
 	}
 	for id := range tx.pendingAdjacency {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		endpoints = append(endpoints, id)
 	}
 	for id, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		edges = append(edges, id)
 		endpoints = append(endpoints, edge.StartNode, edge.EndNode)
 	}
 	for id := range tx.deletedEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		edges = append(edges, id)
 	}
 	for _, op := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
 		if op.OldEdge != nil {
 			endpoints = append(endpoints, op.OldEdge.StartNode, op.OldEdge.EndNode)
 		}
@@ -50,7 +81,7 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked() ([]NodeID, []Edg
 			endpoints = append(endpoints, op.Edge.StartNode, op.Edge.EndNode)
 		}
 	}
-	return nodes, edges, endpoints
+	return nodes, edges, endpoints, ctx.Err()
 }
 
 // entityWriteContext transfers one outer entity write's authority and lifecycle
@@ -220,4 +251,17 @@ func (w *entityWriteContext) stagePublication(cw *commitWriter) error {
 		w.resources.releaseKeys()
 	}
 	return nil
+}
+
+func (tx *BadgerTransaction) lockPendingEntityAuthorityLocked() (func(), error) {
+	ctx := tx.validationContextLocked()
+	nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := entityCommitKeysWithContext(ctx, nodes, edges, endpoints)
+	if err != nil {
+		return nil, err
+	}
+	return tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(ctx, tx.ID, keys)
 }

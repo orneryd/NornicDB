@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 import "strings"
 
 // ScopedLabelNodeReader is an optional extension interface for label reads
@@ -46,57 +48,86 @@ func nodeIDInScope(id NodeID, scope string) bool {
 // otherwise.
 
 func getNodesByLabelInScope(engine Engine, scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScopeWithContext(context.Background(), engine, scope, label)
+}
+
+// getNodesByLabelInScopeWithContext carries the caller through this read and its materialization.
+func getNodesByLabelInScopeWithContext(ctx context.Context, engine Engine, scope, label string) ([]*Node, error) {
 	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
-		return scoped.GetNodesByLabelInScope(scope, label)
+		return GetNodesByLabelInScopeWithContext(ctx, scoped, scope, label)
 	}
-	return engine.GetNodesByLabel(label)
+	return GetNodesByLabelWithContext(ctx, engine, label)
 }
 
 func getFirstNodeByLabelInScope(engine Engine, scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScopeWithContext(context.Background(), engine, scope, label)
+}
+
+// getFirstNodeByLabelInScopeWithContext carries the caller through this read and its materialization.
+func getFirstNodeByLabelInScopeWithContext(ctx context.Context, engine Engine, scope, label string) (*Node, error) {
 	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
-		return scoped.GetFirstNodeByLabelInScope(scope, label)
+		return GetFirstNodeByLabelInScopeWithContext(ctx, scoped, scope, label)
 	}
-	return engine.GetFirstNodeByLabel(label)
+	return GetFirstNodeByLabelWithContext(ctx, engine, label)
 }
 
 func streamNodesByLabelProjectedInScope(engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScopeWithContext(context.Background(), engine, scope, label, properties, visit)
+}
+
+// streamNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func streamNodesByLabelProjectedInScopeWithContext(ctx context.Context, engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
 	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
-		return scoped.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
+		return StreamNodesByLabelProjectedInScopeWithContext(ctx, scoped, scope, label, properties, visit)
 	}
 	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
+		return StreamNodesByLabelProjectedWithContext(ctx, reader, label, properties, visit)
 	}
 	return ErrNotImplemented
 }
 
 func getNodesByLabelVisibleAtInScope(engine Engine, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScopeWithContext(context.Background(), engine, scope, label, version)
+}
+
+// getNodesByLabelVisibleAtInScopeWithContext carries the caller through this read and its materialization.
+func getNodesByLabelVisibleAtInScopeWithContext(ctx context.Context, engine Engine, scope, label string, version MVCCVersion) ([]*Node, error) {
 	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
-		return scoped.GetNodesByLabelVisibleAtInScope(scope, label, version)
+		return GetNodesByLabelVisibleAtInScopeWithContext(ctx, scoped, scope, label, version)
 	}
 	if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 func forEachNodeIDByLabelInScope(engine Engine, scope, label string, visit func(NodeID) bool) error {
+	return forEachNodeIDByLabelInScopeWithContext(context.Background(), engine, scope, label, visit)
+}
+
+// forEachNodeIDByLabelInScopeWithContext carries the caller through this read and its materialization.
+func forEachNodeIDByLabelInScopeWithContext(ctx context.Context, engine Engine, scope, label string, visit func(NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
 	if scoped, ok := engine.(ScopedLabelNodeIDReader); ok {
-		return scoped.ForEachNodeIDByLabelInScope(scope, label, visit)
+		return ForEachNodeIDByLabelInScopeWithContext(ctx, scoped, scope, label, visit)
 	}
 	inScope := func(id NodeID) bool {
 		return !nodeIDInScope(id, scope) || visit(id)
 	}
 	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, inScope)
+		return ForEachNodeIDByLabelWithContext(ctx, lookup, label, inScope)
 	}
-	nodes, err := getNodesByLabelInScope(engine, scope, label)
+	nodes, err := getNodesByLabelInScopeWithContext(ctx, engine, scope, label)
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if node != nil && !inScope(node.ID) {
 			break
 		}
@@ -106,35 +137,70 @@ func forEachNodeIDByLabelInScope(engine Engine, scope, label string, visit func(
 
 // ForEachNodeIDByLabelInScope forwards scoped ID iteration through WAL.
 func (w *WALEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
-	return forEachNodeIDByLabelInScope(w.engine, scope, label, visit)
+	return w.ForEachNodeIDByLabelInScopeWithContext(context.Background(), scope, label, visit)
+}
+
+// ForEachNodeIDByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) ForEachNodeIDByLabelInScopeWithContext(ctx context.Context, scope, label string, visit func(NodeID) bool) error {
+	return forEachNodeIDByLabelInScopeWithContext(ctx, w.engine, scope, label, visit)
 }
 
 // ForEachNodeIDByLabelInScope forwards scoped ID iteration through tracing.
 func (t *TracedEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
-	return forEachNodeIDByLabelInScope(t.Engine, scope, label, visit)
+	return t.ForEachNodeIDByLabelInScopeWithContext(context.Background(), scope, label, visit)
+}
+
+// ForEachNodeIDByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) ForEachNodeIDByLabelInScopeWithContext(ctx context.Context, scope, label string, visit func(NodeID) bool) error {
+	return forEachNodeIDByLabelInScopeWithContext(ctx, t.Engine, scope, label, visit)
 }
 
 // ForEachNodeIDByLabel forwards ID iteration through tracing.
 func (t *TracedEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
-	return t.ForEachNodeIDByLabelInScope("", label, visit)
+	return t.ForEachNodeIDByLabelWithContext(context.Background(), label, visit)
+}
+
+// ForEachNodeIDByLabelWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) ForEachNodeIDByLabelWithContext(ctx context.Context, label string, visit func(NodeID) bool) error {
+	return ForEachNodeIDByLabelInScopeWithContext(ctx, t, "", label, visit)
 }
 
 // GetNodesByLabelInScope forwards the scoped label reader through tracing.
 func (t *TracedEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return getNodesByLabelInScope(t.Engine, scope, label)
+	return t.GetNodesByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetNodesByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) GetNodesByLabelInScopeWithContext(ctx context.Context, scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScopeWithContext(ctx, t.Engine, scope, label)
 }
 
 // GetFirstNodeByLabelInScope forwards the scoped first reader through tracing.
 func (t *TracedEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
-	return getFirstNodeByLabelInScope(t.Engine, scope, label)
+	return t.GetFirstNodeByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetFirstNodeByLabelInScopeWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) GetFirstNodeByLabelInScopeWithContext(ctx context.Context, scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScopeWithContext(ctx, t.Engine, scope, label)
 }
 
 // StreamNodesByLabelProjectedInScope forwards the scoped stream through tracing.
 func (t *TracedEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return streamNodesByLabelProjectedInScope(t.Engine, scope, label, properties, visit)
+	return t.StreamNodesByLabelProjectedInScopeWithContext(context.Background(), scope, label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) StreamNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScopeWithContext(ctx, t.Engine, scope, label, properties, visit)
 }
 
 // GetNodesByLabelVisibleAtInScope forwards the scoped snapshot read through tracing.
 func (t *TracedEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
-	return getNodesByLabelVisibleAtInScope(t.Engine, scope, label, version)
+	return t.GetNodesByLabelVisibleAtInScopeWithContext(context.Background(), scope, label, version)
+}
+
+// GetNodesByLabelVisibleAtInScopeWithContext carries the caller through this read and its materialization.
+func (t *TracedEngine) GetNodesByLabelVisibleAtInScopeWithContext(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScopeWithContext(ctx, t.Engine, scope, label, version)
 }

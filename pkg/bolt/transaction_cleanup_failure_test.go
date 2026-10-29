@@ -198,7 +198,7 @@ func TestBoltTimeoutCleanupFailureClosesConnectionWithoutReset(t *testing.T) {
 				rollbackPanic:   tt.rollbackPanic,
 				rollbackStarted: make(chan struct{}),
 			}
-			port := startControlledTransactionServer(t, executor)
+			port := startControlledTransactionServer(t, executor, rollbackShutdownCheck(t, tt.rollbackErr, tt.rollbackPanic))
 			conn := openBoltTestConn(t, port)
 			beginExplicitTransaction(t, conn, map[string]any{
 				"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
@@ -339,7 +339,7 @@ func TestBoltBeginCleanupFailureClosesAndQuarantinesRawExecutor(t *testing.T) {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := startBoltTestServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
 	conn := openBoltTestConn(t, port)
 
 	require.NoError(t, SendBegin(t, conn, nil))

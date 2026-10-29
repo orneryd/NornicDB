@@ -10,6 +10,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -95,10 +96,31 @@ func (db *DB) closeInternal() error {
 	embedQueue := db.embedQueue
 	db.mu.Unlock()
 
-	db.stopClusteringTimer()
 	if db.buildCancel != nil {
 		db.buildCancel()
 	}
+	// A retained DB consumer can be waiting on the native owner's admission
+	// or leader state. Start that owner's stop before joining those consumers;
+	// its existing Shutdown still owns native signal, join and physical close.
+	var replicationStopped <-chan error
+	if replicator := db.replicator; replicator != nil {
+		outcome := make(chan error, 1)
+		replicationStopped = outcome
+		go func() { outcome <- replicator.Shutdown() }()
+	}
+	db.searchServicesMu.Lock()
+	db.searchClosing = true
+	servicesToStop := make([]*search.Service, 0, len(db.searchServices))
+	for _, entry := range db.searchServices {
+		if entry != nil && entry.svc != nil {
+			servicesToStop = append(servicesToStop, entry.svc)
+		}
+	}
+	db.searchServicesMu.Unlock()
+	for _, svc := range servicesToStop {
+		svc.BeginShutdown()
+	}
+	db.stopClusteringTimer()
 	if embedQueue != nil {
 		embedQueue.Close()
 	}
@@ -110,15 +132,17 @@ func (db *DB) closeInternal() error {
 
 	// Queue workers, initializers and foreground calls are now quiescent. Release all provider
 	// resources through their one owner, including cached/replaced providers.
-	errs := db.closeOwnedEmbedders()
+	errs := db.closeOwnedProviders()
 	// Stop every component that can still mutate graph storage before recording
 	// the durable storage boundary. Search snapshots are derived artifacts and
 	// may take much longer to save; they must not delay this marker.
 	if db.accessFlusher != nil {
-		db.accessFlusher.Stop()
+		if err := db.accessFlusher.Stop(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if db.replicator != nil {
-		if err := db.replicator.Shutdown(); err != nil {
+	if replicationStopped != nil {
+		if err := <-replicationStopped; err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -135,43 +159,44 @@ func (db *DB) closeInternal() error {
 	if db.retentionManager != nil && db.config != nil {
 		if err := db.retentionManager.SavePolicies(db.retentionPoliciesPath()); err != nil {
 			log.Printf("⚠️  Failed to save retention policies: %v", err)
+			errs = append(errs, fmt.Errorf("save retention policies: %w", err))
 		}
 	}
 	var markerEngine storage.Engine
-	if len(errs) == 0 {
+	if len(errs) == 0 && db.opened {
 		markerEngine = db.baseStorage
 	}
+	db.searchServicesMu.RLock()
+	services := make([]*search.Service, 0, len(db.searchServices))
+	for _, entry := range db.searchServices {
+		if entry != nil && entry.svc != nil {
+			services = append(services, entry.svc)
+		}
+	}
+	db.searchServicesMu.RUnlock()
 	markErr := persistDerivedAfterStorageBoundary(markerEngine, db.derivedIndexesHealthy, func() {
 		if db.config == nil || !db.config.Database.PersistSearchIndexes || db.config.Database.DataDir == "" {
 			return
 		}
-		db.searchServicesMu.RLock()
-		defer db.searchServicesMu.RUnlock()
-		for _, entry := range db.searchServices {
-			if entry != nil && entry.svc != nil {
-				entry.svc.PersistIndexesToDisk()
-			}
+		for _, svc := range services {
+			svc.PersistIndexesToDisk()
 		}
 	})
 	if markErr != nil {
 		errs = append(errs, markErr)
 	}
-
-	db.searchServicesMu.RLock()
-	for _, entry := range db.searchServices {
-		if entry != nil && entry.svc != nil {
-			if err := entry.svc.Close(); err != nil {
-				errs = append(errs, err)
-			}
+	for _, svc := range services {
+		if err := svc.Close(); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	db.searchServicesMu.RUnlock()
 	db.searchContinuationMu.Lock()
-	if db.searchContinuation != nil {
-		db.searchContinuation.Close()
-		db.searchContinuation = nil
-	}
+	continuation := db.searchContinuation
+	db.searchContinuation = nil
 	db.searchContinuationMu.Unlock()
+	if continuation != nil {
+		continuation.Close()
+	}
 
 	if db.baseStorage != nil {
 		if err := db.baseStorage.Close(); err != nil {

@@ -156,22 +156,37 @@ func (v *graphIdentityStorage) edge(edge *storage.Edge) *storage.Edge {
 }
 
 func (v *graphIdentityStorage) nodes(nodes []*storage.Node) []*storage.Node {
+	out, _ := v.nodesWithContext(context.Background(), nodes)
+	return out
+}
+
+func (v *graphIdentityStorage) nodesWithContext(ctx context.Context, nodes []*storage.Node) ([]*storage.Node, error) {
 	result := make([]*storage.Node, len(nodes))
 	for i, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result[i] = v.node(node)
 	}
-	return result
+	return result, nil
 }
 
 func (v *graphIdentityStorage) edges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
+	return v.edgesWithContext(context.Background(), edges, err)
+}
+
+func (v *graphIdentityStorage) edgesWithContext(ctx context.Context, edges []*storage.Edge, err error) ([]*storage.Edge, error) {
 	if err != nil {
 		return nil, err
 	}
 	result := make([]*storage.Edge, len(edges))
 	for i, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result[i] = v.edge(edge)
 	}
-	return result, nil
+	return result, ctx.Err()
 }
 
 func (v *graphIdentityStorage) GetNode(key storage.NodeID) (*storage.Node, error) {
@@ -184,9 +199,18 @@ func (v *graphIdentityStorage) GetNode(key storage.NodeID) (*storage.Node, error
 }
 
 func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+	return v.BatchGetNodesWithContext(context.Background(), keys)
+}
+
+// BatchGetNodesWithContext maps graph identities through the same batch owner
+// while observing cancellation in both request and result preparation.
+func (v *graphIdentityStorage) BatchGetNodesWithContext(ctx context.Context, keys []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	requests := make([]storage.NodeID, 0, len(keys))
 	originals := make(map[storage.NodeID][]storage.NodeID, len(keys))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine); ok {
 			if _, requested := originals[id]; !requested {
 				requests = append(requests, id)
@@ -194,13 +218,19 @@ func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage
 			originals[id] = append(originals[id], key)
 		}
 	}
-	nodes, err := v.Engine.BatchGetNodes(requests)
+	nodes, err := storage.BatchGetNodesWithContext(ctx, v.Engine, requests)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[storage.NodeID]*storage.Node, len(nodes))
 	for id, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, key := range originals[id] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			result[key] = v.node(node)
 		}
 	}
@@ -209,39 +239,66 @@ func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage
 
 func (v *graphIdentityStorage) GetAllNodes() []*storage.Node { return v.nodes(v.Engine.GetAllNodes()) }
 func (v *graphIdentityStorage) AllNodes() ([]*storage.Node, error) {
-	nodes, err := v.Engine.AllNodes()
+	return v.AllNodesWithContext(context.Background())
+}
+
+// AllNodesWithContext carries the caller through full materialization.
+func (v *graphIdentityStorage) AllNodesWithContext(ctx context.Context) ([]*storage.Node, error) {
+	nodes, err := storage.AllNodesWithContext(ctx, v.Engine)
 	if err != nil {
 		return nil, err
 	}
-	return v.nodes(nodes), nil
+	return v.nodesWithContext(ctx, nodes)
 }
 func (v *graphIdentityStorage) AllEdges() ([]*storage.Edge, error) {
 	return v.edges(v.Engine.AllEdges())
 }
 func (v *graphIdentityStorage) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := v.Engine.GetNodesByLabel(label)
+	return v.GetNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (v *graphIdentityStorage) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, v.Engine, label)
 	if err != nil {
 		return nil, err
 	}
-	return v.nodes(nodes), nil
+	return v.nodesWithContext(ctx, nodes)
 }
 func (v *graphIdentityStorage) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	node, err := v.Engine.GetFirstNodeByLabel(label)
+	return v.GetFirstNodeByLabelWithContext(context.Background(), label)
+}
+
+// GetFirstNodeByLabelWithContext carries the caller through this read and its materialization.
+func (v *graphIdentityStorage) GetFirstNodeByLabelWithContext(ctx context.Context, label string) (*storage.Node, error) {
+	node, err := storage.GetFirstNodeByLabelWithContext(ctx, v.Engine, label)
 	return v.node(node), err
 }
 func (v *graphIdentityStorage) GetOutgoingEdges(key storage.NodeID) ([]*storage.Edge, error) {
+	return v.GetOutgoingEdgesWithContext(context.Background(), key)
+}
+
+// GetOutgoingEdgesWithContext preserves request preparation through identity projection.
+func (v *graphIdentityStorage) GetOutgoingEdgesWithContext(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
 	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
 	if !ok {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetOutgoingEdges(id))
+	edges, err := storage.GetOutgoingEdgesWithContext(ctx, v.Engine, id)
+	return v.edgesWithContext(ctx, edges, err)
 }
 func (v *graphIdentityStorage) GetIncomingEdges(key storage.NodeID) ([]*storage.Edge, error) {
+	return v.GetIncomingEdgesWithContext(context.Background(), key)
+}
+
+// GetIncomingEdgesWithContext preserves request preparation through identity projection.
+func (v *graphIdentityStorage) GetIncomingEdgesWithContext(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
 	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
 	if !ok {
 		return nil, nil
 	}
-	return v.edges(v.Engine.GetIncomingEdges(id))
+	edges, err := storage.GetIncomingEdgesWithContext(ctx, v.Engine, id)
+	return v.edgesWithContext(ctx, edges, err)
 }
 func (v *graphIdentityStorage) GetEdgesByType(kind string) ([]*storage.Edge, error) {
 	return v.edges(v.Engine.GetEdgesByType(kind))
@@ -304,7 +361,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 
 // algorithmIdentityInput gives all whole-graph algorithms one key domain for
 // native arguments, graph scans, adjacency and their computed maps.
-func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
+func (e *StorageExecutor) algorithmIdentityInput(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
 	view := graphIdentityView(e.storage, e.graphIdentityScope)
 	graph := e.cloneForStorage(view)
 	input := append([]interface{}(nil), args...)
@@ -321,7 +378,7 @@ func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interf
 			}
 		}
 	}
-	nodes, err := graph.algorithmNodes(procedure, input)
+	nodes, err := graph.algorithmNodes(ctx, procedure, input)
 	return graph, nodes, err
 }
 
@@ -428,3 +485,27 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 func (v *graphIdentityStorage) SubscribeEvents(handlers storage.EventHandlers) error {
 	return storage.SubscribeEvents(v.Engine, handlers)
 }
+
+// GetAdjacentEdgesWithContext binds both directions to the same identity read.
+func (v *graphIdentityStorage) GetAdjacentEdgesWithContext(ctx context.Context, key storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
+	if !ok {
+		return nil, nil, ctx.Err()
+	}
+	out, in, err := storage.GetAdjacentEdgesWithContext(ctx, v.Engine, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, err = v.edgesWithContext(ctx, out, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	in, err = v.edgesWithContext(ctx, in, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, in, nil
+}
+
+// OwnsDirectionalReads rejects promotion through an identity-changing decorator.
+func (v *graphIdentityStorage) OwnsDirectionalReads(engine storage.Engine) bool { return engine == v }

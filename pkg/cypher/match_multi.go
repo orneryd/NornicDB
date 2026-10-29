@@ -652,7 +652,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			return nil
 		}
 		if hasViewport && canCheckViewport {
-			visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+			visible, err := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
 			if err != nil {
 				return err
 			}
@@ -697,7 +697,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
+			err := storage.StreamNodesByLabelProjectedWithContext(ctx, reader, labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
 			}
@@ -708,12 +708,15 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
+		ids, err := storage.NodeIDsByLabelWithContext(ctx, store, labels[0], limit)
 		if err != nil {
 			return err
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			node, getErr := e.getQueryNode(store, id)
 			if getErr != nil {
 				return getErr
@@ -725,7 +728,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 				continue
 			}
 			if hasViewport && canCheckViewport {
-				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+				visible, err := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
 				if err != nil {
 					return err
 				}
@@ -816,9 +819,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
+		nodes, err = storage.GetNodesByLabelWithContext(ctx, store, labels[0])
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = storage.AllNodesWithContext(ctx, store)
 	}
 	if err != nil {
 		return err
@@ -836,7 +839,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	}
 	nodes = filteredNodes
 	if hasViewport && canCheckViewport {
-		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
+		nodes, err = filterNodesByTemporalViewport(ctx, nodes, viewport, checker)
 		if err != nil {
 			return err
 		}

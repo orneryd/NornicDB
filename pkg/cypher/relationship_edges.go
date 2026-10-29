@@ -50,40 +50,13 @@ func incidentEdgeLists(store storage.Engine, nodeID storage.NodeID) ([]*storage.
 // Directed reads avoid loading the other direction; both directions use one
 // adjacency call when supported. Cancellation and read errors reach the caller.
 func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
 	if direction == "outgoing" {
-		edges, err := store.GetOutgoingEdges(nodeID)
-		if err == nil {
-			err = ctx.Err()
-		}
+		edges, err := storage.GetOutgoingEdgesWithContext(ctx, store, nodeID)
 		return edges, nil, err
 	}
 	if direction == "incoming" {
-		edges, err := store.GetIncomingEdges(nodeID)
-		if err == nil {
-			err = ctx.Err()
-		}
+		edges, err := storage.GetIncomingEdgesWithContext(ctx, store, nodeID)
 		return nil, edges, err
 	}
-	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
-		out, in, err := adjacent.GetAdjacentEdges(nodeID)
-		if err == nil {
-			err = ctx.Err()
-		}
-		return out, in, err
-	}
-	outgoing, err := store.GetOutgoingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	incoming, err := store.GetIncomingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return outgoing, incoming, ctx.Err()
+	return storage.GetAdjacentEdgesWithContext(ctx, store, nodeID)
 }

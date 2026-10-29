@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 import "strings"
 
 var (
@@ -31,10 +33,15 @@ func batchNodeWithoutEmbeddingsSupported(engine Engine) bool {
 // namespaceLabelCount is the shared namespace-aware capability dispatch.
 // Wrappers preserve their public method while sharing the provider and scan owner.
 func namespaceLabelCount(engine Engine, namespace, label string) (int64, error) {
+	return namespaceLabelCountWithContext(context.Background(), engine, namespace, label)
+}
+
+// namespaceLabelCountWithContext carries the caller through validation and label materialization.
+func namespaceLabelCountWithContext(ctx context.Context, engine Engine, namespace, label string) (int64, error) {
 	if provider, ok := engine.(NamespaceLabelStatsProvider); ok {
-		return provider.NodeCountByLabelInNamespace(namespace, label)
+		return NodeCountByLabelInNamespaceWithContext(ctx, provider, namespace, label)
 	}
-	nodes, err := engine.GetNodesByLabel(label)
+	nodes, err := GetNodesByLabelWithContext(ctx, engine, label)
 	if err != nil {
 		return 0, err
 	}

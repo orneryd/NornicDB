@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -197,77 +198,109 @@ func snapshotLabelPrefixNodeBytes(node *Node) (int, bool) {
 }
 
 func snapshotLabelPrefixValueBytes(value interface{}, depth int) (int, bool) {
+	size, ok, _ := snapshotLabelPrefixValueBytesWithContext(context.Background(), value, depth)
+	return size, ok
+}
+
+func snapshotLabelPrefixValueBytesWithContext(ctx context.Context, value interface{}, depth int) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	if depth > 8 {
-		return 0, false
+		return 0, false, nil
 	}
 	switch typed := value.(type) {
 	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return 8, true
+		return 8, true, nil
 	case time.Time:
-		return 24, true
+		return 24, true, nil
 	case string:
-		return len(typed), true
+		return len(typed), true, nil
 	case []byte:
-		return len(typed), true
+		return len(typed), true, nil
 	case []string:
 		total := 16
 		for _, item := range typed {
+			if err := ctx.Err(); err != nil {
+				return 0, false, err
+			}
 			if len(item) > maxSnapshotLabelPrefixNodeBytes-total {
-				return 0, false
+				return 0, false, nil
 			}
 			total += len(item)
 		}
-		return total, true
+		return total, true, nil
 	case []int:
-		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8
+		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8, nil
 	case []int32:
-		return 16 + len(typed)*4, len(typed) <= maxSnapshotLabelPrefixNodeBytes/4
+		return 16 + len(typed)*4, len(typed) <= maxSnapshotLabelPrefixNodeBytes/4, nil
 	case []int64:
-		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8
+		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8, nil
 	case []float64:
-		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8
+		return 16 + len(typed)*8, len(typed) <= maxSnapshotLabelPrefixNodeBytes/8, nil
 	case []float32:
-		return 16 + len(typed)*4, len(typed) <= maxSnapshotLabelPrefixNodeBytes/4
+		return 16 + len(typed)*4, len(typed) <= maxSnapshotLabelPrefixNodeBytes/4, nil
 	case []bool:
-		return 16 + len(typed), len(typed) <= maxSnapshotLabelPrefixNodeBytes
+		return 16 + len(typed), len(typed) <= maxSnapshotLabelPrefixNodeBytes, nil
 	case []interface{}:
 		total := 16
 		for _, item := range typed {
-			itemBytes, ok := snapshotLabelPrefixValueBytes(item, depth+1)
+			if err := ctx.Err(); err != nil {
+				return 0, false, err
+			}
+			itemBytes, ok, err := snapshotLabelPrefixValueBytesWithContext(ctx, item, depth+1)
+			if err != nil {
+				return 0, false, err
+			}
 			if !ok || itemBytes > maxSnapshotLabelPrefixNodeBytes-total {
-				return 0, false
+				return 0, false, nil
 			}
 			total += itemBytes
 		}
-		return total, true
+		return total, true, nil
 	case map[string]interface{}:
 		total := 32
 		for key, item := range typed {
-			itemBytes, ok := snapshotLabelPrefixValueBytes(item, depth+1)
+			if err := ctx.Err(); err != nil {
+				return 0, false, err
+			}
+			itemBytes, ok, err := snapshotLabelPrefixValueBytesWithContext(ctx, item, depth+1)
+			if err != nil {
+				return 0, false, err
+			}
 			if !ok || len(key) > maxSnapshotLabelPrefixNodeBytes-total || itemBytes > maxSnapshotLabelPrefixNodeBytes-total-len(key) {
-				return 0, false
+				return 0, false, nil
 			}
 			total += len(key) + itemBytes
 		}
-		return total, true
+		return total, true, nil
 	default:
-		return 0, false
+		return 0, false, nil
 	}
 }
-
-func (tx *BadgerTransaction) cacheSnapshotEdgeByIDLocked(edge *Edge) {
-	edgeBytes, ok := snapshotEdgeBytes(edge)
+func (tx *BadgerTransaction) cacheSnapshotEdgeByIDLockedWithContext(ctx context.Context, edge *Edge) error {
+	edgeBytes, ok, err := snapshotEdgeBytesWithContext(ctx, edge)
+	if err != nil {
+		return err
+	}
 	if !ok || edgeBytes > maxSnapshotEdgeCacheBytes {
-		return
+		return ctx.Err()
 	}
 	if _, exists := tx.snapshotEdgeByID[edge.ID]; exists {
-		return
+		return ctx.Err()
+	}
+	image, err := copyEdgeWithContext(ctx, edge)
+	if err != nil {
+		return err
 	}
 	if tx.snapshotEdgeByID == nil {
 		tx.snapshotEdgeByID = make(map[EdgeID]*Edge, maxSnapshotEdgeCacheEntries)
 		tx.snapshotEdgeBytesByID = make(map[EdgeID]int, maxSnapshotEdgeCacheEntries)
 	}
 	for len(tx.snapshotEdgeOrder) >= maxSnapshotEdgeCacheEntries || tx.snapshotEdgeBytes > maxSnapshotEdgeCacheBytes-edgeBytes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		oldest := tx.snapshotEdgeOrder[0]
 		tx.snapshotEdgeOrder[0] = ""
 		tx.snapshotEdgeOrder = tx.snapshotEdgeOrder[1:]
@@ -278,35 +311,54 @@ func (tx *BadgerTransaction) cacheSnapshotEdgeByIDLocked(edge *Edge) {
 	tx.snapshotEdgeOrder = append(tx.snapshotEdgeOrder, edge.ID)
 	tx.snapshotEdgeBytesByID[edge.ID] = edgeBytes
 	tx.snapshotEdgeBytes += edgeBytes
-	tx.snapshotEdgeByID[edge.ID] = copyEdge(edge)
+	tx.snapshotEdgeByID[edge.ID] = image
+	return nil
 }
 
 func snapshotEdgeBytes(edge *Edge) (int, bool) {
+	size, ok, _ := snapshotEdgeBytesWithContext(context.Background(), edge)
+	return size, ok
+}
+
+func snapshotEdgeBytesWithContext(ctx context.Context, edge *Edge) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	if edge == nil || edge.ID == "" || edge.StartNode == "" || edge.EndNode == "" {
-		return 0, false
+		return 0, false, nil
 	}
 	bytes := 96 + len(edge.ID) + len(edge.StartNode) + len(edge.EndNode) + len(edge.Type)
 	for key, value := range edge.Properties {
-		valueBytes, ok := snapshotLabelPrefixValueBytes(value, 0)
+		if err := ctx.Err(); err != nil {
+			return 0, false, err
+		}
+		valueBytes, ok, err := snapshotLabelPrefixValueBytesWithContext(ctx, value, 0)
+		if err != nil {
+			return 0, false, err
+		}
 		if !ok || len(key) > maxSnapshotLabelPrefixNodeBytes-bytes || valueBytes > maxSnapshotLabelPrefixNodeBytes-bytes-len(key) {
-			return 0, false
+			return 0, false, nil
 		}
 		bytes += len(key) + valueBytes
 	}
 	if bytes > maxSnapshotLabelPrefixNodeBytes {
-		return 0, false
+		return 0, false, nil
 	}
-	return bytes, true
+	return bytes, true, ctx.Err()
 }
 
 func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+	return tx.getAllCommittedNodesLockedWithContext(context.Background())
+}
+
+func (tx *BadgerTransaction) getAllCommittedNodesLockedWithContext(ctx context.Context) ([]*Node, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.AllNodesWithContext(ctx)
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtWithViewWithContext(ctx, "", "", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -368,7 +420,7 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLockedWithContext(ctx context.Context, nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
@@ -376,17 +428,17 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
+			return tx.engine.GetOutgoingEdgesWithContext(ctx, nodeID)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
+			return tx.engine.GetIncomingEdgesWithContext(ctx, nodeID)
 		default:
 			return nil, ErrInvalidData
 		}
 	}
 	if tx.snapshotDeregister != nil {
-		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
+		return tx.readCachedSnapshotAdjacentEdgesLockedWithContext(ctx, nodeID, direction, false)
 	}
-	return tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	return tx.engine.readAdjacentEdgesAtWithViewWithContext(ctx, nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
@@ -398,7 +450,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLockedWithContext(ctx context.Context, nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -420,7 +472,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			case Incoming:
 				prefix = tx.engine.mvccIncomingAdjacencyPrefixString(nodeID)
 			}
-			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxn(snapshot, prefix, tx.readTS)
+			edgeIDs, err = tx.engine.collectVisibleAdjacencyEdgeIDsInTxnWithContext(ctx, snapshot, prefix, tx.readTS)
 			if err != nil {
 				return err
 			}
@@ -431,10 +483,17 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			headers = tx.engine.adjacencyHeadersInTxn(snapshot, nodeID, direction)
 		}
 		for _, edgeID := range edgeIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			var edge *Edge
 			decayStable := !tx.engine.visibilityFiltered()
 			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok && decayStable {
-				edge = copyEdge(cachedEdge)
+				var copyErr error
+				edge, copyErr = copyEdgeWithContext(ctx, cachedEdge)
+				if copyErr != nil {
+					return copyErr
+				}
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
 				edge = header
 			} else {
@@ -447,7 +506,9 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 					return edgeErr
 				}
 				if decayStable {
-					tx.cacheSnapshotEdgeByIDLocked(edge)
+					if err := tx.cacheSnapshotEdgeByIDLockedWithContext(ctx, edge); err != nil {
+						return err
+					}
 				}
 			}
 			if edge == nil {
@@ -465,7 +526,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 	if !cached {
 		cache.store(nodeID, edgeIDs)
 	}
-	return edges, nil
+	return edges, ctx.Err()
 }
 
 // OutgoingEdgeHeaders implements EdgeHeaderReader at the transaction's
@@ -517,7 +578,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 			return edge.EndNode == nodeID
 		}), true, nil
 	}
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLockedWithContext(context.Background(), nodeID, direction, true)
 	if err != nil {
 		return nil, true, err
 	}

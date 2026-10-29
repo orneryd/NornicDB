@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -24,8 +25,8 @@ const ShutdownTimeout = 30 * time.Second
 // Reverse order = drain order (the OBS-08 contract — encoded by the
 // caller's slice order).
 //
-// Run returns errors.Join(runErr, shutdownErr) so callers observe both
-// the trigger and any cleanup failures. A clean signal-driven exit
+// Run retains every Start completion as well as shutdown failures, so callers
+// observe sibling outcomes as well as the cancellation trigger. A clean signal-driven exit
 // returns nil.
 //
 // Critical correctness properties enforced here:
@@ -47,17 +48,25 @@ func Run(parent context.Context, components ...Component) error {
 	defer stop()
 
 	g, gctx := errgroup.WithContext(ctx)
+	var outcomes util.WorkLifetime
 	for _, c := range components {
 		c := c // capture loop variable for closure
 		g.Go(func() error {
 			if err := c.Start(gctx); err != nil {
-				return fmt.Errorf("%s: %w", c.Name(), err)
+				result := fmt.Errorf("%s: %w", c.Name(), err)
+				outcomes.RecordError("", result)
+				return result
 			}
 			return nil
 		})
 	}
 
 	runErr := g.Wait()
+	if runErr != nil {
+		// errgroup owns first-error cancellation. The lifetime accumulator owns
+		// every actual completion, including siblings returning after that signal.
+		runErr = outcomes.Err()
+	}
 
 	// OBS-09: fresh context derived from Background, NOT the cancelled gctx.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)

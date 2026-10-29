@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -51,11 +52,11 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 300
 	eng, created := labelScanFixture(t, count)
 
-	require.True(t, eng.labelCoversScope("test:", "Common"))
-	require.False(t, eng.labelCoversScope("test:", "Rare"))
-	require.False(t, eng.labelCoversScope("test:", "Missing"))
-	require.True(t, eng.labelCoversScope("", "Common"))
-	require.False(t, eng.labelCoversScope("", "Rare"))
+	require.True(t, eng.labelCoversScope(context.Background(), "test:", "Common"))
+	require.False(t, eng.labelCoversScope(context.Background(), "test:", "Rare"))
+	require.False(t, eng.labelCoversScope(context.Background(), "test:", "Missing"))
+	require.True(t, eng.labelCoversScope(context.Background(), "", "Common"))
+	require.False(t, eng.labelCoversScope(context.Background(), "", "Rare"))
 
 	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}})
 	nodes := streamLabelNodes(t, eng, "test:", "Common", []string{"i"})
@@ -286,7 +287,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 	stop := fmt.Errorf("stop reading records")
 	visited := 0
 	require.ErrorIs(t, eng.withView(func(txn *badger.Txn) error {
-		return readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
+		return readNodeRecordsInOnePass(context.Background(), txn, "test:", ids, func(NodeID, *badger.Item) error {
 			visited++
 			return stop
 		})
@@ -344,7 +345,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 		{
 			name: "one_pass",
 			read: func(read func(NodeID, *badger.Item) error) error {
-				return readNodeRecordsInOnePass(txn, "test:", ids, read)
+				return readNodeRecordsInOnePass(context.Background(), txn, "test:", ids, read)
 			},
 		},
 	} {

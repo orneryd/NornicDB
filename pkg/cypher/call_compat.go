@@ -954,7 +954,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
 			edge.Properties[propertyKey] = vector
-			if err := updateMutatedEdge(store, edge); err != nil {
+			if err := updateMutatedEdge(ctx, store, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
@@ -971,7 +971,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
 		node.Properties[propertyKey] = vector
-		if err := updateMutatedNode(store, node); err != nil {
+		if err := updateMutatedNode(ctx, store, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))

@@ -1002,7 +1002,7 @@ type Service struct {
 	// timed-out request returns ctx.Err() but the build continues so the
 	// next request finds the service warm.
 	warmingLazy  atomic.Bool
-	warmOnce     sync.Once
+	warmOnce     util.OnceCompletion
 	warmDone     chan struct{}
 	warmDoneOnce sync.Once    // guards every close(s.warmDone) site
 	warmFunc     atomic.Value // WarmFunc; called by EnsureWarm to request a build
@@ -1011,7 +1011,7 @@ type Service struct {
 	// Debounced persist: after IndexNode/RemoveNode we schedule a write to disk after an idle delay.
 	persistMu        sync.Mutex
 	persistRunMu     sync.Mutex
-	persistTimer     *time.Timer
+	persistTimer     *util.OwnedTimer
 	buildInProgress  atomic.Bool
 	persistEnabled   atomic.Bool
 	buildPhase       atomic.Value // string
@@ -1051,7 +1051,7 @@ type Service struct {
 	strategyTransitionMu         sync.Mutex
 	strategyTransitionInProgress bool
 	strategyTransitionPending    strategyMode
-	strategyTransitionTimer      *time.Timer
+	strategyTransitionTimer      *util.OwnedTimer
 	strategyTransitionSeq        uint64
 	strategyTransitionDeltas     []strategyDeltaMutation
 	strategyTransitionStarts     uint64
@@ -1067,7 +1067,11 @@ type Service struct {
 	boundDurationFuse  observability.BoundLatencyObserver
 
 	lifecycleCtx    context.Context
-	lifecycleCancel context.CancelFunc
+	lifecycleCancel context.CancelFunc // alias of lifetimeWork.Cancel, not another cancellation source
+	lifetimeWork    util.WorkLifetime
+	closeOnce       sync.Once
+	closeDone       chan struct{}
+	closeErr        error
 
 	// relationships holds relationship search's indexes when it is enabled
 	// (#1065); nil otherwise.
@@ -1243,7 +1247,6 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
 	}
 	fulltextIndex := NewFulltextIndexV2WithAnalyzer(analyzer)
-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
 	defaults := DefaultServiceOptions("")
 	cacheEntries := defaults.SearchResultCacheEntries
@@ -1285,9 +1288,9 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 		hnswRebuildOverlay:         newANNMutationOverlay(),
 		resultCache:                resultCache,
 		cacheNamespace:             cacheNamespace,
-		lifecycleCtx:               lifecycleCtx,
-		lifecycleCancel:            lifecycleCancel,
 	}
+	svc.lifecycleCtx = svc.lifetimeWork.Context()
+	svc.lifecycleCancel = svc.lifetimeWork.Cancel
 	svc.setFulltext(fulltextIndex)
 	svc.completePolicy.Store(defaultCompleteContinuationPolicy())
 	if options != nil {
@@ -1376,7 +1379,7 @@ func (s *Service) RuntimeStrategyTransitionsEnabled() bool {
 // build in the owner's long-lived context. The DB wires this at service
 // creation time so the build is rooted in db.buildCtx (cancelled on DB
 // close), independent of any caller's request context. Implementations
-// MUST be idempotent — EnsureWarm uses sync.Once to fire it at most once
+// MUST be idempotent — EnsureWarm uses its completion owner to fire it at most once
 // per service lifetime, but the implementation is also free to be a no-op
 // for already-warmed services as a defensive guard.
 type WarmFunc func()
@@ -1407,10 +1410,13 @@ func (s *Service) SetLazyWarming(lazy bool, fn WarmFunc) {
 //   - When warmingLazy=false (eager) or the service is already fully built,
 //     EnsureWarm returns immediately.
 func (s *Service) EnsureWarm(ctx context.Context) error {
+	if err := s.lifecycleCtx.Err(); err != nil {
+		return err
+	}
 	if !s.warmingLazy.Load() || s.ready.Load() {
 		return nil
 	}
-	s.warmOnce.Do(func() {
+	s.warmOnce.Run(func() {
 		// Run the trigger in a goroutine so it doesn't block on the
 		// caller; the build completes regardless of whether the caller
 		// is still waiting.
@@ -1423,11 +1429,14 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 			return
 		}
 		s.warmInFlight.Store(true)
-		go func() {
+		if !s.RunBackgroundTask(func() {
 			defer s.warmInFlight.Store(false)
 			defer s.closeWarmDone()
 			fn()
-		}()
+		}) {
+			s.warmInFlight.Store(false)
+			s.closeWarmDone()
+		}
 	})
 	if ctx == nil {
 		ctx = context.Background()
@@ -1879,6 +1888,11 @@ func (s *Service) reconcileClusterPopulation(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishRead()
 	s.buildMu.RLock()
 	defer s.buildMu.RUnlock()
 	return s.triggerClustering(ctx, nil)
@@ -2265,19 +2279,25 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.lifecycleCancel != nil {
-		s.lifecycleCancel()
-	}
-	relationshipErr := s.joinRelationshipIndex()
+	s.BeginShutdown()
+	s.closeOnce.Do(func() {
+		s.closeDone = make(chan struct{})
+		go func() { s.closeErr = s.closeResources(); close(s.closeDone) }()
+	})
+	<-s.closeDone
+	return s.closeErr
+}
+
+func (s *Service) closeResources() error {
 	s.pauseHNSWBuild() // Service shutdown permanently retires construction.
 	s.continuationMu.Lock()
-	if s.continuationRegistry != nil && s.continuationOwned {
-		s.continuationRegistry.Close()
-	}
+	continuation, owned := s.continuationRegistry, s.continuationOwned
 	s.continuationRegistry = nil
 	s.continuationOwned = false
 	s.continuationMu.Unlock()
-	s.stopHNSWMaintenance()
+	if continuation != nil && owned {
+		continuation.Close()
+	}
 
 	s.persistMu.Lock()
 	if s.persistTimer != nil {
@@ -2293,6 +2313,9 @@ func (s *Service) Close() error {
 	}
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
+
+	<-s.lifetimeWork.Quiescent()
+	relationshipErr := s.joinRelationshipIndex()
 
 	// Join the exclusive base build without excluding derived operations.
 	// indexMu below serializes retirement with their final publications.
@@ -2314,7 +2337,7 @@ func (s *Service) Close() error {
 	s.cleanupPopulationArtifacts()
 	s.persistRunMu.Unlock()
 	s.publishClusterServing()
-	return relationshipErr
+	return errors.Join(relationshipErr, s.lifetimeWork.Err())
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.
@@ -2347,7 +2370,7 @@ func (s *Service) schedulePersist() {
 		s.persistTimer.Stop()
 		s.persistTimer = nil
 	}
-	s.persistTimer = time.AfterFunc(delay, func() {
+	s.persistTimer = s.AfterFunc(delay, func() {
 		s.persistMu.Lock()
 		s.persistTimer = nil
 		s.persistMu.Unlock()
@@ -2411,6 +2434,7 @@ func (s *Service) persistBaseIndexes() error {
 				persistErr = errors.Join(persistErr, fmt.Errorf("sync vector file store: %w", err))
 			}
 			if err := vfs.Save(); err != nil {
+				s.recordLifetimeOutcome("vector store save", err)
 				s.logPrintf("⚠️ Background persist: failed to save vector file store to %s: %v", vPath, err)
 				persistErr = errors.Join(persistErr, fmt.Errorf("save vector file store: %w", err))
 			} else {
@@ -2514,6 +2538,7 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 	}
 	s.logPrintf("📇 Persist: saving BM25 to %s...", fulltextPath)
 	if err := s.fulltext().Save(fulltextPath); err != nil {
+		s.recordLifetimeOutcome("BM25 save", err)
 		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", fulltextPath, err)
 		return
 	}
@@ -2530,8 +2555,9 @@ func (s *Service) persistVectorStoreBackground(vectorPath string, vfs *VectorFil
 	}
 	s.persistVectorQueryMetadata(vfs)
 	s.logPrintf("📇 Persist: syncing %s.vec and saving %s.meta...", vectorPath, vectorPath)
-	_ = vfs.Sync()
+	s.recordLifetimeOutcome("vector store sync", vfs.Sync())
 	if err := vfs.Save(); err != nil {
+		s.recordLifetimeOutcome("vector store save", err)
 		s.logPrintf("⚠️ Background persist: failed to save vector file store to %s: %v", vectorPath, err)
 		return
 	}
@@ -2565,6 +2591,7 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 		return
 	}
 	if err := idx.Save(hnswPath); err != nil {
+		s.recordLifetimeOutcome("HNSW save", err)
 		s.logPrintf("⚠️ Background persist: failed to save HNSW index to %s: %v", hnswPath, err)
 		return
 	}
@@ -2605,6 +2632,7 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 		return
 	}
 	if err := saveIVFHNSWSnapshots(ctx, hnswPath, save.graphs); err != nil {
+		s.recordLifetimeOutcome("IVF-HNSW save", err)
 		s.logPrintf("⚠️ Background persist: failed to save IVF-HNSW clusters to %s: %v", hnswPath, err)
 		return
 	}
@@ -3170,7 +3198,7 @@ func (s *Service) replaceVectorFileStoreLocked(store *VectorFileStore) {
 		return
 	}
 	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
+		s.recordLifetimeOutcome("vector store close", s.vectorFileStore.Close())
 	}
 	s.vectorFileStore = store
 }
@@ -3927,8 +3955,8 @@ func (s *Service) openBuildSnapshot(ctx context.Context) (storage.ReadSnapshotVi
 	if err != nil {
 		return nil, func() {}, err
 	}
-	var once sync.Once
-	return snapshot, func() { once.Do(snapshot.Close) }, nil
+	var once util.OnceCompletion
+	return snapshot, func() { once.Run(snapshot.Close) }, nil
 }
 
 // buildNodeIterator is the node source of the build: its snapshot, or the
@@ -4003,19 +4031,11 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
-	if ctx == nil {
-		ctx = context.Background()
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return err
 	}
-	if s.lifecycleCtx != nil {
-		if err := s.lifecycleCtx.Err(); err != nil {
-			return err
-		}
-		buildCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(s.lifecycleCtx, cancel)
-		defer cancel()
-		defer stop()
-		ctx = buildCtx
-	}
+	defer finishRead()
 	// The build reads its baseline (nodes, relationships) through one storage
 	// snapshot, opened after the queue: a write whose search call ran live
 	// before the queue opened committed before the snapshot, which therefore
@@ -4084,7 +4104,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		interval := time.Duration(sec) * time.Second
 		ticker := time.NewTicker(interval)
 		stop := make(chan struct{})
+		done := make(chan struct{})
 		go func() {
+			defer close(done)
 			for {
 				select {
 				case <-ticker.C:
@@ -4100,8 +4122,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				}
 			}
 		}()
-		defer close(stop)
-		defer ticker.Stop()
+		defer func() { close(stop); ticker.Stop(); <-done }()
 	}
 
 	// Clear cache once for the whole build so IndexNode/RemoveNode don't clear per node.
@@ -4636,7 +4657,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		s.buildProcessed.Store(int64(count))
 		return nil
 	}
-	err := storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
+	err = storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -4920,6 +4941,11 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,
@@ -5297,6 +5323,11 @@ type SearchCandidate struct {
 // with automatic strategy selection. HNSW is the default; CPU brute-force is
 // only selected automatically when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero.
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if err := s.EnsureWarm(ctx); err != nil {
 		return nil, err
 	}
@@ -6037,7 +6068,7 @@ func (s *Service) scheduleDebouncedStrategyTransition(target strategyMode) {
 	if s.strategyTransitionTimer != nil {
 		_ = s.strategyTransitionTimer.Stop()
 	}
-	s.strategyTransitionTimer = time.AfterFunc(debounceDelay, func() {
+	s.strategyTransitionTimer = s.AfterFunc(debounceDelay, func() {
 		s.launchScheduledStrategyTransition()
 	})
 }
@@ -6056,7 +6087,11 @@ func (s *Service) launchScheduledStrategyTransition() {
 	s.strategyTransitionDeltas = s.strategyTransitionDeltas[:0]
 	s.strategyTransitionMu.Unlock()
 
-	go s.runStrategyTransition(target)
+	if !s.RunBackgroundTask(func() { s.runStrategyTransition(target) }) {
+		s.strategyTransitionMu.Lock()
+		s.strategyTransitionInProgress = false
+		s.strategyTransitionMu.Unlock()
+	}
 }
 
 func (s *Service) runStrategyTransition(target strategyMode) {
@@ -7172,33 +7207,47 @@ func (s *Service) SetReranker(r Reranker) {
 
 // RerankerName returns the configured Stage-2 reranker name, or an empty string.
 func (s *Service) RerankerName() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.reranker == nil {
+	_, release, err := s.beginRead(context.Background())
+	if err != nil {
 		return ""
 	}
-	return s.reranker.Name()
+	defer release()
+	s.mu.RLock()
+	reranker := s.reranker
+	s.mu.RUnlock()
+	if reranker == nil {
+		return ""
+	}
+	return reranker.Name()
 }
 
 // CrossEncoderAvailable returns true if a cross-encoder reranker is configured and available.
 func (s *Service) CrossEncoderAvailable(ctx context.Context) bool {
+	ctx, release, err := s.beginRead(ctx)
+	if err != nil {
+		return false
+	}
+	defer release()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.reranker == nil {
+	reranker := s.reranker
+	s.mu.RUnlock()
+	if _, ok := reranker.(*CrossEncoder); !ok {
 		return false
 	}
-	_, ok := s.reranker.(*CrossEncoder)
-	if !ok {
-		return false
-	}
-	return s.reranker.IsAvailable(ctx)
+	return reranker.IsAvailable(ctx)
 }
 
 // RerankerAvailable returns true if Stage-2 reranking is configured and available.
 func (s *Service) RerankerAvailable(ctx context.Context) bool {
+	ctx, release, err := s.beginRead(ctx)
+	if err != nil {
+		return false
+	}
+	defer release()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.reranker != nil && s.reranker.IsAvailable(ctx)
+	reranker := s.reranker
+	s.mu.RUnlock()
+	return reranker != nil && reranker.IsAvailable(ctx)
 }
 
 // RerankCandidates applies the configured Stage-2 reranker to caller-provided candidates.
@@ -7207,6 +7256,11 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 	if s == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults

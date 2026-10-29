@@ -97,46 +97,96 @@ func (e *ReplicatedEngine) IsLeader() bool {
 }
 
 func (e *ReplicatedEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if err := e.applyEntityCommand(CmdCreateNode, node); err != nil {
+	return e.CreateNodeWithContext(nil, node)
+}
+
+// CreateNodeWithContext retains caller cancellation through wire preparation.
+func (e *ReplicatedEngine) CreateNodeWithContext(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	if err := e.applyEntityCommandWithContext(ctx, CmdCreateNode, node); err != nil {
 		return "", err
 	}
 	return node.ID, nil
 }
 
 func (e *ReplicatedEngine) UpdateNode(node *storage.Node) error {
-	return e.applyEntityCommand(CmdUpdateNode, node)
+	return e.UpdateNodeWithContext(nil, node)
+}
+
+// UpdateNodeWithContext retains caller cancellation through leader admission.
+func (e *ReplicatedEngine) UpdateNodeWithContext(ctx context.Context, node *storage.Node) error {
+	return e.applyEntityCommandWithContext(ctx, CmdUpdateNode, node)
 }
 
 func (e *ReplicatedEngine) DeleteNode(id storage.NodeID) error {
-	return e.applyEntityCommand(CmdDeleteNode, id)
+	return e.DeleteNodeWithContext(nil, id)
+}
+
+// DeleteNodeWithContext retains caller cancellation before leader acceptance.
+func (e *ReplicatedEngine) DeleteNodeWithContext(ctx context.Context, id storage.NodeID) error {
+	return e.applyEntityCommandWithContext(ctx, CmdDeleteNode, id)
 }
 
 func (e *ReplicatedEngine) CreateEdge(edge *storage.Edge) error {
-	return e.applyEntityCommand(CmdCreateEdge, edge)
+	return e.CreateEdgeWithContext(nil, edge)
+}
+
+// CreateEdgeWithContext retains caller cancellation through relationship input.
+func (e *ReplicatedEngine) CreateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return e.applyEntityCommandWithContext(ctx, CmdCreateEdge, edge)
 }
 
 func (e *ReplicatedEngine) UpdateEdge(edge *storage.Edge) error {
-	return e.applyEntityCommand(CmdUpdateEdge, edge)
+	return e.UpdateEdgeWithContext(nil, edge)
+}
+
+// UpdateEdgeWithContext retains caller cancellation through relationship input.
+func (e *ReplicatedEngine) UpdateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return e.applyEntityCommandWithContext(ctx, CmdUpdateEdge, edge)
 }
 
 func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID) error {
-	return e.applyEntityCommand(CmdDeleteEdge, id)
+	return e.DeleteEdgeWithContext(nil, id)
+}
+
+// DeleteEdgeWithContext retains caller cancellation before leader acceptance.
+func (e *ReplicatedEngine) DeleteEdgeWithContext(ctx context.Context, id storage.EdgeID) error {
+	return e.applyEntityCommandWithContext(ctx, CmdDeleteEdge, id)
 }
 
 func (e *ReplicatedEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	return e.applyEntityCommand(CmdBulkCreateNodes, nodes)
+	return e.BulkCreateNodesWithContext(nil, nodes)
+}
+
+// BulkCreateNodesWithContext observes input encoding and native preparation.
+func (e *ReplicatedEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*storage.Node) error {
+	return e.applyEntityCommandWithContext(ctx, CmdBulkCreateNodes, nodes)
 }
 
 func (e *ReplicatedEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	return e.applyEntityCommand(CmdBulkCreateEdges, edges)
+	return e.BulkCreateEdgesWithContext(nil, edges)
+}
+
+// BulkCreateEdgesWithContext observes input encoding and native preparation.
+func (e *ReplicatedEngine) BulkCreateEdgesWithContext(ctx context.Context, edges []*storage.Edge) error {
+	return e.applyEntityCommandWithContext(ctx, CmdBulkCreateEdges, edges)
 }
 
 func (e *ReplicatedEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteNodes, ids)
+	return e.BulkDeleteNodesWithContext(nil, ids)
+}
+
+// BulkDeleteNodesWithContext retains caller cancellation for the atomic command.
+func (e *ReplicatedEngine) BulkDeleteNodesWithContext(ctx context.Context, ids []storage.NodeID) error {
+	return e.applyEntityCommandWithContext(ctx, CmdBulkDeleteNodes, ids)
 }
 
 func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteEdges, ids)
+	return e.BulkDeleteEdgesWithContext(nil, ids)
+}
+
+// BulkDeleteEdgesWithContext retains caller cancellation for the atomic command.
+func (e *ReplicatedEngine) BulkDeleteEdgesWithContext(ctx context.Context, ids []storage.EdgeID) error {
+	return e.applyEntityCommandWithContext(ctx, CmdBulkDeleteEdges, ids)
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
@@ -170,11 +220,14 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 	return storage.SubscribeEvents(e.Engine, handlers)
 }
 
-// applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
-func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
-	data, err := encodeEntityCommandPayload(kind, value)
+// applyEntityCommandWithContext keeps native direct/bulk wire kinds and their producer policy.
+func (e *ReplicatedEngine) applyEntityCommandWithContext(ctx context.Context, kind CommandType, value any) error {
+	if ctx == nil {
+		ctx = e.replicator.LifetimeContext()
+	}
+	data, err := encodeEntityCommandPayloadWithContext(ctx, kind, value)
 	if err != nil {
 		return err
 	}
-	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+	return applyReplicatorWithContext(ctx, e.replicator, &Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
 }

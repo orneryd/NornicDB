@@ -278,7 +278,7 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
 
 	tx.mu.Lock()
-	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	_, err = tx.getCommittedAdjacentEdgesLockedWithContext(context.Background(), start, EdgeDirection(99))
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrInvalidData)
 }
@@ -302,9 +302,9 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	tx.mu.Lock()
 	tx.readTS = MVCCVersion{} // force the no-snapshot path deterministically
 	zeroed := tx.readTS.IsZero()
-	out, outErr := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
-	in, inErr := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
-	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	out, outErr := tx.getCommittedAdjacentEdgesLockedWithContext(context.Background(), start, Outgoing)
+	in, inErr := tx.getCommittedAdjacentEdgesLockedWithContext(context.Background(), target, Incoming)
+	_, badDirErr := tx.getCommittedAdjacentEdgesLockedWithContext(context.Background(), start, EdgeDirection(99))
 	nodes, nodesErr := tx.getAllCommittedNodesLocked()
 	tx.mu.Unlock()
 

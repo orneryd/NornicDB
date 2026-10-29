@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"runtime"
 	"strings"
 	"sync"
@@ -273,7 +274,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	nodes, err := store.AllNodes()
+	nodes, err := storage.AllNodesWithContext(ctx, store)
 	if err != nil {
 		return nil, err
 	}

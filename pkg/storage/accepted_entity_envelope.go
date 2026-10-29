@@ -81,20 +81,27 @@ func DecodeEntityChange(kind EntityCommandKind, data []byte) (Operation, error) 
 	return op, nil
 }
 func ApplyEntityChange(target entityWriter, op Operation, updateNode func(*Node) error, deleteNode func(NodeID) error) error {
+	return ApplyEntityChangeWithContext(context.Background(), target, op, updateNode, deleteNode)
+}
+
+func ApplyEntityChangeWithContext(ctx context.Context, target entityWriter, op Operation, updateNode func(*Node) error, deleteNode func(NodeID) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch op.Type {
 	case OpCreateNode:
-		_, err := target.CreateNode(op.Node)
+		_, err := CreateNodeWithContext(ctx, target, op.Node)
 		return err
 	case OpUpdateNode:
 		return updateNode(op.Node)
 	case OpDeleteNode:
 		return deleteNode(op.NodeID)
 	case OpCreateEdge:
-		return target.CreateEdge(op.Edge)
+		return CreateEdgeWithContext(ctx, target, op.Edge)
 	case OpUpdateEdge:
-		return target.UpdateEdge(op.Edge)
+		return UpdateEdgeWithContext(ctx, target, op.Edge)
 	case OpDeleteEdge:
-		return target.DeleteEdge(op.EdgeID)
+		return DeleteEdgeWithContext(ctx, target, op.EdgeID)
 	default:
 		return fmt.Errorf("not an entity operation: %s", op.Type)
 	}
@@ -112,12 +119,21 @@ const (
 
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller.
+var errEntityTransactionUnavailable = errors.New("entity transaction needs a native transactional engine")
+
 func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+	return BeginEntityTransactionWithContext(context.Background(), engine, mode)
+}
+
+func BeginEntityTransactionWithContext(ctx context.Context, engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
 	visited := map[Engine]bool{}
 	for engine != nil && !visited[engine] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		visited[engine] = true
 		if starter, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
@@ -137,7 +153,7 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 		}
 		engine = wrapper.GetInnerEngine()
 	}
-	return nil, errors.New("entity transaction needs a native transactional engine")
+	return nil, errEntityTransactionUnavailable
 }
 
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
@@ -158,7 +174,14 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 // returns the commit receipt. DecodeEntityTransaction validates the wire image
 // before callers publish it to replication or recovery logs.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	tx, err := BeginEntityTransaction(engine, envelope.Mode)
+	return submitDecodedEntityTransactionWithPolicy(ctx, engine, envelope, ops, settle, StoredNodeImages)
+}
+func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
+	return SubmitAcceptedEntityTransaction(ctx, engine, envelope, ops, settle)
+}
+
+func submitDecodedEntityTransactionWithPolicy(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome), policy EntityImagePolicy) (*CommitReceipt, error) {
+	tx, err := BeginEntityTransactionWithContext(ctx, engine, envelope.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -170,13 +193,18 @@ func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelop
 		return nil, err
 	}
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
-		LogicalID:  envelope.LogicalTxID,
-		Operations: ops,
+		LogicalID:       envelope.LogicalTxID,
+		Operations:      ops,
+		clientNodeEdits: policy == ClientNodeEdits,
 	})
 	if err != nil {
 		return nil, err
 	}
-	route, found := EntityCommitSubmitterFor(engine)
+	route, found, err := EntityCommitSubmitterForWithContext(ctx, engine)
+	if err != nil {
+		prepared.Abort()
+		return nil, err
+	}
 	if !found {
 		prepared.Abort()
 		return nil, ErrInvalidData

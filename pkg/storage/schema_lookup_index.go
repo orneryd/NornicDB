@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"sort"
+	"context"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -129,12 +129,22 @@ func (sm *SchemaManager) indexNameTakenLocked(name string) bool {
 // exportLookupIndexesLocked is the persisted form of the lookup indexes. It
 // is never nil, so a schema with none dropped reads back with none.
 func (sm *SchemaManager) exportLookupIndexesLocked() *[]SchemaLookupIndexDef {
+	defs, _ := sm.exportLookupIndexesLockedWithContext(context.Background())
+	return defs
+}
+
+func (sm *SchemaManager) exportLookupIndexesLockedWithContext(ctx context.Context) (*[]SchemaLookupIndexDef, error) {
 	defs := make([]SchemaLookupIndexDef, 0, len(sm.lookupIndexes))
 	for entityType, name := range sm.lookupIndexes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		defs = append(defs, SchemaLookupIndexDef{Name: name, EntityType: entityType})
 	}
-	sort.Slice(defs, func(i, j int) bool { return defs[i].EntityType < defs[j].EntityType })
-	return &defs
+	if err := sortIndexCandidatesWithContext(ctx, defs, func(left, right SchemaLookupIndexDef) bool { return left.EntityType < right.EntityType }); err != nil {
+		return nil, err
+	}
+	return &defs, ctx.Err()
 }
 
 // importLookupIndexes reads persisted lookup indexes. A definition written

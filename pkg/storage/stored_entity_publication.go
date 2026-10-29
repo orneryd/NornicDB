@@ -108,6 +108,7 @@ func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state b
 // captureStoredEntityChanges reads each typed touched entity once. Both views
 // belong to this commit, never the latest mutable storage after publication.
 type storedEntityCapture struct {
+	ctx           context.Context
 	keys          []any
 	before, after storedEntityView
 	// staged is read while the caller holds the transaction mutex and entity
@@ -116,19 +117,39 @@ type storedEntityCapture struct {
 }
 
 func (b *BadgerEngine) captureStoredEntityChanges(request storedEntityCapture) ([]StoredEntityChange, error) {
+	ctx := request.ctx
+	if ctx == nil && request.staged != nil {
+		ctx = request.staged.validationContextLocked()
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	keys, before, after := request.keys, request.before, request.after
 	if tx := request.staged; tx != nil {
 		if tx.preparedEntityCommit != nil {
 			return tx.preparedEntityCommit.changes, nil
 		}
 		var constraints publicationConstraintView
-		keys = appendOperationPublicationKeys(nil, &constraints, tx.physicalOperationsLocked())
+		operations, err := tx.physicalOperationsLocked(ctx)
+		if err != nil {
+			return nil, err
+		}
+		keys, err = appendOperationPublicationKeysWithContext(ctx, nil, &constraints, operations)
+		if err != nil {
+			return nil, err
+		}
 		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
 		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}}
 	}
 	seen := make(map[any]struct{}, len(keys))
 	changes := make([]StoredEntityChange, 0, len(keys))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch key.(type) {
 		case NodeID, EdgeID:
 		default:
@@ -236,11 +257,23 @@ func (entry StoredEntitySnapshotEntry) Read() (StoredEntityChange, error) {
 // ForEach streams typed stored identities through the same scan fault boundary.
 // Call entry.Read only when a complete stored image is needed.
 func (s StoredEntitySnapshot) ForEach(visit func(StoredEntitySnapshotEntry) error) error {
+	return s.ForEachWithContext(context.Background(), visit)
+}
+
+// ForEachWithContext observes the caller while preparing a cold managed ledger.
+// It uses the same pinned identities, body reader and installed fault boundary.
+func (s StoredEntitySnapshot) ForEachWithContext(ctx context.Context, visit func(StoredEntitySnapshotEntry) error) error {
 	for _, kind := range []byte{prefixNode, prefixEdge} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		prefix := append([]byte{kind}, []byte(s.namespace+":")...)
 		it := s.txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		scan := func() error {
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				id := string(it.Item().Key()[1:])
 				entityKind := StoredEntityNodeKind
 				if kind == prefixEdge {
@@ -268,7 +301,7 @@ func (s StoredEntitySnapshot) ForEach(visit func(StoredEntitySnapshotEntry) erro
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // InitializeStoredEntityObserver owns one exclusive stored snapshot/install cut.

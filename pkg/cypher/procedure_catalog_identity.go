@@ -96,7 +96,7 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, s
 		} else {
 			migrated := *node
 			migrated.ID = destinationID
-			if _, err := store.CreateNode(&migrated); err != nil {
+			if _, err := storage.CreateNodeWithContext(ctx, store, &migrated); err != nil {
 				return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 			}
 		}

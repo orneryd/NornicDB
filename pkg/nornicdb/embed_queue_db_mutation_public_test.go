@@ -120,7 +120,7 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 			done := make(chan struct{})
 			close(done)
 			entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: done}
-			entry.buildOnce.Do(func() {})
+			entry.buildOnce.Run(func() {})
 			db := &DB{storage: ns, baseStorage: store, config: config, embedQueue: worker,
 				searchServices: map[string]*dbSearchService{"nornic": entry}}
 			t.Cleanup(func() { release(); worker.Close(); _ = svc.Close(); _ = disk.Close() })

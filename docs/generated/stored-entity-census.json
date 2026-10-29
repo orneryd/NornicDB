@@ -387,14 +387,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:221",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:221",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:221",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:221",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
@@ -429,14 +429,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:238",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:238",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:238",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:238",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
@@ -471,14 +471,14 @@
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:241",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:241",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
       "origin": "pkg/storage/badger_count_deltas.go:241",
       "func": "pkg/storage.BadgerEngine.foldCountDeltaKeys$1 pkg/storage/badger_count_deltas.go:241",
-      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:646"
+      "where": "pkg/storage.BadgerEngine.foldNamedCountDeltas pkg/storage/badger_label_count.go:645"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
@@ -910,51 +910,51 @@
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:188",
-      "func": "pkg/storage.BadgerEngine.adjustLabelCountInTxn pkg/storage/badger_label_count.go:188",
-      "where": "pkg/storage.BadgerEngine.adjustLabelCountInTxn pkg/storage/badger_label_count.go:188"
+      "origin": "pkg/storage/badger_label_count.go:187",
+      "func": "pkg/storage.BadgerEngine.adjustLabelCountInTxn pkg/storage/badger_label_count.go:187",
+      "where": "pkg/storage.BadgerEngine.adjustLabelCountInTxn pkg/storage/badger_label_count.go:187"
     },
     {
       "space": "prefixMVCCMetaLabelCountDelta",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:261",
-      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:261",
-      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:261"
+      "origin": "pkg/storage/badger_label_count.go:260",
+      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:260",
+      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:260"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:273",
-      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:273",
-      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:273"
+      "origin": "pkg/storage/badger_label_count.go:272",
+      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:272",
+      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:272"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:275",
-      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:275",
-      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:275"
+      "origin": "pkg/storage/badger_label_count.go:274",
+      "func": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:274",
+      "where": "pkg/storage.BadgerEngine.repairLabelCountLocked$1 pkg/storage/badger_label_count.go:274"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:425",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:425",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:425"
+      "origin": "pkg/storage/badger_label_count.go:424",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:424",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:424"
     },
     {
       "space": "prefixMVCCMetaLabelCount",
       "class": "derived-count",
-      "origin": "pkg/storage/badger_label_count.go:436",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:436",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:436"
+      "origin": "pkg/storage/badger_label_count.go:435",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:435",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:435"
     },
     {
       "space": "prefixMVCCMetaLabelCountReady",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger_label_count.go:440",
-      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:440",
-      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:440"
+      "origin": "pkg/storage/badger_label_count.go:439",
+      "func": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:439",
+      "where": "pkg/storage.BadgerEngine.rebuildLabelCounts$1 pkg/storage/badger_label_count.go:439"
     },
     {
       "space": "prefixMVCCMetaEdgeBetweenIndexReady",
@@ -2986,13 +2986,13 @@
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustLabelCount",
-      "pos": "pkg/storage/badger_label_count.go:480"
+      "pos": "pkg/storage/badger_label_count.go:479"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
       "class": "derived-count",
       "func": "pkg/storage.BadgerTransaction.bufferAdjustLabelCount",
-      "pos": "pkg/storage/badger_label_count.go:482"
+      "pos": "pkg/storage/badger_label_count.go:481"
     },
     {
       "field": "pkg/storage.BadgerTransaction.pendingLabelCountDeltas",
@@ -3202,49 +3202,49 @@
       "field": "pkg/storage.CommitBuffer.deletes",
       "class": "write-behind generation contents",
       "func": "pkg/storage.CommitBuffer.addDelete",
-      "pos": "pkg/storage/commit_buffer.go:371"
+      "pos": "pkg/storage/commit_buffer.go:372"
     },
     {
       "field": "pkg/storage.CommitBuffer.deletes",
       "class": "write-behind generation contents",
       "func": "pkg/storage.CommitBuffer.clearEntityDeletion",
-      "pos": "pkg/storage/commit_buffer_visibility.go:48"
+      "pos": "pkg/storage/commit_buffer_visibility.go:51"
     },
     {
       "field": "pkg/storage.CommitBuffer.deletes",
       "class": "write-behind generation contents",
       "func": "pkg/storage.CommitBuffer.clearEntityDeletion",
-      "pos": "pkg/storage/commit_buffer_visibility.go:50"
+      "pos": "pkg/storage/commit_buffer_visibility.go:53"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeCreateCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:254"
+      "pos": "pkg/storage/commit_buffer.go:255"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeCreateCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.addEdge",
-      "pos": "pkg/storage/commit_buffer.go:345"
+      "pos": "pkg/storage/commit_buffer.go:346"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeDeleteCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:229"
+      "pos": "pkg/storage/commit_buffer.go:230"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeDeleteCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:259"
+      "pos": "pkg/storage/commit_buffer.go:260"
     },
     {
       "field": "pkg/storage.CommitBuffer.ops",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.rotate",
-      "pos": "pkg/storage/commit_buffer.go:652"
+      "pos": "pkg/storage/commit_buffer.go:653"
     },
     {
       "field": "pkg/storage.CommitOutcome.State",
@@ -3262,127 +3262,127 @@
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:541"
+      "pos": "pkg/storage/commit_buffer.go:542"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:544"
+      "pos": "pkg/storage/commit_buffer.go:545"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:789"
+      "pos": "pkg/storage/commit_buffer.go:790"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:791"
+      "pos": "pkg/storage/commit_buffer.go:792"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:794"
+      "pos": "pkg/storage/commit_buffer.go:795"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.drainDur",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:785"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.drainDur",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:788"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.drainRate",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
       "pos": "pkg/storage/commit_buffer.go:784"
     },
     {
-      "field": "pkg/storage.WriteBehindBuffer.drainDur",
+      "field": "pkg/storage.WriteBehindBuffer.drainRate",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
       "pos": "pkg/storage/commit_buffer.go:787"
     },
     {
-      "field": "pkg/storage.WriteBehindBuffer.drainRate",
+      "field": "pkg/storage.WriteBehindBuffer.maxDelay",
       "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:783"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.drainRate",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:786"
+      "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
+      "pos": "pkg/storage/commit_buffer.go:533"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.maxDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:532"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.maxDelay",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:538"
+      "pos": "pkg/storage/commit_buffer.go:539"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.minDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:529"
+      "pos": "pkg/storage/commit_buffer.go:530"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.minDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:535"
+      "pos": "pkg/storage/commit_buffer.go:536"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendNode",
-      "pos": "pkg/storage/commit_buffer.go:564"
+      "pos": "pkg/storage/commit_buffer.go:565"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendEdge",
-      "pos": "pkg/storage/commit_buffer.go:580"
+      "pos": "pkg/storage/commit_buffer.go:581"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendDelete",
-      "pos": "pkg/storage/commit_buffer.go:594"
+      "pos": "pkg/storage/commit_buffer.go:595"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendCommit",
-      "pos": "pkg/storage/commit_buffer.go:610"
+      "pos": "pkg/storage/commit_buffer.go:611"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendCommit",
-      "pos": "pkg/storage/commit_buffer.go:612"
+      "pos": "pkg/storage/commit_buffer.go:613"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.rotate",
-      "pos": "pkg/storage/commit_buffer.go:655"
+      "pos": "pkg/storage/commit_buffer.go:656"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.targetOps",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:796"
+      "pos": "pkg/storage/commit_buffer.go:797"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.warnState",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.sizingWarningLocked",
-      "pos": "pkg/storage/commit_buffer.go:1585"
+      "pos": "pkg/storage/commit_buffer.go:1604"
     },
     {
       "field": "pkg/storage.bufferedCardinalityDeltas.edgeTotal",
@@ -3467,6 +3467,12 @@
       "class": "publication-order",
       "func": "pkg/storage.publicationStage.register",
       "pos": "pkg/storage/badger_publication_stage.go:81"
+    },
+    {
+      "field": "pkg/storage.nodeRef.num",
+      "class": "snapshot dictionary numeric reference (local value)",
+      "func": "pkg/storage.BadgerEngine.snapshotNodeRef$1",
+      "pos": "pkg/storage/node_reference.go:39"
     },
     {
       "field": "pkg/storage.prefixDrops.pending",

@@ -2483,9 +2483,8 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			ChunkOverlap:     8,
 			DeferWorkerStart: true,
 		})
-		worker.clusterDebounceMu.Lock()
-		worker.clusterDebounceTimer = time.NewTimer(time.Hour)
-		worker.clusterDebounceMu.Unlock()
+		worker.config.ClusterDebounceDelay = time.Hour
+		worker.scheduleClusteringDebounced(1)
 		worker.Close()
 
 		worker.clusterDebounceMu.Lock()
