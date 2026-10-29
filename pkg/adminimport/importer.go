@@ -147,7 +147,7 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 		}
 	}
 	if opts.BuildIndexes {
-		svc := search.NewService(target)
+		svc := search.NewService(target, search.DefaultVectorDimensions, nil)
 		defer svc.Close()
 		if opts.DataDir != "" {
 			base := filepath.Join(opts.DataDir, "search", opts.DatabaseName)

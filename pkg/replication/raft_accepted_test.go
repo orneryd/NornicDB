@@ -81,7 +81,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 			require.NoError(t, tx.SetNamespace("wire"))
 			_, err = tx.CreateNode(&storage.Node{ID: "wire:accepted", Properties: map[string]any{"value": "once"}})
 			require.NoError(t, err)
-			prepared, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+			prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
 			if route == "enqueue-shutdown" {
 				defer prepared.Abort()

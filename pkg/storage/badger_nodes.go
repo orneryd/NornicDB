@@ -72,12 +72,14 @@ func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityW
 		}
 		defer order.release()
 	}
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
 	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
 	keys := func() []any {
 		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, schema, node.ID, nil, image)
+		return appendNodePublicationKeys(nil, &constraints, node.ID, nil, image)
 	}
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -213,7 +215,9 @@ const (
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
 // miss decode via decode, per-read visibility and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
-// copy shape and whether the decoded node is cached.
+// copy shape and whether the decoded node is cached. A nil hitCopy is reserved
+// for a stored existence check: it avoids materializing a cache hit and returns
+// no node image, while preserving the same admission, decode, and error behavior.
 func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
@@ -279,12 +283,14 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	if node == nil {
 		return nil, ErrNotFound
 	}
-	if !loaded {
+	if !loaded && hitCopy != nil {
 		// Captured cache and overlay versions are immutable. Materialize after
 		// capture so copying does not extend either read lock or its hot frame.
 		node = hitCopy(node)
 	}
-	node.embeddingOwner, node.embeddingOwnerID = b, id
+	if loaded || hitCopy != nil {
+		node.embeddingOwner, node.embeddingOwnerID = b, id
+	}
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -295,6 +301,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	}
 	if loaded && cacheMode != nodeReadCacheProjection {
 		b.cacheFillNode(gen, node, cacheMode)
+	}
+	if hitCopy == nil {
+		// The immutable cached/overlay pointer must not escape an existence read.
+		return nil, nil
 	}
 	return node, nil
 }
@@ -310,21 +320,29 @@ func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
 }
 
 func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
-	return b.getNodeSnapshotForRead(id, false, v)
+	return b.getNodeSnapshotForRead(id, false, v, false)
 }
 
 func (b *BadgerEngine) getNodeSnapshot(id NodeID, force bool) (*Node, error) {
-	return b.getNodeSnapshotForRead(id, force, visibleRead)
+	return b.getNodeSnapshotForRead(id, force, visibleRead, false)
 }
 
-func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisibility) (*Node, error) {
+// An existence-only stored read never returns an image, even on a cache hit.
+func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisibility, existenceOnly bool) (*Node, error) {
 	mode := nodeReadCacheFull
 	if force {
 		mode = nodeReadCacheSnapshot
 	}
+	copyImage := copyNode
+	if existenceOnly {
+		if v != storedRead {
+			return nil, ErrInvalidData
+		}
+		copyImage = nil
+	}
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
-	}, copyNode, mode)
+	}, copyImage, mode)
 }
 
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
@@ -417,7 +435,7 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
-	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nodeReadCacheProjection)
+	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
@@ -498,6 +516,8 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 		}
 		defer order.release()
 	}
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	var publicationOps []Operation
 	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
 	keys := func() []any {
@@ -506,7 +526,7 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 			publicationOps[0].Type = OpCreateNode
 		}
 		capturePublicationOperations(notification, publicationOps)
-		return appendNodePublicationKeys(nil, schema, node.ID, existingNode, image)
+		return appendNodePublicationKeys(nil, &constraints, node.ID, existingNode, image)
 	}
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
@@ -771,13 +791,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	var publicationOps []Operation
 	schema := b.schemaForNodeID(id)
+	// Capture before physical assembly can acquire the commit gate.
+	constraints := capturePublicationConstraintView(schema)
 	publish := func() {
 		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true)
 	}
 	keys := func() []any {
 		publicationOps = []Operation{result.operation(id)}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, schema, publicationOps)
+		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
 	}
 
 	err = b.withPublishingUpdate(func(txn *badger.Txn) error {

@@ -20,7 +20,7 @@ func TestRuntimeStrategyTransitionDoesNotRepublishRetiredGraph(t *testing.T) {
 				mode = "file"
 			}
 			t.Run(operation+"/"+mode, func(t *testing.T) {
-				svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
+				svc := NewService(newNamespacedEngine(t), 3, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				if fileBacked {
 					vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)

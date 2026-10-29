@@ -557,6 +557,9 @@ func TestDBConfigHandlers(t *testing.T) {
 	server, authn := setupTestServer(t)
 	token := getAuthToken(t, authn, "admin")
 
+	unauthorized := makeRequest(t, server, "GET", "/admin/databases/config/keys", nil, "")
+	require.Equal(t, http.StatusUnauthorized, unauthorized.Code)
+
 	rec := makeRequest(t, server, "GET", "/admin/databases/config/keys", nil, "Bearer "+token)
 	assert.Equal(t, http.StatusOK, rec.Code)
 

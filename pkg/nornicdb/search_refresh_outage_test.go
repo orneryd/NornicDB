@@ -39,7 +39,7 @@ func TestXhighTransientOutageDoesNotSpendAllRefreshRetriesImmediately(t *testing
 	ctx := context.Background()
 	tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "retrytenant")
 	fault := &xhighReadOutage{Engine: tenant}
-	svc, err := db.EnsureSearchIndexesBuilt(ctx, "retrytenant", fault)
+	svc, err := db.EnsureSearchIndexes(ctx, "retrytenant", fault, SearchIndexBuildWait)
 	require.NoError(t, err)
 	_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeoutage"}})
 	require.NoError(t, err)

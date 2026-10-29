@@ -749,7 +749,7 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 		require.ErrorContains(t, err, "boom")
 		require.Nil(t, svc)
 
-		expected := search.NewServiceWithDimensions(store, 4)
+		expected := search.NewService(store, 4, nil)
 		service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
 			_ = database
 			_ = st
@@ -1114,7 +1114,7 @@ func TestPointsService_SearchProviderMutationPaths(t *testing.T) {
 	service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
 		_ = database
 		if sharedSearch == nil {
-			sharedSearch = search.NewServiceWithDimensions(st, 4)
+			sharedSearch = search.NewService(st, 4, nil)
 		}
 		return sharedSearch, nil
 	}

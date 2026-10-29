@@ -18,7 +18,7 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 
 	hnswBeforeInstallHook = func(context.Context) {
@@ -48,7 +48,7 @@ func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
 		require.NoError(t, svc.IndexNode(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 	}

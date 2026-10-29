@@ -23,7 +23,7 @@ func BenchmarkSearchRefreshDBUpdateNode(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = db.Close() })
-	if _, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil); err != nil {
+	if _, err := db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait); err != nil {
 		b.Fatal(err)
 	}
 	if _, err := db.CreateNodeWithID(ctx, "source", []string{"Doc"}, map[string]interface{}{"content": "alpha"}); err != nil {
@@ -54,7 +54,7 @@ func BenchmarkSearchRefreshEventDrain(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = db.Close() })
 	dbName := db.defaultDatabaseName()
-	if _, err := db.EnsureSearchIndexesBuilt(ctx, dbName, nil); err != nil {
+	if _, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait); err != nil {
 		b.Fatal(err)
 	}
 	db.searchServicesMu.RLock()
@@ -103,7 +103,7 @@ func BenchmarkSearchRefreshCypherCachedRead(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = db.Close() })
-	if _, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil); err != nil {
+	if _, err := db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait); err != nil {
 		b.Fatal(err)
 	}
 	if _, err := db.ExecuteCypher(ctx, "CREATE (:Doc {content: 'alpha'})", nil); err != nil {

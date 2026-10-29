@@ -31,11 +31,11 @@ func writeV1NodeBody(t *testing.T, eng *BadgerEngine, n *Node) {
 func writeV1CompactEdgeBody(t *testing.T, eng *BadgerEngine, edge *Edge) {
 	t.Helper()
 	require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
-		startNum, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+		startNum, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID(edge.StartNode))
 		if err != nil {
 			return err
 		}
-		endNum, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+		endNum, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID(edge.EndNode))
 		if err != nil {
 			return err
 		}
@@ -116,11 +116,11 @@ func TestMigrateV1ToV2_RewritesAllEdges(t *testing.T) {
 
 	// Create a couple of nodes' numIDs so edges can resolve endpoints.
 	require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
-		_, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "test:start")
+		_, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID("test:start"))
 		if err != nil {
 			return err
 		}
-		_, err = eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "test:end")
+		_, err = resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID("test:end"))
 		if err != nil {
 			return err
 		}

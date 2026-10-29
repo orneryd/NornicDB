@@ -483,7 +483,7 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 	assert.Equal(t, 0, len(nonSystemNodes), "Default database should not see nodes from test_db")
 }
 
-func TestDatabaseManager_GetStorage(t *testing.T) {
+func TestDatabaseManagerStorageRoutes(t *testing.T) {
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
@@ -511,6 +511,20 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 	store2, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
 	assert.Equal(t, store, store2) // Should be same instance (cached)
+
+	t.Run("configured default route", func(t *testing.T) {
+		storage, err := manager.GetDefaultStorage()
+		require.NoError(t, err)
+		assert.NotNil(t, storage)
+
+		// GetDefaultStorage must resolve the configured default database name.
+		assert.Equal(t, "nornic", manager.DefaultDatabaseName())
+
+		// Should be the same as getting "nornic"
+		storage2, err := manager.GetStorage("nornic")
+		require.NoError(t, err)
+		assert.Equal(t, storage, storage2)
+	})
 
 	t.Run("composite storage resolves aliases and is not cached as namespaced engine", func(t *testing.T) {
 		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
@@ -745,33 +759,6 @@ func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
 	// Should be able to get storage now
 	_, err = manager.GetStorage("tenant_a")
 	require.NoError(t, err)
-}
-
-// TestDatabaseManager_GetDefaultStorage retains the original default-storage
-// fixture and asserts that GetDefaultStorage resolves exactly the storage of the
-// configured default database. The missing-database error identity for this
-// route is owned by TestDatabaseManagerRejectedCatalogRequests, whose
-// storage/nonexistent row exercises the same GetStorage call that
-// GetDefaultStorage delegates to, so no duplicate rejection fixture is kept.
-func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(t.Context(), inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	storage, err := manager.GetDefaultStorage()
-	require.NoError(t, err)
-	assert.NotNil(t, storage)
-
-	// GetDefaultStorage must resolve the configured default database name.
-	assert.Equal(t, "nornic", manager.DefaultDatabaseName())
-
-	// Should be the same as getting "nornic"
-	storage2, err := manager.GetStorage("nornic")
-	require.NoError(t, err)
-	assert.Equal(t, storage, storage2)
 }
 
 func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {

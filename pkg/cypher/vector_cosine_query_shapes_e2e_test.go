@@ -126,106 +126,6 @@ func TestE2E_VectorCosine_QueryShape_ExplicitTransactionUsesIndexedPath(t *testi
 	require.NoError(t, err)
 }
 
-func TestE2E_VectorCosine_TinyChunkPropertyPatternPreservesExactResults(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
-	counting := &countingStreamingEngine{Engine: ns}
-	exec := NewStorageExecutor(counting)
-	ctx := context.Background()
-
-	const dim = 1024
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX tiny_chunk_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
-	exec.SetSearchService(searchSvc)
-
-	for i := 0; i < 21; i++ {
-		vec := make([]float64, dim)
-		vec[i%dim] = 1.0
-		if i == 1 {
-			vec[0] = 0.8
-			vec[1] = 0.6
-		}
-		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Chunk {uuid:'c-%02d', group_id:'kg', emb:%s})", i, formatInlineFloat64Vector(vec)), nil)
-		require.NoError(t, err)
-	}
-	require.Equal(t, 21, searchSvc.CountPropertyVectorEntries("emb"))
-	require.NoError(t, searchSvc.BuildIndexes(ctx))
-	require.True(t, searchSvc.IsReady())
-
-	q := make([]float64, dim)
-	q[0] = 1.0
-
-	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('tiny_chunk_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", map[string]interface{}{"q": q})
-	require.NoError(t, err)
-
-	counting.allNodesCalls = 0
-	counting.labelCalls = 0
-	counting.streamNodesCalls = 0
-
-	res, err := exec.Execute(ctx, `
-MATCH (c:Chunk {group_id:'kg'}) WHERE c.emb IS NOT NULL
-WITH c, vector.similarity.cosine(c.emb, $q) AS sim
-RETURN c.uuid AS uuid, sim
-ORDER BY sim DESC
-LIMIT 3
-`, map[string]interface{}{"q": q})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 3)
-	require.Equal(t, "c-00", res.Rows[0][0])
-	require.Equal(t, "c-01", res.Rows[1][0])
-}
-
-func BenchmarkE2E_VectorCosine_TinyChunkPropertyPattern(b *testing.B) {
-	base := newTestMemoryEngine(b)
-	ns := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(ns)
-	exec.cache = nil
-	ctx := context.Background()
-
-	const dim = 1024
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX tiny_chunk_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(b, err)
-
-	searchSvc := search.NewServiceWithDimensions(ns, dim)
-	exec.SetSearchService(searchSvc)
-
-	for i := 0; i < 21; i++ {
-		vec := make([]float64, dim)
-		vec[i%dim] = 1.0
-		if i == 1 {
-			vec[0] = 0.8
-			vec[1] = 0.6
-		}
-		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Chunk {uuid:'c-%02d', group_id:'kg', emb:%s})", i, formatInlineFloat64Vector(vec)), nil)
-		require.NoError(b, err)
-	}
-	require.NoError(b, searchSvc.BuildIndexes(ctx))
-	require.True(b, searchSvc.IsReady())
-
-	q := make([]float64, dim)
-	q[0] = 1.0
-	params := map[string]interface{}{"q": q}
-	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('tiny_chunk_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", params)
-	require.NoError(b, err)
-
-	query := `
-MATCH (c:Chunk {group_id:'kg'}) WHERE c.emb IS NOT NULL
-WITH c, vector.similarity.cosine(c.emb, $q) AS sim
-RETURN c.uuid AS uuid, sim
-ORDER BY sim DESC
-LIMIT 3
-`
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		res, err := exec.Execute(ctx, query, params)
-		require.NoError(b, err)
-		require.Len(b, res.Rows, 3)
-	}
-}
-
 func formatInlineFloat64Vector(vec []float64) string {
 	if len(vec) == 0 {
 		return "[]"
@@ -239,4 +139,84 @@ func formatInlineFloat64Vector(vec []float64) string {
 	}
 	out += "]"
 	return out
+}
+
+const tinyChunkPropertyQuery = `
+MATCH (c:Chunk {group_id:'kg'}) WHERE c.emb IS NOT NULL
+WITH c, vector.similarity.cosine(c.emb, $q) AS sim
+RETURN c.uuid AS uuid, sim
+ORDER BY sim DESC
+LIMIT 3
+`
+
+// newTinyChunkPropertyFixture owns the shared 21-node, 1024-dimensional
+// population and index warmup. The caller selects instrumentation and caching
+// before any query runs; benchmark setup stays outside its measured loop.
+func newTinyChunkPropertyFixture(t testing.TB, executor func(storage.Engine) *StorageExecutor) (*StorageExecutor, map[string]interface{}) {
+	t.Helper()
+	ns := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := executor(ns)
+	ctx := context.Background()
+	const dim = 1024
+	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX tiny_chunk_idx FOR (c:Chunk) ON (c.emb) OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}", nil)
+	require.NoError(t, err)
+	service := search.NewService(ns, dim, nil)
+	exec.SetSearchService(service)
+	for i := 0; i < 21; i++ {
+		vec := make([]float64, dim)
+		vec[i%dim] = 1.0
+		if i == 1 {
+			vec[0], vec[1] = 0.8, 0.6
+		}
+		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Chunk {uuid:'c-%02d', group_id:'kg', emb:%s})", i, formatInlineFloat64Vector(vec)), nil)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 21, service.CountPropertyVectorEntries("emb"))
+	require.NoError(t, service.BuildIndexes(ctx))
+	require.True(t, service.IsReady())
+	queryVector := make([]float64, dim)
+	queryVector[0] = 1.0
+	params := map[string]interface{}{"q": queryVector}
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('tiny_chunk_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", params)
+	require.NoError(t, err)
+	return exec, params
+}
+
+func TestE2E_VectorCosine_TinyChunkPropertyPatternPreservesExactResults(t *testing.T) {
+	var counting *countingStreamingEngine
+	exec, params := newTinyChunkPropertyFixture(t, func(engine storage.Engine) *StorageExecutor {
+		counting = &countingStreamingEngine{Engine: engine}
+		return NewStorageExecutor(counting)
+	})
+	counting.allNodesCalls, counting.labelCalls, counting.streamNodesCalls = 0, 0, 0
+	res := runTinyChunkPropertyQueries(t, exec, params, 1)
+	require.Equal(t, "c-00", res.Rows[0][0])
+	require.Equal(t, "c-01", res.Rows[1][0])
+}
+
+func BenchmarkE2E_VectorCosine_TinyChunkPropertyPattern(b *testing.B) {
+	exec, params := newTinyChunkPropertyFixture(b, func(engine storage.Engine) *StorageExecutor {
+		exec := NewStorageExecutor(engine)
+		exec.cache = nil
+		return exec
+	})
+	b.ReportAllocs()
+	b.ResetTimer()
+	runTinyChunkPropertyQueries(b, exec, params, b.N)
+}
+
+// runTinyChunkPropertyQueries owns the query and cardinality invariant shared
+// by correctness and timing runs. Fixture creation and benchmark timer control
+// stay with their callers; the correctness test also checks the returned IDs.
+func runTinyChunkPropertyQueries(t testing.TB, exec *StorageExecutor, params map[string]interface{}, count int) *ExecuteResult {
+	t.Helper()
+	ctx := context.Background()
+	var result *ExecuteResult
+	for i := 0; i < count; i++ {
+		var err error
+		result, err = exec.Execute(ctx, tinyChunkPropertyQuery, params)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 3)
+	}
+	return result
 }

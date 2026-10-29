@@ -240,9 +240,9 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 		}
 	}
 	require.True(t, found, "buffered ACK must have an actual recoverable WAL payload before crash")
-	flushed, err := engine.bufferedFlushMarkerExists("", tx.ID, "")
+	marker, err := engine.observeBufferedCommitReceipt(bufferedReceiptRead{txID: tx.ID})
 	require.NoError(t, err)
-	require.False(t, flushed, "crash fixture must not be durably replayed")
+	require.False(t, marker.present, "crash fixture must not be durably replayed")
 	crashClose(t, engine, wal)
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL

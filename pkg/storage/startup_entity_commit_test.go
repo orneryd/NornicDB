@@ -23,7 +23,7 @@ func TestAcceptedWALNativeStartupLineage(t *testing.T) {
 			require.NoError(t, tx.SetNamespace("test"))
 			_, err = tx.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}})
 			require.NoError(t, err)
-			p, err := tx.PrepareEntityCommit(context.Background(), "startup-lineage")
+			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "startup-lineage"})
 			require.NoError(t, err)
 			r, err := owner.SubmitEntityCommit(context.Background(), p, nil)
 			require.NoError(t, err)
@@ -78,19 +78,43 @@ func TestAcceptedBufferedReceiptVisibleBeforeFlush(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
-	p, err := tx.PrepareEntityCommit(context.Background(), "live-receipt")
+	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "live-receipt"})
 	require.NoError(t, err)
 	r, err := b.SubmitEntityCommit(context.Background(), p, nil)
 	require.NoError(t, err)
 	require.NoError(t, r.Wait(context.Background()))
 	require.True(t, tx.AcknowledgedBuffered())
-	next, err := b.BeginTransaction()
+	physical, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
 	require.NoError(t, err)
-	defer next.Rollback()
-	require.NoError(t, next.SetNamespace("test"))
-	exists, err := next.PrepareLogicalCommitReceipt("live-receipt")
-	require.NoError(t, err)
-	require.True(t, exists, "acknowledged receipt must prevent duplicate semantic application before physical flush")
+	require.False(t, physical.present, "physical-only reads must not observe an acknowledged generation before flush")
+	for _, test := range []struct {
+		name string
+		mode EntityCommitMode
+	}{
+		{"implicit pending receipt", CommitModeImplicit},
+		{"explicit receipt", CommitModeExplicit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			next, err := BeginEntityTransaction(b, test.mode)
+			require.NoError(t, err)
+			defer next.Rollback()
+			require.NoError(t, next.SetNamespace("test"))
+			duplicate, err := next.PrepareEntityCommit(context.Background(), EntityCommitRequest{
+				LogicalID:  "live-receipt",
+				Operations: []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:duplicate-must-not-stage"}}},
+			})
+			require.NoError(t, err)
+			defer duplicate.Abort()
+			require.NoError(t, duplicate.Commit(nil))
+			_, err = b.GetNode("test:duplicate-must-not-stage")
+			require.ErrorIs(t, err, ErrNotFound, "acknowledged receipt must prevent duplicate semantic application")
+			if test.mode == CommitModeImplicit {
+				physical, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: "test", logicalID: "live-receipt"})
+				require.NoError(t, err)
+				require.False(t, physical.present, "implicit duplicate admission must observe the pending receipt without flushing it")
+			}
+		})
+	}
 }
 
 // The durable record below is the precise crash boundary after accepted WAL
@@ -102,7 +126,7 @@ func TestAcceptedWALUnappliedRecordStartup(t *testing.T) {
 			dir := t.TempDir()
 			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: !buffered, manualDrain: true})
 			w := b.bufferedCommitWAL
-			payload, err := EncodeEntityTransaction("test", "unapplied-startup", []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:new", Properties: map[string]any{"v": int64(42)}}}}, CommitModeImplicit)
+			payload, err := EncodeEntityTransaction(EntityTransactionRequest{Namespace: "test", LogicalID: "unapplied-startup", Operations: []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:new", Properties: map[string]any{"v": int64(42)}}}}, Mode: CommitModeImplicit})
 			require.NoError(t, err)
 			require.NoError(t, w.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, "test"))
 			seq := w.Sequence()

@@ -28,6 +28,7 @@ const (
 	testCatalogDropAlias
 	testCatalogGetLimits
 	testCatalogSetLimits
+	testCatalogCreateComposite
 	testCatalogFailureCount
 )
 
@@ -166,6 +167,9 @@ func (m *mockDatabaseManager) GetDatabaseLimits(databaseName string) (interface{
 }
 
 func (m *mockDatabaseManager) CreateCompositeDatabase(ctx context.Context, name string, constituents []interface{}) error {
+	if err := m.catalogFailures[testCatalogCreateComposite]; err != nil {
+		return err
+	}
 	return fmt.Errorf("not implemented in mock")
 }
 

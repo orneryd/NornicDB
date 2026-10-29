@@ -69,7 +69,6 @@ var settingsRegistry = []SettingDefinition{
 	{Name: "db.nornic.embedding.gpu.layers", EnvironmentVariable: "NORNICDB_EMBEDDING_GPU_LAYERS", Type: "number", Category: "Embeddings", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
 	{Name: "db.nornic.embedding.warmup.interval", EnvironmentVariable: "NORNICDB_EMBEDDING_WARMUP_INTERVAL", Type: "duration", Category: "Embeddings", Scope: ScopeDatabase, RestartLevel: RestartProcess},
 	{Name: "db.nornic.search.min.similarity", EnvironmentVariable: "NORNICDB_SEARCH_MIN_SIMILARITY", Type: "number", Category: "Search", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
-	{Name: "db.nornic.search.bm25.engine", EnvironmentVariable: "NORNICDB_SEARCH_BM25_ENGINE", Type: "string", Category: "Search", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
 	{Name: "db.nornic.search.bm25.enabled", EnvironmentVariable: "NORNICDB_SEARCH_BM25_ENABLED", Type: "boolean", Category: "Search", Description: "Master switch for BM25 fulltext search on this database. When false, no BM25 build runs and search returns no fulltext results. Default: true.", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
 	{Name: "db.nornic.search.bm25.warming", EnvironmentVariable: "NORNICDB_SEARCH_BM25_WARMING", Type: "enum", Category: "Search", Description: "When BM25 is enabled, choose startup or lazy warming.", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild, ValidValues: []string{"startup", "lazy"}},
 	{Name: "db.nornic.search.bm25.stemmer", EnvironmentVariable: "NORNICDB_SEARCH_BM25_STEMMER", Type: "string", Category: "Search", Description: "BM25 stemmer plugin ID for this database. Use none for the default language-neutral analyzer.", DefaultValue: "none", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
@@ -179,10 +178,15 @@ func CanonicalizeOverrides(overrides map[string]string) map[string]string {
 	return canonical
 }
 
+// LookupSetting resolves a canonical name or environment alternative against the
+// private registry. It walks settingsRegistry directly instead of materialising a
+// defensive copy of every definition, and hands the caller the single matching
+// definition with its own ValidValues copy so public ownership stays defensive.
 func LookupSetting(name string) (SettingDefinition, bool) {
 	name = CanonicalSettingName(name)
-	for _, definition := range Settings() {
+	for _, definition := range settingsRegistry {
 		if definition.Name == name {
+			definition.ValidValues = append([]string(nil), definition.ValidValues...)
 			return definition, true
 		}
 	}

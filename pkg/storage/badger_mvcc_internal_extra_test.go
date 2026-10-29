@@ -123,7 +123,7 @@ func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *tes
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		key, keyErr := engine.mvccOutgoingAdjacencyKeyString(txn, "test:adj-a", "test:adj-edge", head.Version)
+		key, keyErr := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, "test:adj-a", "test:adj-edge", head.Version)
 		if keyErr != nil {
 			return keyErr
 		}

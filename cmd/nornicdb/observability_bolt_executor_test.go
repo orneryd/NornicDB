@@ -43,7 +43,7 @@ func TestProductionExecutorsShareQueryStatistics(t *testing.T) {
 	result, err := transaction.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	require.Equal(t, "RETURN <REDACTED> AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
+	require.Equal(t, "RETURN 530 AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
 }
 
 // TestConfigureDatabaseExecutor_InheritsLoggerAndSlowQueryThreshold proves

@@ -13,7 +13,7 @@ import (
 // isn't cached: two predicates over the same options give their own results.
 func TestSearchWhereAdmitsCandidates(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 	makeNode(t, eng, "nornic:a", []string{"Doc"}, map[string]any{"content": "late fee clause", "state": "current"})
 	makeNode(t, eng, "nornic:b", []string{"Doc"}, map[string]any{"content": "late fee clause", "state": "retired"})

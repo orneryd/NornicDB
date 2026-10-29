@@ -26,6 +26,9 @@ const recoveryBatchSize = 1000
 func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
+	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+		return result, status, err
+	}
 	var snapshotSeq uint64
 	if err := markRecoveryPropertyForeign(destination); err != nil {
 		return result, status, err

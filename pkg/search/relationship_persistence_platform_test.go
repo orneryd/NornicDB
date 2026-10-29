@@ -17,7 +17,7 @@ import (
 func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 	t.Chdir(t.TempDir())
 	engine := relationshipTestEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath("bm25")
@@ -33,8 +33,10 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 	<-svc.relationshipSearch().done
 	require.NoError(t, svc.Close())
 	require.Equal(t, 2, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 2)
-	_, err := os.Stat("bm25" + relationshipVectorsFileSuffix)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 2)
+	_, err = os.Stat("bm25" + relationshipVectorsFileSuffix)
 	require.NoError(t, err)
 
 	reused := &countingEmbed{}
@@ -53,7 +55,7 @@ func TestRelationshipEmbeddingPersistsWithRelativeIndexPath(t *testing.T) {
 // same test uses storage's Windows policy when built and run on Windows.
 func TestRelationshipEmbeddingDirectorySyncUsesPlatformHelper(t *testing.T) {
 	engine := relationshipTestEngine(t)
-	svc := NewServiceWithDimensions(engine, 3)
+	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	path := filepath.Join(t.TempDir(), "bm25")
 	svc.SetPersistenceEnabled(true)
@@ -91,5 +93,7 @@ func TestRelationshipEmbeddingDirectorySyncUsesPlatformHelper(t *testing.T) {
 	require.False(t, failed)
 	require.EqualValues(t, 1, embed.calls.Load(), "sync retry must not repeat the provider request")
 	require.Equal(t, 1, svc.RelationshipEmbeddingCount())
-	require.Len(t, svc.loadRelationshipVectors(), 1)
+	saved, err := svc.loadRelationshipVectors()
+	require.NoError(t, err)
+	require.Len(t, saved, 1)
 }

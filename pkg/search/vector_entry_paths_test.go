@@ -60,7 +60,7 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 // forEachNodeVectorEntry stops as soon as its callback does, in every entry
 // kind, and visits entries in kind order.
 func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+	svc := NewService(newTestMemoryEngine(t), 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	for name, node := range map[string]*storage.Node{
 		"named":    {ID: "n", NamedEmbeddings: map[string][]float32{"a": {1, 0}, "b": {0, 1}}},
@@ -97,7 +97,7 @@ func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
 // The rejection must preserve acknowledged entries in every destination, while
 // capacity estimation still charges only canonical entries of valid dimensions.
 func TestIndexNodeRejectsMismatchedEntriesBeforeMutation(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
+	svc := NewService(newNamespacedEngine(t), 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	embCfg := gpu.DefaultEmbeddingIndexConfig(2)
 	embCfg.GPUEnabled = false
@@ -149,8 +149,9 @@ func TestIndexNodeRejectsMismatchedEntriesBeforeMutation(t *testing.T) {
 		assert.False(t, unchanged, "rejected entries must never match the indexed state")
 	}
 	svc.indexMu.RLock()
-	usage := svc.estimateNodeIndexCapacityLocked(invalid, nodeFulltext{})
+	usage, err := svc.checkNodeIndexCapacityLocked(invalid, nodeFulltext{})
 	svc.indexMu.RUnlock()
+	require.NoError(t, err)
 	assert.Equal(t, int64(len("n")+16+len(nodeNamedVectorKey("n", "v"))+16+len("n")+16), usage.vectorMetadata,
 		"the capacity estimate charges only canonical entries with the destination dimension")
 }

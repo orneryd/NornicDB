@@ -58,7 +58,7 @@ func openEmbeddingSearchDB(tb testing.TB, dims int) *DB {
 	require.NoError(tb, err)
 	tb.Cleanup(func() { _ = db.Close() })
 	db.SetEmbedder(&unitVectorEmbedder{dims: dims})
-	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), db.defaultDatabaseName(), nil)
+	svc, err := db.EnsureSearchIndexes(context.Background(), db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 	require.NoError(tb, err)
 	require.True(tb, svc.IsReady())
 	return db

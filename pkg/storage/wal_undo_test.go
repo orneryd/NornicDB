@@ -205,7 +205,7 @@ func TestTxBoundaryMarkers(t *testing.T) {
 	wal.Close()
 
 	// Read back
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}

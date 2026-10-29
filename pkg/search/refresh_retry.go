@@ -18,13 +18,13 @@ func (r RefreshRetry) Key() string {
 
 func (r RefreshRetry) Current() bool {
 	if s := r.Node.service; s != nil {
-		s.nodeMutationMu.Lock()
-		defer s.nodeMutationMu.Unlock()
+		lane := s.lockMutation(string(r.Node.nodeID))
+		defer s.unlockMutation(lane)
 		return s.nodeMutationCurrentLocked(r.Node)
 	}
 	if s := r.Edge.service; s != nil {
-		s.nodeMutationMu.Lock()
-		defer s.nodeMutationMu.Unlock()
+		lane := s.lockMutation(string(r.Edge.edgeID))
+		defer s.unlockMutation(lane)
 		return s.edgeMutationCurrentLocked(r.Edge)
 	}
 	return false

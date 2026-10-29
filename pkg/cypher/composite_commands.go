@@ -26,9 +26,83 @@ func parseCypherValueToken(tok string) (string, error) {
 	return tok, nil
 }
 
+// compositeAdminPrefix consumes the fixed grammar of an administration head.
+// Lexical extents and keyword identity belong to cyphertext; this adapter
+// decides only which words the command requires and where its name begins.
+func compositeAdminPrefix(text string, words ...string) (int, bool) {
+	end := 0
+	for _, word := range words {
+		start, unfinished := cyphertext.GapEnd(text, end)
+		if unfinished >= 0 {
+			return start, false
+		}
+		wordEnd := cyphertext.KeywordEnd(text, start, word, cyphertext.CypherWord)
+		if wordEnd < 0 {
+			return start, false
+		}
+		end = wordEnd
+	}
+	end, unfinished := cyphertext.GapEnd(text, end)
+	return end, unfinished < 0
+}
+
+// compositeAdminName consumes one complete catalog name from a SHOW head.
+// The shared name owner supplies decoded identity. Dots and hyphens are the
+// native administration grammar; executeShowWithTail owns subsequent clauses.
+func compositeAdminName(text string) (string, bool) {
+	start, unfinished := cyphertext.GapEnd(text, 0)
+	if unfinished >= 0 || start == len(text) {
+		return "", false
+	}
+	if cyphertext.IsStringQuote(text[start]) {
+		end, closed := cyphertext.ScanQuotedText(text, start)
+		if !closed {
+			return "", false
+		}
+		name, quoted := cyphertext.DecodeString(text[start:end], cyphertext.AcceptedSource)
+		end, unfinished = cyphertext.GapEnd(text, end)
+		return name, quoted && name != "" && unfinished < 0 && end == len(text)
+	}
+	name, ok := cyphertext.ScanIdentifier(text, start)
+	if !ok {
+		return "", false
+	}
+	value := name.Value
+	end := name.End
+	for {
+		end, unfinished = cyphertext.GapEnd(text, end)
+		if unfinished >= 0 {
+			return "", false
+		}
+		if end == len(text) {
+			return value, value != ""
+		}
+		separator := text[end]
+		if separator != '.' && separator != '-' {
+			return "", false
+		}
+		start, unfinished = cyphertext.GapEnd(text, end+1)
+		if unfinished >= 0 || start == len(text) {
+			return "", false
+		}
+		value += string(separator)
+		if cyphertext.IsDigit(text[start]) {
+			end = cyphertext.NamePartEnd(text, start)
+			value += text[start:end]
+			continue
+		}
+		name, ok = cyphertext.ScanIdentifier(text, start)
+		if !ok {
+			return "", false
+		}
+		end = name.End
+		value += name.Value
+	}
+}
+
 func parseConstituentFromTokens(tokens []string, idx *int, readers ...*adminCredentialReader) (map[string]interface{}, error) {
 	if *idx >= len(tokens) || !equalFoldASCII(tokens[*idx], "ALIAS") {
-		return nil, localizedError(localization.CypherCompositeConstituentAliasExpected(), nil)
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstituent", localization.CypherCompositeConstituentAliasExpected())
 	}
 	*idx = *idx + 1
 
@@ -263,6 +337,12 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
 	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	// executeShowWithTail owns valid SHOW tails. Its head must contain only
+	// this command, including when an unknown suffix precedes a valid YIELD.
+	end, valid := compositeAdminPrefix(cypher, "SHOW", "COMPOSITE", "DATABASES")
+	if !valid || end != len(cypher) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "SyntaxError", localization.CypherAdminShowClauseInvalid())
+	}
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
@@ -306,49 +386,19 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}
 
-	// Find "SHOW CONSTITUENTS" keyword position
-	showIdx := findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS")
-	if showIdx == -1 {
-		return nil, localizedError(localization.CypherCompositeShowConstituentsInvalidSyntax(), nil)
+	nameStart, validHead := compositeAdminPrefix(cypher, "SHOW", "CONSTITUENTS", "FOR", "COMPOSITE", "DATABASE")
+	if !validHead {
+		if prefixEnd, ok := compositeAdminPrefix(cypher, "SHOW", "CONSTITUENTS"); ok && prefixEnd == len(cypher) {
+			return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
+		}
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherCompositeShowConstituentsInvalidSyntax())
 	}
-
-	// Check for "FOR COMPOSITE DATABASE"
-	forIdx := findMultiWordKeywordIndex(cypher, "FOR", "COMPOSITE DATABASE")
-	var compositeName string
-
-	if forIdx >= 0 {
-		// Extract composite database name
-		startPos := forIdx + len("FOR")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
-		// Skip "COMPOSITE DATABASE"
-		if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
-			startPos += len("COMPOSITE DATABASE")
-			for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-				startPos++
-			}
-		} else {
-			// Try with flexible whitespace
-			if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
-				startPos += len("COMPOSITE")
-				for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-					startPos++
-				}
-				if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-					startPos += len("DATABASE")
-					for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-						startPos++
-					}
-				}
-			}
-		}
-
-		compositeName = strings.TrimSpace(cypher[startPos:])
-		compositeName = strings.ReplaceAll(compositeName, " ", "")
-		compositeName = strings.ReplaceAll(compositeName, "\t", "")
-		compositeName = strings.ReplaceAll(compositeName, "\n", "")
-		compositeName = strings.ReplaceAll(compositeName, "\r", "")
+	if nameStart == len(cypher) {
+		return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
+	}
+	compositeName, validName := compositeAdminName(cypher[nameStart:])
+	if !validName {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherCompositeShowConstituentsInvalidSyntax())
 	}
 
 	if compositeName == "" {

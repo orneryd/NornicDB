@@ -43,7 +43,7 @@ func (e *countingStoreEngine) OpenReadSnapshot(ctx context.Context) (storage.Rea
 }
 
 func compatStoreService(engine storage.Engine, dir string) *Service {
-	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	svc := NewService(engine, 3, nil)
 	svc.FixVectorDimensions()
 	svc.SetFulltextIndexPath(filepath.Join(dir, "search", "bm25"))
 	svc.SetVectorIndexPath(filepath.Join(dir, "search", "vectors"))

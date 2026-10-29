@@ -153,8 +153,16 @@ func DefaultConfig() *Config {
 // Thread Safety:
 //
 //	All methods are thread-safe and can be called concurrently.
+type replicationWALPreparation struct {
+	dir          string
+	mode         string
+	allowUpgrade bool
+}
+
 type DB struct {
 	config *Config
+	// The replication WAL is checked before opening the primary store.
+	preparedReplicationWAL replicationWALPreparation
 	// The boot selection is shared by the native upgrade and the catalog;
 	// server construction must not independently resolve a different key.
 	remoteCredentialKey       string
@@ -189,7 +197,7 @@ type DB struct {
 	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
-	// searchServiceCreationMu serializes the "create and insert" path in getOrCreateSearchService
+	// searchServiceCreationMu serializes the "create and insert" path in GetOrCreateSearchService
 	// so only one goroutine creates a service per dbName at a time, avoiding RWMutex contention deadlock.
 	searchServiceCreationMu sync.Mutex
 	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
@@ -232,7 +240,7 @@ type DB struct {
 
 	// Optional: when set, per-database config overrides are applied for search/embed (dims, minSimilarity).
 	// Server wires this when system DB and DbConfigStore are available.
-	// Use dbConfigResolverMu (not db.mu) so getOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
+	// Use dbConfigResolverMu (not db.mu) so GetOrCreateSearchService does not contend with other db.mu users and avoid deadlock.
 	dbConfigResolverMu      sync.RWMutex
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
@@ -278,7 +286,7 @@ type DB struct {
 	// embedConfigForDB returns resolved embed config for a database; when set, EmbedQueryForDB uses the registry.
 	embedConfigForDB func(dbName string) (*embed.Config, error)
 
-	// Optional: when set, getOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
+	// Optional: when set, GetOrCreateSearchService uses this to get the reranker for a database (enables per-DB reranker).
 	rerankerResolver func(dbName string) search.Reranker
 
 	lifecycleManager  *lifecycle.MVCCLifecycleManager
@@ -286,10 +294,10 @@ type DB struct {
 	onRetentionAction func(action, recordID, category string)
 }
 
-// DbConfigResolver returns effective embedding dimensions, search min similarity, and BM25 engine for a database.
-// When set, getOrCreateSearchService uses these instead of the global db.config values.
-// Return ("", 0, 0) values to use global defaults for that DB.
-type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string)
+// DbConfigResolver returns effective embedding dimensions and search min similarity for a database.
+// When set, GetOrCreateSearchService uses these instead of the global db.config values.
+// A non-positive dimension uses the global dimension; similarity is used as returned.
+type DbConfigResolver func(dbName string) (embeddingDims int, searchMinSimilarity float64)
 
 // DbSearchOptionsResolver returns resource options for a database search service.
 type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
@@ -298,7 +306,7 @@ type DbSearchOptionsResolver func(dbName string) search.ServiceOptions
 // and warming triggers. Defaults reproduce today's behaviour: bm25Enabled=true,
 // vectorEnabled=true, both warming="startup".
 //
-// When set, getOrCreateSearchService and the boot orchestrator consult it to
+// When set, GetOrCreateSearchService and the boot orchestrator consult it to
 // decide whether to build, lazy-defer, or skip each index per database.
 //
 // Returning an empty `bm25Warming` or `vectorWarming` is treated as "startup".
@@ -600,6 +608,19 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	// Refuse an unsupported WAL before opening or migrating the Badger store.
+	// Otherwise a failed startup can advance the storage version while leaving
+	// the old WAL unreadable by the new binary.
+	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
+		walDir := filepath.Join(dataDir, "wal")
+		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
+		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
+			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+		}
+		if err != nil {
+			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
+		}
+	}
 	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
 	// Literal embedded configurations predate these fields. The all-zero pair
 	// means omitted here; explicit zero in YAML or environment fails parsing.
@@ -608,6 +629,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 	if err := nornicConfig.ValidateMemoryRecoveryTimings(intervalMS, rearmMS); err != nil {
 		return nil, err
+	}
+	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	preparedWAL := replicationWALPreparation{dir: replicationWALDirectory(dataDir, mode), mode: mode, allowUpgrade: config.Database.AllowStorageUpgrade}
+	if err := prepareReplicationWAL(preparedWAL.dir, preparedWAL.allowUpgrade, preparedWAL.mode); err != nil {
+		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 	config.Database.DataDir = dataDir
 	// Defensive defaults for the per-DB search-index master switches.
@@ -642,8 +668,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	db := &DB{
-		config:            config,
-		searchWarmupReady: make(chan struct{}),
+		config:                 config,
+		preparedReplicationWAL: preparedWAL,
+		searchWarmupReady:      make(chan struct{}),
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
 	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
@@ -785,6 +812,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					autoRecoverEnabled, os.Getenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION"), corruptionSuspected, config.Database.EncryptionEnabled)
 				return nil, localizedError(localization.NornicDBCorePersistentStorageOpenFailed(err), err)
 			}
+		}
+		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
+			_ = badgerEngine.Close()
+			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
 		if config.Database.MVCCLifecycleEnabled {
 			lifecycleConfig := lifecycle.DefaultLifecycleConfig()
@@ -1259,12 +1290,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
 			NodeCreated: db.indexNodeFromEvent,
 			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: db.removeNodeFromEvent,
+			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
 			// Relationship vectors are indexed whether or not relationship
 			// search (#1065) is on.
 			EdgeCreated:    db.indexRelationshipFromEvent,
 			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    db.removeRelationshipFromEvent,
+			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
 			NamespaceReset: db.dropSearchForPrefix,
 		})
 		if err != nil {
@@ -1379,7 +1410,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				default:
 					log.Printf("🔍 Building BM25 + vector indexes for database %s (bm25=%v vector=%v)...", dbName, bm25On, vectorOn)
 				}
-				_, err := db.EnsureSearchIndexesBuilt(ctx, dbName, storageEngine)
+				_, err := db.EnsureSearchIndexes(ctx, dbName, storageEngine, SearchIndexBuildWait)
 				results <- searchBuildResult{dbName: dbName, err: err, outcome: outcome}
 			}(dbName)
 		}
@@ -1540,66 +1571,64 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	return badgerOptions, walConfig
 }
 
+func replicationWALDirectory(dataDir, mode string) string {
+	replicationDir := os.Getenv("NORNICDB_CLUSTER_DATA_DIR")
+	if replicationDir == "" {
+		if dataDir == "" {
+			if mode == "" || mode == string(replication.ModeStandalone) {
+				return ""
+			}
+			replicationDir = filepath.Join("data", "replication")
+		} else {
+			replicationDir = filepath.Join(dataDir, "replication")
+		}
+	}
+	return filepath.Join(replicationDir, "wal")
+}
+
+// prepareReplicationWAL checks or upgrades the separate replication log before
+// the primary store can change.
+func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
+	if dir == "" {
+		return nil
+	}
+	if allowUpgrade {
+		_, err := storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: replication.TranscodeV4WALPayload})
+		return err
+	}
+	if mode != "" && mode != string(replication.ModeStandalone) {
+		return storage.ValidateWALFormat(dir, storage.WALValidateCurrent)
+	}
+	return nil
+}
+
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
 	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	dataDir, allowUpgrade := "", false
+	if db.config != nil {
+		dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
+	}
+	replicationWALDir := replicationWALDirectory(dataDir, mode)
+	preparation := replicationWALPreparation{dir: replicationWALDir, mode: mode, allowUpgrade: allowUpgrade}
+	if db.preparedReplicationWAL != preparation {
+		if err := prepareReplicationWAL(replicationWALDir, allowUpgrade, mode); err != nil {
+			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		}
+		db.preparedReplicationWAL = preparation
+	}
 	if mode == "" || mode == string(replication.ModeStandalone) {
 		return base, nil
 	}
-
 	replCfg := replication.LoadFromEnv()
-
-	// Keep replication state under the DB data dir unless explicitly overridden.
-	if os.Getenv("NORNICDB_CLUSTER_DATA_DIR") == "" {
-		if db.config != nil && db.config.Database.DataDir != "" {
-			replCfg.DataDir = db.config.Database.DataDir + "/replication"
-		} else {
-			replCfg.DataDir = "./data/replication"
-		}
-	}
-
-	adapter, err := replication.NewStorageAdapterWithWAL(base, replCfg.DataDir+"/wal")
+	replCfg.DataDir = filepath.Dir(replicationWALDir)
+	runtime, err := replication.StartRuntime(context.Background(), base, replCfg)
 	if err != nil {
-		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		return nil, err
 	}
-
-	replicator, err := replication.NewReplicator(replCfg, adapter)
-	if err != nil {
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
-	}
-
-	// The transport is built from the whole loaded config, so the
-	// replication secret and TLS settings apply. If they can't be applied
-	// (an unreadable certificate, say), replication doesn't start rather
-	// than run plaintext or unsigned.
-	transport, err := replication.NewDefaultTransportFromConfig(replCfg)
-	if err != nil {
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
-	}
-
-	// Wire transport into modes that support it.
-	if r, ok := replicator.(interface{ SetTransport(replication.Transport) }); ok {
-		r.SetTransport(transport)
-	}
-	// If we're using the default ClusterTransport, register message handlers for the replicator.
-	if ct, ok := transport.(*replication.ClusterTransport); ok {
-		replication.RegisterClusterHandlers(ct, replicator)
-	}
-
-	if err := replicator.Start(context.Background()); err != nil {
-		_ = transport.Close()
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
-	}
-
-	db.replicator = replicator
-	db.replicationAdapter = adapter
-	db.replicationTrans = transport
-
-	return replication.NewReplicatedEngine(base, replicator, 30*time.Second), nil
+	db.replicator = runtime.Replicator
+	db.replicationAdapter = runtime.Adapter
+	db.replicationTrans = runtime.Transport
+	return runtime.Engine, nil
 }
 
 // SetEmbedder configures the auto-embed queue with the given embedder.
@@ -2134,8 +2163,8 @@ func (db *DB) SetAllDatabasesProvider(provider func() []DatabaseAndStorage) {
 }
 
 // SetDbConfigResolver sets an optional resolver for per-database config
-// (embedding dims, search min similarity, BM25 engine).
-// When set, getOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
+// (embedding dimensions and search min similarity).
+// When set, GetOrCreateSearchService uses the resolver for the given dbName instead of global db.config.
 // Call with nil to use global config only.
 func (db *DB) SetDbConfigResolver(resolver DbConfigResolver) {
 	db.dbConfigResolverMu.Lock()
@@ -2152,7 +2181,7 @@ func (db *DB) SetDbSearchOptionsResolver(resolver DbSearchOptionsResolver) {
 
 // SetDbSearchFlagsResolver sets an optional resolver for per-database search
 // index master switches and warming triggers. When set, the boot orchestrator
-// and getOrCreateSearchService consult it to decide whether to build, lazy-
+// and GetOrCreateSearchService consult it to decide whether to build, lazy-
 // defer, or skip each index per database. Call with nil to use global defaults
 // (today's behaviour).
 func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
@@ -2261,7 +2290,7 @@ func (db *DB) ResetEmbedWorker() error {
 func (db *DB) ClearAllEmbeddings() (int, error) {
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
+	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
 		if err := svc.ClearVectorIndex(); err != nil {
 			return 0, err
 		}

@@ -12,7 +12,7 @@ import (
 func TestDbRetrieveContinuationResultLimitPublic(t *testing.T) {
 	contract.RunResultLimit(t, func(t *testing.T, vector bool) contract.LimitFixture {
 		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "ceiling")
-		service := search.NewServiceWithDimensions(engine, 2)
+		service := search.NewService(engine, 2, nil)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		exec := NewStorageExecutor(engine)
 		exec.SetSearchService(service)

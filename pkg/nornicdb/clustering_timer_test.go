@@ -72,7 +72,7 @@ func TestClusteringTimer_ClustersBulkLoadWhenItStops(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "bulk")
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 	svc.EnableClustering(nil, 4)
 	svc.SetMinEmbeddingsForClustering(10)
 	require.NoError(t, svc.BuildIndexes(context.Background()))

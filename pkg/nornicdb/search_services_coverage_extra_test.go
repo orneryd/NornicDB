@@ -41,7 +41,7 @@ func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 	db.startSearchIndexBuild(&dbSearchService{}, nil)
 
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant-build")
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 	entry := &dbSearchService{dbName: "tenant-build", svc: svc, buildDone: make(chan struct{})}
 
 	db.startSearchIndexBuild(entry, nil)
@@ -62,7 +62,7 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 	t.Run("returns early when flush already running", func(t *testing.T) {
 		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
-		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3)
+		svc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3, nil)
 		entry := &dbSearchService{
 			dbName:              "tenant",
 			svc:                 svc,
@@ -86,7 +86,7 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		db.closed = true
-		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3)
+		svc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3, nil)
 		entry := &dbSearchService{
 			dbName:            "tenant",
 			svc:               svc,
@@ -118,11 +118,11 @@ func TestSearchServices_Coverage_EnsureBuiltAndStartedDefaultBranches(t *testing
 		return true, false, "startup", "startup"
 	})
 
-	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), "", nil)
+	svc, err := db.EnsureSearchIndexes(context.Background(), "", nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.True(t, svc.GetBuildProgress().Ready)
 
-	startedSvc, err := db.EnsureSearchIndexesBuildStarted("", nil)
+	startedSvc, err := db.EnsureSearchIndexes(nil, "", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, startedSvc)
 }
@@ -135,7 +135,7 @@ func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil
 		return true, false, "startup", "startup"
 	})
 
-	svc, err := db.EnsureSearchIndexesBuildStarted("tenant-startup", nil)
+	svc, err := db.EnsureSearchIndexes(nil, "tenant-startup", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 

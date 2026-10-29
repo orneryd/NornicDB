@@ -1111,7 +1111,7 @@ func (r *RemoteEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		out := node
 		switch {
 		case opts.Projection != nil:
-			out = copyNodeProjectedWithoutEmbeddings(node, opts.Projection)
+			out = projectCachedNodeForRead(node, opts.Projection, true)
 		case opts.StripEmbeddings || (!opts.WithEmbeddings && !opts.ApplyDecayFilter):
 			out = copyNodeWithoutEmbeddings(node)
 		}

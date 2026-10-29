@@ -10,83 +10,91 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNodeMutationReservationPreservesNewerLiveMutation(t *testing.T) {
-	for _, remove := range []bool{false, true} {
-		t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
-			base := newTestMemoryEngine(t)
-			t.Cleanup(func() { _ = base.Close() })
-			engine := storage.NewNamespacedEngine(base, "test")
-			svc := NewServiceWithDimensions(engine, 2)
-			t.Cleanup(func() { _ = svc.Close() })
-			old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-			reservation := svc.ReserveNodeMutation(old.ID)
-			newer := storage.CopyNode(old)
-			newer.Properties["content"] = "current"
-			newer.ChunkEmbeddings = [][]float32{{0, 1}}
-			_, err := engine.CreateNode(newer)
-			require.NoError(t, err)
-			require.NoError(t, svc.RefreshNode(newer.ID))
-			if remove {
-				require.NoError(t, engine.DeleteNode(old.ID))
-				require.NoError(t, svc.RefreshNode(old.ID))
-			}
-			// An old drain can arrive after the latest generation was applied
-			// and its bookkeeping retired. It must still remain obsolete.
-			require.NoError(t, svc.IndexNodeWithMutation(old, reservation))
-			require.NoError(t, svc.RemoveNodeWithMutation(reservation))
-			if remove {
-				require.Zero(t, svc.EmbeddingCount())
-			} else {
-				require.Equal(t, 1, svc.EmbeddingCount())
-				opts := DefaultSearchOptions()
-				opts.MinRRFScore = 0
-				response, err := svc.Search(context.Background(), "current", nil, opts)
+// TestNodeMutationReservationsPreserveNewerWrites owns the reservation
+// contract for a node's index entries: an older write that applies after a
+// newer generation retired is obsolete, both when the newer write left the
+// node indexed (a live re-creation, or a storage delete plus refresh) and when
+// it removed it (a removal, or a storage delete), and under concurrent writers
+// mixing reservations with direct storage writes.
+func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
+	t.Run("older live write after a newer one", func(t *testing.T) {
+		for _, remove := range []bool{false, true} {
+			t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
+				base := newTestMemoryEngine(t)
+				t.Cleanup(func() { _ = base.Close() })
+				engine := storage.NewNamespacedEngine(base, "test")
+				svc := NewService(engine, 2, nil)
+				t.Cleanup(func() { _ = svc.Close() })
+				old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
+				reservation := svc.ReserveNodeMutation(old.ID)
+				newer := storage.CopyNode(old)
+				newer.Properties["content"] = "current"
+				newer.ChunkEmbeddings = [][]float32{{0, 1}}
+				_, err := engine.CreateNode(newer)
 				require.NoError(t, err)
-				require.Len(t, response.Results, 1)
-				response, err = svc.Search(context.Background(), "obsolete", nil, opts)
-				require.NoError(t, err)
-				require.Empty(t, response.Results)
-			}
-			svc.nodeMutationMu.Lock()
-			require.Empty(t, svc.pendingNodeMutations)
-			svc.nodeMutationMu.Unlock()
-		})
-	}
-}
-
-func TestNodeMutationConcurrentReservationsAndDirectWrites(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = base.Close() })
-	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
-	t.Cleanup(func() { _ = svc.Close() })
-	var writers sync.WaitGroup
-	for writer := range 8 {
-		writers.Add(1)
-		go func() {
-			defer writers.Done()
-			for i := range 64 {
-				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i%8)), ChunkEmbeddings: [][]float32{{1, 0}}}
-				reservation := svc.ReserveNodeMutation(node.ID)
-				if (writer+i)%2 == 0 {
-					_ = engine.DeleteNode(node.ID)
-				} else if err := engine.UpdateNode(node); err != nil {
-					_, _ = engine.CreateNode(node)
+				require.NoError(t, svc.RefreshNode(newer.ID))
+				if remove {
+					require.NoError(t, engine.DeleteNode(old.ID))
+					require.NoError(t, svc.RefreshNode(old.ID))
 				}
-				_ = svc.RefreshNode(node.ID)
-				_ = svc.IndexNodeWithMutation(node, reservation)
-			}
-		}()
-	}
-	writers.Wait()
-	for i := range 8 {
-		id := storage.NodeID(fmt.Sprintf("n%d", i))
-		stale := svc.ReserveNodeMutation(id)
-		_ = engine.DeleteNode(id)
-		require.NoError(t, svc.RefreshNode(id))
-		require.NoError(t, svc.IndexNodeWithMutation(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
-	}
-	require.Zero(t, svc.EmbeddingCount())
+				// An old drain can arrive after the latest generation was applied
+				// and its bookkeeping retired. It must still remain obsolete.
+				require.NoError(t, svc.IndexNodeWithMutation(old, reservation))
+				require.NoError(t, svc.RemoveNodeWithMutation(reservation))
+				if remove {
+					require.Zero(t, svc.EmbeddingCount())
+				} else {
+					require.Equal(t, 1, svc.EmbeddingCount())
+					opts := DefaultSearchOptions()
+					opts.MinRRFScore = 0
+					response, err := svc.Search(context.Background(), "current", nil, opts)
+					require.NoError(t, err)
+					require.Len(t, response.Results, 1)
+					response, err = svc.Search(context.Background(), "obsolete", nil, opts)
+					require.NoError(t, err)
+					require.Empty(t, response.Results)
+				}
+				svc.nodeMutationMu.Lock()
+				require.Empty(t, svc.pendingNodeMutations)
+				svc.nodeMutationMu.Unlock()
+			})
+		}
+	})
+
+	t.Run("concurrent reservations and direct writes", func(t *testing.T) {
+		base := newTestMemoryEngine(t)
+		t.Cleanup(func() { _ = base.Close() })
+		engine := storage.NewNamespacedEngine(base, "test")
+		svc := NewService(engine, 2, nil)
+		t.Cleanup(func() { _ = svc.Close() })
+		var writers sync.WaitGroup
+		for writer := range 8 {
+			writers.Add(1)
+			go func() {
+				defer writers.Done()
+				for i := range 64 {
+					node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i%8)), ChunkEmbeddings: [][]float32{{1, 0}}}
+					reservation := svc.ReserveNodeMutation(node.ID)
+					if (writer+i)%2 == 0 {
+						_ = engine.DeleteNode(node.ID)
+					} else if err := engine.UpdateNode(node); err != nil {
+						_, _ = engine.CreateNode(node)
+					}
+					_ = svc.RefreshNode(node.ID)
+					_ = svc.IndexNodeWithMutation(node, reservation)
+				}
+			}()
+		}
+		writers.Wait()
+		for i := range 8 {
+			id := storage.NodeID(fmt.Sprintf("n%d", i))
+			stale := svc.ReserveNodeMutation(id)
+			_ = engine.DeleteNode(id)
+			require.NoError(t, svc.RefreshNode(id))
+			require.NoError(t, svc.IndexNodeWithMutation(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
+		}
+		require.Zero(t, svc.EmbeddingCount())
+	})
 }
 
 // A refresh rejected at entry never happened: the reservation it superseded
@@ -95,7 +103,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	older := svc.ReserveNodeMutation("source")
 	rejected := svc.ReserveNodeMutation("source")
@@ -110,7 +118,7 @@ func TestRefreshNodeFollowsStorage(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := engine.CreateNode(node)
@@ -160,7 +168,7 @@ func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	}
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
 	barrier := &edgeReadBarrier{Engine: engine, armed: true, entered: make(chan struct{}), release: make(chan struct{})}
-	svc := NewServiceWithDimensions(barrier, 2)
+	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	older := svc.ReserveEdgeMutation("r")
 	done := make(chan error, 1)

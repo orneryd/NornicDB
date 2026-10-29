@@ -77,7 +77,7 @@ func TestIVFPQMainKeyEvidenceDoesNotHideMembers(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			node := &storage.Node{ID: "winner", ChunkEmbeddings: [][]float32{{1, 0}}}
 			candidateID := nodeNamedVectorKey("winner", "old")

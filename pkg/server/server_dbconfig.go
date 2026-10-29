@@ -15,27 +15,24 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// GET /admin/databases/config/keys
-func (s *Server) handleDbConfigKeys(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
-		return
-	}
-	keys := dbconfig.AllowedKeys()
-	httpresponse.WriteJSON(w, http.StatusOK, keys)
-}
-
-// handleDbConfigPrefix handles GET/PUT /admin/databases/{dbName}/config.
-// Route is registered as /admin/databases/ so we receive e.g. /admin/databases/nornic/config.
+// handleDbConfigPrefix handles the keys endpoint and per-database config routes.
 func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin/databases/")
-	if path == "" || path == "config/keys" {
-		// config/keys is handled by handleDbConfigKeys
+	if path == "config/keys" {
+		if r.Method != http.MethodGet {
+			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
+			return
+		}
+		httpresponse.WriteJSON(w, http.StatusOK, dbconfig.AllowedKeys())
+		return
+	}
+	if path == "" {
 		s.writeNeo4jNotFound(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
@@ -63,10 +60,8 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.Method {
-		case http.MethodGet:
-			s.handleGetDbConfig(w, r, dbName)
-		case http.MethodPut:
-			s.handlePutDbConfig(w, r, dbName)
+		case http.MethodGet, http.MethodPut:
+			s.handleDbConfig(w, r, dbName)
 		default:
 			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 		}
@@ -195,22 +190,21 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-func (s *Server) handleGetDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
-	overrides := s.dbConfigStore.GetOverrides(dbName)
-	if overrides == nil {
-		overrides = make(map[string]string)
+func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
+	if r.Method == http.MethodGet {
+		overrides := s.dbConfigStore.GetOverrides(dbName)
+		if overrides == nil {
+			overrides = make(map[string]string)
+		}
+		resolved := dbconfig.Resolve(s.processConfig, overrides)
+		effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
+		writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, nil)
+		return
 	}
-	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides":      redactDatabaseSettings(overrides),
-		"configured":     redactDatabaseSettings(overrides),
-		"effective":      redactDatabaseSettings(effective),
-		"pendingRestart": pendingRestart,
-	})
-}
-
-func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
+	if r.Method != http.MethodPut {
+		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
+		return
+	}
 	var body struct {
 		Overrides map[string]string `json:"overrides"`
 	}
@@ -234,7 +228,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		}
 		normalized, err := dbconfig.NormalizeSettingValue(key, value)
 		if err != nil {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", err.Error())
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", observability.RedactText(err.Error()))
 			return
 		}
 		body.Overrides[key] = normalized
@@ -243,7 +237,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	selectedStemmer := stemmer.NormalizeSelection(nextResolved.Effective["db.nornic.search.bm25.stemmer"])
 	if nextResolved.BM25Enabled && selectedStemmer != stemmer.NoneID {
 		if _, ok := stemmer.Lookup(selectedStemmer); !ok {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", "configured BM25 stemmer \""+selectedStemmer+"\" is not registered")
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", observability.RedactText("configured BM25 stemmer \""+selectedStemmer+"\" is not registered"))
 			return
 		}
 	}
@@ -283,7 +277,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStorageResolveFailedEvent(dbName, err))
-		} else if _, err := s.db.EnsureSearchIndexesBuildStarted(dbName, storageEngine); err != nil {
+		} else if _, err := s.db.EnsureSearchIndexes(nil, dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStartFailedEvent(dbName, err))
 		} else {
 			rebuildTriggered = true
@@ -294,13 +288,21 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 		overrides = make(map[string]string)
 	}
 	effective, pendingRestart := s.updateDatabaseConfigRuntimeState(dbName, previousResolved, nextResolved, changedDefinitions)
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"overrides":        redactDatabaseSettings(overrides),
-		"configured":       redactDatabaseSettings(overrides),
-		"effective":        redactDatabaseSettings(effective),
-		"pendingRestart":   pendingRestart,
-		"rebuildTriggered": rebuildTriggered,
-	})
+	writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, &rebuildTriggered)
+}
+
+// Both operations return the same redacted configuration; a PUT also reports
+// whether its change started a rebuild.
+func writeDatabaseConfigResponse(w http.ResponseWriter, overrides, effective map[string]string, pendingRestart bool, rebuildTriggered *bool) {
+	redacted := redactDatabaseSettings(overrides)
+	response := map[string]interface{}{
+		"overrides": redacted, "configured": redacted,
+		"effective": redactDatabaseSettings(effective), "pendingRestart": pendingRestart,
+	}
+	if rebuildTriggered != nil {
+		response["rebuildTriggered"] = *rebuildTriggered
+	}
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

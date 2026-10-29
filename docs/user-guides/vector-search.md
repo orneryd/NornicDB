@@ -43,7 +43,7 @@ NornicDB automatically maintains an internal vector index that:
 
 ```go
 // This happens automatically at database startup:
-db.searchService = search.NewServiceWithDimensions(storage, 1024)
+db.searchService = search.NewService(storage, 1024, nil)
 
 // Nodes are indexed automatically via storage callbacks:
 // OnNodeCreated → searchService.IndexNode(node)

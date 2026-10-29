@@ -405,27 +405,20 @@ func (a textAnalyzer) Analyze(text string) []string
 
 Required call sites:
 
-- BM25 V1 single-document index.
-- BM25 V1 batch index.
-- BM25 V1 update/removal token reconstruction.
-- BM25 V1 query analysis.
-- BM25 V2 single and batch index.
-- BM25 V2 update/removal token reconstruction.
-- BM25 V2 query analysis.
+- BM25 single and batch index.
+- BM25 update/removal token reconstruction.
+- BM25 query analysis.
 - Hybrid-routing lexical profile tokenization, using the service's analyzer.
 
-Constructors should preserve source compatibility:
+Constructors:
 
 ```go
-func NewFulltextIndex() *FulltextIndex
-func NewFulltextIndexV2() *FulltextIndexV2
-func NewFulltextIndexWithAnalyzer(analyzer Analyzer) *FulltextIndex
 func NewFulltextIndexV2WithAnalyzer(analyzer Analyzer) *FulltextIndexV2
 ```
 
-The existing constructors use the exact Unicode analyzer.
+Passing a nil analyzer uses the exact Unicode analyzer.
 
-The V2 analyzer is immutable. Its query-plan cache therefore does not need the analyzer ID in every key. Replacing an analyzer requires replacing or clearing the index and query cache as part of the rebuild.
+The analyzer is immutable. Its query-plan cache therefore does not need the analyzer ID in every key. Replacing an analyzer requires replacing or clearing the index and query cache as part of the rebuild.
 
 ## Persistence and Rebuild Semantics
 
@@ -567,7 +560,7 @@ On Linux and macOS CI:
 2. Generate its manifest and digest.
 3. Start the loader against a temporary plugin directory.
 4. Select `test.ukrainian` for a test database.
-5. Run the Ukrainian retrieval scenarios through BM25 V1 and V2.
+5. Run the Ukrainian retrieval scenarios through the full-text index.
 6. Restart against persisted indexes and verify equivalent results.
 7. Modify the fixture digest and prove the index rebuild path is selected.
 
@@ -619,10 +612,10 @@ Configuration 2 must have no per-token or per-query overhead compared with confi
 Add benchmarks for:
 
 - analyzer throughput over Latin and Ukrainian text;
-- BM25 V2 batch indexing;
-- BM25 V2 exact warm common query;
-- BM25 V2 exact cold common query;
-- BM25 V2 rare query;
+- BM25 batch indexing;
+- BM25 exact warm common query;
+- BM25 exact cold common query;
+- BM25 rare query;
 - update/removal token reconstruction;
 - concurrent query execution with the selected plugin.
 
@@ -736,7 +729,7 @@ Extend `db.index.fulltext.listAvailableAnalyzers()` to report actual registered 
 - Generated Snowball Go can be packaged without a hand-written wrapper.
 - Indexing, querying, updating, and removal use the same analyzer.
 - Persisted BM25 cannot load under a mismatched plugin fingerprint.
-- Ukrainian fixture scenarios pass under both BM25 engines.
+- Ukrainian fixture scenarios pass under the full-text index.
 - Default analyzer parity, race, restart, and dynamic plugin tests run in CI.
 - BM25 benchmarks report latency, throughput, bytes, and allocations for inactive and active plugin configurations.
 - Phrase search and original stored text remain unchanged.

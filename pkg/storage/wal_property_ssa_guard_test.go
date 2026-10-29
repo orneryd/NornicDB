@@ -4,6 +4,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/orneryd/nornicdb/internal/ssawalk"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -13,10 +14,11 @@ type bindingSSAFrame struct {
 }
 
 type bindingSSAAnalysis struct {
-	calls    map[*ssa.Function][]ssa.CallInstruction
-	closures map[*ssa.Function][]*ssa.MakeClosure
-	stores   map[*ssa.Function][]*ssa.Store
-	writes   *types.Var
+	calls        map[*ssa.Function][]ssa.CallInstruction
+	closures     map[*ssa.Function][]*ssa.MakeClosure
+	stores       map[*ssa.Function][]*ssa.Store
+	writes       *types.Var
+	reachability *bindingSSAReachability
 }
 
 // Follow aliases backwards from mutation/escape sinks. Call frames preserve
@@ -30,22 +32,19 @@ func bufferedBodySSAProducers(functions []*ssa.Function, commit types.Type, tran
 			a.writes = fields.Field(i)
 		}
 	}
-	for _, fn := range functions {
-		for _, block := range fn.Blocks {
-			for _, instruction := range block.Instrs {
-				if call, ok := instruction.(ssa.CallInstruction); ok {
-					if callee := call.Common().StaticCallee(); callee != nil {
-						a.calls[callee] = append(a.calls[callee], call)
-					}
-				}
-				if closure, ok := instruction.(*ssa.MakeClosure); ok {
-					callee := closure.Fn.(*ssa.Function)
-					a.closures[callee] = append(a.closures[callee], closure)
-				}
-				if store, ok := instruction.(*ssa.Store); ok {
-					a.stores[fn] = append(a.stores[fn], store)
-				}
+	steps := ssawalk.Instructions(functions)
+	for _, step := range steps {
+		if call, ok := step.Ins.(ssa.CallInstruction); ok {
+			if callee := call.Common().StaticCallee(); callee != nil {
+				a.calls[callee] = append(a.calls[callee], call)
 			}
+		}
+		if closure, ok := step.Ins.(*ssa.MakeClosure); ok {
+			callee := closure.Fn.(*ssa.Function)
+			a.closures[callee] = append(a.closures[callee], closure)
+		}
+		if store, ok := step.Ins.(*ssa.Store); ok {
+			a.stores[step.Func] = append(a.stores[step.Func], store)
 		}
 	}
 	isCommit := func(typ types.Type) bool {
@@ -64,85 +63,86 @@ func bufferedBodySSAProducers(functions []*ssa.Function, commit types.Type, tran
 			}
 		}
 	}
+	a.reachability = newBindingSSAReachability(a, functions)
 	for _, root := range roots {
 		a.writes = root
+		a.reachability.setRoot(root)
 		for _, fn := range functions {
 			if owners[fn] {
 				continue
 			}
 			alias := func(v ssa.Value) bool { return a.alias(v, nil, map[ssa.Value]bool{}) }
 			flag := func(instruction ssa.Instruction) { out[fn.String()+" @ "+instruction.String()] = true }
-			for _, block := range fn.Blocks {
-				for _, instruction := range block.Instrs {
-					switch v := instruction.(type) {
-					case *ssa.Alloc:
-						if isCommit(v.Type()) {
-							// Copying an existing typed commit is consumption. Assigning
-							// its writes field later remains an independently checked sink.
-							copy := false
-							for _, store := range a.stores[fn] {
-								if store.Addr == v && types.Identical(store.Val.Type(), commit) {
-									copy = true
-								}
-							}
-							if !copy {
-								flag(v)
+			for _, step := range ssawalk.Instructions([]*ssa.Function{fn}) {
+				instruction := step.Ins
+				switch v := instruction.(type) {
+				case *ssa.Alloc:
+					if isCommit(v.Type()) {
+						// Copying an existing typed commit is consumption. Assigning
+						// its writes field later remains an independently checked sink.
+						copy := false
+						for _, store := range a.stores[fn] {
+							if store.Addr == v && types.Identical(store.Val.Type(), commit) {
+								copy = true
 							}
 						}
-					case *ssa.ChangeType:
-						if isCommit(v.Type()) && !isCommit(v.X.Type()) {
+						if !copy {
 							flag(v)
-						}
-					case *ssa.Convert:
-						if isCommit(v.Type()) && !isCommit(v.X.Type()) {
-							flag(v)
-						}
-					case *ssa.Store:
-						_, localSlot := v.Addr.(*ssa.Alloc)
-						if !localSlot && alias(v.Addr) {
-							flag(v)
-						}
-						if bindingSSAMapCarrier(v.Val.Type()) && alias(v.Val) {
-							if _, localSlot := v.Addr.(*ssa.Alloc); !localSlot {
-								flag(v)
-							}
-						}
-					case *ssa.MapUpdate:
-						if alias(v.Map) {
-							flag(v)
-						}
-						if bindingSSAMapCarrier(v.Value.Type()) && alias(v.Value) {
-							flag(v)
-						}
-					case *ssa.Return:
-						for _, result := range v.Results {
-							if bindingSSAMapCarrier(result.Type()) && alias(result) {
-								flag(v)
-							}
 						}
 					}
-					if call, ok := instruction.(ssa.CallInstruction); ok {
-						common := call.Common()
-						if builtin, ok := common.Value.(*ssa.Builtin); ok {
-							switch builtin.Name() {
-							case "clear", "delete", "copy", "append":
-								if len(common.Args) > 0 && alias(common.Args[0]) {
-									flag(instruction)
-								}
+				case *ssa.ChangeType:
+					if isCommit(v.Type()) && !isCommit(v.X.Type()) {
+						flag(v)
+					}
+				case *ssa.Convert:
+					if isCommit(v.Type()) && !isCommit(v.X.Type()) {
+						flag(v)
+					}
+				case *ssa.Store:
+					_, localSlot := v.Addr.(*ssa.Alloc)
+					if !localSlot && alias(v.Addr) {
+						flag(v)
+					}
+					if bindingSSAMapCarrier(v.Val.Type()) && alias(v.Val) {
+						if _, localSlot := v.Addr.(*ssa.Alloc); !localSlot {
+							flag(v)
+						}
+					}
+				case *ssa.MapUpdate:
+					if alias(v.Map) {
+						flag(v)
+					}
+					if bindingSSAMapCarrier(v.Value.Type()) && alias(v.Value) {
+						flag(v)
+					}
+				case *ssa.Return:
+					for _, result := range v.Results {
+						if bindingSSAMapCarrier(result.Type()) && alias(result) {
+							flag(v)
+						}
+					}
+				}
+				if call, ok := instruction.(ssa.CallInstruction); ok {
+					common := call.Common()
+					if builtin, ok := common.Value.(*ssa.Builtin); ok {
+						switch builtin.Name() {
+						case "clear", "delete", "copy", "append":
+							if len(common.Args) > 0 && alias(common.Args[0]) {
+								flag(instruction)
 							}
-						} else if callee := common.StaticCallee(); callee == nil || len(callee.Blocks) == 0 {
-							for _, arg := range common.Args {
-								if bindingSSAMapCarrier(arg.Type()) && alias(arg) {
+						}
+					} else if callee := common.StaticCallee(); callee == nil || len(callee.Blocks) == 0 {
+						for _, arg := range common.Args {
+							if bindingSSAMapCarrier(arg.Type()) && alias(arg) {
+								flag(instruction)
+							}
+							if callee == nil && !common.IsInvoke() && alias(arg) {
+								flag(instruction)
+							}
+							if root != roots[0] && callee != nil && callee.Object() != nil && callee.Object().Pkg() != nil && callee.Object().Pkg().Path() == "github.com/dgraph-io/badger/v4" && alias(arg) {
+								switch callee.Name() {
+								case "Set", "SetEntry", "NewEntry":
 									flag(instruction)
-								}
-								if callee == nil && !common.IsInvoke() && alias(arg) {
-									flag(instruction)
-								}
-								if root != roots[0] && callee != nil && callee.Object() != nil && callee.Object().Pkg() != nil && callee.Object().Pkg().Path() == "github.com/dgraph-io/badger/v4" && alias(arg) {
-									switch callee.Name() {
-									case "Set", "SetEntry", "NewEntry":
-										flag(instruction)
-									}
 								}
 							}
 						}
@@ -153,18 +153,14 @@ func bufferedBodySSAProducers(functions []*ssa.Function, commit types.Type, tran
 	}
 	// Physical WAL records are emitted only by the record owner. Constants in
 	// SSA retain their resolved operation type through ordinary var aliases.
-	for _, fn := range functions {
-		if fn == writer {
+	for _, step := range steps {
+		if step.Func == writer {
 			continue
 		}
-		for _, block := range fn.Blocks {
-			for _, instruction := range block.Instrs {
-				if call, ok := instruction.(ssa.CallInstruction); ok {
-					for _, arg := range call.Common().Args {
-						if value, ok := arg.(*ssa.Const); ok && value.Value != nil && types.Identical(value.Type(), bufferedOperation.Type()) && value.Value.ExactString() == bufferedOperation.Val().ExactString() {
-							out[fn.String()+" @ "+instruction.String()] = true
-						}
-					}
+		if call, ok := step.Ins.(ssa.CallInstruction); ok {
+			for _, arg := range call.Common().Args {
+				if value, ok := arg.(*ssa.Const); ok && value.Value != nil && types.Identical(value.Type(), bufferedOperation.Type()) && value.Value.ExactString() == bufferedOperation.Val().ExactString() {
+					out[step.Func.String()+" @ "+step.Ins.String()] = true
 				}
 			}
 		}
@@ -226,9 +222,32 @@ func (a *bindingSSAAnalysis) alias(value ssa.Value, frame *bindingSSAFrame, seen
 	if value == nil || !bindingSSAReference(value.Type()) || seen[value] {
 		return false
 	}
+	if a.reachability != nil && !a.reachability.mayReach(value) {
+		return false
+	}
 	seen[value] = true
 	defer delete(seen, value)
 	alias := func(v ssa.Value) bool { return a.alias(v, frame, seen) }
+	// Call results are traced through the callee's returns with a frame that
+	// binds the callee's parameters to this call's arguments. A tuple index
+	// selects the matching result position.
+	callAlias := func(call *ssa.Call, index int) bool {
+		callee := call.Common().StaticCallee()
+		if callee == nil {
+			return false
+		}
+		for _, block := range callee.Blocks {
+			if len(block.Instrs) == 0 {
+				continue
+			}
+			if ret, ok := block.Instrs[len(block.Instrs)-1].(*ssa.Return); ok && index < len(ret.Results) {
+				if a.alias(ret.Results[index], &bindingSSAFrame{call: call, parent: frame}, seen) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	switch v := value.(type) {
 	case *ssa.Alloc:
 		// Captured locals are addresses in closure bindings. Their initializing
@@ -318,7 +337,7 @@ func (a *bindingSSAAnalysis) alias(value ssa.Value, frame *bindingSSAFrame, seen
 	case *ssa.Extract:
 		switch tuple := v.Tuple.(type) {
 		case *ssa.Call:
-			return a.callAlias(tuple, v.Index, frame, seen)
+			return callAlias(tuple, v.Index)
 		case *ssa.Lookup:
 			return v.Index == 0 && alias(tuple.X)
 		case *ssa.TypeAssert:
@@ -329,25 +348,7 @@ func (a *bindingSSAAnalysis) alias(value ssa.Value, frame *bindingSSAFrame, seen
 			}
 		}
 	case *ssa.Call:
-		return a.callAlias(v, 0, frame, seen)
-	}
-	return false
-}
-
-func (a *bindingSSAAnalysis) callAlias(call *ssa.Call, index int, frame *bindingSSAFrame, seen map[ssa.Value]bool) bool {
-	callee := call.Common().StaticCallee()
-	if callee == nil {
-		return false
-	}
-	for _, block := range callee.Blocks {
-		if len(block.Instrs) == 0 {
-			continue
-		}
-		if ret, ok := block.Instrs[len(block.Instrs)-1].(*ssa.Return); ok && index < len(ret.Results) {
-			if a.alias(ret.Results[index], &bindingSSAFrame{call: call, parent: frame}, seen) {
-				return true
-			}
-		}
+		return callAlias(v, 0)
 	}
 	return false
 }

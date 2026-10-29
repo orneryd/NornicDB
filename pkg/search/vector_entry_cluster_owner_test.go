@@ -19,7 +19,7 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				engine := newNamespacedEngine(t)
-				svc := NewServiceWithDimensions(engine, vectorOwnerDims)
+				svc := NewService(engine, vectorOwnerDims, nil)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				svc.EnableClustering(nil, 1)
 				svc.SetMinEmbeddingsForClustering(1)

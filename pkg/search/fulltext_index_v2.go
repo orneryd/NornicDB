@@ -1,3 +1,4 @@
+// Package search provides full-text indexing with BM25 scoring.
 package search
 
 import (
@@ -11,8 +12,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 )
 
+// BM25 parameters (standard values)
 const (
-	bm25V2FormatVersion        = "2.1.0"
+	bm25K1              = 1.2  // Term frequency saturation
+	bm25B               = 0.75 // Length normalization
+	bm25AnalyzerVersion = bm25TokenizerVersion
+)
+
+// bm25V2FormatVersion is the semver written into saved BM25 index files.
+// On load, a file whose version is not equal to this is not loaded (caller rebuilds).
+const bm25V2FormatVersion = "2.1.0"
+
+const (
 	bm25PrefixWeight           = 0.8
 	bm25SparseMinDocSlots      = 100_000
 	bm25DenseMinPostingVisits  = 4096
@@ -57,7 +68,7 @@ func (st *bm25TermState) compactLocked(docLengths []uint32) {
 	st.dead = 0
 }
 
-// FulltextIndexV2 provides a BM25 index optimized for large datasets.
+// FulltextIndexV2 provides BM25-based full-text search.
 // It stores compact postings (docNum/tf) and uses bounded prefix expansion + top-k scoring.
 type FulltextIndexV2 struct {
 	mu sync.RWMutex
@@ -90,10 +101,8 @@ type FulltextIndexV2 struct {
 	analyzer            Analyzer
 }
 
-func NewFulltextIndexV2() *FulltextIndexV2 {
-	return NewFulltextIndexV2WithAnalyzer(nil)
-}
-
+// NewFulltextIndexV2WithAnalyzer creates a full-text search index with the supplied analyzer.
+// A nil analyzer selects the default analyzer.
 func NewFulltextIndexV2WithAnalyzer(analyzer Analyzer) *FulltextIndexV2 {
 	maxPrefixExpansions := envutil.GetInt("NORNICDB_BM25_PREFIX_MAX_EXPANSIONS", 0)
 	if maxPrefixExpansions < 0 {
@@ -166,10 +175,31 @@ func (f *FulltextIndexV2) Clear() {
 	f.markDirtyLocked()
 }
 
-func (f *FulltextIndexV2) Index(id string, text string) {
-	f.IndexBatch([]FulltextBatchEntry{{ID: id, Text: text}})
+// Index adds or updates a document. When prepared is false, it analyzes text
+// itself and ignores terms and frequency. When prepared is true, those inputs
+// must contain the analyzer's tokens and their frequencies for the text.
+func (f *FulltextIndexV2) Index(id, text string, terms []string, frequency map[string]int, prepared bool) {
+	if id == "" {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dirty := f.applyDocumentLocked(id, text, terms, frequency, prepared)
+	f.updateAvgDocLengthLocked()
+	if dirty {
+		f.markDirtyLocked()
+	}
 }
 
+// FulltextBatchEntry is one (id, text) pair for IndexBatch.
+type FulltextBatchEntry struct {
+	ID   string
+	Text string
+}
+
+// IndexBatch adds or updates many documents under one lock and updates
+// avgDocLength once at the end. Use this during bulk build to reduce lock
+// contention and avoid O(N) avg updates.
 func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 	if len(entries) == 0 {
 		return
@@ -178,66 +208,68 @@ func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 	defer f.mu.Unlock()
 
 	dirty := false
-	for _, e := range entries {
-		if e.ID == "" {
-			continue
-		}
-		if f.removeInternalLocked(e.ID) {
+	for _, entry := range entries {
+		if entry.ID != "" && f.applyDocumentLocked(entry.ID, entry.Text, nil, nil, false) {
 			dirty = true
 		}
-		tokens := f.analyze(e.Text)
-		if len(tokens) == 0 {
-			continue
-		}
-
-		docNum, ok := f.docIDToNum[e.ID]
-		if !ok {
-			docNum = uint32(len(f.docNumToID))
-			if f.docIDsLexicalByNum {
-				for previous := len(f.docNumToID) - 1; previous >= 0; previous-- {
-					if previousID := f.docNumToID[previous]; previousID != "" {
-						f.docIDsLexicalByNum = previousID < e.ID
-						break
-					}
-				}
-			}
-			f.docIDToNum[e.ID] = docNum
-			f.docNumToID = append(f.docNumToID, e.ID)
-			f.docLengths = append(f.docLengths, 0)
-		} else {
-			f.docNumToID[docNum] = e.ID
-		}
-
-		termFreq := make(map[string]int, len(tokens))
-		for _, t := range tokens {
-			termFreq[t]++
-		}
-
-		f.documents[e.ID] = e.Text
-		f.docLengths[docNum] = uint32(len(tokens))
-		f.docCount++
-		f.totalDocLength += int64(len(tokens))
-
-		for term, tf := range termFreq {
-			if tf <= 0 {
-				continue
-			}
-			st, exists := f.termIndex[term]
-			if !exists {
-				st = &bm25TermState{}
-				f.termIndex[term] = st
-				f.insertLexiconTermLocked(term)
-			}
-			st.Postings = append(st.Postings, bm25Posting{DocNum: docNum, TF: uint16(minInt(tf, math.MaxUint16))})
-		}
-
-		dirty = true
 	}
 
 	f.updateAvgDocLengthLocked()
 	if dirty {
 		f.markDirtyLocked()
 	}
+}
+
+// applyDocumentLocked is the shared single-document mutation for live and
+// batched indexing. The caller updates aggregate metadata once per batch.
+func (f *FulltextIndexV2) applyDocumentLocked(id, text string, terms []string, frequency map[string]int, prepared bool) bool {
+	removed := f.removeInternalLocked(id)
+	if !prepared {
+		terms = f.analyze(text)
+	}
+	if len(terms) == 0 {
+		return removed
+	}
+	docNum, ok := f.docIDToNum[id]
+	if !ok {
+		docNum = uint32(len(f.docNumToID))
+		if f.docIDsLexicalByNum {
+			for previous := len(f.docNumToID) - 1; previous >= 0; previous-- {
+				if previousID := f.docNumToID[previous]; previousID != "" {
+					f.docIDsLexicalByNum = previousID < id
+					break
+				}
+			}
+		}
+		f.docIDToNum[id] = docNum
+		f.docNumToID = append(f.docNumToID, id)
+		f.docLengths = append(f.docLengths, 0)
+	} else {
+		f.docNumToID[docNum] = id
+	}
+	if !prepared {
+		frequency = make(map[string]int, len(terms))
+		for _, term := range terms {
+			frequency[term]++
+		}
+	}
+	f.documents[id] = text
+	f.docLengths[docNum] = uint32(len(terms))
+	f.docCount++
+	f.totalDocLength += int64(len(terms))
+	for term, tf := range frequency {
+		if tf <= 0 {
+			continue
+		}
+		st, exists := f.termIndex[term]
+		if !exists {
+			st = &bm25TermState{}
+			f.termIndex[term] = st
+			f.insertLexiconTermLocked(term)
+		}
+		st.Postings = append(st.Postings, bm25Posting{DocNum: docNum, TF: uint16(minInt(tf, math.MaxUint16))})
+	}
+	return true
 }
 
 func (f *FulltextIndexV2) Remove(id string) {
@@ -770,6 +802,26 @@ func (f *FulltextIndexV2) analyze(text string) []string {
 	return normalizeAnalyzer(f.analyzer).Analyze(text)
 }
 
+func lexicalSeedMinDocumentFrequency() int {
+	minFrequency := envutil.GetInt("NORNICDB_BM25_IDF_MIN_DOC_FREQ", 2)
+	if minFrequency < 1 {
+		return 1
+	}
+	return minFrequency
+}
+
+// tokenize splits canonically equivalent Unicode text into exact terms.
+func tokenize(text string) []string {
+	return DefaultTextAnalyzer().Analyze(text)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 type scoredDoc struct {
 	docNum uint32
 	score  float64
@@ -963,11 +1015,4 @@ func topKFromDenseScores(scores []float64, touched []uint32, docIDs []string, as
 		}
 	}
 	return sortScoreHeapDescending(h, docIDs)
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -35,7 +35,7 @@ func TestSearchContinuationPageSizeGRPC(t *testing.T) {
 			if limit != 500 {
 				options.SearchCursorMaxPageSize = limit
 			}
-			svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(store, 3, "v2", &options)
+			svc := search.NewService(store, 3, &options)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			api, err := NewService(Config{}, nil, nil, svc)
 			require.NoError(t, err)

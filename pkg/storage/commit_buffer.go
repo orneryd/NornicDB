@@ -65,6 +65,12 @@ type bufferedCommit struct {
 	// were pending; replay clears their mark once their keys are durable.
 	// Nil for commits recovered from the WAL, whose entries load as stored.
 	idEntries *txnCounterState
+	// walIDs is present only while the originating transaction captures its
+	// WAL record; buffered replay does not retain or consult the source owner.
+	walIDs *idDictionary
+	// numericBindings belongs to a recovered record and resolves its source
+	// numeric IDs against the receiving store before physical replay.
+	numericBindings []byte
 
 	// propKeyDrain carries the property-key dictionary tokens staged by this
 	// commit; they persist out-of-transaction at replay, as the normal

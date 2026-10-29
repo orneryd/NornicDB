@@ -125,11 +125,11 @@ func (b *BadgerEngine) ensureEdgeAdjacencyAtHeadInTxn(txn *badger.Txn, edge *Edg
 	if edge == nil {
 		return nil
 	}
-	outgoingKey, err := b.mvccOutgoingAdjacencyKeyString(txn, edge.StartNode, edge.ID, version)
+	outgoingKey, err := b.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, edge.StartNode, edge.ID, version)
 	if err != nil {
 		return err
 	}
-	incomingKey, err := b.mvccIncomingAdjacencyKeyString(txn, edge.EndNode, edge.ID, version)
+	incomingKey, err := b.mvccAdjacencyKeyString(mvccAdjacencyIncoming, txn, edge.EndNode, edge.ID, version)
 	if err != nil {
 		return err
 	}

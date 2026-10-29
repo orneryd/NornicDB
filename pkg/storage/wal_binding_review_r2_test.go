@@ -14,7 +14,9 @@ func r2BindingData(t testing.TB, count int) (*BadgerEngine, WALBufferedCommitDat
 	source, _, c := bindingCostFixture(t, count)
 	bindings, err := bufferedWALPropertyBindings(c.writes, source.propKeyDict)
 	require.NoError(t, err)
-	return source, WALBufferedCommitData{Namespace: c.namespace, TxID: c.txID, Writes: c.writes, PropertyBindings: bindings}
+	numeric, err := captureWALNumericBindings(source.idDict, c.writes, c.deletes, nil)
+	require.NoError(t, err)
+	return source, WALBufferedCommitData{Namespace: c.namespace, TxID: c.txID, Writes: c.writes, NumericBindings: numeric, PropertyBindings: bindings}
 }
 
 func TestReviewR2RemapCrashBeforeApply(t *testing.T) {

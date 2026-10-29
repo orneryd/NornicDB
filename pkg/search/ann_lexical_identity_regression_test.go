@@ -81,7 +81,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": "alpha beta"}, NamedEmbeddings: map[string][]float32{"default": vec}})
 				require.NoError(t, err)
 			}
-			svc := NewServiceWithDimensions(engine, 2)
+			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			if clustered {
 				svc.EnableClustering(nil, 2)
@@ -124,7 +124,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 }
 
 func TestBM25SeedEmbeddingIDsUsesIndexedMetadata(t *testing.T) {
-	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
+	svc := NewService(newNamespacedEngine(t), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.IndexNode(&storage.Node{
 		ID: "seed", Properties: map[string]any{"text": "alpha", "features": []float32{1, 0}},

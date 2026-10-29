@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,6 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	if walPath == "" {
 		return false, nil, nil
 	}
-
 	fi, err := os.Stat(walPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -37,9 +37,7 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	if fi.Mode().IsRegular() && fi.Size() == 0 {
 		return false, nil, nil
 	}
-
-	// Only attempt repair for the atomic WAL format (magic header).
-	// Legacy JSON format is kept for backward compatibility but is not repaired here.
+	// Only the current atomic WAL format is eligible for repair.
 	f, err := os.Open(walPath)
 	if err != nil {
 		return false, nil, fmt.Errorf("wal: startup repair open failed: %w", err)
@@ -50,6 +48,12 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	if readErr != nil {
 		// If we can't even read the header, treat as partial tail and truncate to 0.
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			if err := validateWALFileVersion(walPath, false); err != nil {
+				return false, nil, err
+			}
+			if !bytes.HasPrefix([]byte("WALE"), header[:n]) {
+				return false, nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
+			}
 			return truncateWALFile(walPath, 0, 0, "incomplete_tail", logger)
 		}
 		return false, nil, fmt.Errorf("wal: startup repair header read failed: %w", readErr)
@@ -59,8 +63,10 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	}
 
 	if binary.LittleEndian.Uint32(header) != walMagic {
-		// Not atomic format: no-op.
-		return false, nil, nil
+		return false, nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
+	}
+	if err := validateWALFileVersion(walPath, false); err != nil {
+		return false, nil, err
 	}
 
 	// Open RW so we can truncate in place if needed.
@@ -114,10 +120,10 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		}
 
 		version := header[4]
-		if version > walFormatVersionPropertyEpoch {
+		if version != walFormatVersionCurrent {
 			// A newer format is not evidence of a torn write. Never destroy data
 			// merely because this binary cannot read it.
-			return 0, lastGoodSeq, "", false, fmt.Errorf("wal: unsupported WAL version %d (max supported: %d)", version, walFormatVersionPropertyEpoch)
+			return 0, lastGoodSeq, "", false, unsupportedWALVersion(version)
 		}
 
 		payloadLen := binary.LittleEndian.Uint32(header[5:9])
@@ -186,7 +192,8 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		}
 
 		// Decode entry to track last-good sequence (best-effort).
-		entry, err := decodeWALEntry(payload, version)
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
 		if err != nil {
 			return offset, lastGoodSeq, "invalid_json", false, nil
 		}

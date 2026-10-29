@@ -603,7 +603,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 
 	// Keep request-path read-your-write behavior for search by indexing immediately.
 	// Storage event callbacks still provide eventual consistency for external writers.
-	svc, svcErr := db.getOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
+	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
 		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
@@ -668,7 +668,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	}
 
 	// Keep search results immediately consistent after updates.
-	svc, svcErr := db.getOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
+	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
 		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
@@ -706,7 +706,7 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	}
 	// The refresh reads the deletion, and waits for any in-flight build to
 	// finish so a stale scan cannot re-add the deleted node.
-	if err := db.refreshNodeInSearchIndexes(ctx, defaultDB, storageEngine, storage.NodeID(id)); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+	if err := search.RefreshIndexes(ctx, dbRefreshScope{db: db, dbName: defaultDB, storage: storageEngine}, search.RefreshRequest{Node: storage.NodeID(id)}); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
 		return err
 	}
 	return nil
@@ -1632,7 +1632,7 @@ func (db *DB) restartSearchAfterRestore() {
 	// each use, so the default Cypher executor uses the rebuilt one.
 	db.invalidateSearchState(func(string) bool { return true }, true)
 	dbName := db.defaultDatabaseName()
-	if svc, err := db.getOrCreateSearchService(dbName, db.storage); err == nil && svc != nil {
+	if svc, err := db.GetOrCreateSearchService(dbName, db.storage); err == nil && svc != nil {
 		db.searchServicesMu.RLock()
 		entry := db.searchServices[dbName]
 		db.searchServicesMu.RUnlock()

@@ -11,7 +11,7 @@ import (
 func BenchmarkSearchNodeMutationOrdering(b *testing.B) {
 	engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	defer svc.Close()
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "bravo"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	b.ReportAllocs()

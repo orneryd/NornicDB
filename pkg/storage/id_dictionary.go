@@ -23,9 +23,8 @@ import (
 //	[prefixEdgeIDForward]  + stringID     -> 8-byte numID
 //	[prefixIDCounter]      + "node" | "edge" -> 8-byte next value
 //
-// There is intentionally no reverse map. Every call site that resolves a
-// numeric ID back to a string already has the string — lookups from
-// numeric IDs alone are not required for the caller patterns we support.
+// Reverse entries map a numeric node or edge ID back to its string ID for
+// index and MVCC readers that start from the numeric form.
 //
 // The in-memory cache is rebuilt on engine open by scanning the forward
 // prefix once. From then on, resolveNodeNumID / resolveEdgeNumID operate
@@ -89,20 +88,14 @@ var (
 	idCounterEdgeKey = []byte{prefixIDDictCounter, 'e'}
 )
 
-// nodeDictShard is one slice of the node ID dictionary.
-type nodeDictShard struct {
-	mu      sync.RWMutex
-	forward map[NodeID]uint64
-	reverse map[uint64]NodeID
-	// pending marks, by forward shard, the entries whose forward and
-	// reverse keys no committed transaction has written yet: the
-	// transaction that allocated one may still roll back, leaving the entry
-	// in memory only (#907, I29). A transaction that resolves a pending
-	// entry writes its keys too, and the first commit that persists them
-	// clears the mark. Each holds the state of the transaction that last
-	// wrote the keys, so that transaction resolving the entry again doesn't
-	// write them again.
-	pending map[NodeID]*txnCounterState
+// idDictShard is one independently locked slice of a numeric-ID dictionary.
+// Pending entries and adopters belong to the forward shard for their ID.
+type idDictShard[ID ~string] struct {
+	mu       sync.RWMutex
+	forward  map[ID]uint64
+	reverse  map[uint64]ID
+	pending  map[ID]*txnCounterState
+	adopters map[ID]map[*txnCounterState]struct{}
 }
 
 // nodeForwardShard picks the shard of a node's forward entry. FNV-1a over
@@ -119,17 +112,6 @@ func nodeForwardShard(id NodeID) int {
 // nodeReverseShard picks the shard of a node's reverse entry.
 func nodeReverseShard(num uint64) int {
 	return int(num % nodeDictShards)
-}
-
-// edgeDictShard is one slice of the edge ID dictionary, sharded the same
-// way as nodes: every created relationship writes its forward/reverse pair
-// through this dictionary, so the single shared lock serialized bulk edge
-// creation under concurrency.
-type edgeDictShard struct {
-	mu      sync.RWMutex
-	forward map[EdgeID]uint64
-	reverse map[uint64]EdgeID
-	pending map[EdgeID]*txnCounterState // as nodeDictShard.pending
 }
 
 // edgeForwardShard picks the shard of an edge's forward entry.
@@ -153,8 +135,8 @@ type idDictionary struct {
 	// concurrent creates of distinct entities no longer serialize on one
 	// dictionary-wide lock. mu guards freelistTTL only.
 	mu    sync.RWMutex
-	nodes [nodeDictShards]nodeDictShard
-	edges [nodeDictShards]edgeDictShard
+	nodes [nodeDictShards]idDictShard[NodeID]
+	edges [nodeDictShards]idDictShard[EdgeID]
 
 	// Counters for next available numID; also persisted so we don't
 	// reuse IDs across restarts.
@@ -177,6 +159,12 @@ type idDictionary struct {
 	// find nothing, and decrement back to accuracy on next reload).
 	nodeFreelistPending atomic.Int64
 	edgeFreelistPending atomic.Int64
+	// A popped key remains visible to other transactions until the claiming
+	// transaction commits. Reserve it in memory across aborts and transfer
+	// its deletion when another transaction persists the same pending name.
+	freelistClaimMu    sync.Mutex
+	freelistClaims     map[freelistClaimID]*freelistClaim
+	freelistClaimCount atomic.Int64
 	// lastFreedStamp is the monotonic freed-at stamp stamped on freelist
 	// keys. Wall-clock time is NOT used directly: under NTP steps (and with
 	// per-thread cached time.Now reads, which repeat under very fast
@@ -207,8 +195,20 @@ type txnCounterState struct {
 	nodeMax uint64 // 0 = no node allocs on this txn
 	edgeMax uint64
 	// The pending entries whose keys this txn writes.
-	nodes []NodeID
-	edges []EdgeID
+	nodes     []NodeID
+	edges     []EdgeID
+	claims    []*freelistClaim
+	abandoned atomic.Bool
+}
+
+type freelistClaimID struct {
+	kind byte
+	id   uint64
+}
+
+type freelistClaim struct {
+	id  freelistClaimID
+	key []byte
 }
 
 func newIDDictionary() *idDictionary {
@@ -330,6 +330,80 @@ func (d *idDictionary) takeTxnCommitting(txn *badger.Txn) *txnCounterState {
 	return st
 }
 
+// adoptPendingWriter records overlapping writers only for a pending name
+// that another transaction has already staged. Its caller holds the forward
+// shard lock. The ordinary one-writer path creates no additional map.
+func adoptPendingWriter[K comparable](pending map[K]*txnCounterState, adopters *map[K]map[*txnCounterState]struct{}, key K, writer *txnCounterState) {
+	previous, exists := pending[key]
+	if !exists || previous == writer {
+		return
+	}
+	owners := (*adopters)[key]
+	if owners == nil && previous != nil && !previous.abandoned.Load() {
+		if *adopters == nil {
+			*adopters = make(map[K]map[*txnCounterState]struct{})
+		}
+		owners = make(map[*txnCounterState]struct{}, 2)
+		owners[previous] = struct{}{}
+		(*adopters)[key] = owners
+	}
+	if owners != nil {
+		owners[writer] = struct{}{}
+	}
+	pending[key] = writer
+}
+
+// A successful writer makes this generation durable, even if an adopter was
+// staged later. Old writers are removed from adopters when a name is removed,
+// so they cannot clear a newer generation's pending mark.
+func clearCommittedPending[K comparable](pending map[K]*txnCounterState, adopters map[K]map[*txnCounterState]struct{}, key K, writer *txnCounterState) {
+	_, shared := adopters[key][writer]
+	if pending[key] == writer || shared {
+		delete(pending, key)
+		delete(adopters, key)
+	}
+}
+
+// abandonPendingWriter returns true only when no other live writer owns the
+// name. A discarded writer can remain as a pending placeholder until another
+// transaction adopts it, but cannot keep a rejected generation alive.
+func abandonPendingWriter[K comparable](pending map[K]*txnCounterState, adopters map[K]map[*txnCounterState]struct{}, key K, writer *txnCounterState) bool {
+	current, exists := pending[key]
+	if !exists {
+		return false
+	}
+	owners := adopters[key]
+	if owners == nil {
+		if current != writer {
+			return false
+		}
+		delete(pending, key)
+		return true
+	}
+	if _, tracked := owners[writer]; !tracked {
+		return false
+	}
+	delete(owners, writer)
+	var survivor *txnCounterState
+	for owner := range owners {
+		if owner.abandoned.Load() {
+			delete(owners, owner)
+		} else {
+			survivor = owner
+		}
+	}
+	if survivor != nil {
+		pending[key] = survivor
+		if len(owners) == 1 {
+			delete(adopters, key)
+		}
+		return false
+	}
+	delete(pending, key)
+	delete(adopters, key)
+	return true
+}
+
 // clearPending clears the pending mark of the entries st wrote, once a
 // commit has persisted their keys. An entry another transaction wrote since
 // (rewritten, or deleted and allocated again) keeps the mark: its last
@@ -338,22 +412,129 @@ func (d *idDictionary) clearPending(st *txnCounterState) {
 	if st == nil {
 		return
 	}
+	if len(st.claims) != 0 {
+		d.freelistClaimMu.Lock()
+		for _, claim := range st.claims {
+			if d.freelistClaims[claim.id] == claim {
+				delete(d.freelistClaims, claim.id)
+				d.freelistClaimCount.Add(-1)
+			}
+		}
+		d.freelistClaimMu.Unlock()
+	}
 	for _, id := range st.nodes {
 		sh := &d.nodes[nodeForwardShard(id)]
 		sh.mu.Lock()
-		if sh.pending[id] == st {
-			delete(sh.pending, id)
-		}
+		clearCommittedPending(sh.pending, sh.adopters, id, st)
 		sh.mu.Unlock()
 	}
 	for _, id := range st.edges {
 		sh := &d.edges[edgeForwardShard(id)]
 		sh.mu.Lock()
-		if sh.pending[id] == st {
-			delete(sh.pending, id)
-		}
+		clearCommittedPending(sh.pending, sh.adopters, id, st)
 		sh.mu.Unlock()
 	}
+}
+
+// abandonPending releases entries belonging only to a rejected buffered
+// commit. An adopter changes the pending writer under the forward shard lock,
+// so its entries and recycled-ID claims survive the rejected commit.
+func (d *idDictionary) abandonPending(st *txnCounterState) {
+	if st == nil {
+		return
+	}
+	st.abandoned.Store(true)
+	for _, id := range st.nodes {
+		sh := &d.nodes[nodeForwardShard(id)]
+		sh.mu.Lock()
+		num, found := sh.forward[id]
+		remove := abandonPendingWriter(sh.pending, sh.adopters, id, st)
+		if remove {
+			delete(sh.forward, id)
+		}
+		sh.mu.Unlock()
+		if remove && found {
+			reverse := &d.nodes[nodeReverseShard(num)]
+			reverse.mu.Lock()
+			if reverse.reverse[num] == id {
+				delete(reverse.reverse, num)
+			}
+			reverse.mu.Unlock()
+		}
+	}
+	for _, id := range st.edges {
+		sh := &d.edges[edgeForwardShard(id)]
+		sh.mu.Lock()
+		num, found := sh.forward[id]
+		remove := abandonPendingWriter(sh.pending, sh.adopters, id, st)
+		if remove {
+			delete(sh.forward, id)
+		}
+		sh.mu.Unlock()
+		if remove && found {
+			reverse := &d.edges[edgeReverseShard(num)]
+			reverse.mu.Lock()
+			if reverse.reverse[num] == id {
+				delete(reverse.reverse, num)
+			}
+			reverse.mu.Unlock()
+		}
+	}
+	for _, claim := range st.claims {
+		var used bool
+		if claim.id.kind == freelistKindNode {
+			_, used = d.lookupNodeIDByNum(claim.id.id)
+		} else {
+			_, used = d.lookupEdgeIDByNum(claim.id.id)
+		}
+		if used {
+			continue
+		}
+		d.freelistClaimMu.Lock()
+		if d.freelistClaims[claim.id] == claim {
+			delete(d.freelistClaims, claim.id)
+			d.freelistClaimCount.Add(-1)
+			if claim.id.kind == freelistKindNode {
+				d.nodeFreelistPending.Add(1)
+			} else {
+				d.edgeFreelistPending.Add(1)
+			}
+		}
+		d.freelistClaimMu.Unlock()
+	}
+}
+
+// addTxnFreelistClaim records a staged deletion for the transaction's
+// commit/abort bookkeeping. The claim itself is retained after abort because
+// its pending dictionary name may be adopted by another transaction.
+func (d *idDictionary) addTxnFreelistClaim(txn *badger.Txn, claim *freelistClaim) {
+	d.txnMu.Lock()
+	st := d.txnCounters[txn]
+	if st == nil {
+		st = &txnCounterState{}
+		d.txnCounters[txn] = st
+	}
+	st.claims = append(st.claims, claim)
+	d.txnMu.Unlock()
+}
+
+// A second writer of a pending name must carry the same freelist deletion;
+// either writer may be the first to commit its dictionary entries.
+func (d *idDictionary) stagePendingFreelistClaim(txn kvWriter, kind byte, num uint64) error {
+	if d.freelistClaimCount.Load() == 0 {
+		return nil
+	}
+	d.freelistClaimMu.Lock()
+	claim := d.freelistClaims[freelistClaimID{kind, num}]
+	d.freelistClaimMu.Unlock()
+	if claim == nil {
+		return nil
+	}
+	if err := txn.Delete(claim.key); err != nil {
+		return err
+	}
+	d.addTxnFreelistClaim(kvWriterTxn(txn), claim)
+	return nil
 }
 
 // nodePendingWriter is a pending node entry's last writer, if it is
@@ -428,6 +609,7 @@ func (d *idDictionary) discardTxnCounters(txn *badger.Txn) {
 	for _, states := range []map[*badger.Txn]*txnCounterState{d.txnCounters, d.txnCommitting} {
 		if st, ok := states[txn]; ok {
 			// Pending entries still name it as their writer; drop the list.
+			st.abandoned.Store(true)
 			st.nodes, st.edges = nil, nil
 			delete(states, txn)
 		}
@@ -539,34 +721,65 @@ func (d *idDictionary) popAgedFreelistEntryInTxn(txn kvWriter, kind byte, ttl ti
 	defer it.Close()
 	// Skip entries this transaction already popped: a transaction stages
 	// its pops (stagedKV), and the iterator does not see staged deletions.
-	it.Rewind()
-	for it.ValidForPrefix(prefix) && kvStagedDeleted(txn, it.Item().Key()) {
-		it.Next()
+	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		key := it.Item().KeyCopy(nil)
+		if kvStagedDeleted(txn, key) {
+			continue
+		}
+		if len(key) != 1+1+8+8 {
+			return 0, false, fmt.Errorf("freelist key wrong size: %d", len(key))
+		}
+		if binary.BigEndian.Uint64(key[2:10]) > cutoffNanos {
+			return 0, false, nil
+		}
+		numID := binary.BigEndian.Uint64(key[10:18])
+		claimID := freelistClaimID{kind, numID}
+		// Reserve before checking the reverse map so the claim lock is never
+		// held while taking a dictionary shard lock.
+		d.freelistClaimMu.Lock()
+		if d.freelistClaims[claimID] != nil {
+			d.freelistClaimMu.Unlock()
+			continue
+		}
+		claim := &freelistClaim{id: claimID, key: key}
+		if d.freelistClaims == nil {
+			d.freelistClaims = make(map[freelistClaimID]*freelistClaim)
+		}
+		d.freelistClaims[claimID] = claim
+		d.freelistClaimCount.Add(1)
+		d.freelistClaimMu.Unlock()
+		release := func() {
+			d.freelistClaimMu.Lock()
+			if d.freelistClaims[claimID] == claim {
+				delete(d.freelistClaims, claimID)
+				d.freelistClaimCount.Add(-1)
+			}
+			d.freelistClaimMu.Unlock()
+		}
+		// A transaction with an older read timestamp may still see a key
+		// already removed by a committed claimant.
+		if kind == freelistKindNode {
+			if _, exists := d.lookupNodeIDByNum(numID); exists {
+				release()
+				continue
+			}
+		} else if _, exists := d.lookupEdgeIDByNum(numID); exists {
+			release()
+			continue
+		}
+		if err := txn.Delete(key); err != nil {
+			release()
+			return 0, false, err
+		}
+		d.addTxnFreelistClaim(kvWriterTxn(txn), claim)
+		if kind == freelistKindNode {
+			d.nodeFreelistPending.Add(-1)
+		} else {
+			d.edgeFreelistPending.Add(-1)
+		}
+		return numID, true, nil
 	}
-	if !it.ValidForPrefix(prefix) {
-		return 0, false, nil
-	}
-	key := it.Item().KeyCopy(nil)
-	if len(key) != 1+1+8+8 {
-		return 0, false, fmt.Errorf("freelist key wrong size: %d", len(key))
-	}
-	freedAt := binary.BigEndian.Uint64(key[2:10])
-	if freedAt > cutoffNanos {
-		// Head entry is still too fresh. Because entries are sorted by
-		// freedAt, every later entry is equally or more fresh — no point
-		// scanning. Fall back to counter bump.
-		return 0, false, nil
-	}
-	numID := binary.BigEndian.Uint64(key[10:18])
-	if err := txn.Delete(key); err != nil {
-		return 0, false, err
-	}
-	if kind == freelistKindNode {
-		d.nodeFreelistPending.Add(-1)
-	} else {
-		d.edgeFreelistPending.Add(-1)
-	}
-	return numID, true, nil
+	return 0, false, nil
 }
 
 // freelistStagedCount returns the persisted freelist entry count for
@@ -770,13 +983,13 @@ func (d *idDictionary) nodeReverseLookup(num uint64) (NodeID, bool) {
 	return id, ok
 }
 
-// nodePairStore installs forward[id] = num and reverse[num] = id. The
+// storeIDPair installs forward[id] = num and reverse[num] = id. The
 // forward entry is published before the reverse one: a reverse reader can
 // never observe a num whose forward entry isn't visible yet. When another
 // goroutine already stored a num for id it returns that num with ok=false
 // (the caller adopts it and must not publish reverse itself).
-func (d *idDictionary) nodePairStore(id NodeID, num uint64, writer *txnCounterState) (uint64, bool) {
-	fshard := &d.nodes[nodeForwardShard(id)]
+func storeIDPair[ID ~string](shards *[nodeDictShards]idDictShard[ID], forwardShard func(ID) int, reverseShard func(uint64) int, id ID, num uint64, writer *txnCounterState) (uint64, bool) {
+	fshard := &shards[forwardShard(id)]
 	fshard.mu.Lock()
 	if existing, already := fshard.forward[id]; already {
 		fshard.mu.Unlock()
@@ -788,7 +1001,7 @@ func (d *idDictionary) nodePairStore(id NodeID, num uint64, writer *txnCounterSt
 		fshard.pending[id] = writer
 	}
 	fshard.mu.Unlock()
-	rshard := &d.nodes[nodeReverseShard(num)]
+	rshard := &shards[reverseShard(num)]
 	rshard.mu.Lock()
 	// Sole writer of this num at creation time (numIDs are unique per
 	// allocation; reissue requires a full freelist TTL cycle that cannot
@@ -796,54 +1009,6 @@ func (d *idDictionary) nodePairStore(id NodeID, num uint64, writer *txnCounterSt
 	rshard.reverse[num] = id
 	rshard.mu.Unlock()
 	return num, true
-}
-
-// nodePairRemoveByID removes forward[id] and the matching reverse entry.
-// The forward entry goes first so a reverse reader can never observe a num
-// whose forward entry is already gone. Returns the removed num.
-func (d *idDictionary) nodePairRemoveByID(id NodeID) (uint64, bool) {
-	fshard := &d.nodes[nodeForwardShard(id)]
-	fshard.mu.Lock()
-	num, ok := fshard.forward[id]
-	if ok {
-		delete(fshard.forward, id)
-		delete(fshard.pending, id)
-	}
-	fshard.mu.Unlock()
-	if !ok {
-		return 0, false
-	}
-	rshard := &d.nodes[nodeReverseShard(num)]
-	rshard.mu.Lock()
-	if rshard.reverse[num] == id {
-		delete(rshard.reverse, num)
-	}
-	rshard.mu.Unlock()
-	return num, true
-}
-
-// nodePairRemoveByNum removes reverse[num] and the matching forward entry.
-// The forward delete is guarded by its value so a reissued num can never
-// strip a newer pair.
-func (d *idDictionary) nodePairRemoveByNum(num uint64) (NodeID, bool) {
-	rshard := &d.nodes[nodeReverseShard(num)]
-	rshard.mu.Lock()
-	id, ok := rshard.reverse[num]
-	if ok {
-		delete(rshard.reverse, num)
-	}
-	rshard.mu.Unlock()
-	if !ok {
-		return "", false
-	}
-	fshard := &d.nodes[nodeForwardShard(id)]
-	fshard.mu.Lock()
-	if fshard.forward[id] == num {
-		delete(fshard.forward, id)
-		delete(fshard.pending, id)
-	}
-	fshard.mu.Unlock()
-	return id, true
 }
 
 // edgeForwardLookup returns the numeric ID for an edge string ID.
@@ -864,102 +1029,90 @@ func (d *idDictionary) edgeReverseLookup(num uint64) (EdgeID, bool) {
 	return id, ok
 }
 
-// edgePairStore installs forward[id] = num and reverse[num] = id, forward
-// first so a reverse reader never sees a num before its forward entry.
-// When another goroutine already stored a num for id it returns that num
-// with ok=false (the caller adopts it).
-func (d *idDictionary) edgePairStore(id EdgeID, num uint64, writer *txnCounterState) (uint64, bool) {
-	fshard := &d.edges[edgeForwardShard(id)]
-	fshard.mu.Lock()
-	if existing, already := fshard.forward[id]; already {
-		fshard.mu.Unlock()
-		return existing, false
-	}
-	fshard.forward[id] = num
-	if writer != nil {
-		// Pending until a commit persists its keys (pending).
-		fshard.pending[id] = writer
-	}
-	fshard.mu.Unlock()
-	rshard := &d.edges[edgeReverseShard(num)]
-	rshard.mu.Lock()
-	rshard.reverse[num] = id
-	rshard.mu.Unlock()
-	return num, true
-}
+type idPairRemoval uint8
 
-// edgePairRemoveByID removes forward[id] and the matching reverse entry.
-func (d *idDictionary) edgePairRemoveByID(id EdgeID) (uint64, bool) {
-	fshard := &d.edges[edgeForwardShard(id)]
+const (
+	idPairByString idPairRemoval = iota
+	idPairByNumber
+)
+
+// removeIDPair removes a matching forward/reverse pair for either dictionary.
+// ID removal locks the forward shard first; numeric removal locks the reverse
+// shard first. The second delete is value-guarded so a new generation remains.
+func removeIDPair[ID ~string](shards *[nodeDictShards]idDictShard[ID], forwardShard func(ID) int, reverseShard func(uint64) int, id ID, num uint64, mode idPairRemoval) (ID, uint64, bool) {
+	if mode == idPairByNumber {
+		rshard := &shards[reverseShard(num)]
+		rshard.mu.Lock()
+		id, ok := rshard.reverse[num]
+		if ok {
+			delete(rshard.reverse, num)
+		}
+		rshard.mu.Unlock()
+		if !ok {
+			return "", 0, false
+		}
+		fshard := &shards[forwardShard(id)]
+		fshard.mu.Lock()
+		if fshard.forward[id] == num {
+			delete(fshard.forward, id)
+			delete(fshard.pending, id)
+			delete(fshard.adopters, id)
+		}
+		fshard.mu.Unlock()
+		return id, num, true
+	}
+	fshard := &shards[forwardShard(id)]
 	fshard.mu.Lock()
 	num, ok := fshard.forward[id]
 	if ok {
 		delete(fshard.forward, id)
 		delete(fshard.pending, id)
+		delete(fshard.adopters, id)
 	}
 	fshard.mu.Unlock()
 	if !ok {
-		return 0, false
+		return "", 0, false
 	}
-	rshard := &d.edges[edgeReverseShard(num)]
+	rshard := &shards[reverseShard(num)]
 	rshard.mu.Lock()
 	if rshard.reverse[num] == id {
 		delete(rshard.reverse, num)
 	}
 	rshard.mu.Unlock()
-	return num, true
+	return id, num, true
 }
 
-// edgePairRemoveByNum removes reverse[num] and the matching forward entry;
-// the forward delete is value-guarded against a reissued num.
-func (d *idDictionary) edgePairRemoveByNum(num uint64) (EdgeID, bool) {
-	rshard := &d.edges[edgeReverseShard(num)]
-	rshard.mu.Lock()
-	id, ok := rshard.reverse[num]
-	if ok {
-		delete(rshard.reverse, num)
-	}
-	rshard.mu.Unlock()
-	if !ok {
-		return "", false
-	}
-	fshard := &d.edges[edgeForwardShard(id)]
-	fshard.mu.Lock()
-	if fshard.forward[id] == num {
-		delete(fshard.forward, id)
-		delete(fshard.pending, id)
-	}
-	fshard.mu.Unlock()
-	return id, true
-}
-
-// resolveOrAllocateNodeNumIDInTxn returns the 8-byte numeric ID for the
-// given node string ID, allocating a fresh one (and persisting it) on
-// first sight. Must be called inside an update txn.
-//
-// Lock discipline: the shared dict mutex is held ONLY for in-memory map
-// lookups and the final map-update commit. Badger writes happen against
-// the caller's private *badger.Txn (which is per-goroutine) outside the
-// lock so we don't serialize seed-heavy workloads through one global
-// mutex. Races where two goroutines allocate concurrently for the same
-// string ID are resolved via a map re-check after the Badger writes —
-// the loser's numID becomes orphaned and the pruner + freelist reclaim
-// it on the next cycle. The counter itself is atomic (never reused
-// across a race).
-func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn kvWriter, id NodeID) (uint64, error) {
-	if num, ok := d.nodeForwardLookup(id); ok {
-		if writer, pending := d.nodePendingWriter(id); pending && !d.txnWrote(kvWriterTxn(txn), writer) {
-			return num, d.persistPendingNodeInTxn(txn, id, num)
+// resolveOrAllocateNumericIDInTxn resolves or allocates a node or edge ID.
+// The concrete ID type selects its dictionary and keeps their numeric spaces
+// and persisted key families separate.
+func resolveOrAllocateNumericIDInTxn[ID NodeID | EdgeID](d *idDictionary, txn kvWriter, id ID) (uint64, error) {
+	switch value := any(id).(type) {
+	case NodeID:
+		sh := &d.nodes[nodeForwardShard(value)]
+		if num, ok, err := resolveExistingIDInTxn(d, txn, sh, value, freelistKindNode); ok || err != nil {
+			return num, err
 		}
-		return num, nil
+		return allocateIDInTxn(d, txn, value, sh, &d.nodes, nodeForwardShard, nodeReverseShard, &d.nextNode, freelistKindNode)
+	case EdgeID:
+		sh := &d.edges[edgeForwardShard(value)]
+		if num, ok, err := resolveExistingIDInTxn(d, txn, sh, value, freelistKindEdge); ok || err != nil {
+			return num, err
+		}
+		return allocateIDInTxn(d, txn, value, sh, &d.edges, edgeForwardShard, edgeReverseShard, &d.nextEdge, freelistKindEdge)
+	default:
+		panic("unsupported numeric ID type")
 	}
+}
+
+// allocateIDInTxn owns the shared allocation and concurrent-adoption policy.
+// It publishes the forward mapping before the reverse mapping and preserves a
+// rejected winner's ability to disappear before an adopter writes its keys.
+func allocateIDInTxn[ID ~string](d *idDictionary, txn kvWriter, id ID, sh *idDictShard[ID], shards *[nodeDictShards]idDictShard[ID], forwardShard func(ID) int, reverseShard func(uint64) int, counter *atomic.Uint64, kind byte) (uint64, error) {
 	ttl := d.currentFreelistTTL()
 	if ttl <= 0 {
 		ttl = defaultIDFreelistTTL
 	}
-
-	// Try the debounced freelist (Badger seek, no dict lock held).
-	recycled, ok, err := d.popAgedFreelistEntryInTxn(txn, freelistKindNode, ttl)
+	recycled, ok, err := d.popAgedFreelistEntryInTxn(txn, kind, ttl)
 	if err != nil {
 		return 0, err
 	}
@@ -967,34 +1120,64 @@ func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn kvWriter, id NodeID) 
 	if ok {
 		num = recycled
 	} else {
-		num = d.nextNode.Add(1)
+		num = counter.Add(1)
 	}
-
-	// Persist forward + reverse via the per-txn Badger handle. No
-	// shared lock required here. The monotonic counter key is NOT
-	// written per-alloc; it's staged on the txn and flushed ONCE at
-	// commit time. Seed workloads that allocate thousands of numIDs
-	// per commit thereby pay two counter-key writes total (one for
-	// nodes, one for edges) instead of one per allocation.
-	if err := setNodeEntryInTxn(txn, id, num); err != nil {
-		return 0, err
+	var writer *txnCounterState
+	switch kind {
+	case freelistKindNode:
+		if err := setNodeEntryInTxn(txn, NodeID(id), num); err != nil {
+			return 0, err
+		}
+	case freelistKindEdge:
+		if err := setEdgeEntryInTxn(txn, EdgeID(id), num); err != nil {
+			return 0, err
+		}
+	default:
+		return 0, fmt.Errorf("unknown numeric ID kind %q", kind)
 	}
 	if !ok {
-		d.recordTxnCounterUse(kvWriterTxn(txn), freelistKindNode, num)
+		d.recordTxnCounterUse(kvWriterTxn(txn), kind, num)
 	}
-
-	// Update the sharded maps under narrow shard locks. Resolve
-	// concurrent-create races by adopting whichever numID another
-	// goroutine already stored — we abandon `num` (it becomes orphaned
-	// in Badger; the pruner + freelist reclaim it).
 	runIDAllocationRecheckHook()
-	writer := d.stageTxnEntry(kvWriterTxn(txn), id, "")
-	if adopted, ok := d.nodePairStore(id, num, writer); !ok {
-		// Another allocation stored it first: its keys may not be
-		// committed, so this txn writes the adopted entry's keys over ours.
-		return adopted, d.persistPendingNodeInTxn(txn, id, adopted)
+	if kind == freelistKindNode {
+		writer = d.stageTxnEntry(kvWriterTxn(txn), NodeID(id), "")
+	} else {
+		writer = d.stageTxnEntry(kvWriterTxn(txn), "", EdgeID(id))
 	}
-	return num, nil
+	for {
+		if _, stored := storeIDPair(shards, forwardShard, reverseShard, id, num, writer); stored {
+			return num, nil
+		}
+		runIDAllocationAdoptionHook()
+		adopted, found, err := persistPendingIDInTxn(d, txn, sh, id, kind)
+		if found || err != nil {
+			return adopted, err
+		}
+	}
+}
+
+// resolveExistingIDInTxn resolves the forward entry and pending owner under
+// the same shard lock, rechecking after upgrading from a read to a write lock.
+func resolveExistingIDInTxn[ID ~string](d *idDictionary, txn kvWriter, sh *idDictShard[ID], id ID, kind byte) (uint64, bool, error) {
+	sh.mu.RLock()
+	num, found := sh.forward[id]
+	writer, pending := sh.pending[id]
+	if !found || !pending || d.txnWrote(kvWriterTxn(txn), writer) {
+		sh.mu.RUnlock()
+		return num, found, nil
+	}
+	sh.mu.RUnlock()
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	num, found = sh.forward[id]
+	writer, pending = sh.pending[id]
+	if !found || !pending || d.txnWrote(kvWriterTxn(txn), writer) {
+		return num, found, nil
+	}
+	if err := writePendingIDLocked(d, txn, sh, id, num, kind); err != nil {
+		return 0, true, err
+	}
+	return num, true, nil
 }
 
 // idAllocationRecheckHook lets storage tests interpose between an
@@ -1002,8 +1185,18 @@ func (d *idDictionary) resolveOrAllocateNodeNumIDInTxn(txn kvWriter, id NodeID) 
 // concurrent allocation of the same ID is found.
 var idAllocationRecheckHook atomic.Pointer[func()]
 
+// idAllocationAdoptionHook permits a deterministic rejection between a
+// losing allocation's recheck and the adoption of the winning binding.
+var idAllocationAdoptionHook atomic.Pointer[func()]
+
 func runIDAllocationRecheckHook() {
 	if hook := idAllocationRecheckHook.Load(); hook != nil {
+		(*hook)()
+	}
+}
+
+func runIDAllocationAdoptionHook() {
+	if hook := idAllocationAdoptionHook.Load(); hook != nil {
 		(*hook)()
 	}
 }
@@ -1018,20 +1211,41 @@ func setNodeEntryInTxn(txn kvWriter, id NodeID, num uint64) error {
 	return txn.Set(append([]byte{prefixIDDictNodeReverse}, numBytes[:]...), []byte(id))
 }
 
-// persistPendingNodeInTxn writes the keys of an entry txn resolved but did
-// not allocate, and stages it on txn: the transaction that allocated it
-// may not have committed.
-func (d *idDictionary) persistPendingNodeInTxn(txn kvWriter, id NodeID, num uint64) error {
-	if err := setNodeEntryInTxn(txn, id, num); err != nil {
+// persistPendingIDInTxn rechecks and stages the winning entry's keys while
+// holding its shard lock. The winner may have been rejected after the caller
+// observed it; found=false lets the caller publish its own allocation.
+func persistPendingIDInTxn[ID ~string](d *idDictionary, txn kvWriter, sh *idDictShard[ID], id ID, kind byte) (uint64, bool, error) {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	num, found := sh.forward[id]
+	if !found {
+		return 0, false, nil
+	}
+	return num, true, writePendingIDLocked(d, txn, sh, id, num, kind)
+}
+
+func writePendingIDLocked[ID ~string](d *idDictionary, txn kvWriter, sh *idDictShard[ID], id ID, num uint64, kind byte) error {
+	if err := d.stagePendingFreelistClaim(txn, kind, num); err != nil {
 		return err
 	}
-	writer := d.stageTxnEntry(kvWriterTxn(txn), id, "")
-	sh := &d.nodes[nodeForwardShard(id)]
-	sh.mu.Lock()
-	if _, pending := sh.pending[id]; pending {
-		sh.pending[id] = writer
+	var writer *txnCounterState
+	switch kind {
+	case freelistKindNode:
+		node := NodeID(id)
+		if err := setNodeEntryInTxn(txn, node, num); err != nil {
+			return err
+		}
+		writer = d.stageTxnEntry(kvWriterTxn(txn), node, "")
+	case freelistKindEdge:
+		edge := EdgeID(id)
+		if err := setEdgeEntryInTxn(txn, edge, num); err != nil {
+			return err
+		}
+		writer = d.stageTxnEntry(kvWriterTxn(txn), "", edge)
+	default:
+		return fmt.Errorf("unknown numeric ID kind %q", kind)
 	}
-	sh.mu.Unlock()
+	adoptPendingWriter(sh.pending, &sh.adopters, id, writer)
 	return nil
 }
 
@@ -1039,45 +1253,6 @@ func (d *idDictionary) persistPendingNodeInTxn(txn kvWriter, id NodeID, num uint
 // ("", false) if the reverse map has no entry.
 func (d *idDictionary) lookupNodeIDByNum(num uint64) (NodeID, bool) {
 	return d.nodeReverseLookup(num)
-}
-
-// resolveOrAllocateEdgeNumIDInTxn is the edge analogue of
-// resolveOrAllocateNodeNumIDInTxn.
-func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn kvWriter, id EdgeID) (uint64, error) {
-	if num, ok := d.edgeForwardLookup(id); ok {
-		if writer, pending := d.edgePendingWriter(id); pending && !d.txnWrote(kvWriterTxn(txn), writer) {
-			return num, d.persistPendingEdgeInTxn(txn, id, num)
-		}
-		return num, nil
-	}
-	ttl := d.currentFreelistTTL()
-	if ttl <= 0 {
-		ttl = defaultIDFreelistTTL
-	}
-
-	recycled, ok, err := d.popAgedFreelistEntryInTxn(txn, freelistKindEdge, ttl)
-	if err != nil {
-		return 0, err
-	}
-	var num uint64
-	if ok {
-		num = recycled
-	} else {
-		num = d.nextEdge.Add(1)
-	}
-	if err := setEdgeEntryInTxn(txn, id, num); err != nil {
-		return 0, err
-	}
-	if !ok {
-		d.recordTxnCounterUse(kvWriterTxn(txn), freelistKindEdge, num)
-	}
-
-	runIDAllocationRecheckHook()
-	writer := d.stageTxnEntry(kvWriterTxn(txn), "", id)
-	if adopted, stored := d.edgePairStore(id, num, writer); !stored {
-		return adopted, d.persistPendingEdgeInTxn(txn, id, adopted)
-	}
-	return num, nil
 }
 
 // setEdgeEntryInTxn writes an edge entry's forward and reverse keys.
@@ -1088,21 +1263,6 @@ func setEdgeEntryInTxn(txn kvWriter, id EdgeID, num uint64) error {
 		return err
 	}
 	return txn.Set(append([]byte{prefixIDDictEdgeReverse}, numBytes[:]...), []byte(id))
-}
-
-// persistPendingEdgeInTxn is the edge analogue of persistPendingNodeInTxn.
-func (d *idDictionary) persistPendingEdgeInTxn(txn kvWriter, id EdgeID, num uint64) error {
-	if err := setEdgeEntryInTxn(txn, id, num); err != nil {
-		return err
-	}
-	writer := d.stageTxnEntry(kvWriterTxn(txn), "", id)
-	sh := &d.edges[edgeForwardShard(id)]
-	sh.mu.Lock()
-	if _, pending := sh.pending[id]; pending {
-		sh.pending[id] = writer
-	}
-	sh.mu.Unlock()
-	return nil
 }
 
 // CounterUsage returns the current node/edge counters. Metrics consumers
@@ -1144,31 +1304,29 @@ func (d *idDictionary) lookupEdgeIDByNum(num uint64) (EdgeID, bool) {
 	return d.edgeReverseLookup(num)
 }
 
-// deleteNodeEntryInTxn removes the forward and reverse dict entries for
-// a node. Called by the delete path so dict entries don't accumulate
-// after the node is gone. The counter is intentionally NOT decremented
-// — numIDs are never reused to avoid aliasing on any index scanners or
-// snapshot readers that still hold a reference.
-//
-// IMPORTANT: callers must not invoke this while any archived MVCC
-// version record or in-flight snapshot reader could still need to
-// resolve the numID back to a string. Practically, the BadgerEngine
-// delete path gates this on `retentionRetainsHistory() == false &&
-// activeMVCCSnapshotReaders == 0`. The prune pipeline (which knows when
-// historical records go away) is the right place to flush dict entries
-// for retention > 0 configurations — a future hook.
-func (d *idDictionary) deleteNodeEntryInTxn(txn *badger.Txn, id NodeID) error {
-	num, ok := d.nodePairRemoveByID(id)
-	if !ok {
-		return nil
-	}
-	if err := txn.Delete(nodeIDForwardKey(id)); err != nil {
-		return err
+// deleteIDEntryInTxn removes a cached pair and its persistent dictionary keys.
+// Callers must retain entries needed by archived MVCC versions or snapshots.
+// A numeric deletion must remove the reverse key even after cache eviction.
+func deleteIDEntryInTxn[ID ~string](txn *badger.Txn, shards *[nodeDictShards]idDictShard[ID], forwardShard func(ID) int, reverseShard func(uint64) int, forwardKey func(ID) []byte, reversePrefix byte, id ID, num uint64, mode idPairRemoval) error {
+	removedID, removedNum, ok := removeIDPair(shards, forwardShard, reverseShard, id, num, mode)
+	if mode == idPairByString {
+		if !ok {
+			return nil
+		}
+		if err := txn.Delete(forwardKey(removedID)); err != nil {
+			return err
+		}
+		num = removedNum
 	}
 	var numBytes [8]byte
 	binary.BigEndian.PutUint64(numBytes[:], num)
-	reverseKey := append([]byte{prefixIDDictNodeReverse}, numBytes[:]...)
-	return txn.Delete(reverseKey)
+	if err := txn.Delete(append([]byte{reversePrefix}, numBytes[:]...)); err != nil {
+		return err
+	}
+	if mode == idPairByNumber && ok {
+		return txn.Delete(forwardKey(removedID))
+	}
+	return nil
 }
 
 // forgetNodeCache drops the in-memory cache entry for a node without
@@ -1176,61 +1334,12 @@ func (d *idDictionary) deleteNodeEntryInTxn(txn *badger.Txn, id NodeID) error {
 // path (which persisted the delete via bufferDelete but hasn't yet
 // updated the in-memory side).
 func (d *idDictionary) forgetNodeCache(id NodeID) {
-	d.nodePairRemoveByID(id)
+	removeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, id, 0, idPairByString)
 }
 
 // forgetEdgeCache is the edge analogue of forgetNodeCache.
 func (d *idDictionary) forgetEdgeCache(id EdgeID) {
-	d.edgePairRemoveByID(id)
-}
-
-// deleteNodeEntryByNumInTxn removes both dict keys for a node addressed
-// by numID. Used by the prune pipeline which has the numID (from the
-// version-record scan) but may not know the string ID.
-func (d *idDictionary) deleteNodeEntryByNumInTxn(txn *badger.Txn, num uint64) error {
-	id, ok := d.nodePairRemoveByNum(num)
-	var numBytes [8]byte
-	binary.BigEndian.PutUint64(numBytes[:], num)
-	if err := txn.Delete(append([]byte{prefixIDDictNodeReverse}, numBytes[:]...)); err != nil {
-		return err
-	}
-	if ok {
-		if err := txn.Delete(nodeIDForwardKey(id)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// deleteEdgeEntryByNumInTxn is the edge analogue.
-func (d *idDictionary) deleteEdgeEntryByNumInTxn(txn *badger.Txn, num uint64) error {
-	id, ok := d.edgePairRemoveByNum(num)
-	var numBytes [8]byte
-	binary.BigEndian.PutUint64(numBytes[:], num)
-	if err := txn.Delete(append([]byte{prefixIDDictEdgeReverse}, numBytes[:]...)); err != nil {
-		return err
-	}
-	if ok {
-		if err := txn.Delete(edgeIDForwardKey(id)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// deleteEdgeEntryInTxn is the edge analogue of deleteNodeEntryInTxn.
-func (d *idDictionary) deleteEdgeEntryInTxn(txn *badger.Txn, id EdgeID) error {
-	num, ok := d.edgePairRemoveByID(id)
-	if !ok {
-		return nil
-	}
-	if err := txn.Delete(edgeIDForwardKey(id)); err != nil {
-		return err
-	}
-	var numBytes [8]byte
-	binary.BigEndian.PutUint64(numBytes[:], num)
-	reverseKey := append([]byte{prefixIDDictEdgeReverse}, numBytes[:]...)
-	return txn.Delete(reverseKey)
+	removeIDPair(&d.edges, edgeForwardShard, edgeReverseShard, id, 0, idPairByString)
 }
 
 // lookupNodeNumID returns the numeric ID if present, or (0,false). Does
@@ -1261,13 +1370,13 @@ func (d *idDictionary) replaceWith(fresh *idDictionary) {
 	for i := range d.nodes {
 		sh := &d.nodes[i]
 		sh.mu.Lock()
-		sh.forward, sh.reverse, sh.pending = fresh.nodes[i].forward, fresh.nodes[i].reverse, fresh.nodes[i].pending
+		sh.forward, sh.reverse, sh.pending, sh.adopters = fresh.nodes[i].forward, fresh.nodes[i].reverse, fresh.nodes[i].pending, fresh.nodes[i].adopters
 		sh.mu.Unlock()
 	}
 	for i := range d.edges {
 		sh := &d.edges[i]
 		sh.mu.Lock()
-		sh.forward, sh.reverse, sh.pending = fresh.edges[i].forward, fresh.edges[i].reverse, fresh.edges[i].pending
+		sh.forward, sh.reverse, sh.pending, sh.adopters = fresh.edges[i].forward, fresh.edges[i].reverse, fresh.edges[i].pending, fresh.edges[i].adopters
 		sh.mu.Unlock()
 	}
 	d.mu.Lock()
@@ -1276,6 +1385,10 @@ func (d *idDictionary) replaceWith(fresh *idDictionary) {
 	d.nodeFreelistPending.Store(fresh.nodeFreelistPending.Load())
 	d.edgeFreelistPending.Store(fresh.edgeFreelistPending.Load())
 	d.mu.Unlock()
+	d.freelistClaimMu.Lock()
+	d.freelistClaims = nil
+	d.freelistClaimCount.Store(0)
+	d.freelistClaimMu.Unlock()
 	d.txnMu.Lock()
 	d.txnCounters = make(map[*badger.Txn]*txnCounterState)
 	d.txnCommitting = make(map[*badger.Txn]*txnCounterState)

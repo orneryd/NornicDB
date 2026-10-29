@@ -156,152 +156,102 @@ func TestVectorIndexRegistryAndNamedEmbeddings(t *testing.T) {
 	assert.Equal(t, vectorspace.DistanceDot, stats[0].Distance)
 }
 
-func TestVectorIndexQueryNodes_PrefersNamedEmbeddingsOverPropertyAndFallsBack(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "nornic")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create nodes directly so we can populate NamedEmbeddings and ChunkEmbeddings.
-	makeID := func(raw string) storage.NodeID {
-		return storage.NodeID(storage.EnsureDatabasePrefix("nornic", raw))
-	}
-	mustCreate := func(n *storage.Node) {
-		_, err := store.CreateNode(n)
-		require.NoError(t, err)
-	}
-
-	// Highest score via NamedEmbeddings["title"].
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-named"),
-		Labels:          []string{"Doc"},
-		Properties:      map[string]interface{}{"title": "not a vector"},
-		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
-	})
-	// Medium score via node.Properties["title"] vector (when no NamedEmbeddings).
-	mustCreate(&storage.Node{
-		ID:         makeID("doc-prop"),
-		Labels:     []string{"Doc"},
-		Properties: map[string]interface{}{"title": []float64{0.8, 0.2, 0}},
-	})
-	// Lower score via ChunkEmbeddings fallback.
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-chunk"),
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.5, 0.5, 0}},
-	})
-	// Precedence check: NamedEmbeddings should win even if property vector would score higher.
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-both"),
-		Labels:          []string{"Doc"},
-		Properties:      map[string]interface{}{"title": []float64{1, 0, 0}},
-		NamedEmbeddings: map[string][]float32{"title": {0, 1, 0}},
-	})
-	// Label filter should exclude this.
-	mustCreate(&storage.Node{
-		ID:              makeID("other-label"),
-		Labels:          []string{"Other"},
-		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
-	})
-
-	// Create index via DDL (not the CALL helper), with property "title".
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX title_idx FOR (n:Doc) ON (n.title) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-
-	result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 10, [1,0,0]) YIELD node, score", nil)
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 4)
-
-	gotIDs := make([]string, 0, len(result.Rows))
-	gotScores := make([]float64, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		n, ok := row[0].(*storage.Node)
-		require.True(t, ok)
-		gotIDs = append(gotIDs, string(n.ID))
-		score, ok := row[1].(float64)
-		require.True(t, ok)
-		gotScores = append(gotScores, score)
+// TestVectorIndexQueryNodesEmbeddingSourcePrecedence owns the embedding-source
+// contract of db.index.vector.queryNodes: NamedEmbeddings win over a property
+// vector, a property vector wins over ChunkEmbeddings, and the other label is
+// excluded. Both the executor's exact (unwired) path and the unified search
+// service path must preserve those Cypher semantics, so the same population
+// and assertions run against each.
+func TestVectorIndexQueryNodesEmbeddingSourcePrecedence(t *testing.T) {
+	cases := []struct {
+		name       string
+		useService bool
+	}{
+		{name: "exact fallback without a wired service", useService: false},
+		{name: "unified search service", useService: true},
 	}
 
-	assert.True(t, strings.HasSuffix(gotIDs[0], "doc-named"))
-	assert.True(t, strings.HasSuffix(gotIDs[1], "doc-prop"))
-	assert.True(t, strings.HasSuffix(gotIDs[2], "doc-chunk"))
-	assert.True(t, strings.HasSuffix(gotIDs[3], "doc-both"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "nornic")
+			exec := NewStorageExecutor(store)
+			if tc.useService {
+				exec.SetSearchService(search.NewService(store, search.DefaultVectorDimensions, nil))
+			}
+			ctx := context.Background()
 
-	// Ensure ordering reflects the precedence and expected similarity ordering.
-	require.Greater(t, gotScores[0], gotScores[1])
-	require.Greater(t, gotScores[1], gotScores[2])
-	require.Greater(t, gotScores[2], gotScores[3])
-}
+			makeID := func(raw string) storage.NodeID {
+				return storage.NodeID(storage.EnsureDatabasePrefix("nornic", raw))
+			}
+			mustCreate := func(n *storage.Node) {
+				_, err := store.CreateNode(n)
+				require.NoError(t, err)
+			}
 
-func TestVectorIndexQueryNodes_WithUnifiedSearchService_PreservesCypherSemantics(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "nornic")
-	exec := NewStorageExecutor(store)
-	exec.SetSearchService(search.NewService(store))
-	ctx := context.Background()
+			// Highest score via NamedEmbeddings["title"].
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-named"),
+				Labels:          []string{"Doc"},
+				Properties:      map[string]interface{}{"title": "not a vector"},
+				NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+			})
+			// Medium score via node.Properties["title"] vector (when no NamedEmbeddings).
+			mustCreate(&storage.Node{
+				ID:         makeID("doc-prop"),
+				Labels:     []string{"Doc"},
+				Properties: map[string]interface{}{"title": []float64{0.8, 0.2, 0}},
+			})
+			// Lower score via ChunkEmbeddings fallback.
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-chunk"),
+				Labels:          []string{"Doc"},
+				ChunkEmbeddings: [][]float32{{0.5, 0.5, 0}},
+			})
+			// Precedence check: NamedEmbeddings should win even if property vector would score higher.
+			mustCreate(&storage.Node{
+				ID:              makeID("doc-both"),
+				Labels:          []string{"Doc"},
+				Properties:      map[string]interface{}{"title": []float64{1, 0, 0}},
+				NamedEmbeddings: map[string][]float32{"title": {0, 1, 0}},
+			})
+			// Label filter should exclude this.
+			mustCreate(&storage.Node{
+				ID:              makeID("other-label"),
+				Labels:          []string{"Other"},
+				NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
+			})
 
-	makeID := func(raw string) storage.NodeID {
-		return storage.NodeID(storage.EnsureDatabasePrefix("nornic", raw))
+			// Create index via DDL (not the CALL helper), with property "title".
+			_, err := exec.Execute(ctx, "CREATE VECTOR INDEX title_idx FOR (n:Doc) ON (n.title) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
+			require.NoError(t, err)
+
+			result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 10, [1,0,0]) YIELD node, score", nil)
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 4)
+
+			gotIDs := make([]string, 0, len(result.Rows))
+			gotScores := make([]float64, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				n, ok := row[0].(*storage.Node)
+				require.True(t, ok)
+				gotIDs = append(gotIDs, string(n.ID))
+				score, ok := row[1].(float64)
+				require.True(t, ok)
+				gotScores = append(gotScores, score)
+			}
+
+			assert.True(t, strings.HasSuffix(gotIDs[0], "doc-named"))
+			assert.True(t, strings.HasSuffix(gotIDs[1], "doc-prop"))
+			assert.True(t, strings.HasSuffix(gotIDs[2], "doc-chunk"))
+			assert.True(t, strings.HasSuffix(gotIDs[3], "doc-both"))
+
+			// Ensure ordering reflects the precedence and expected similarity ordering.
+			require.Greater(t, gotScores[0], gotScores[1])
+			require.Greater(t, gotScores[1], gotScores[2])
+			require.Greater(t, gotScores[2], gotScores[3])
+		})
 	}
-	mustCreate := func(n *storage.Node) {
-		_, err := store.CreateNode(n)
-		require.NoError(t, err)
-	}
-
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-named"),
-		Labels:          []string{"Doc"},
-		Properties:      map[string]interface{}{"title": "not a vector"},
-		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
-	})
-	mustCreate(&storage.Node{
-		ID:         makeID("doc-prop"),
-		Labels:     []string{"Doc"},
-		Properties: map[string]interface{}{"title": []float64{0.8, 0.2, 0}},
-	})
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-chunk"),
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.5, 0.5, 0}},
-	})
-	mustCreate(&storage.Node{
-		ID:              makeID("doc-both"),
-		Labels:          []string{"Doc"},
-		Properties:      map[string]interface{}{"title": []float64{1, 0, 0}},
-		NamedEmbeddings: map[string][]float32{"title": {0, 1, 0}},
-	})
-	mustCreate(&storage.Node{
-		ID:              makeID("other-label"),
-		Labels:          []string{"Other"},
-		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
-	})
-
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX title_idx FOR (n:Doc) ON (n.title) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-
-	result, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('title_idx', 10, [1,0,0]) YIELD node, score", nil)
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 4)
-
-	gotIDs := make([]string, 0, len(result.Rows))
-	gotScores := make([]float64, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		n, ok := row[0].(*storage.Node)
-		require.True(t, ok)
-		gotIDs = append(gotIDs, string(n.ID))
-		score, ok := row[1].(float64)
-		require.True(t, ok)
-		gotScores = append(gotScores, score)
-	}
-
-	assert.True(t, strings.HasSuffix(gotIDs[0], "doc-named"))
-	assert.True(t, strings.HasSuffix(gotIDs[1], "doc-prop"))
-	assert.True(t, strings.HasSuffix(gotIDs[2], "doc-chunk"))
-	assert.True(t, strings.HasSuffix(gotIDs[3], "doc-both"))
-	require.Greater(t, gotScores[0], gotScores[1])
-	require.Greater(t, gotScores[1], gotScores[2])
-	require.Greater(t, gotScores[2], gotScores[3])
 }
 
 func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
@@ -482,79 +432,100 @@ func TestVectorIndexQueryNodesWithProcedure(t *testing.T) {
 	})
 }
 
-func TestCallDbIndexVectorQueryNodes_DoesNotCreateSearchServiceWhenUnwired(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	exec := NewStorageExecutor(engine)
-	ctx := context.Background()
+// TestCallDbIndexVectorQueryNodesServiceWiring owns both halves of the
+// procedure's service-wiring contract: an executor with no DB-owned search
+// service answers from its exact fallback and never allocates a throwaway
+// service, while a lazily warmed wired service is warmed by the query itself
+// and answers from its index without a full store scan.
+func TestCallDbIndexVectorQueryNodesServiceWiring(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "does not create a search service when unwired",
+			run: func(t *testing.T) {
+				baseEngine := newTestMemoryEngine(t)
+				engine := storage.NewNamespacedEngine(baseEngine, "test")
+				exec := NewStorageExecutor(engine)
+				ctx := context.Background()
 
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-	for i := 0; i < 10; i++ {
-		vec := []float64{0, 1, 0, 0}
-		if i == 0 {
-			vec = []float64{1, 0, 0, 0}
-		}
-		_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Doc {uuid:'doc-%02d', embedding:%s})", i, formatInlineFloat64Vector(vec)), nil)
-		require.NoError(t, err)
+				_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
+				require.NoError(t, err)
+				for i := 0; i < 10; i++ {
+					vec := []float64{0, 1, 0, 0}
+					if i == 0 {
+						vec = []float64{1, 0, 0, 0}
+					}
+					_, err = exec.Execute(ctx, fmt.Sprintf("CREATE (:Doc {uuid:'doc-%02d', embedding:%s})", i, formatInlineFloat64Vector(vec)), nil)
+					require.NoError(t, err)
+				}
+
+				params := map[string]interface{}{"q": []float64{1, 0, 0, 0}}
+				for i := 0; i < 5; i++ {
+					res, err := exec.Execute(ctx, fmt.Sprintf("CALL db.index.vector.queryNodes('doc_emb_idx', 3, $q) YIELD node, score RETURN node.uuid AS uuid, score /* query_%d */", i), params)
+					require.NoError(t, err)
+					require.Len(t, res.Rows, 3)
+					require.Equal(t, "doc-00", res.Rows[0][0])
+					require.Nil(t, exec.searchService, "queryNodes must use exact fallback when no DB-owned service is wired, not allocate a throwaway service")
+				}
+			},
+		},
+		{
+			name: "lazy wired service warms before query",
+			run: func(t *testing.T) {
+				baseEngine := newTestMemoryEngine(t)
+				engine := storage.NewNamespacedEngine(baseEngine, "test")
+				counting := &countingStreamingEngine{Engine: engine}
+				exec := NewStorageExecutor(counting)
+				ctx := context.Background()
+
+				_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
+				require.NoError(t, err)
+
+				searchSvc := search.NewService(engine, 4, nil)
+				var warmCalls int32
+				var warmErr atomic.Value
+				searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
+					atomic.AddInt32(&warmCalls, 1)
+					if err := searchSvc.BuildIndexes(context.Background()); err != nil {
+						warmErr.Store(err)
+					}
+				}))
+				exec.SetSearchService(searchSvc)
+
+				_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-best', embedding:[1.0,0.0,0.0,0.0]})", nil)
+				require.NoError(t, err)
+				_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-other', embedding:[0.0,1.0,0.0,0.0]})", nil)
+				require.NoError(t, err)
+				require.False(t, searchSvc.IsReady(), "live-indexed vector properties must not be reported as full warmup readiness")
+				require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("embedding"), "live-indexed vector properties are present before full warmup")
+
+				counting.allNodesCalls = 0
+				counting.labelCalls = 0
+				counting.streamNodesCalls = 0
+
+				res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_emb_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", map[string]interface{}{
+					"q": []float64{1, 0, 0, 0},
+				})
+				require.NoError(t, err)
+				require.Len(t, res.Rows, 1)
+				require.Equal(t, "doc-best", res.Rows[0][0])
+				if errValue := warmErr.Load(); errValue != nil {
+					require.NoError(t, errValue.(error))
+				}
+				require.True(t, searchSvc.IsReady())
+				require.Equal(t, int32(1), atomic.LoadInt32(&warmCalls))
+				require.Equal(t, 0, counting.allNodesCalls)
+				require.Equal(t, 0, counting.labelCalls)
+				require.Equal(t, 0, counting.streamNodesCalls)
+			},
+		},
 	}
 
-	params := map[string]interface{}{"q": []float64{1, 0, 0, 0}}
-	for i := 0; i < 5; i++ {
-		res, err := exec.Execute(ctx, fmt.Sprintf("CALL db.index.vector.queryNodes('doc_emb_idx', 3, $q) YIELD node, score RETURN node.uuid AS uuid, score /* query_%d */", i), params)
-		require.NoError(t, err)
-		require.Len(t, res.Rows, 3)
-		require.Equal(t, "doc-00", res.Rows[0][0])
-		require.Nil(t, exec.searchService, "queryNodes must use exact fallback when no DB-owned service is wired, not allocate a throwaway service")
+	for _, tc := range cases {
+		t.Run(tc.name, tc.run)
 	}
-}
-
-func TestCallDbIndexVectorQueryNodes_LazyWiredServiceWarmsBeforeQuery(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	counting := &countingStreamingEngine{Engine: engine}
-	exec := NewStorageExecutor(counting)
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX doc_emb_idx FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-
-	searchSvc := search.NewServiceWithDimensions(engine, 4)
-	var warmCalls int32
-	var warmErr atomic.Value
-	searchSvc.SetLazyWarming(true, search.WarmFunc(func() {
-		atomic.AddInt32(&warmCalls, 1)
-		if err := searchSvc.BuildIndexes(context.Background()); err != nil {
-			warmErr.Store(err)
-		}
-	}))
-	exec.SetSearchService(searchSvc)
-
-	_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-best', embedding:[1.0,0.0,0.0,0.0]})", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:Doc {uuid:'doc-other', embedding:[0.0,1.0,0.0,0.0]})", nil)
-	require.NoError(t, err)
-	require.False(t, searchSvc.IsReady(), "live-indexed vector properties must not be reported as full warmup readiness")
-	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("embedding"), "live-indexed vector properties are present before full warmup")
-
-	counting.allNodesCalls = 0
-	counting.labelCalls = 0
-	counting.streamNodesCalls = 0
-
-	res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('doc_emb_idx', 1, $q) YIELD node, score RETURN node.uuid AS uuid, score", map[string]interface{}{
-		"q": []float64{1, 0, 0, 0},
-	})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, "doc-best", res.Rows[0][0])
-	if errValue := warmErr.Load(); errValue != nil {
-		require.NoError(t, errValue.(error))
-	}
-	require.True(t, searchSvc.IsReady())
-	require.Equal(t, int32(1), atomic.LoadInt32(&warmCalls))
-	require.Equal(t, 0, counting.allNodesCalls)
-	require.Equal(t, 0, counting.labelCalls)
-	require.Equal(t, 0, counting.streamNodesCalls)
 }
 
 // mockQueryEmbedder is a test embedder for string queries
@@ -628,9 +599,6 @@ func loadLargeDocQuery(t *testing.T) string {
 	return query
 }
 
-// TestVectorSearchQueryModes tests all three query modes:
-// 1. Direct vector array (Neo4j compatible)
-// 2. String query (NornicDB server-side embedding)
 // 3. Parameter reference ($queryVector)
 func TestVectorSearchQueryModes(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
@@ -1580,7 +1548,7 @@ func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVector
 		},
 	}))
 
-	searchSvc := search.NewServiceWithDimensions(engine, 3)
+	searchSvc := search.NewService(engine, 3, nil)
 	require.NoError(t, searchSvc.BuildIndexes(ctx))
 	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
 	exec.SetSearchService(searchSvc)
@@ -2102,33 +2070,4 @@ func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
 	res, err = exec.callDbIndexVectorQueryNodes(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])")
 	require.NoError(t, err)
 	require.NotNil(t, res)
-}
-
-func TestCallDbIndexVectorQueryNodes_MissingIndexFallsThroughToManagedEmbeddings(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	exec := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	_, err := engine.CreateNode(&storage.Node{
-		ID:              "doc-managed",
-		Labels:          []string{"Doc"},
-		NamedEmbeddings: map[string][]float32{"managed": {1.0, 0.0, 0.0}},
-	})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
-		ID:              "doc-chunk",
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.6, 0.4, 0.0}},
-	})
-	require.NoError(t, err)
-
-	res, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('missing_idx', 5, [1.0, 0.0, 0.0]) YIELD node, score", nil)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.NotEmpty(t, res.Rows)
-
-	topNode, ok := res.Rows[0][0].(*storage.Node)
-	require.True(t, ok)
-	assert.Equal(t, storage.NodeID("doc-managed"), topNode.ID)
 }

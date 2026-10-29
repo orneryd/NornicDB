@@ -20,7 +20,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	reached, published := false, false
 	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		svc.SetPersistenceEnabled(true)
@@ -67,7 +67,7 @@ func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	gate := &finalPersistGateLog{entered: make(chan struct{}), release: make(chan struct{})}
 	openFirst := sync.OnceFunc(func() { close(gate.release) })
 	openSecond := sync.OnceFunc(func() { close(engine.release) })

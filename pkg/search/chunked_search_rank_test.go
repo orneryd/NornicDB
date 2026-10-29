@@ -10,7 +10,10 @@ import (
 
 // A chunked result keeps SearchResult's rank contract: a positive rank names
 // the best rank any searched chunk gave it by that method, and 0 means no
-// searched chunk found it by that method.
+// searched chunk found it by that method. A chunked result found by vector
+// also carries the best vector similarity of the chunks that found it by
+// vector, even when its representative (highest-scoring) chunk found it by
+// keyword only.
 func TestSearchTextChunksKeepsRankProvenance(t *testing.T) {
 	t.Run("vector-only hit in every chunk", func(t *testing.T) {
 		for _, graph := range []bool{false, true} {
@@ -31,7 +34,7 @@ func TestSearchTextChunksKeepsRankProvenance(t *testing.T) {
 				}
 				_, err := store.CreateNode(node)
 				require.NoError(t, err)
-				svc := NewServiceWithDimensions(store, 2)
+				svc := NewService(store, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				require.NoError(t, svc.IndexNode(node))
 				opts := DefaultSearchOptions()
@@ -104,47 +107,44 @@ func TestSearchTextChunksKeepsRankProvenance(t *testing.T) {
 			}
 		}
 	})
-}
 
-// A chunked result found by vector carries a vector score as its Similarity,
-// the best of the chunks that found it by vector, even when its
-// representative (highest-scoring) chunk found it by keyword only.
-func TestSearchTextChunksKeepsVectorSimilarity(t *testing.T) {
-	response, err := SearchTextChunks(
-		context.Background(),
-		"complete query",
-		&SearchOptions{Limit: 10},
-		func(context.Context, string) ([]string, error) {
-			return []string{"keyword chunk", "weak vector chunk", "strong vector chunk"}, nil
-		},
-		func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil },
-		func(_ context.Context, query string, _ []float32, _ *SearchOptions) (*SearchResponse, error) {
-			switch query {
-			case "keyword chunk":
-				// The representative: highest score, keyword only, BM25 similarity.
-				return &SearchResponse{Results: []SearchResult{
-					{NodeID: "mixed", Score: 0.9, Similarity: 7.5, BM25Rank: 1},
-					{NodeID: "keyword-only", Score: 0.8, Similarity: 4.0, BM25Rank: 2},
-				}}, nil
-			case "weak vector chunk":
-				return &SearchResponse{Results: []SearchResult{{NodeID: "mixed", Score: 0.3, Similarity: 0.6, VectorRank: 2}}}, nil
-			case "strong vector chunk":
-				return &SearchResponse{Results: []SearchResult{{NodeID: "mixed", Score: 0.4, Similarity: 0.7, VectorRank: 1}}}, nil
-			}
-			t.Fatalf("unexpected search query %q", query)
-			return nil, nil
-		},
-	)
-	require.NoError(t, err)
-	byID := make(map[storage.NodeID]SearchResult, len(response.Results))
-	for _, result := range response.Results {
-		byID[result.NodeID] = result
-	}
-	mixed := byID["mixed"]
-	require.Equal(t, 1, mixed.VectorRank)
-	require.Equal(t, 1, mixed.BM25Rank)
-	require.InDelta(t, 0.7, mixed.Similarity, 1e-12, "the vector similarity, not the representative's keyword score")
-	keywordOnly := byID["keyword-only"]
-	require.Equal(t, 0, keywordOnly.VectorRank)
-	require.InDelta(t, 4.0, keywordOnly.Similarity, 1e-12, "a keyword-only result keeps its keyword score")
+	t.Run("vector similarity provenance", func(t *testing.T) {
+		response, err := SearchTextChunks(
+			context.Background(),
+			"complete query",
+			&SearchOptions{Limit: 10},
+			func(context.Context, string) ([]string, error) {
+				return []string{"keyword chunk", "weak vector chunk", "strong vector chunk"}, nil
+			},
+			func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil },
+			func(_ context.Context, query string, _ []float32, _ *SearchOptions) (*SearchResponse, error) {
+				switch query {
+				case "keyword chunk":
+					// The representative: highest score, keyword only, BM25 similarity.
+					return &SearchResponse{Results: []SearchResult{
+						{NodeID: "mixed", Score: 0.9, Similarity: 7.5, BM25Rank: 1},
+						{NodeID: "keyword-only", Score: 0.8, Similarity: 4.0, BM25Rank: 2},
+					}}, nil
+				case "weak vector chunk":
+					return &SearchResponse{Results: []SearchResult{{NodeID: "mixed", Score: 0.3, Similarity: 0.6, VectorRank: 2}}}, nil
+				case "strong vector chunk":
+					return &SearchResponse{Results: []SearchResult{{NodeID: "mixed", Score: 0.4, Similarity: 0.7, VectorRank: 1}}}, nil
+				}
+				t.Fatalf("unexpected search query %q", query)
+				return nil, nil
+			},
+		)
+		require.NoError(t, err)
+		byID := make(map[storage.NodeID]SearchResult, len(response.Results))
+		for _, result := range response.Results {
+			byID[result.NodeID] = result
+		}
+		mixed := byID["mixed"]
+		require.Equal(t, 1, mixed.VectorRank)
+		require.Equal(t, 1, mixed.BM25Rank)
+		require.InDelta(t, 0.7, mixed.Similarity, 1e-12, "the vector similarity, not the representative's keyword score")
+		keywordOnly := byID["keyword-only"]
+		require.Equal(t, 0, keywordOnly.VectorRank)
+		require.InDelta(t, 4.0, keywordOnly.Similarity, 1e-12, "a keyword-only result keeps its keyword score")
+	})
 }

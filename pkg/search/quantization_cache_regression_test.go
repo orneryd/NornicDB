@@ -19,7 +19,7 @@ func quantizationCachedService(t *testing.T) *Service {
 	store := newNamespacedEngine(t)
 	_, err := store.CreateNode(&storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}})
 	require.NoError(t, err)
-	svc := NewServiceWithDimensions(store, 4)
+	svc := NewService(store, 4, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.NotNil(t, svc.resultCache)

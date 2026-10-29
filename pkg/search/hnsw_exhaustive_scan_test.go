@@ -424,7 +424,7 @@ func requireContinuationReturnsEveryLiveDocument(t *testing.T, service *Service,
 func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	live := map[string]bool{}
 	indexDoc := func(i int) {
@@ -637,7 +637,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 		t.Run(fmt.Sprintf("docs=%d", docs), func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			service := NewServiceWithDimensions(engine, 2)
+			service := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			for i := 0; i < docs; i++ {
 				angle := math.Pi * float64(i) / float64(docs) / 2
@@ -705,7 +705,7 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 	const docs = 1000
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewServiceWithDimensions(engine, 2)
+	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	for i := 0; i < docs; i++ {
 		vec := []float32{0, 1}
@@ -805,7 +805,7 @@ func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
 				})
 				require.NoError(t, err)
 			}
-			service := NewServiceWithDimensions(engine, 2)
+			service := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			service.EnableClustering(nil, 1)
 			service.SetMinEmbeddingsForClustering(1)

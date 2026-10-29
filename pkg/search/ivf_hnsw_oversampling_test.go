@@ -12,7 +12,7 @@ import (
 // 16-D queries; routes are chosen by each test's cluster selector.
 func clusteredRouteFixture(t *testing.T, clusters int) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(nil, 16)
+	svc := NewService(nil, 16, nil)
 	svc.EnableClustering(nil, clusters)
 	query := make([]float32, 16)
 	query[0] = 1

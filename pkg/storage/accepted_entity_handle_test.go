@@ -17,7 +17,7 @@ func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{make([]float32, 16000)}})
 	require.NoError(t, err)
-	p, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
 	h := NewAcceptedEntityCommitHandle(p)
@@ -67,7 +67,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(&Node{ID: "test:pending", ChunkEmbeddings: [][]float32{make([]float32, 16000)}})
 	require.NoError(t, err)
-	p, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
 	settled := false

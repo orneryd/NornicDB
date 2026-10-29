@@ -18,7 +18,7 @@ func newSearchRefreshBenchExecutor(b *testing.B) *StorageExecutor {
 	if _, err := store.CreateNode(&storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}); err != nil {
 		b.Fatal(err)
 	}
-	svc := search.NewServiceWithDimensions(store, 2)
+	svc := search.NewService(store, 2, nil)
 	b.Cleanup(func() { _ = svc.Close() })
 	if err := svc.BuildIndexes(context.Background()); err != nil {
 		b.Fatal(err)

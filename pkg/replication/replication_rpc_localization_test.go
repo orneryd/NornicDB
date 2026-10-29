@@ -46,9 +46,10 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		transport := NewClusterTransport(nil)
 		RegisterClusterHandlers(transport, &coverageReplicator{})
 
-		_, err := transport.handlers[ClusterMsgHeartbeat](context.Background(), "peer", &ClusterMessage{Payload: []byte("bad")})
-		localizedErr := requireReplicationRPCError(t, err, "replication.rpc.decode_failed", "decode heartbeat: invalid character 'b' looking for beginning of value")
+		_, err := transport.handlers[ClusterMsgHeartbeat](context.Background(), "peer", &ClusterMessage{Payload: []byte{0x81, 0xa1, 'x'}})
+		localizedErr := requireReplicationRPCError(t, err, "replication.rpc.decode_failed", "decode heartbeat: invalid replication payload: unexpected EOF")
 		require.ErrorIs(t, err, localizedErr.Cause)
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	})
 
 	t.Run("not connected", func(t *testing.T) {

@@ -223,43 +223,46 @@ type publicationUniqueKey struct {
 // appendNodePublicationKeys appends the keys a publication of a node write
 // is ordered on: the node, and the unique values old (the pre-write node)
 // and written hold, the ones the write frees and takes.
-func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old, written *Node) []any {
+//
+// view is the commit's captured constraint metadata. It supplies every rule
+// this reads and takes no lock, so late derivation from a restored operation
+// never waits on the schema while the caller may hold the commit gate.
+func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id NodeID, old, written *Node) []any {
 	keys = append(keys, id)
-	if schema == nil {
+	if view == nil || view.nodeRules == 0 {
 		return keys
 	}
-	// Publication dependencies are a set: unlike validation, they need no
-	// name ordering. Read the schema once without copying and sorting its
-	// constraints for each version of the node.
-	schema.mu.RLock()
-	defer schema.mu.RUnlock()
-	if len(schema.uniqueConstraints) == 0 {
-		return keys
-	}
-	for _, c := range schema.constraints {
-		if c.EffectiveEntityType() != ConstraintEntityNode || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
+	namespace := namespaceForNodeID(id)
+	// The rules are walked here, not in a callback: a rule is then addressed
+	// through its index and its strings are never copied into a closure.
+	for i := -1; i < len(view.rest); i++ {
+		rule := &view.first
+		if i >= 0 {
+			rule = &view.rest[i]
+		}
+		if rule.empty() || rule.kind != ConstraintEntityNode {
 			continue
 		}
-		// An unchanged UNIQUE value is one dependency, not two queue
-		// entries. Keep the comparison local to this constraint so no
-		// per-node set allocation or search through earlier nodes is needed.
+		// An unchanged UNIQUE value is one dependency, not two queue entries.
 		var previous uniqueConstraintLockKey
 		var havePrevious bool
-		for _, node := range []*Node{old, written} {
-			if node == nil || !hasLabel(node.Labels, c.Label) {
+		for _, node := range [2]*Node{old, written} {
+			if node == nil || !hasLabel(node.Labels, rule.label) {
 				continue
 			}
-			value, ok := node.Properties[c.Properties[0]]
+			value, ok := node.Properties[rule.property]
 			if !ok {
 				continue
 			}
-			if key, keyed := indexValueKey(value); keyed {
-				dependency := uniqueConstraintLockKey{label: c.Label, property: c.Properties[0], value: key}
-				if !havePrevious || dependency != previous {
-					keys = append(keys, publicationUniqueKey{namespaceForNodeID(id), dependency})
-				}
-				previous, havePrevious = dependency, true
+			key, keyed := indexValueKey(value)
+			if !keyed {
+				continue
 			}
+			dependency := uniqueConstraintLockKey{label: rule.label, property: rule.property, value: key}
+			if !havePrevious || dependency != previous {
+				keys = append(keys, publicationUniqueKey{namespace, dependency})
+			}
+			previous, havePrevious = dependency, true
 		}
 	}
 	return keys
@@ -267,23 +270,32 @@ func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old
 
 // appendEdgePublicationKeys appends the keys a publication of an edge write
 // is ordered on: the edge, and the relationship-uniqueness values old and
-// written hold.
-func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old, written *Edge) []any {
+// written hold. view supplies every rule, as for nodes.
+func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id EdgeID, old, written *Edge) []any {
 	keys = append(keys, id)
-	if schema == nil {
+	if view == nil {
 		return keys
 	}
-	schema.mu.RLock()
-	defer schema.mu.RUnlock()
-	for _, edge := range []*Edge{old, written} {
-		if edge == nil || len(edge.Properties) == 0 {
+	namespace := namespaceForEdgeID(id)
+	for i := -1; i < len(view.rest); i++ {
+		rule := &view.first
+		if i >= 0 {
+			rule = &view.rest[i]
+		}
+		if rule.empty() || rule.kind != ConstraintEntityRelationship {
 			continue
 		}
-		for _, c := range schema.constraints {
-			if c.Label != edge.Type || c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
+		label := "\x00relationship:" + rule.label
+		for _, edge := range [2]*Edge{old, written} {
+			if edge == nil || len(edge.Properties) == 0 || edge.Type != rule.label {
 				continue
 			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+			properties := rule.properties
+			if len(properties) == 0 {
+				single := [1]string{rule.property}
+				properties = single[:]
+			}
+			values, ok := relationshipConstraintValueKeys(properties, edge.Properties, true)
 			if !ok || len(values) == 0 {
 				continue
 			}
@@ -291,7 +303,7 @@ func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old
 			if len(values) > 1 {
 				key = NewCompositeKey(values...).Hash
 			}
-			keys = append(keys, publicationUniqueKey{namespaceForEdgeID(id), uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key}})
+			keys = append(keys, publicationUniqueKey{namespace, uniqueConstraintLockKey{label: label, property: rule.propertyKey, value: key}})
 		}
 	}
 	return keys
@@ -300,24 +312,24 @@ func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old
 // appendOperationPublicationKeys appends the keys of a commit's operations:
 // every node and edge they write, edges a node delete removed, and the unique
 // values they free and take.
-func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Operation) []any {
+func appendOperationPublicationKeys(keys []any, view *publicationConstraintView, ops []Operation) []any {
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil {
-				keys = appendNodePublicationKeys(keys, schema, op.Node.ID, op.OldNode, op.Node)
+				keys = appendNodePublicationKeys(keys, view, op.Node.ID, op.OldNode, op.Node)
 			}
 		case OpDeleteNode:
-			keys = appendNodePublicationKeys(keys, schema, op.NodeID, op.OldNode, nil)
+			keys = appendNodePublicationKeys(keys, view, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
 				keys = append(keys, edgeID)
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil {
-				keys = appendEdgePublicationKeys(keys, schema, op.Edge.ID, op.OldEdge, op.Edge)
+				keys = appendEdgePublicationKeys(keys, view, op.Edge.ID, op.OldEdge, op.Edge)
 			}
 		case OpDeleteEdge:
-			keys = appendEdgePublicationKeys(keys, schema, op.EdgeID, op.OldEdge, nil)
+			keys = appendEdgePublicationKeys(keys, view, op.EdgeID, op.OldEdge, nil)
 		}
 	}
 	return keys

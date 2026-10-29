@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -26,20 +25,5 @@ func TestPendingCandidatesBufferedFlush(t *testing.T) {
 	require.Equal(t, 1, e.PendingEmbeddingsCount())
 	node := e.FindNodeNeedingEmbedding()
 	require.NotNil(t, node, "flush must publish into the loaded candidate cache")
-	require.Equal(t, pendingCandidateNode(0).ID, node.ID)
-}
-
-func TestPendingCandidatesBufferedWALReplay(t *testing.T) {
-	e := newTestBadgerEngineForPending(t)
-	_, err := e.CreateNode(pendingCandidateNode(0))
-	require.NoError(t, err)
-	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
-	payload, err := json.Marshal(WALBufferedCommitData{Namespace: "test", Writes: map[string][]byte{string(pendingEmbedKey(pendingCandidateNode(0).ID)): {}}})
-	require.NoError(t, err)
-	require.NoError(t, ReplayWALEntry(e, WALEntry{Operation: OpBufferedCommit, Database: "test", Data: payload}))
-	require.Equal(t, 1, e.PendingEmbeddingsCount())
-	node := e.FindNodeNeedingEmbedding()
-	require.NotNil(t, node, "buffered replay must publish into the loaded candidate cache")
 	require.Equal(t, pendingCandidateNode(0).ID, node.ID)
 }

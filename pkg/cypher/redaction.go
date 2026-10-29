@@ -191,11 +191,37 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		query = normalized.String()
 	}
 	grammarValid := grammarAccepts(query)
-	// Valid syntax supplies roles: a property named password is ordinary
-	// structure, and all literal values below are still masked. If syntax
-	// cannot establish those roles, retain fail-closed PASSWORD projection.
-	if !grammarValid && cyphertext.PasswordBoundary(query) >= 0 {
-		return RedactedPlaceholder
+	// Grammar acceptance does not make every identifier public: a remote
+	// credential may be an unquoted keyword or a quoted identifier. Consume
+	// the retained grammar's credential roles before preserving identifiers.
+	// A property named password remains ordinary query structure.
+	var credentialURLs [][2]int
+	if source.PasswordBoundary() >= 0 || grammarValid && checked.possibleCredentialRole {
+		if !grammarValid {
+			return RedactedPlaceholder
+		}
+		syntax, err := cantlr.ParseSyntax(ctx, source.Text, cantlr.StatementEntry, false, cyphertext.AcceptedSource)
+		if err != nil {
+			return RedactedPlaceholder
+		}
+		credential := false
+		syntax.Walk(func(node cantlr.SyntaxNode) func() {
+			if node.Rule() == cantlr.CypherParserRULE_credentialValue {
+				credential = true
+			}
+			if node.Rule() == cantlr.CypherParserRULE_credentialURL {
+				first, after := node.TokenRange()
+				// Parameters are references, not inline credentials. The grammar
+				// owns this role even when the URL is a quoted identifier.
+				if first >= 0 && after > first && first < len(toks) && toks[first].GetText() != "$" {
+					credentialURLs = append(credentialURLs, [2]int{first, after})
+				}
+			}
+			return nil
+		})
+		if credential {
+			return RedactedPlaceholder
+		}
 	}
 
 	var b strings.Builder
@@ -205,6 +231,7 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 	var stack []int
 	prev := noPrevToken
 	acceptedCursor, originalCursor := 0, 0
+	urlIndex := 0
 	for i, tok := range toks {
 		if i&1023 == 0 && ctx.Err() != nil {
 			return RedactedPlaceholder
@@ -215,6 +242,18 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		originalEnd, _ := source.OriginalOffset(acceptedCursor, false, cyphertext.SourceExtent)
 		originalText := source.Original[originalCursor:originalEnd]
 		originalCursor = originalEnd
+		for urlIndex < len(credentialURLs) && i >= credentialURLs[urlIndex][1] {
+			urlIndex++
+		}
+		if urlIndex < len(credentialURLs) && i >= credentialURLs[urlIndex][0] {
+			if i == credentialURLs[urlIndex][0] {
+				b.WriteString(RedactedPlaceholder)
+			}
+			if tok.GetChannel() == antlr4.TokenDefaultChannel {
+				prev = ttype
+			}
+			continue
+		}
 		if stripComments && (ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT) {
 			var ok bool
 			text, ok = cyphertext.CommentReplacement(text, func() bool { return ctx.Err() != nil })
@@ -259,8 +298,9 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 const noPrevToken = -1
 
 type checkedRedactionTokens struct {
-	tokens      []antlr4.Token
-	hasComments bool
+	tokens                 []antlr4.Token
+	hasComments            bool
+	possibleCredentialRole bool
 }
 
 // redactLexCheckedContext applies the step-1 fail-closed signals and records
@@ -278,6 +318,9 @@ func redactLexCheckedContext(ctx context.Context, query string) (checkedRedactio
 			return checkedRedactionTokens{}, false
 		}
 		ttype := tok.GetTokenType()
+		if ttype == cantlr.CypherLexerID && (strings.EqualFold(tok.GetText(), "AT") || strings.EqualFold(tok.GetText(), "SECRET")) {
+			checked.possibleCredentialRole = true
+		}
 		if ttype == cantlr.CypherLexerERRCHAR {
 			return checkedRedactionTokens{}, false
 		}
