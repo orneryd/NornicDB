@@ -29,7 +29,7 @@ func TestSearchStreamLifecycleGRPCResponseSendFailure(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1})
 	require.NoError(t, err)

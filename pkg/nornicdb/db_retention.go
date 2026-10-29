@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/retention"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -89,7 +90,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 				log.Printf("⚠️  Retention: failed to process %s: %v", node.ID, err)
 			} else {
 				deleted++
-				if idxErr := db.refreshNodeInSearchIndexes(ctx, dbName, db.storage, node.ID); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
+				if idxErr := search.RefreshIndexes(ctx, dbRefreshScope{db: db, dbName: dbName, storage: db.storage}, search.RefreshRequest{Node: node.ID}); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
 					log.Printf("⚠️  Retention: failed to remove %s from search indexes: %v", node.ID, idxErr)
 				}
 			}

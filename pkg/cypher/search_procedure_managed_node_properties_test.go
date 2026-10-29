@@ -37,7 +37,7 @@ func TestSearchProcedureManagedNodeProperties(t *testing.T) {
 				node.EmbedMeta = map[string]interface{}{"has_embedding": true, "chunk_count": 1}
 				require.NoError(t, base.UpdateNodeEmbeddingSidecar(node))
 			}
-			svc := search.NewServiceWithDimensions(store, 2048)
+			svc := search.NewService(store, 2048, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			require.NoError(t, svc.BuildIndexes(ctx))
 			exec.SetSearchService(svc)

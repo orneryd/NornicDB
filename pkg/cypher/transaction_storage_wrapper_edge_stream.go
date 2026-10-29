@@ -46,6 +46,7 @@ func (w *transactionStorageWrapper) streamEdgesByType(ctx context.Context, edgeT
 		out.ID = w.unprefixEdgeID(out.ID)
 		out.StartNode = w.unprefixNodeID(out.StartNode)
 		out.EndNode = w.unprefixNodeID(out.EndNode)
+		out.Database = w.namespace
 		return visit(&out)
 	})
 }

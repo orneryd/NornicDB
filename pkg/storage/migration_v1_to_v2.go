@@ -604,11 +604,11 @@ func decodeEdgeAnyV1(b *BadgerEngine, txn *badger.Txn, data []byte, edgeID EdgeI
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	startNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+	startNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.StartNode))
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("v1→v2: allocating start numID for %q: %w", edgeID, err)
 	}
-	endNum, err := b.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+	endNum, err := resolveOrAllocateNumericIDInTxn(b.idDict, txn, NodeID(edge.EndNode))
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("v1→v2: allocating end numID for %q: %w", edgeID, err)
 	}

@@ -24,11 +24,11 @@ func TestSystemCypherSkipsDataSearchSetup(t *testing.T) {
 	handler := NewHandler(db, manager)
 	system := manager.SystemDatabaseName()
 	var systemSetups atomic.Int64
-	db.SetDbConfigResolver(func(database string) (int, float64, string) {
+	db.SetDbConfigResolver(func(database string) (int, float64) {
 		if database == system {
 			systemSetups.Add(1)
 		}
-		return 0, 0, ""
+		return 0, 0
 	})
 	admin := cypher.WithPermissionChecker(context.Background(), func(string) bool { return true })
 	for _, scoped := range []bool{false, true} {

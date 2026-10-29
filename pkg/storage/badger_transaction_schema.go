@@ -118,6 +118,11 @@ func cloneSchemaIndexValues[Key comparable](values map[Key][]NodeID) map[Key][]N
 }
 
 func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager) {
+	// An ordinary schema transaction can replace the durable token order.
+	// Readers must stop using the previous accepted-token snapshot before
+	// installing it, just as they do for a definition replacement.
+	sm.tokenSnapshot.Store(nil)
+	defer sm.publishTokenSnapshotLocked(nil, nil)
 	for key, constraint := range snapshot.uniqueConstraints {
 		if existing := sm.uniqueConstraints[key]; existing != nil && existing.Name == constraint.Name {
 			snapshot.uniqueConstraints[key] = existing

@@ -56,7 +56,7 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 				ctx := context.Background()
 				tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "retryowner")
 				fault := &retryOwnerReadWindow{Engine: tenant, edge: kind == "relationship"}
-				svc, err := db.EnsureSearchIndexesBuilt(ctx, "retryowner", fault)
+				svc, err := db.EnsureSearchIndexes(ctx, "retryowner", fault, SearchIndexBuildWait)
 				require.NoError(t, err)
 				_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeowneroutage"}})
 				require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 				db, _ := openConsumerDB(t, true)
 				tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "retrynewer")
 				fault := &retryOwnerReadWindow{Engine: tenant, edge: kind == "relationship"}
-				svc, err := db.EnsureSearchIndexesBuilt(context.Background(), "retrynewer", fault)
+				svc, err := db.EnsureSearchIndexes(context.Background(), "retrynewer", fault, SearchIndexBuildWait)
 				require.NoError(t, err)
 				_, err = tenant.CreateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "initialownerword"}})
 				require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 				if retire {
 					db.ResetSearchService("retrynewer")
 					require.True(t, svc.Closed())
-					svc, err = db.EnsureSearchIndexesBuilt(context.Background(), "retrynewer", tenant)
+					svc, err = db.EnsureSearchIndexes(context.Background(), "retrynewer", tenant, SearchIndexBuildWait)
 					require.NoError(t, err)
 				} else if kind == "node" {
 					require.NoError(t, svc.RefreshNode("a"))

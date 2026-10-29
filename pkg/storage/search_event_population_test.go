@@ -27,6 +27,55 @@ var entityStateKeys = map[string]bool{
 // entityStateWriters are the calls that persist or drop keys.
 var entityStateWriters = map[string]bool{"Set": true, "SetEntry": true, "Delete": true, "DropPrefix": true}
 
+type storageMutatorFunction struct {
+	calls map[string]bool
+	seed  bool
+}
+
+// storageMutatorReachability records which functions can reach a state write.
+func storageMutatorReachability(funcs map[string]*storageMutatorFunction) map[string]bool {
+	reaches := make(map[string]bool, len(funcs))
+	callers := make(map[string][]string)
+	var queue []string
+	for name, fn := range funcs {
+		if fn.seed {
+			reaches[name] = true
+			queue = append(queue, name)
+		}
+		for callee := range fn.calls {
+			callers[callee] = append(callers[callee], name)
+		}
+	}
+	// Walk backwards from the actual state writers. A cycle is not proof that
+	// its members cannot reach a writer: another edge in the cycle may do so.
+	for len(queue) != 0 {
+		last := len(queue) - 1
+		name := queue[last]
+		queue = queue[:last]
+		for _, caller := range callers[name] {
+			if !reaches[caller] {
+				reaches[caller] = true
+				queue = append(queue, caller)
+			}
+		}
+	}
+	return reaches
+}
+
+func TestStorageMutatorReachabilityHandlesCycles(t *testing.T) {
+	funcs := map[string]*storageMutatorFunction{
+		"A":    {calls: map[string]bool{"B": true, "Z": true}},
+		"B":    {calls: map[string]bool{"A": true}},
+		"Z":    {seed: true},
+		"self": {calls: map[string]bool{"self": true}},
+	}
+	reaches := storageMutatorReachability(funcs)
+	require.True(t, reaches["A"])
+	require.True(t, reaches["B"], "B reaches the state writer through A")
+	require.True(t, reaches["Z"])
+	require.False(t, reaches["self"], "a disconnected cycle has no state writer")
+}
+
 // storageMutatorPopulation computes, from the package's production source,
 // every exported method of the Badger engine and its transaction that reaches
 // a function both building an entity-state key and writing or deleting keys.
@@ -73,11 +122,7 @@ func storageMutatorPopulation(t *testing.T) []string {
 		}
 		return named.Obj().Name() + "." + fn.Name()
 	}
-	type fn struct {
-		calls map[string]bool
-		seed  bool
-	}
-	funcs := make(map[string]*fn)
+	funcs := make(map[string]*storageMutatorFunction)
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			d, ok := decl.(*ast.FuncDecl)
@@ -94,7 +139,7 @@ func storageMutatorPopulation(t *testing.T) []string {
 					name = id.Name + "." + name
 				}
 			}
-			f := &fn{calls: make(map[string]bool)}
+			f := &storageMutatorFunction{calls: make(map[string]bool)}
 			builds, writes := false, false
 			ast.Inspect(d.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
@@ -127,37 +172,14 @@ func storageMutatorPopulation(t *testing.T) []string {
 			funcs[name] = f
 		}
 	}
-	reaches := make(map[string]bool)
-	var visit func(name string, seen map[string]bool) bool
-	visit = func(name string, seen map[string]bool) bool {
-		if r, ok := reaches[name]; ok {
-			return r
-		}
-		if seen[name] {
-			return false
-		}
-		seen[name] = true
-		f := funcs[name]
-		if f == nil {
-			return false
-		}
-		result := f.seed
-		for callee := range f.calls {
-			if result {
-				break
-			}
-			result = visit(callee, seen)
-		}
-		reaches[name] = result
-		return result
-	}
+	reaches := storageMutatorReachability(funcs)
 	var population []string
 	for name := range funcs {
 		receiver, method, ok := strings.Cut(name, ".")
 		if !ok || (receiver != "BadgerEngine" && receiver != "BadgerTransaction") || !ast.IsExported(method) {
 			continue
 		}
-		if visit(name, make(map[string]bool)) {
+		if reaches[name] {
 			population = append(population, name)
 		}
 	}
@@ -218,7 +240,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerEngine.ReconcileDecaySuppressionWithChanges": scenarioDecay,
 	"BadgerTransaction.Commit":                          scenarioPublishes + " (a transaction commit)",
 	"BadgerTransaction.CommitContext":                   "Commit's implementation; " + scenarioPublishes,
-	"BadgerTransaction.CommitContextWithPublication":    "Commit's implementation; " + scenarioPublishes,
+	"BadgerTransaction.PublishCommit":                   "Commit's implementation; " + scenarioPublishes,
 	"BadgerTransaction.CreateNode":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateEdge":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.UpdateGraphNode":                 "buffers in the transaction; published by its Commit",

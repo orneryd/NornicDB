@@ -488,7 +488,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		sh.mu.RUnlock()
 	}
 	for _, id := range nodeVictims {
-		b.idDict.nodePairRemoveByID(id)
+		removeIDPair(&b.idDict.nodes, nodeForwardShard, nodeReverseShard, id, 0, idPairByString)
 	}
 	var edgeVictims []EdgeID
 	for i := range b.idDict.edges {
@@ -502,7 +502,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		sh.mu.RUnlock()
 	}
 	for _, id := range edgeVictims {
-		b.idDict.edgePairRemoveByID(id)
+		removeIDPair(&b.idDict.edges, edgeForwardShard, edgeReverseShard, id, 0, idPairByString)
 	}
 	if wholeNamespace {
 		b.transitionNamespaceSchema(namespace, schemaNamespaceRetire, nil)

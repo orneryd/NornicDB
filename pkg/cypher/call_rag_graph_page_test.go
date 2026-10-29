@@ -19,7 +19,7 @@ func TestRetrieveGraphPageYieldsAndReportsQueryChunks(t *testing.T) {
 	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
 	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
-	service := search.NewServiceWithDimensions(store, 2)
+	service := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	require.NoError(t, service.BuildIndexes(ctx))
 	exec.SetSearchService(service)

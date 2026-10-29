@@ -39,7 +39,7 @@ func TestIDDictionary_ShardedConcurrentPairs(t *testing.T) {
 				var num uint64
 				err := e.db.Update(func(txn *badger.Txn) error {
 					var err error
-					num, err = d.resolveOrAllocateNodeNumIDInTxn(txn, id)
+					num, err = resolveOrAllocateNumericIDInTxn(d, txn, NodeID(id))
 					return err
 				})
 				require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestIDDictionary_ShardedConcurrentPairs(t *testing.T) {
 			defer wg.Done()
 			for i := g; i < len(ids); i += goroutines {
 				err := e.db.Update(func(txn *badger.Txn) error {
-					return d.deleteNodeEntryInTxn(txn, ids[i])
+					return deleteIDEntryInTxn(txn, &d.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, ids[i], 0, idPairByString)
 				})
 				require.NoError(t, err)
 			}
@@ -89,7 +89,7 @@ func TestIDDictionary_ShardedConcurrentPairs(t *testing.T) {
 			defer wg.Done()
 			for i := g; i < len(ids); i += goroutines {
 				err := e.db.Update(func(txn *badger.Txn) error {
-					_, err := d.resolveOrAllocateNodeNumIDInTxn(txn, ids[i])
+					_, err := resolveOrAllocateNumericIDInTxn(d, txn, NodeID(ids[i]))
 					return err
 				})
 				require.NoError(t, err)

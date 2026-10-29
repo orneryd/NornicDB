@@ -21,9 +21,9 @@ func TestOperationLegacyReplacementFlagIsDecodeOnly(t *testing.T) {
 	require.NotContains(t, string(encoded), "replaces_existing", "current writers never emit the legacy flag")
 }
 
-// TestHistoricalEdgeOverwriteWALKeepsCounts records the exact buffered-WAL
-// shape acknowledged by the short-lived 68db5d16d writer. The field remains
-// readable even though current CREATE admission never writes it.
+// TestHistoricalEdgeOverwriteWALKeepsCounts exercises the historical
+// replacement flag inside a current buffered record. Older WAL frame versions
+// are rejected; a current record still needs the source numeric bindings.
 func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	dir := t.TempDir()
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
@@ -50,6 +50,9 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 		Ops:    []Operation{{Type: OpCreateEdge, EdgeID: edge.ID, Edge: edge}},
 		Writes: map[string][]byte{string(edgeKey(edge.ID)): raw},
 	}
+	var err error
+	data.NumericBindings, err = captureWALNumericBindings(engine.idDict, data.Writes, nil, nil)
+	require.NoError(t, err)
 	encoded, err := json.Marshal(data)
 	require.NoError(t, err)
 	var payload map[string]any

@@ -15,7 +15,7 @@ func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	svc := search.NewServiceWithDimensions(engine, 3)
+	svc := search.NewService(engine, 3, nil)
 
 	notifier, ok := interface{}(engine).(storage.StorageEventNotifier)
 	require.True(t, ok)

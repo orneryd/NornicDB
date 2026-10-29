@@ -77,7 +77,7 @@ func TestIngestDocuments(t *testing.T) {
 
 func TestNornicDocumentSinkPreservesBEIRID(t *testing.T) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "bench")
-	index := search.NewServiceWithDimensions(engine, 2)
+	index := search.NewService(engine, 2, nil)
 	sink := &NornicDocumentSink{Engine: engine, Indexer: index}
 	require.NoError(t, sink.StoreDocument(context.Background(), Document{ID: "doc-1", Title: "Title", Text: "retrieval text"}))
 	node, err := engine.GetNode("doc-1")

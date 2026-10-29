@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This control compiles on the previous head too. The physical payload must
-// retain the base layout, without per-record bindings or identity metadata.
-func TestWALSteadyBufferedPayloadMatchesBase(t *testing.T) {
+// The buffered record uses the typed codec, but still keeps dictionary
+// bindings in the epoch rather than duplicating them in each physical record.
+func TestWALSteadyBufferedPayloadUsesTypedCodec(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, keys := range []int{1, 160} {
 		t.Run(fmt.Sprint(keys), func(t *testing.T) {
@@ -28,12 +28,20 @@ func TestWALSteadyBufferedPayloadMatchesBase(t *testing.T) {
 			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 			require.NoError(t, err)
 			require.Len(t, entries, 3)
-			expected, err := json.Marshal(WALBufferedCommitData{TxID: commit.txID, Namespace: commit.namespace, Writes: commit.writes})
-			require.NoError(t, err)
 			for _, entry := range entries {
 				payload, err := decompressWALBufferedCommitPayload(entry.Data)
 				require.NoError(t, err)
-				require.Equal(t, string(expected), string(payload))
+				serializer, _, headered, err := splitSerializationHeader(payload)
+				require.NoError(t, err)
+				require.True(t, headered)
+				require.Equal(t, serializerIDMsgpack, serializer)
+				var data WALBufferedCommitData
+				require.NoError(t, decodeRecoveryPayload(payload, &data))
+				require.Equal(t, commit.txID, data.TxID)
+				require.Equal(t, commit.namespace, data.Namespace)
+				require.Equal(t, commit.writes, data.Writes)
+				require.Empty(t, data.PropertyBindings)
+				require.Empty(t, data.PropertyDictionaryID)
 			}
 		})
 	}
@@ -88,7 +96,8 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				for start := 0; start < len(bytes); {
 					size := int(binary.LittleEndian.Uint32(bytes[start+5 : start+9]))
 					end := start + int(alignUp(int64(9+size+4+8)))
-					physical, err := decodeWALEntry(bytes[start+9:start+9+size], bytes[start+4])
+					physical, err := WALEntry{}, error(nil)
+					_, err = processWALEntryPayload(walPayloadDecode, nil, &physical, bytes[start+9:start+9+size], bytes[start+4])
 					require.NoError(t, err)
 					// A torn header/body cannot lend authority to a later body.
 					for _, cut := range []int{start + 1, end} {
@@ -153,7 +162,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				require.NoError(t, dest.Close())
 			}
 			check("a2", "b2") // snapshot published, original WAL still present
-			require.NoError(t, wal.TruncateAfterSnapshot(snapshot.Sequence))
+			require.NoError(t, wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate))
 			check("a2", "b2") // retained entries keep their original epoch
 			update("epoch:a", map[string]any{"alpha": "a3", "beta": "b3"})
 			check("a3", "b3") // first steady append after truncation
@@ -193,11 +202,13 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	// happen to match the previous writer. A later constructor cannot infer it.
 	payload, err := decompressWALBufferedCommitPayload(entries[0].Data)
 	require.NoError(t, err)
+	var unbound walBufferedCommitPayload
+	require.NoError(t, decodeRecoveryPayload(payload, &unbound))
 	require.NoError(t, wal.Close())
 	reopened, err := NewWAL(wal.Config().Dir, DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	require.NoError(t, reopened.Append(OpBufferedCommit, json.RawMessage(payload)))
+	require.NoError(t, reopened.Append(OpBufferedCommit, &unbound))
 	entries, err = ReadWALEntriesFromDir(reopened.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
@@ -206,7 +217,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	// Batch writes share the same unbound boundary owner.
 	require.NoError(t, reopened.AppendBufferedCommit(commit, source.propKeyDict))
 	batch := reopened.NewBatch()
-	require.NoError(t, batch.append(OpBufferedCommit, json.RawMessage(payload)))
+	require.NoError(t, batch.append(OpBufferedCommit, &unbound))
 	require.NoError(t, batch.Commit())
 	entries, err = ReadWALEntriesFromDir(reopened.Config().Dir)
 	require.NoError(t, err)
@@ -225,7 +236,8 @@ func TestWALPropertyEpochChangesOnlyAtDictionaryBoundaries(t *testing.T) {
 		count := 0
 		for offset := 0; offset < len(raw); {
 			size := int(binary.LittleEndian.Uint32(raw[offset+5 : offset+9]))
-			entry, err := decodeWALEntry(raw[offset+9:offset+9+size], raw[offset+4])
+			entry, err := WALEntry{}, error(nil)
+			_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, raw[offset+9:offset+9+size], raw[offset+4])
 			require.NoError(t, err)
 			if isWALPropertyEpoch(entry) {
 				count++
@@ -276,7 +288,9 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	require.NoError(t, err)
 	payload, err := decompressWALBufferedCommitPayload(entries[1].Data)
 	require.NoError(t, err)
-	require.NoError(t, legacy.Append(OpBufferedCommit, json.RawMessage(payload)))
+	var unbound walBufferedCommitPayload
+	require.NoError(t, decodeRecoveryPayload(payload, &unbound))
+	require.NoError(t, legacy.Append(OpBufferedCommit, &unbound))
 	require.NoError(t, legacy.Close())
 	dir := t.TempDir()
 	dest := reviewBindingEngine(t, dir)
@@ -315,35 +329,22 @@ func TestWALPropertyEpochOwnDirectoryAllocationBounds(t *testing.T) {
 	}), "known original-store epochs do no binding work per record")
 }
 
-func TestWALPropertyEpochSealsLegacyJSONBeforeAppend(t *testing.T) {
+func TestWALRejectsLegacyJSONBeforeAppendWithoutChangingIt(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source, _, commit := bindingCostFixture(t, 1)
+	_, _, commit := bindingCostFixture(t, 1)
 	data, err := json.Marshal(WALBufferedCommitData{TxID: "old", Namespace: commit.namespace, Writes: commit.writes})
 	require.NoError(t, err)
 	old := WALEntry{Sequence: 7, Timestamp: time.Now(), Operation: OpBufferedCommit, Data: data, Checksum: crc32Checksum(data)}
 	raw, err := json.Marshal(old)
 	require.NoError(t, err)
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "wal.log"), append(raw, '\n'), 0600))
+	oldBytes := append(raw, '\n')
+	path := filepath.Join(dir, "wal.log")
+	require.NoError(t, os.WriteFile(path, oldBytes, 0600))
 	wal, err := NewWAL(dir, DefaultWALConfig())
+	require.Nil(t, wal)
+	require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+	after, err := os.ReadFile(path)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = wal.Close() })
-	wal.bindPropertyDictionary(source.propKeyDict)
-	// Attachment may precede constructor recovery. The old pending record
-	// remains readable before the new writer appends its first operation.
-	entries, err := ReadWALEntriesFromDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, old.Data, entries[0].Data)
-	require.Nil(t, entries[0].PropertyEpoch)
-	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	entries, err = ReadWALEntriesFromDir(dir)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	require.Equal(t, uint64(8), entries[1].Sequence)
-	require.NotNil(t, entries[1].PropertyEpoch)
-	manifest, err := loadWALManifest(dir)
-	require.NoError(t, err)
-	require.Len(t, manifest.Segments, 1)
-	require.Equal(t, uint64(7), manifest.Segments[0].LastSeq)
+	require.Equal(t, oldBytes, after)
 }

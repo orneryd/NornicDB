@@ -97,28 +97,6 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 	b.bufferedCommitWAL = w
 }
 
-// bufferedFlushMarkerExists reports whether a buffered commit's data has
-// already been applied to Badger (marker present).
-func (b *BadgerEngine) bufferedFlushMarkerExists(namespace, txID, logicalID string) (bool, error) {
-	if txID == "" && logicalID == "" {
-		return false, nil
-	}
-	key := bufferedCommitMarkerKey(namespace, txID, logicalID)
-	exists := false
-	err := b.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		exists = true
-		return nil
-	})
-	return exists, err
-}
-
 // commitBufferedLocked captures the transaction's validated, materialized
 // commit state into the engine's write-behind buffer and closes the
 // transaction as committed without writing to Badger. The caller has already
@@ -176,19 +154,20 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
-	// The dictionary no longer owns these entries. A rejected pre-WAL commit
-	// must clear their pending marks, which otherwise retain the whole state.
+	// A rejected pre-WAL commit drops entries that no other transaction adopted.
 	transferred := false
 	defer func() {
 		if transferred {
 			return
 		}
-		tx.engine.idDict.clearPending(c.idEntries)
+		tx.engine.idDict.abandonPending(c.idEntries)
 		if c.idEntries != nil {
 			clear(c.idEntries.nodes)
 			clear(c.idEntries.edges)
+			clear(c.idEntries.claims)
 			c.idEntries.nodes = nil
 			c.idEntries.edges = nil
+			c.idEntries.claims = nil
 		}
 		if c.memoryLease != nil {
 			c.memoryLease.Release()
@@ -212,7 +191,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	var accounting func()
 	if registry := tx.engine.storedEntityObservers.Load(); registry != nil {
 		if observer := (*registry)[tx.namespace].observer; observer != nil {
-			changes, err := tx.capturePreparedEntityChangesLocked()
+			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
 			if err != nil {
 				tx.closeLocked(TxStatusRolledBack, true, nil)
 				return err
@@ -247,7 +226,10 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
 	if tx.engine.bufferedCommitWAL != nil {
-		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict); err != nil {
+		c.walIDs = tx.engine.idDict
+		err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict)
+		c.walIDs = nil
+		if err != nil {
 			// The ACK must never outrun the durable record: failing to log
 			// the payload fails the commit.
 			tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -426,6 +408,24 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		return err
 	}
 
+	// Capture constraint metadata before any write can promote the physical
+	// writer to the exclusive commit gate. Recovered operation images are
+	// hydrated below; their late key derivation reads only these snapshots.
+	schemas := make(map[string]*SchemaManager, 1)
+	constraints := make(map[string]*publicationConstraintView, 1)
+	for _, c := range commits {
+		if c.namespace == "" {
+			continue
+		}
+		if _, exists := schemas[c.namespace]; exists {
+			continue
+		}
+		schema := b.GetSchemaForNamespace(c.namespace)
+		schemas[c.namespace] = schema
+		view := capturePublicationConstraintView(schema)
+		constraints[c.namespace] = &view
+	}
+
 	for commitIndex := range commits {
 		c := &commits[commitIndex]
 		// The commit's MVCC version was allocated at ACK time; the flusher
@@ -439,7 +439,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			}
 		}
 		versions[c.namespace] = v
-		if c.hasCounters {
+		if c.hasCounters && !c.recovered {
 			anyCounters = true
 			if c.counterNodeMax > maxNode {
 				maxNode = c.counterNodeMax
@@ -457,22 +457,31 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
+		writes, deletes := c.writes, c.deletes
 		if c.recovered {
-			if err := b.restoreBufferedOperationBodies(cw.txn, c); err != nil {
+			var err error
+			writes, deletes, err = b.rebindBufferedNumericIDs(cw.txn, c)
+			if err != nil {
+				return abort(err)
+			}
+			if err := b.restoreBufferedOperationBodies(cw.txn, c, writes, deletes); err != nil {
+				return abort(err)
+			}
+			if err := validateReboundWALWrites(writes, deletes); err != nil {
 				return abort(err)
 			}
 		}
 		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
 		}
-		for keyStr := range c.deletes {
+		for keyStr := range deletes {
 			key := []byte(keyStr)
 			if err := w.write(func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
 				return abort(err)
 			}
 		}
-		for keyStr, value := range c.writes {
-			if c.deletes[keyStr] {
+		for keyStr, value := range writes {
+			if deletes[keyStr] {
 				continue
 			}
 			key := []byte(keyStr)
@@ -494,15 +503,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	acquireCounts()
 
-	schemas := make(map[string]*SchemaManager, 1)
 	var notificationOps []Operation
 	for _, c := range commits {
-		schema := schemas[c.namespace]
-		if schema == nil && c.namespace != "" {
-			schema = b.GetSchemaForNamespace(c.namespace)
-			schemas[c.namespace] = schema
-		}
-		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, schema, c.ops)
+		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, constraints[c.namespace], c.ops)
 		notificationOps = append(notificationOps, c.ops...)
 	}
 	capturePublicationOperations(notification, notificationOps)
@@ -513,7 +516,13 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	}
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
-	b.idDict.flushTxnCounters(cw.txn)
+	replayNodeMax, replayEdgeMax := b.idDict.flushTxnCounters(cw.txn)
+	if replayNodeMax > maxNode {
+		maxNode, anyCounters = replayNodeMax, true
+	}
+	if replayEdgeMax > maxEdge {
+		maxEdge, anyCounters = replayEdgeMax, true
+	}
 	committing := cw.txn
 	if err := cw.finish(); err != nil {
 		b.totalCountWriteMu.Unlock()

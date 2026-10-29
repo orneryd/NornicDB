@@ -46,7 +46,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		t.Fatal("server readiness failed")
 	}
 	ready()
-	request := func(t *testing.T, label, query string, wantError bool) {
+	request := func(t *testing.T, label, query string, wantError bool) []byte {
 		t.Helper()
 		status, data, err := investigationHTTP(base, "system", query, "")
 		var body investigationResponse
@@ -58,7 +58,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 			t.Error(label + " disclosed a synthetic password; value withheld")
 		}
 		if !wantError {
-			return
+			return data
 		}
 		// The same rejected statement through the public GraphQL resolver must
 		// report the resolution error, executed by the cypher resolver rather
@@ -73,17 +73,17 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		graphqlResponse, graphqlErr := (&http.Client{Timeout: 8 * time.Second}).Post(base+"/graphql", "application/json", bytes.NewReader(graphqlBody))
 		if graphqlErr != nil {
 			t.Error(label + " GraphQL transport failure; details withheld")
-			return
+			return data
 		}
 		graphqlData, readErr := io.ReadAll(graphqlResponse.Body)
 		graphqlResponse.Body.Close()
 		if readErr != nil {
 			t.Error(label + " GraphQL response read failure; details withheld")
-			return
+			return data
 		}
 		if graphqlResponse.StatusCode != http.StatusOK {
 			t.Error(label + " GraphQL response was not HTTP 200; status withheld")
-			return
+			return data
 		}
 		var graphqlResult struct {
 			Errors []struct {
@@ -93,11 +93,11 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		}
 		if decodeErr := json.Unmarshal(graphqlData, &graphqlResult); decodeErr != nil {
 			t.Error(label + " GraphQL response could not be decoded; body withheld")
-			return
+			return data
 		}
 		if len(graphqlResult.Errors) == 0 {
 			t.Error(label + " GraphQL returned no rejection errors; body withheld")
-			return
+			return data
 		}
 		for _, graphqlError := range graphqlResult.Errors {
 			if strings.TrimSpace(graphqlError.Message) == "" {
@@ -110,6 +110,25 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		if bytes.Contains(graphqlData, []byte(investigationPass)) {
 			t.Error(label + " GraphQL response disclosed a synthetic password; value withheld")
 		}
+		return data
+	}
+	assertAliasStored := func(dbName, wantedAlias string) {
+		t.Helper()
+		data := request(t, "SHOW constituents", "SHOW CONSTITUENTS FOR COMPOSITE DATABASE "+dbName, false)
+		var body investigationResponse
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal("constituent response could not be decoded")
+		}
+		for _, result := range body.Results {
+			for _, item := range result.Data {
+				for _, value := range item.Row {
+					if alias, ok := value.(string); ok && alias == wantedAlias {
+						return
+					}
+				}
+			}
+		}
+		t.Fatal("valid remote alias was not persisted; details withheld")
 	}
 	checkDuplicatePassword := func() {
 		t.Helper()
@@ -134,8 +153,13 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 				declaration := " FOR DATABASE nornic AT '" + endpoint + "'" + suffix + " TYPE remote ACCESS read"
 				request(t, "ALTER ADD", "ALTER COMPOSITE DATABASE "+db+" ADD ALIAS r"+declaration, false)
 				request(t, "CREATE remote", "CREATE COMPOSITE DATABASE "+db+"_create ALIAS r"+declaration, false)
-				request(t, "SHOW constituents", "SHOW CONSTITUENTS FOR COMPOSITE DATABASE "+db, false)
-				request(t, "EXPLAIN", "EXPLAIN CREATE COMPOSITE DATABASE "+db+"_plan ALIAS r"+declaration, false)
+				assertAliasStored(db, "r")
+				assertAliasStored(db+"_create", "r")
+				// EXPLAIN remains a required public wire check, including the
+				// formerly tracked NOR-211 administration metadata regression.
+				t.Run("explain_NOR211", func(t *testing.T) {
+					request(t, "EXPLAIN", "EXPLAIN CREATE COMPOSITE DATABASE "+db+"_plan ALIAS r"+declaration, false)
+				})
 				request(t, "duplicate ADD error", "ALTER COMPOSITE DATABASE "+db+" ADD ALIAS r"+declaration, true)
 				request(t, "unsupported SET error", "ALTER COMPOSITE DATABASE "+db+" SET ALIAS r AT '"+endpoint+"'", true)
 				request(t, "CREATE unexpected URI error", "CREATE COMPOSITE DATABASE "+db+"_bad ALIAS r FOR DATABASE nornic '"+endpoint+"'", true)
@@ -148,11 +172,15 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		stop = investigationStart(t, binary, serverDir, hp, bp, false, "antlr")
 		ready()
 		checkDuplicatePassword()
-		// The existing remote-DDL grammar gap is not part of this correction.
-		// Exercise real rejection output and catalog display after native setup.
-		for _, command := range []string{"CREATE COMPOSITE DATABASE wire_rejected ALIAS r FOR DATABASE nornic", "ALTER COMPOSITE DATABASE wire_http_uri ADD ALIAS rejected FOR DATABASE nornic"} {
-			request(t, "ANTLR AT rejection", command+" AT 'http://admin:"+investigationPass+"@127.0.0.1:1' TYPE remote ACCESS read", true)
-			request(t, "ANTLR unexpected URI rejection", command+" 'http://admin:"+investigationPass+"@127.0.0.1:1'", true)
+		// The composite grammar now accepts the AT constituent form. Keep checking
+		// that its response and later catalog display stay safe.
+		for _, entry := range []struct{ command, database, alias string }{
+			{"CREATE COMPOSITE DATABASE wire_rejected ALIAS r FOR DATABASE nornic", "wire_rejected", "r"},
+			{"ALTER COMPOSITE DATABASE wire_http_uri ADD ALIAS rejected FOR DATABASE nornic", "wire_http_uri", "rejected"},
+		} {
+			request(t, "ANTLR AT accepted", entry.command+" AT 'http://admin:"+investigationPass+"@127.0.0.1:1' TYPE remote ACCESS read", false)
+			assertAliasStored(entry.database, entry.alias)
+			request(t, "ANTLR unexpected URI rejection", entry.command+" 'http://admin:"+investigationPass+"@127.0.0.1:1'", true)
 		}
 	}
 	request(t, "SHOW composite databases", "SHOW COMPOSITE DATABASES", false)

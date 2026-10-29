@@ -28,7 +28,7 @@ func TestBoltRetrieveCanceledEmbeddingReturnsFailure(t *testing.T) {
 	server, port := startBoltIntegrationServer(t, store)
 	exec := server.executor.(*cypherQueryExecutor).executor
 	exec.SetEmbedder(canceledSearchEmbedder{})
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	exec.SetSearchService(svc)
 	conn := openBoltTestConn(t, port)

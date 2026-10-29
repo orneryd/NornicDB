@@ -57,11 +57,7 @@ func decodeEntityCommandOperations(kind CommandType, data []byte) ([]storage.Ope
 	}
 	return nil, false, nil
 }
-func applyDirectEntityCommand(engine storage.Engine, kind CommandType, data []byte) error {
-	ops, _, err := decodeEntityCommandOperations(kind, data)
-	if err != nil {
-		return err
-	}
+func applyDirectEntityCommand(engine storage.Engine, kind CommandType, ops []storage.Operation) error {
 	switch kind {
 	case CmdBulkCreateNodes:
 		nodes := make([]*storage.Node, len(ops))

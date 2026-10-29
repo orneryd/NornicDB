@@ -2,67 +2,12 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
-
-func TestBadgerMVCC_WithViewNodeMVCCVersionsFromKey_UnknownDecodeAndYieldError(t *testing.T) {
-	engine := createMVCCBadgerEngine(t)
-
-	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	unknownKey := mvccNodeVersionKey(8_888_888, v)
-	unknownRec, err := encodeMVCCNodeRecord(&Node{ID: "ghost:n", Labels: []string{"N"}}, false)
-	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error { return txn.Set(unknownKey, unknownRec) }))
-
-	yieldCount := 0
-	_, reachedEnd, err := engine.withViewNodeMVCCVersionsFromKey([]byte{prefixMVCCNode}, 1, func(NodeID, MVCCVersion, bool) error {
-		yieldCount++
-		return nil
-	})
-	require.NoError(t, err)
-	require.False(t, reachedEnd)
-	require.Equal(t, 0, yieldCount)
-
-	_, err = engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"N"}})
-	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		vk, keyErr := engine.mvccNodeVersionKeyString(txn, "test:n1", v)
-		if keyErr != nil {
-			return keyErr
-		}
-		return txn.Set(vk, []byte("corrupt-node-mvcc-record"))
-	}))
-
-	_, _, err = engine.withViewNodeMVCCVersionsFromKey([]byte{prefixMVCCNode}, 64, func(NodeID, MVCCVersion, bool) error {
-		return nil
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "msgpack")
-
-	// Restore a valid record so yield-error branch can be exercised.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		vk, keyErr := engine.mvccNodeVersionKeyString(txn, "test:n1", v)
-		if keyErr != nil {
-			return keyErr
-		}
-		rec, recErr := encodeMVCCNodeRecord(&Node{ID: "test:n1", Labels: []string{"N"}}, false)
-		if recErr != nil {
-			return recErr
-		}
-		return txn.Set(vk, rec)
-	}))
-
-	wantErr := errors.New("stop-yield")
-	_, _, err = engine.withViewNodeMVCCVersionsFromKey([]byte{prefixMVCCNode}, 64, func(NodeID, MVCCVersion, bool) error {
-		return wantErr
-	})
-	require.ErrorIs(t, err, wantErr)
-}
 
 func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)

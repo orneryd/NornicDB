@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+// UseArgument is one grammar-owned expression with its exact original source
+// association. Span is a half-open byte interval; Text is that source slice.
+type UseArgument struct {
+	Span cyphertext.Span
+	Text string
+}
+
 // UseReference is the shared grammar's graph selector product. End is a UTF-8
 // byte offset in the original source, including the optional GRAPH word and
 // excluding its follower. AcceptedEnd separately retains the grammar cursor.
@@ -15,6 +22,7 @@ type UseReference struct {
 	Name        string
 	Function    string
 	Args        []string
+	Arguments   []UseArgument
 	End         int
 	AcceptedEnd int
 }
@@ -67,14 +75,18 @@ func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 			child := chain.Child(i)
 			if child.Rule() == CypherParserRULE_expression {
 				text := child.Text()
+				start, end := child.Span()
+				argumentSpan := cyphertext.Span{Start: start, End: end}
 				if source != nil {
 					start, end := child.Span()
 					span, ok := source.OriginalSpan(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExtent)
 					if ok {
 						text = source.Original[span.Start:span.End]
+						argumentSpan = span
 					}
 				}
 				reference.Args = append(reference.Args, text)
+				reference.Arguments = append(reference.Arguments, UseArgument{Span: argumentSpan, Text: text})
 			}
 		}
 	}

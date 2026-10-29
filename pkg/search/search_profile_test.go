@@ -19,7 +19,7 @@ func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service
 	tb.Helper()
 	base := newTestMemoryEngine(tb)
 	engine := storage.NewNamespacedEngine(base, "nornic")
-	svc := NewServiceWithDimensions(engine, dims)
+	svc := NewService(engine, dims, nil)
 
 	// Build deterministic synthetic data with mixed lexical content and vectors.
 	for i := 0; i < nodeCount; i++ {
@@ -155,7 +155,7 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 	})
 
 	engine := storage.NewNamespacedEngine(baseEngine, dbName)
-	svc := NewServiceWithDimensions(engine, dims)
+	svc := NewService(engine, dims, nil)
 	svc.SetFulltextIndexPath(fulltextPath)
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetHNSWIndexPath(hnswPath)

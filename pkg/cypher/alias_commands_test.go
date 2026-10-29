@@ -11,11 +11,61 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil/compositeddl"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
 )
+
+func TestAliasCommands_ShowAliasesConsumesCommandHead(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	dbm := newAliasTestDatabaseManager(t)
+	require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant-a"}))
+	require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant.b"}))
+	require.NoError(t, dbm.CreateAlias(t.Context(), "main", "tenant-a"))
+	require.NoError(t, dbm.CreateAlias(t.Context(), "other", "tenant.b"))
+	exec.SetDatabaseManager(dbm)
+	ctx := context.Background()
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	for _, c := range compositeddl.Cases() {
+		if !strings.HasPrefix(c.Name, "show_aliases_invalid_") {
+			continue
+		}
+		t.Run(c.Name, func(t *testing.T) {
+			result, err := exec.Execute(ctx, strings.ReplaceAll(c.Statement, "$db", "tenant-a"), nil)
+			require.Nil(t, result)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+			// The statement boundary can refuse a second statement first. Also
+			// exercise the listing owner directly, including that same suffix.
+			result, err = exec.executeShowAliases(ctx, showCommandHead(strings.ReplaceAll(c.Statement, "$db", "tenant-a")))
+			require.Nil(t, result)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+			var typed *localization.LocalizedError
+			require.ErrorAs(t, err, &typed)
+			require.Equal(t, localization.MessageCypherResidualShowAliasesSyntaxInvalid, typed.Message.ID)
+			spanish, _, err := manager.Render(localization.WithPreferences(ctx, language.EuropeanSpanish), localization.ErrorRequest(typed))
+			require.NoError(t, err)
+			require.NotEqual(t, typed.Error(), spanish)
+		})
+	}
+	for query, count := range map[string]int{
+		"SHOW ALIASES":                                            2,
+		"SHOW ALIASES FOR DATABASES;":                             2,
+		"SHOW\tALIASES\nFOR\tDATABASE tenant-a;":                  1,
+		"SHOW ALIASES FOR DATABASE tenant.b":                      1,
+		"SHOW ALIASES WHERE alias = 'main'":                       1,
+		"SHOW ALIASES YIELD alias, database WHERE alias = 'main'": 1,
+		"SHOW ALIASES FOR DATABASE tenant-a YIELD * ORDER BY alias LIMIT 1 RETURN alias, database": 1,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Len(t, result.Rows, count, query)
+	}
+}
 
 // aliasTestDatabaseManager implements DatabaseManagerInterface for alias testing.
 type aliasTestDatabaseManager struct {
@@ -413,11 +463,12 @@ func TestAliasCommandWhitespaceErrors(t *testing.T) {
 		{name: "TestAliasCommands_CreateAlias_ErrorCases_WhitespaceVariations", createExisting: true, cases: []struct {
 			name, query string
 			expectErr   bool
-		}{{
-			name:      "alias_already_exists",
-			query:     "CREATE ALIAS existing FOR DATABASE tenant_a",
-			expectErr: true,
-		},
+		}{
+			{
+				name:      "alias_already_exists",
+				query:     "CREATE ALIAS existing FOR DATABASE tenant_a",
+				expectErr: true,
+			},
 			{
 				name:      "database_not_found",
 				query:     "CREATE ALIAS new_alias FOR DATABASE nonexistent",
@@ -436,11 +487,12 @@ func TestAliasCommandWhitespaceErrors(t *testing.T) {
 		{name: "TestAliasCommands_DropAlias_ErrorCases_WhitespaceVariations", createExisting: false, cases: []struct {
 			name, query string
 			expectErr   bool
-		}{{
-			name:      "alias_not_found",
-			query:     "DROP ALIAS nonexistent",
-			expectErr: true,
-		},
+		}{
+			{
+				name:      "alias_not_found",
+				query:     "DROP ALIAS nonexistent",
+				expectErr: true,
+			},
 			{
 				name:      "alias_not_found_with_IF_EXISTS",
 				query:     "DROP ALIAS nonexistent IF EXISTS",

@@ -184,13 +184,7 @@ func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 		if !bound {
 			return nil, false
 		}
-		if scope.executor != nil {
-			base = scope.executor.queryVisibleValue(base)
-		}
-		if o.directProperty {
-			return rowPropertyValue(base, o.chain)
-		}
-		return evaluateRowPropertyChain(base, o.chain)
+		return evaluateRowPropertyChain(base, o.chain, scope.executor, o.directProperty)
 	default:
 		return scope.lookup(o.variable)
 	}

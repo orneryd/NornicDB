@@ -19,7 +19,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 		defer os.Unsetenv("NORNICDB_VECTOR_ANN_QUALITY")
 
 		engine := newTestMemoryEngine(t)
-		svc := NewServiceWithDimensions(engine, 4)
+		svc := NewService(engine, 4, nil)
 
 		// Add nodes and verify HNSW is used by default.
 		for i := 0; i < 10; i++ {
@@ -53,7 +53,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 		defer os.Unsetenv("NORNICDB_VECTOR_ANN_QUALITY")
 
 		engine := newTestMemoryEngine(t)
-		svc := NewServiceWithDimensions(engine, 4)
+		svc := NewService(engine, 4, nil)
 
 		// Add nodes and verify HNSW is used by default.
 		for i := 0; i < 10; i++ {
@@ -93,7 +93,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 		}()
 
 		engine := newTestMemoryEngine(t)
-		svc := NewServiceWithDimensions(engine, 4)
+		svc := NewService(engine, 4, nil)
 
 		// Add nodes and verify HNSW is used by default.
 		for i := 0; i < 10; i++ {

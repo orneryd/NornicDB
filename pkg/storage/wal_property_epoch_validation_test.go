@@ -11,21 +11,35 @@ import (
 	"testing"
 	"time"
 
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 type epochFailWriter struct{}
 
 func (epochFailWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+// epochValidationRecord builds one complete record around a supplied payload.
+// Old framing is still produced explicitly where a test must prove refusal.
 func epochValidationRecord(t *testing.T, data []byte, version uint8) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
-	payload, err := encodeWALEntryV3(&buffer, &WALEntry{Operation: OpCheckpoint, Data: data, Checksum: crc32Checksum(data)})
+	payload, err := processWALEntryPayload(walPayloadEncode, &buffer, &WALEntry{Operation: OpCheckpoint, Data: data, Checksum: crc32Checksum(data)}, nil, 0)
 	require.NoError(t, err)
 	record, _ := buildAtomicRecord(payload, version)
+	return record
+}
+
+// epochValidationControl builds a control whose payload is exactly the supplied
+// frame. Hand-written JSON can carry duplicate keys, so a byte-exact control
+// must come from the product encoder to keep sealing's fixed frame length.
+func epochValidationControl(t *testing.T, frame walPropertyEpochFrame) []byte {
+	t.Helper()
+	payload, err := encodeWALPropertyEpochFrame(frame, 1, time.Unix(0, 0).UTC())
+	require.NoError(t, err)
+	record, _ := buildAtomicRecord(payload, walFormatVersionCurrent)
 	return record
 }
 
@@ -41,7 +55,7 @@ func TestWALPropertyEpochMalformedAuthority(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "wal.log")
-			raw := epochValidationRecord(t, []byte(data), walFormatVersionPropertyEpoch)
+			raw := epochValidationRecord(t, []byte(data), walFormatVersionCurrent)
 			if name == "byte span" || name == "sequence span" {
 				// Keep the actual writer's fixed-width framing: failure must
 				// come from invalid authority, not a changed frame byte length.
@@ -49,33 +63,76 @@ func TestWALPropertyEpochMalformedAuthority(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(data), &frame))
 				payload, err := encodeWALPropertyEpochFrame(frame, 0, time.Unix(0, 0))
 				require.NoError(t, err)
-				raw, _ = buildAtomicRecord(payload, walFormatVersionPropertyEpoch)
+				raw, _ = buildAtomicRecord(payload, walFormatVersionCurrent)
 			}
 			require.NoError(t, os.WriteFile(path, raw, 0600))
-			_, err := ReadWALEntries(path)
+			file, err := os.Open(path)
+			require.NoError(t, err)
+			_, err = ReadWALEntries(file.Name(), nil)
+			require.NoError(t, file.Close())
 			require.Error(t, err)
-			require.Error(t, sealWALPropertyEpochFile(path), "clean conversion must use the same authority validator")
+			require.Error(t, sealWALPropertyEpochFile(path), "clean sealing must use the same authority validator")
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, raw, after)
 		})
 	}
+	// A control authored by an older framing is refused before its authority is
+	// examined: the recognizer is a payload prefix, so it still matches.
 	path := filepath.Join(t.TempDir(), "wal.log")
-	require.NoError(t, os.WriteFile(path, epochValidationRecord(t, []byte(valid), walFormatVersionV3), 0600))
-	_, err := ReadWALEntries(path)
-	require.ErrorContains(t, err, "requires framing version 4")
-	_, err = decodeWALPropertyEpochFrame(WALEntry{Operation: OpCreateNode})
+	old := epochValidationRecord(t, []byte(valid), walFormatVersionV3)
+	require.NoError(t, os.WriteFile(path, old, 0600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	_, err = ReadWALEntries(file.Name(), nil)
+	require.NoError(t, file.Close())
+	require.ErrorIs(t, err, ErrWALUnsupportedVersion)
+	require.ErrorIs(t, sealWALPropertyEpochFile(path), ErrWALUnsupportedVersion)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, old, after, "old framing is refused, not converted")
+	// Decode-level rules still hold for a payload that reached a current frame.
+	_, err = decodeWALPropertyEpochFrame(WALEntry{Operation: OpCreateNode, framingVersion: walFormatVersionCurrent})
 	require.Error(t, err)
+	entry := WALEntry{Operation: OpCheckpoint, Data: []byte(valid), framingVersion: walFormatVersionCurrent}
+	frame, err := decodeWALPropertyEpochFrame(entry)
+	require.NoError(t, err)
+	require.Equal(t, ^uint64(0), frame.through, "a null authority is valid in the current framing")
+	require.Equal(t, ^uint64(0), frame.last)
 	_, err = encodeWALPropertyEpochFrame(walPropertyEpochFrame{}, 0, time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC))
 	require.Error(t, err)
 	_, err = encodeWALPropertyEpochFrame(walPropertyEpochFrame{Epoch: &WALPropertyEpoch{state: &walPropertyEpochState{Bindings: make([]byte, walMaxEntrySize)}}}, 0, time.Now())
 	require.ErrorContains(t, err, "maximum frame size", "an oversized dictionary must fail before writing an unreadable frame")
 }
 
+// An ordinary current-framing record is not an authority control: reading and
+// sealing must both accept it even though it shares the version byte with the
+// controls around it.
+func TestWALPropertyEpochOrdinaryCurrentFrameIsNotAControl(t *testing.T) {
+	control := epochValidationControl(t, walPropertyEpochFrame{Format: 1, Through: "ffffffffffffffff", Last: "ffffffffffffffff"})
+	ordinary := epochValidationRecord(t, []byte(`{}`), walFormatVersionCurrent)
+	path := filepath.Join(t.TempDir(), "wal.log")
+	require.NoError(t, os.WriteFile(path, append(bytes.Clone(control), ordinary...), 0600))
+	plan, err := scanWALPropertyEpochFile(path, nil)
+	require.NoError(t, err)
+	require.Len(t, plan.controls, 1, "only the property epoch payload is a control")
+	require.NoError(t, sealWALPropertyEpochFile(path))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	entries, err := ReadWALEntries(file.Name(), nil)
+	require.NoError(t, file.Close())
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the authority control is consumed by the reader")
+	require.Equal(t, OpCheckpoint, entries[0].Operation)
+	require.Nil(t, entries[0].PropertyEpoch, "an ordinary record carries no authority")
+	sealed, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, len(control)+len(ordinary), len(sealed), "sealing a control keeps its fixed frame length")
+}
+
 func TestWALPropertyEpochSealingRejectsDamagedFrames(t *testing.T) {
-	data := []byte(`{"nornic_property_epoch":1,"authority":null,"through":"ffffffffffffffff","last":"ffffffffffffffff"}`)
-	good := epochValidationRecord(t, data, walFormatVersionPropertyEpoch)
-	for _, kind := range []string{"header", "size", "version", "payload", "crc", "trailer", "inner crc", "v4 ordinary", "invalid payload"} {
+	good := epochValidationControl(t, walPropertyEpochFrame{Format: 1, Through: "ffffffffffffffff", Last: "ffffffffffffffff"})
+	for _, kind := range []string{"header", "size", "version", "payload", "crc", "trailer", "inner crc", "current ordinary", "old framing", "invalid payload"} {
 		t.Run(kind, func(t *testing.T) {
 			raw := bytes.Clone(good)
 			size := int(binary.LittleEndian.Uint32(raw[5:9]))
@@ -95,11 +152,20 @@ func TestWALPropertyEpochSealingRejectsDamagedFrames(t *testing.T) {
 			case "inner crc":
 				raw[9+size-1] ^= 1
 				binary.LittleEndian.PutUint32(raw[9+size:], crc32Checksum(raw[9:9+size]))
-			case "v4 ordinary":
-				raw = epochValidationRecord(t, []byte(`{}`), walFormatVersionPropertyEpoch)
+			case "current ordinary":
+				// A damaged body that keeps the current version byte must be
+				// refused by the payload checks, not waved through by framing.
+				raw = epochValidationRecord(t, []byte(`{}`), walFormatVersionCurrent)
+				raw[9+int(binary.LittleEndian.Uint32(raw[5:9]))-1] ^= 1
+			case "old framing":
+				// An intact earlier-record against the same control payload:
+				// the framing generation, not the payload, is what refuses it.
+				old := bytes.Clone(good)
+				old[4] = walFormatVersionV3
+				raw = old
 			case "invalid payload":
 				payload := []byte("invalid")
-				raw = buildAtomicRecordRaw(payload, walFormatVersionV3, crc32Checksum(payload), walTrailer, true)
+				raw = buildAtomicRecordRaw(payload, walFormatVersionCurrent, crc32Checksum(payload), walTrailer, true)
 			}
 			path := filepath.Join(t.TempDir(), "wal.log")
 			require.NoError(t, os.WriteFile(path, raw, 0600))
@@ -110,17 +176,16 @@ func TestWALPropertyEpochSealingRejectsDamagedFrames(t *testing.T) {
 		})
 	}
 	path := filepath.Join(t.TempDir(), "wal.log")
-	require.Error(t, sealWALPropertyEpochFile(path))
-	for _, data := range [][]byte{nil, []byte("{}\n")} {
-		require.NoError(t, os.WriteFile(path, data, 0600))
-		if len(data) == 0 {
-			require.NoError(t, sealWALPropertyEpochFile(path))
-		} else {
-			require.Error(t, sealWALPropertyEpochFile(path))
-		}
-	}
-	require.NoError(t, os.WriteFile(path, []byte("{\"seq\":1}\n"), 0600))
-	require.NoError(t, sealWALPropertyEpochFile(path), "historical JSON is not rewritten")
+	require.Error(t, sealWALPropertyEpochFile(path), "a missing file cannot be sealed")
+	require.NoError(t, os.WriteFile(path, nil, 0600))
+	require.NoError(t, sealWALPropertyEpochFile(path), "an empty file has nothing to seal")
+	// Historical JSON and old framing are refused instead of being rewritten.
+	historical := []byte(`{"seq":1}` + "\n")
+	require.NoError(t, os.WriteFile(path, historical, 0600))
+	require.ErrorIs(t, sealWALPropertyEpochFile(path), ErrWALUnsupportedVersion)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, historical, after, "old framing is not rewritten")
 }
 
 func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
@@ -132,7 +197,9 @@ func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
 	require.NoError(t, err)
 	firstSize := int(binary.LittleEndian.Uint32(raw[5:9]))
 	firstEnd := int(alignUp(int64(9 + firstSize + 4 + 8)))
-	malformed, _ := buildAtomicRecord([]byte("bad"), walFormatVersionV3)
+	// Splice a current-framing record whose payload is not a valid entry body
+	// between the authority control and the ordinary commit it must not lend to.
+	malformed, _ := buildAtomicRecord([]byte("bad"), walFormatVersionCurrent)
 	path := filepath.Join(t.TempDir(), "wal.log")
 	require.NoError(t, os.WriteFile(path, append(append(bytes.Clone(raw[:firstEnd]), malformed...), raw[firstEnd:]...), 0600))
 	file, err := os.Open(path)
@@ -147,7 +214,8 @@ func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
 	t.Cleanup(func() { _ = dest.Close() })
 	require.ErrorContains(t, ReplayWALEntry(dest, entries[0]), "missing property name binding")
 	for _, legacy := range []bool{false, true} {
-		entry, err := decodeWALEntry(raw[9:9+firstSize], raw[4])
+		entry, err := WALEntry{}, error(nil)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, raw[9:9+firstSize], raw[4])
 		require.NoError(t, err)
 		entry.Checksum++
 		var data []byte
@@ -159,15 +227,12 @@ func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
 			data[9+firstSize] ^= 1
 		}
 		require.NoError(t, os.WriteFile(path, data, 0600))
-		file, err := os.Open(path)
-		require.NoError(t, err)
+		_, err = readWALEntriesForTruncation(path, 0)
 		if legacy {
-			_, err = readLegacyWALEntriesForTruncation(file, 0)
+			require.ErrorIs(t, err, ErrWALUnsupportedVersion, "a legacy file must not be salvaged")
 		} else {
-			_, err = readAtomicWALEntriesForTruncation(file, 0)
+			require.Error(t, err, "a damaged control must stop salvage")
 		}
-		require.Error(t, err, "a damaged control must stop salvage")
-		require.NoError(t, file.Close())
 	}
 }
 
@@ -258,8 +323,8 @@ func TestWALPropertyEpochUnappliedLogCannotGainCleanProof(t *testing.T) {
 		require.NoError(t, wal.Append(OpBufferedCommit, record))
 		require.Error(t, dest.Close())
 		require.NoError(t, wal.Close())
-		_, versions := walEpochRawBodies(t, walActivePath(wal.Config().Dir))
-		require.Contains(t, versions, walFormatVersionPropertyEpoch, "failed clean shutdown preserves the older-reader refusal")
+		_, _, controls := walEpochRawBodies(t, walActivePath(wal.Config().Dir))
+		require.NotZero(t, controls, "failed clean shutdown preserves the unapplied authority control")
 		dest = reviewBindingEngine(t, dir)
 		require.True(t, dest.walPropertySource.foreign)
 		require.False(t, dest.walPropertySource.clean)

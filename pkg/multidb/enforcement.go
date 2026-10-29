@@ -33,11 +33,10 @@
 //
 // MaxBytes Enforcement:
 //
-// MaxBytes enforcement uses exact size calculation, not estimation. When checking
-// limits for a create operation, the actual serialized size of the node/edge is
-// calculated using gob encoding (matching the storage format). The current total
-// storage size is tracked incrementally in DatabaseInfo, and the check verifies
-// that currentSize + newEntitySize <= MaxBytes.
+// MaxBytes enforcement charges the MessagePack size of a canonical logical
+// entity. This is a consistent quota measure, not the physical Badger size.
+// The current total is tracked incrementally in DatabaseInfo, and the check
+// verifies that currentSize + newEntitySize <= MaxBytes.
 //
 // Storage size is tracked incrementally:
 //   - Initialized lazily on first access (calculated from all existing nodes/edges)
@@ -46,9 +45,7 @@
 package multidb
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,6 +53,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // LimitChecker provides an interface for checking resource limits.
@@ -114,9 +112,8 @@ func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
 //
 // Returns an error if the operation would exceed any configured limits.
 //
-// For MaxBytes enforcement, the exact serialized size of the node/edge is calculated
-// using gob encoding (matching the actual storage format). This ensures accurate
-// limit checking without estimation.
+// MaxBytes charges the MessagePack size of the canonical logical node or
+// relationship, consistently with the incremental usage counter.
 //
 // Example:
 //
@@ -240,8 +237,8 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 	return nil
 }
 
-// calculateNodeSize measures the legacy gob-based logical byte quota. Persistent
-// bodies use msgpack; this counter is not the physical Badger/WAL footprint.
+// calculateNodeSize measures the MessagePack logical byte quota. Persistent
+// bodies have their own encoding, so this is not the physical Badger/WAL footprint.
 // Empty and nil properties represent the same propertyless entity across
 // point/stream readers and staged writes, so they must have one quota size.
 //
@@ -257,7 +254,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 //		},
 //	}
 //	size, err := calculateNodeSize(node)
-//	// size is the exact byte count that will be stored
+//	// size is the logical byte quota charged for the entity
 func calculateNodeSize(node *storage.Node) (int64, error) {
 	if node != nil {
 		canonical := *node
@@ -267,12 +264,11 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 		}
 		node = &canonical
 	}
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(node); err != nil {
+	encoded, err := msgpack.Marshal(node)
+	if err != nil {
 		return 0, localizedError(localization.MultidbStorageEncodeNodeFailed(err), err)
 	}
-	return int64(buf.Len()), nil
+	return int64(len(encoded)), nil
 }
 
 // calculateEdgeSize uses the same canonical logical quota model as nodes.
@@ -290,7 +286,7 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 //		},
 //	}
 //	size, err := calculateEdgeSize(edge)
-//	// size is the exact byte count that will be stored
+//	// size is the logical byte quota charged for the entity
 func calculateEdgeSize(edge *storage.Edge) (int64, error) {
 	if edge != nil {
 		canonical := *edge
@@ -300,12 +296,11 @@ func calculateEdgeSize(edge *storage.Edge) (int64, error) {
 		}
 		edge = &canonical
 	}
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(edge); err != nil {
+	encoded, err := msgpack.Marshal(edge)
+	if err != nil {
 		return 0, localizedError(localization.MultidbStorageEncodeEdgeFailed(err), err)
 	}
-	return int64(buf.Len()), nil
+	return int64(len(encoded)), nil
 }
 
 // CheckQueryLimits checks if query execution is allowed and returns a context with timeout.

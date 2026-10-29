@@ -3,7 +3,6 @@ package storage
 import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ func createdNodeIDs(t *testing.T, walDir string) []string {
 			return nil
 		}
 		var data WALNodeData
-		require.NoError(t, json.Unmarshal(entry.Data, &data))
+		require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
 		ids = append(ids, string(data.Node.ID))
 		return nil
 	}))
@@ -110,20 +109,20 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 
 	t.Run("nothing sealed yet keeps nothing to remove", func(t *testing.T) {
 		_, wal := newRetentionWALEngine(t, t.TempDir(), time.Hour, 0)
-		require.NoError(t, wal.TruncateAfterSnapshot(1))
+		require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
 		manifest, err := loadWALManifest(wal.config.Dir)
 		require.NoError(t, err)
 		require.Empty(t, manifest.Segments)
 	})
 
-	t.Run("a segment that can't be sealed fails the truncation", func(t *testing.T) {
+	t.Run("an invalid segments path fails before sealing", func(t *testing.T) {
 		root := t.TempDir()
 		walEngine, wal := newRetentionWALEngine(t, root, time.Hour, 0)
 		createWALNodes(t, walEngine, 1, 1)
 		// A file where the segments directory goes.
 		require.NoError(t, os.RemoveAll(walSegmentsDir(wal.config.Dir)))
 		require.NoError(t, os.WriteFile(walSegmentsDir(wal.config.Dir), []byte("x"), 0o644))
-		require.ErrorContains(t, wal.TruncateAfterSnapshot(wal.sequence.Load()), "failed to seal segment before retention")
+		require.ErrorContains(t, wal.ManageSnapshot(wal.sequence.Load(), WALSnapshotTruncate), "cannot truncate before validating WAL")
 	})
 
 	t.Run("without retention covered entries are dropped", func(t *testing.T) {
@@ -134,4 +133,94 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		createWALNodes(t, walEngine, 4, 4)
 		require.Equal(t, nodeIDRange(4, 4), createdNodeIDs(t, wal.config.Dir))
 	})
+}
+
+// Standalone retention runs the segment-retention algorithm only. Before any
+// segment is sealed it must leave the active WAL and the manifest untouched.
+func TestStandaloneRetentionLeavesUnsealedWALUnchanged(t *testing.T) {
+	defer config.WithWALEnabled()()
+	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(t.TempDir(), "wal"), SyncMode: "immediate", RetentionMaxAge: time.Nanosecond, RetentionMaxSegments: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 2}))
+	require.NoError(t, wal.Sync())
+
+	dir := wal.config.Dir
+	before, err := os.ReadFile(walActivePath(dir))
+	require.NoError(t, err)
+	require.NotEmpty(t, before)
+	_, manifestErrBefore := os.Stat(walManifestPath(dir))
+	require.True(t, os.IsNotExist(manifestErrBefore), "a fresh WAL publishes no segment manifest")
+	entriesBefore, err := ReadWALEntriesFromDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entriesBefore, 2)
+
+	require.NoError(t, wal.ManageSnapshot(wal.Sequence(), WALSnapshotRetention))
+
+	after, err := os.ReadFile(walActivePath(dir))
+	require.NoError(t, err)
+	require.Equal(t, before, after, "standalone retention must not rewrite the active WAL")
+	_, manifestErrAfter := os.Stat(walManifestPath(dir))
+	require.True(t, os.IsNotExist(manifestErrAfter), "standalone retention must not publish a seal")
+	sealed, globErr := filepath.Glob(filepath.Join(walSegmentsDir(dir), "seg-*.wal"))
+	require.NoError(t, globErr)
+	require.Empty(t, sealed, "standalone retention must not rotate the active segment")
+	entriesAfter, err := ReadWALEntriesFromDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entriesAfter, 2)
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 3}))
+}
+
+func TestManageSnapshotRejectsUnknownModeWithoutChangingWAL(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := filepath.Join(t.TempDir(), "wal")
+	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
+	wal.mu.Lock()
+	err = wal.rotateSegmentLocked(wal.Sequence())
+	wal.mu.Unlock()
+	require.NoError(t, err)
+	manifest, err := loadWALManifest(dir)
+	require.NoError(t, err)
+	require.Len(t, manifest.Segments, 1)
+	segment := filepath.Join(walSegmentsDir(dir), manifest.Segments[0].Path)
+	before, err := os.ReadFile(walManifestPath(dir))
+	require.NoError(t, err)
+
+	err = wal.ManageSnapshot(wal.Sequence(), WALSnapshotMode(255))
+	require.ErrorContains(t, err, "invalid WAL snapshot mode")
+	after, err := os.ReadFile(walManifestPath(dir))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.FileExists(t, segment)
+}
+
+func TestManageSnapshotReturnsClosedWhenCloseWinsBeforeLock(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	for _, mode := range []WALSnapshotMode{WALSnapshotTruncate, WALSnapshotRetention} {
+		t.Run(mode.String(), func(t *testing.T) {
+			wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(t.TempDir(), "wal"), SyncMode: "immediate"})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = wal.Close() })
+			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
+			entered, release := make(chan struct{}), make(chan struct{})
+			wal.beforeSnapshotLock = func() { close(entered); <-release }
+			result := make(chan error, 1)
+			go func() { result <- wal.ManageSnapshot(wal.Sequence(), mode) }()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				close(release)
+				_ = wal.Close()
+				t.Fatal("snapshot did not reach the lock boundary")
+			}
+			closeErr := wal.Close()
+			close(release)
+			require.NoError(t, closeErr)
+			require.ErrorIs(t, <-result, ErrWALClosed)
+		})
+	}
 }

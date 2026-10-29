@@ -17,7 +17,7 @@ import (
 // free while waiting. Both operations must then finish.
 func TestCompressedPipelineCreationRacesPolicyChange(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
+	svc := NewService(newTestMemoryEngine(t), 16, nil)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)

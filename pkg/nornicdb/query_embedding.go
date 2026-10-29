@@ -97,7 +97,7 @@ func (db *DB) validateQueryEmbeddingDimensions(dbName string, vec []float32) err
 	if resolver == nil || len(vec) == 0 {
 		return nil
 	}
-	resolvedDims, _, _ := resolver(dbName)
+	resolvedDims, _ := resolver(dbName)
 	if resolvedDims <= 0 {
 		return nil
 	}

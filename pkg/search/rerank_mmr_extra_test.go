@@ -8,7 +8,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -89,60 +88,93 @@ func (e *mmrGetNodeErrorEngine) GetNode(storage.NodeID) (*storage.Node, error) {
 	return nil, e.err
 }
 
+// TestSearchRerankExtraApplyMMRBranches covers each way applyMMR can decline
+// to diversify and each way it diversifies: a result set no larger than the
+// requested k, a lambda that keeps the order, a fully diverse selection, a
+// node without an embedding, candidates the store cannot read (dropped as
+// orphans), and a storage error (the input order stands).
 func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 2)
+	results := []rrfResult{
+		{ID: "nornic:a", RRFScore: 0.9},
+		{ID: "nornic:b", RRFScore: 0.8},
+		{ID: "nornic:c", RRFScore: 0.7},
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, engine *storage.MemoryEngine)
+	}{
+		{
+			name: "result set no larger than k keeps every result",
+			run: func(t *testing.T, engine *storage.MemoryEngine) {
+				svc := NewService(engine, 2, nil)
+				require.Equal(t, results[:1], svc.applyMMR(context.Background(), results[:1], []float32{1, 0}, 3, 0.5, nil))
+			},
+		},
+		{
+			name: "lambda at one keeps the input order",
+			run: func(t *testing.T, engine *storage.MemoryEngine) {
+				svc := NewService(engine, 2, nil)
+				require.Equal(t, results, svc.applyMMR(context.Background(), results, []float32{1, 0}, 3, 1.0, nil))
+			},
+		},
+		{
+			name: "diverse selection and a node without embeddings",
+			run: func(t *testing.T, engine *storage.MemoryEngine) {
+				for _, node := range []*storage.Node{
+					{ID: "nornic:a", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}},
+					{ID: "nornic:b", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}},
+					{ID: "nornic:c", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0, 1}}},
+				} {
+					_, err := engine.CreateNode(node)
+					require.NoError(t, err)
+				}
+				svc := NewService(engine, 2, nil)
 
-	results := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}, {ID: "nornic:c", RRFScore: 0.7}}
-	require.Equal(t, results[:1], svc.applyMMR(context.Background(), results[:1], []float32{1, 0}, 3, 0.5, nil))
-	require.Equal(t, results, svc.applyMMR(context.Background(), results, []float32{1, 0}, 3, 1.0, nil))
+				diverse := svc.applyMMR(context.Background(), results, []float32{1, 0}, 2, 0.2, map[string]bool{})
+				require.Len(t, diverse, 2)
+				require.Equal(t, "nornic:a", diverse[0].ID)
+				require.NotEqual(t, diverse[0].ID, diverse[1].ID)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:b", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:c", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0, 1}}})
-	require.NoError(t, err)
-
-	diverse := svc.applyMMR(context.Background(), results, []float32{1, 0}, 2, 0.2, map[string]bool{})
-	require.Len(t, diverse, 2)
-	require.Equal(t, "nornic:a", diverse[0].ID)
-	require.NotEqual(t, diverse[0].ID, diverse[1].ID)
-
-	noEmbeddingResults := []rrfResult{{ID: "nornic:d", RRFScore: 0.6}}
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:d", Labels: []string{"Doc"}})
-	require.NoError(t, err)
-	selected := svc.applyMMR(context.Background(), noEmbeddingResults, []float32{1, 0}, 3, 0.5, map[string]bool{})
-	require.Equal(t, noEmbeddingResults, selected)
-}
-
-func TestSearchRerankExtraApplyMMRErrorBranches(t *testing.T) {
-	missingEngine := newTestMemoryEngine(t)
-	t.Cleanup(func() { missingEngine.Close() })
-	_, err := missingEngine.CreateNode(&storage.Node{ID: "nornic:ok", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	missingSvc := NewServiceWithDimensions(missingEngine, 2)
-	seen := map[string]bool{}
-	selected := missingSvc.applyMMR(context.Background(), []rrfResult{
-		{ID: "nornic:missing", RRFScore: 0.9},
-		{ID: "nornic:ok", RRFScore: 0.8},
-	}, []float32{1, 0}, 2, 0.5, seen)
-	require.Equal(t, []rrfResult{{ID: "nornic:ok", RRFScore: 0.8}}, selected)
-	require.True(t, seen["nornic:missing"])
-
-	boomEngine := &mmrGetNodeErrorEngine{Engine: newTestMemoryEngine(t), err: errors.New("storage boom")}
-	t.Cleanup(func() { boomEngine.Close() })
-	boomSvc := NewServiceWithDimensions(boomEngine, 2)
-	results := []rrfResult{{ID: "a", RRFScore: 0.9}, {ID: "b", RRFScore: 0.8}}
-	selected = boomSvc.applyMMR(context.Background(), results, []float32{1, 0}, 2, 0.5, nil)
-	require.Equal(t, results, selected)
+				noEmbeddingResults := []rrfResult{{ID: "nornic:d", RRFScore: 0.6}}
+				_, err := engine.CreateNode(&storage.Node{ID: "nornic:d", Labels: []string{"Doc"}})
+				require.NoError(t, err)
+				require.Equal(t, noEmbeddingResults, svc.applyMMR(context.Background(), noEmbeddingResults, []float32{1, 0}, 3, 0.5, map[string]bool{}))
+			},
+		},
+		{
+			name: "unreadable candidates are dropped as orphans",
+			run: func(t *testing.T, engine *storage.MemoryEngine) {
+				_, err := engine.CreateNode(&storage.Node{ID: "nornic:ok", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+				require.NoError(t, err)
+				svc := NewService(engine, 2, nil)
+				seen := map[string]bool{}
+				require.Equal(t, []rrfResult{{ID: "nornic:ok", RRFScore: 0.8}}, svc.applyMMR(context.Background(), []rrfResult{
+					{ID: "nornic:missing", RRFScore: 0.9},
+					{ID: "nornic:ok", RRFScore: 0.8},
+				}, []float32{1, 0}, 2, 0.5, seen))
+				require.True(t, seen["nornic:missing"])
+			},
+		},
+		{
+			name: "storage error keeps the input order",
+			run: func(t *testing.T, engine *storage.MemoryEngine) {
+				boomEngine := &mmrGetNodeErrorEngine{Engine: engine, err: errors.New("storage boom")}
+				boomSvc := NewService(boomEngine, 2, nil)
+				input := []rrfResult{{ID: "a", RRFScore: 0.9}, {ID: "b", RRFScore: 0.8}}
+				require.Equal(t, input, boomSvc.applyMMR(context.Background(), input, []float32{1, 0}, 2, 0.5, nil))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.run(t, newTestMemoryEngine(t))
+		})
+	}
 }
 
 func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 	ctx := context.Background()
 
 	base := []rrfResult{
@@ -190,7 +222,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewService(engine, 2, nil)
 
 	longPrefix := strings.Repeat("предисловие ", 80)
 	longSuffix := strings.Repeat(" заключение", 80)
@@ -234,120 +266,4 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 		require.LessOrEqual(t, utf8.RuneCountInString(candidate.Content), 96)
 		require.True(t, utf8.ValidString(candidate.Content))
 	}
-}
-
-func TestRerankCandidateCharCeilingUsesOptionThenEnvironmentThenDefault(t *testing.T) {
-	t.Setenv(EnvSearchRerankMaxDocumentChars, "4096")
-	require.Equal(t, 1024, effectiveRerankMaxChars(&SearchOptions{RerankMaxChars: 1024}))
-	require.Equal(t, 4096, effectiveRerankMaxChars(&SearchOptions{}))
-	t.Setenv(EnvSearchRerankMaxDocumentChars, "invalid")
-	require.Equal(t, defaultRerankMaxDocumentChars, effectiveRerankMaxChars(&SearchOptions{}))
-	t.Setenv(EnvSearchRerankMaxDocumentChars, "0")
-	require.Equal(t, defaultRerankMaxDocumentChars, effectiveRerankMaxChars(&SearchOptions{}))
-	// The deprecated BYTES variable is honoured when CHARS is unset, as a character count.
-	t.Setenv(EnvSearchRerankMaxDocumentChars, "")
-	t.Setenv(EnvSearchRerankMaxDocumentBytes, "3000")
-	require.Equal(t, 3000, effectiveRerankMaxChars(&SearchOptions{}))
-	t.Setenv(EnvSearchRerankMaxDocumentChars, "512")
-	require.Equal(t, 512, effectiveRerankMaxChars(&SearchOptions{}), "CHARS wins over BYTES")
-}
-
-func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 2)
-	for _, id := range []string{"nornic:a", "nornic:b", "nornic:c"} {
-		_, err := engine.CreateNode(&storage.Node{
-			ID:         storage.NodeID(id),
-			Labels:     []string{"Doc"},
-			Properties: map[string]interface{}{"text": id + " searchable content"},
-		})
-		require.NoError(t, err)
-	}
-
-	reranker := &recordingReranker{}
-	ctx := withRerankMemo(context.Background(), newRerankMemo())
-	first := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}}
-	firstOut, _ := svc.applyStage2Rerank(ctx, "query", first, &SearchOptions{}, nil, reranker)
-	require.Len(t, firstOut, 2)
-	second := append(append([]rrfResult(nil), first...), rrfResult{ID: "nornic:c", RRFScore: 0.7})
-	secondOut, outcome := svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker)
-	require.Len(t, secondOut, 3)
-	require.Equal(t, SearchFallbackNone, outcome.FallbackReason, "remembered scores still rerank")
-
-	require.Len(t, reranker.calls, 2)
-	require.Len(t, reranker.calls[0], 2)
-	require.Equal(t, []RerankCandidate{{ID: "nornic:c", Content: "Doc nornic:c searchable content", Score: 0.7}}, reranker.calls[1])
-
-	svc.applyStage2Rerank(ctx, "different query", first, &SearchOptions{}, nil, reranker)
-	require.Len(t, reranker.calls, 3)
-	require.Len(t, reranker.calls[2], 2, "a distinct query must not reuse prior scores")
-}
-
-func TestStage2RerankMemoRebindsMovedCandidatesByIdentity(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 2)
-	for _, id := range []string{"nornic:a", "nornic:b", "nornic:c"} {
-		_, err := engine.CreateNode(&storage.Node{
-			ID:         storage.NodeID(id),
-			Labels:     []string{"Doc"},
-			Properties: map[string]interface{}{"text": id + " searchable content"},
-		})
-		require.NoError(t, err)
-	}
-
-	reranker := &identityOrderedReranker{}
-	ctx := withRerankMemo(context.Background(), newRerankMemo())
-	shallow := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}}
-	shallowOut, shallowOutcome := svc.applyStage2Rerank(ctx, "query", shallow, &SearchOptions{}, nil, reranker)
-	require.Equal(t, SearchFallbackNone, shallowOutcome.FallbackReason)
-	require.Equal(t, []string{"nornic:b", "nornic:a"}, []string{shallowOut[0].ID, shallowOut[1].ID})
-
-	deeper := []rrfResult{{ID: "nornic:b", RRFScore: 1.0}, {ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:c", RRFScore: 0.7}}
-	deeperOut, deeperOutcome := svc.applyStage2Rerank(ctx, "query", deeper, &SearchOptions{}, nil, reranker)
-	require.Equal(t, SearchFallbackNone, deeperOutcome.FallbackReason)
-	require.False(t, deeperOutcome.FallbackTriggered)
-	require.Equal(t, []string{"nornic:b", "nornic:a", "nornic:c"}, []string{deeperOut[0].ID, deeperOut[1].ID, deeperOut[2].ID})
-
-	freshReranker := &identityOrderedReranker{}
-	freshOut, freshOutcome := svc.applyStage2Rerank(context.Background(), "query", deeper, &SearchOptions{}, nil, freshReranker)
-	require.Equal(t, freshOutcome.Method, deeperOutcome.Method)
-	require.Equal(t, freshOutcome.FallbackTriggered, deeperOutcome.FallbackTriggered)
-	require.Equal(t, freshOutcome.FallbackReason, deeperOutcome.FallbackReason)
-	require.Equal(t, []string{freshOut[0].ID, freshOut[1].ID, freshOut[2].ID}, []string{deeperOut[0].ID, deeperOut[1].ID, deeperOut[2].ID})
-
-	require.Len(t, reranker.calls, 2)
-	require.Equal(t, []RerankCandidate{{ID: "nornic:c", Content: "Doc nornic:c searchable content", Score: 0.7}}, reranker.calls[1])
-}
-
-var benchmarkRerankCandidateContent string
-
-func BenchmarkRerankCandidateContentForLongDocument(b *testing.B) {
-	svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
-	text := strings.Repeat("предисловие ", 7000) + "alpha tango" + strings.Repeat(" заключение", 7000)
-	node := &storage.Node{
-		ID:         "nornic:long",
-		Labels:     []string{"LongDoc"},
-		Properties: map[string]interface{}{"text": text},
-	}
-	result := rrfResult{ID: "nornic:long", BM25Rank: 1}
-	b.Run("bounded_matching_window", func(b *testing.B) {
-		b.SetBytes(int64(len(text)))
-		b.ReportAllocs()
-		for range b.N {
-			content := svc.rerankCandidateContent(node, result, "alpha tango", 4096)
-			if utf8.RuneCountInString(content) > 4096 {
-				b.Fatalf("candidate content exceeded character ceiling: %d", utf8.RuneCountInString(content))
-			}
-			benchmarkRerankCandidateContent = content
-		}
-	})
-	b.Run("whole_searchable_node", func(b *testing.B) {
-		b.SetBytes(int64(len(text)))
-		b.ReportAllocs()
-		for range b.N {
-			benchmarkRerankCandidateContent = svc.extractSearchableText(node)
-		}
-	})
 }

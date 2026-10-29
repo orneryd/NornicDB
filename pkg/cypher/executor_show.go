@@ -1354,57 +1354,51 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP ALIAS"), nil)
 	}
 
-	// Find "DROP ALIAS" keyword position
-	dropAliasIdx := findMultiWordKeywordIndex(cypher, "DROP", "ALIAS")
-	if dropAliasIdx == -1 {
-		return nil, localizedError(localization.CypherAdminInvalidSyntax("DROP ALIAS"), nil)
+	// Admit the entire name and optional suffix before resolving or mutating it.
+	tokens, spans, tokenErr := tokenizeSource(cypher)
+	if tokenErr != nil {
+		return nil, &classifiedCypherError{cause: tokenErr, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidAliasSyntax"}
 	}
-
-	// Skip "DROP" and whitespace to find "ALIAS"
-	startPos := dropAliasIdx + len("DROP")
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
+	invalid := func() error {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidAliasSyntax", localization.CypherAdminInvalidSyntax("DROP ALIAS"))
 	}
-	// Skip "ALIAS" and whitespace
-	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
-		startPos += len("ALIAS")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
+	if len(tokens) < 2 || !equalFoldASCII(tokens[0], "DROP") || !equalFoldASCII(tokens[1], "ALIAS") {
+		return nil, invalid()
 	}
-
-	if startPos >= len(cypher) {
+	if len(tokens) == 2 {
 		return nil, localizedError(localization.CypherAdminAliasNameExpected("DROP ALIAS"), nil)
 	}
-
-	// Find end of alias name (whitespace, end of string, or "IF EXISTS")
-	ifExistsIdx := findMultiWordKeywordIndex(cypher[startPos:], "IF", "EXISTS")
-	var aliasNameEnd int
-	if ifExistsIdx >= 0 {
-		aliasNameEnd = startPos + ifExistsIdx
-	} else {
-		aliasNameEnd = len(cypher)
+	end := len(tokens)
+	if end >= 5 && equalFoldASCII(tokens[end-2], "FOR") && equalFoldASCII(tokens[end-1], "DATABASE") {
+		end -= 2
 	}
-
-	rawAliasName := strings.TrimSpace(cypher[startPos:aliasNameEnd])
-	aliasName, err := unquoteBacktickIdentifier(rawAliasName)
-	if err != nil {
-		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+	ifExists := end >= 5 && equalFoldASCII(tokens[end-2], "IF") && equalFoldASCII(tokens[end-1], "EXISTS")
+	if ifExists {
+		end -= 2
 	}
-
-	if aliasName == "" {
-		return nil, localizedError(localization.CypherAdminAliasNameEmpty("DROP ALIAS"), nil)
+	if end <= 2 || len(tokens[2]) == 0 || cyphertext.IsStringQuote(tokens[2][0]) {
+		return nil, invalid()
 	}
-
-	// Preserve decoded identity; database-alias admission rejects whitespace.
+	rawAliasName := cypher[spans[2].start:spans[end-1].end]
+	aliasName, validName := compositeAdminName(rawAliasName)
+	if !validName {
+		decoded, err := unquoteBacktickIdentifier(rawAliasName)
+		if err != nil {
+			return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+		}
+		if decoded == "" {
+			return nil, localizedError(localization.CypherAdminAliasNameEmpty("DROP ALIAS"), nil)
+		}
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidAliasSyntax", localization.CypherAdminInvalidAliasName(decoded))
+	}
 	if strings.IndexFunc(aliasName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
 	}
+	var err error
 
-	// Check if alias exists (by checking if it resolves)
 	_, err = e.dbManager.ResolveDatabase(aliasName)
 	if err != nil {
-		if ifExistsIdx >= 0 {
+		if ifExists {
 			// IF EXISTS - return success with no error
 			return &ExecuteResult{
 				Columns: []string{"alias"},
@@ -1452,45 +1446,34 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 		return nil, localizedError(localization.CypherResidualShowAliasesManagerUnavailable(), nil)
 	}
 
-	// Find "SHOW ALIASES" keyword position
-	showAliasesIdx := findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES")
-	if showAliasesIdx == -1 {
-		return nil, localizedError(localization.CypherResidualShowAliasesSyntaxInvalid(), nil)
+	// executeShowWithTail has separated WHERE / YIELD from the command head.
+	// Consume that head completely; looking anywhere for FOR DATABASE silently
+	// accepted arbitrary suffixes when ANTLR delegated this extension to us.
+	startPos, validHead := compositeAdminPrefix(cypher, "SHOW", "ALIASES")
+	invalid := func() (*ExecuteResult, error) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherResidualShowAliasesSyntaxInvalid())
 	}
-
-	// Skip "SHOW" and whitespace to find "ALIASES"
-	startPos := showAliasesIdx + len("SHOW")
-	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-		startPos++
-	}
-	// Skip "ALIASES" and whitespace
-	if startPos+len("ALIASES") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIASES")], "ALIASES") {
-		startPos += len("ALIASES")
-		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
-			startPos++
-		}
+	if !validHead {
+		return invalid()
 	}
 
 	// Check for "FOR DATABASE" clause
 	var databaseName string
 	if startPos < len(cypher) {
-		forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
-		if forIdx >= 0 {
-			// Extract database name
-			dbStartPos := startPos + forIdx + len("FOR")
-			for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
-				dbStartPos++
+		tail := cypher[startPos:]
+		allEnd, all := compositeAdminPrefix(tail, "FOR", "DATABASES")
+		nameStart, one := compositeAdminPrefix(tail, "FOR", "DATABASE")
+		switch {
+		case all && allEnd == len(tail):
+			// Neo4j's explicit all-databases form.
+		case one:
+			var validName bool
+			databaseName, validName = compositeAdminName(tail[nameStart:])
+			if !validName {
+				return invalid()
 			}
-			// Skip "DATABASE" and whitespace
-			if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
-				dbStartPos += len("DATABASE")
-				for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
-					dbStartPos++
-				}
-			}
-			if dbStartPos < len(cypher) {
-				databaseName = strings.TrimSpace(cypher[dbStartPos:])
-			}
+		default:
+			return invalid()
 		}
 	}
 

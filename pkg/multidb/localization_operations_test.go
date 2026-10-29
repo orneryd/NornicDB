@@ -62,6 +62,6 @@ func TestMultidbStorageErrorsPreserveCauses(t *testing.T) {
 
 	badNode := &storage.Node{ID: "bad-node", Properties: map[string]any{"bad": make(chan int)}}
 	_, err = calculateNodeSize(badNode)
-	localizedErr = requireMultidbOperationLocalizedError(t, err, "multidb.storage.encode_node_failed", "failed to encode node: gob: type not registered for interface: chan int")
+	localizedErr = requireMultidbOperationLocalizedError(t, err, "multidb.storage.encode_node_failed", "failed to encode node: msgpack: Encode(unsupported chan int)")
 	require.Contains(t, localizedErr.Message.Data["Cause"], "chan int")
 }

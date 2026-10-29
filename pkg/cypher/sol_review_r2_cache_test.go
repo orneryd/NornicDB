@@ -16,7 +16,7 @@ func solR2CacheExecutor(t *testing.T) *StorageExecutor {
 		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript", "kind": string(id)}})
 		require.NoError(t, err)
 	}
-	svc := search.NewService(store)
+	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 64, TTL: time.Hour})

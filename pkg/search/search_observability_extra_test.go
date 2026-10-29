@@ -18,7 +18,7 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.Equal(t, uint64(0), (*Service)(nil).IndexSizeBytes("hnsw"))
 	require.Equal(t, uint64(0), svc.IndexSizeBytes("hnsw"))
 	require.Equal(t, uint64(0), svc.IndexSizeBytes("bm25"))
@@ -39,7 +39,7 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 func TestObserveSearchStageDirect(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()
 	svc.AttachMetrics(observability.NewSearchMetrics(reg, false, &nilSearchProbe{}))
 

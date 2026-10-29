@@ -331,6 +331,10 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	if def == nil {
 		return nil
 	}
+	// A replacement may remove names, so no old snapshot may be used once the
+	// replacement starts. Publish the final accepted order while still locked.
+	sm.tokenSnapshot.Store(nil)
+	defer sm.publishTokenSnapshotLocked(nil, nil)
 
 	// Reset all collections.
 	sm.uniqueConstraints = make(map[string]*UniqueConstraint)

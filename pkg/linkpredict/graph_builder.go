@@ -4,7 +4,7 @@
 //   - Streaming construction with chunked processing (fixes memory spikes)
 //   - Parallel edge fetching with worker pool (4-8x speedup)
 //   - Context cancellation and progress callbacks
-//   - Disk-based graph caching (gob serialization)
+//   - Disk-based graph caching (MessagePack serialization)
 //   - Incremental graph updates (delta changes)
 //
 // Memory Optimization:
@@ -19,8 +19,8 @@
 package linkpredict
 
 import (
+	"bufio"
 	"context"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -32,6 +32,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -318,20 +320,15 @@ schedule:
 }
 
 // =============================================================================
-// CACHING (GOB SERIALIZATION)
+// CACHING (MESSAGEPACK SERIALIZATION)
 // =============================================================================
 
 // CachedGraph is the serialized format for graph caching.
 type CachedGraph struct {
-	Graph     map[string][]string // Simplified format for gob
-	Timestamp time.Time
-	NodeCount int
-	EdgeCount int
-}
-
-func init() {
-	// Register types for gob encoding
-	gob.Register(&CachedGraph{})
+	Graph     map[string][]string `msgpack:"graph"`
+	Timestamp time.Time           `msgpack:"timestamp"`
+	NodeCount int                 `msgpack:"node_count"`
+	EdgeCount int                 `msgpack:"edge_count"`
 }
 
 // cacheFilePath returns the path to the cache file. A graph built with
@@ -339,13 +336,13 @@ func init() {
 // file, so a build never loads a graph cached for other options.
 func (b *GraphBuilder) cacheFilePath() string {
 	if b.config.Undirected && len(b.config.RelationshipTypes) == 0 {
-		return filepath.Join(b.config.CachePath, "graph_cache.gob")
+		return filepath.Join(b.config.CachePath, "graph_cache.msgpack")
 	}
 	types := append([]string(nil), b.config.RelationshipTypes...)
 	slices.Sort(types)
 	identity := fnv.New64a()
 	fmt.Fprintf(identity, "undirected=%t types=%q", b.config.Undirected, types)
-	return filepath.Join(b.config.CachePath, fmt.Sprintf("graph_cache_%016x.gob", identity.Sum64()))
+	return filepath.Join(b.config.CachePath, fmt.Sprintf("graph_cache_%016x.msgpack", identity.Sum64()))
 }
 
 // loadFromCache attempts to load a cached graph.
@@ -361,28 +358,77 @@ func (b *GraphBuilder) loadFromCache() (Graph, error) {
 	}
 	defer file.Close()
 
-	var cached CachedGraph
-	decoder := gob.NewDecoder(file)
-	if err := decoder.Decode(&cached); err != nil {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	graph, timestamp, err := decodeGraphCache(msgpack.NewDecoder(bufio.NewReaderSize(file, 64<<10)), info.Size())
+	if err != nil {
 		return nil, err
 	}
 
 	// Check TTL
-	if time.Since(cached.Timestamp) > b.config.CacheTTL {
+	if time.Since(timestamp) > b.config.CacheTTL {
 		return nil, errors.New("cache expired")
 	}
-
-	// Convert back to Graph format
-	graph := make(Graph, len(cached.Graph))
-	for nodeID, neighbors := range cached.Graph {
-		nodeSet := make(NodeSet, len(neighbors))
-		for _, neighbor := range neighbors {
-			nodeSet[storage.NodeID(neighbor)] = struct{}{}
-		}
-		graph[storage.NodeID(nodeID)] = nodeSet
-	}
-
 	return graph, nil
+}
+
+// decodeGraphCache builds the graph directly from the cached neighbor lists,
+// avoiding a second complete map and a temporary slice for every node.
+func decodeGraphCache(dec *msgpack.Decoder, fileSize int64) (Graph, time.Time, error) {
+	fields, err := dec.DecodeMapLen()
+	if err != nil || fields < 0 || int64(fields) > fileSize/2 {
+		return nil, time.Time{}, fmt.Errorf("invalid graph cache header")
+	}
+	var graph Graph
+	var timestamp time.Time
+	for i := 0; i < fields; i++ {
+		name, err := dec.DecodeString()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		switch name {
+		case "graph":
+			count, err := dec.DecodeMapLen()
+			if err != nil || count < 0 || int64(count) > fileSize/2 {
+				return nil, time.Time{}, fmt.Errorf("invalid graph cache node count")
+			}
+			graph = make(Graph, count)
+			for j := 0; j < count; j++ {
+				id, err := dec.DecodeString()
+				if err != nil {
+					return nil, time.Time{}, err
+				}
+				neighbors, err := dec.DecodeArrayLen()
+				if err != nil || neighbors < 0 || int64(neighbors) > fileSize {
+					return nil, time.Time{}, fmt.Errorf("invalid graph cache neighbor count")
+				}
+				set := make(NodeSet, neighbors)
+				for k := 0; k < neighbors; k++ {
+					neighbor, err := dec.DecodeString()
+					if err != nil {
+						return nil, time.Time{}, err
+					}
+					set[storage.NodeID(neighbor)] = struct{}{}
+				}
+				graph[storage.NodeID(id)] = set
+			}
+		case "timestamp":
+			if err := dec.Decode(&timestamp); err != nil {
+				return nil, time.Time{}, err
+			}
+		case "node_count", "edge_count":
+			if _, err := dec.DecodeInt(); err != nil {
+				return nil, time.Time{}, err
+			}
+		default:
+			if err := dec.Skip(); err != nil {
+				return nil, time.Time{}, err
+			}
+		}
+	}
+	return graph, timestamp, nil
 }
 
 // saveToCache persists the graph to disk.
@@ -396,7 +442,6 @@ func (b *GraphBuilder) saveToCache(graph Graph) error {
 		return err
 	}
 
-	// Convert to serializable format
 	cached := CachedGraph{
 		Graph:     make(map[string][]string, len(graph)),
 		Timestamp: time.Now(),
@@ -423,8 +468,13 @@ func (b *GraphBuilder) saveToCache(graph Graph) error {
 		return err
 	}
 
-	encoder := gob.NewEncoder(file)
-	if err := encoder.Encode(&cached); err != nil {
+	buffered := bufio.NewWriter(file)
+	if err := msgpack.NewEncoder(buffered).Encode(&cached); err != nil {
+		file.Close()
+		os.Remove(tempPath)
+		return err
+	}
+	if err := buffered.Flush(); err != nil {
 		file.Close()
 		os.Remove(tempPath)
 		return err
@@ -440,6 +490,10 @@ func (b *GraphBuilder) saveToCache(graph Graph) error {
 }
 
 // InvalidateCache removes the cached graph.
+//
+// Only the MessagePack cache file for this builder's configuration is removed.
+// Legacy .gob cache files from earlier releases are derived caches that are no
+// longer read; they are left untouched and are never loaded.
 func (b *GraphBuilder) InvalidateCache() error {
 	if b.config.CachePath == "" {
 		return nil

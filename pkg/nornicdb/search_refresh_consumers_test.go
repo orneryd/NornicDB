@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -45,16 +46,6 @@ func (b *consumerWriteBarrier) DeleteNode(id storage.NodeID) error {
 	return b.Engine.DeleteNode(id)
 }
 
-func (b *consumerWriteBarrier) wait(t *testing.T, what string) {
-	t.Helper()
-	select {
-	case <-b.entered:
-	case <-time.After(5 * time.Second):
-		b.open()
-		t.Fatal(what + " did not reach its barrier")
-	}
-}
-
 func openConsumerDB(t *testing.T, relationships bool) (*DB, *search.Service) {
 	t.Helper()
 	config := DefaultConfig()
@@ -65,7 +56,7 @@ func openConsumerDB(t *testing.T, relationships bool) (*DB, *search.Service) {
 	db, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	svc, err := db.EnsureSearchIndexesBuilt(context.Background(), db.defaultDatabaseName(), nil)
+	svc, err := db.EnsureSearchIndexes(context.Background(), db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.True(t, svc.IsReady())
 	return db, svc
@@ -104,52 +95,75 @@ func consumerDBHits(t *testing.T, svc *search.Service, word string) int {
 // settleQueuedRefreshes outlasts the deferred search flush.
 func settleQueuedRefreshes() { time.Sleep(4 * searchMutationDebounceDelay) }
 
-// DB.UpdateNode refreshes search after committing; a delete that commits
-// in between must stay deleted in search (#1482 round 2 regression).
-func TestDBUpdateIndexCannotResurrectDelete(t *testing.T) {
-	ctx := context.Background()
-	db, svc := openConsumerDB(t, false)
-	_, err := db.CreateNodeWithID(ctx, "source", []string{"Doc"}, map[string]interface{}{"content": "alphaword"})
-	require.NoError(t, err)
-	require.Eventually(t, func() bool { return consumerDBHits(t, svc, "alphaword") == 1 }, 5*time.Second, 20*time.Millisecond)
-	barrier := installConsumerBarrier(t, db)
-	barrier.updateArmed.Store(true)
-	done := make(chan error, 1)
-	go func() {
-		_, err := db.UpdateNode(ctx, "source", map[string]interface{}{"content": "bravoword"})
-		done <- err
-	}()
-	barrier.wait(t, "update")
-	require.NoError(t, db.DeleteNode(ctx, "source"))
-	barrier.open()
-	require.NoError(t, <-done)
-	settleQueuedRefreshes()
-	_, err = db.storage.GetNode("source")
-	require.ErrorIs(t, err, storage.ErrNotFound)
-	require.Zero(t, svc.FulltextDocCount(), "an update's late index call resurrected a deleted node (counted without a search, which would clean the orphan)")
-}
-
-// DB.DeleteNode refreshes search after its storage delete; an update that
-// commits before that delete must not leave the deleted node indexed.
-func TestDBDeleteWithConcurrentUpdateLeavesSearch(t *testing.T) {
-	ctx := context.Background()
-	db, svc := openConsumerDB(t, false)
-	_, err := db.CreateNodeWithID(ctx, "source", []string{"Doc"}, map[string]interface{}{"content": "alphaword"})
-	require.NoError(t, err)
-	require.Eventually(t, func() bool { return consumerDBHits(t, svc, "alphaword") == 1 }, 5*time.Second, 20*time.Millisecond)
-	barrier := installConsumerBarrier(t, db)
-	barrier.deleteArmed.Store(true)
-	done := make(chan error, 1)
-	go func() { done <- db.DeleteNode(ctx, "source") }()
-	barrier.wait(t, "delete")
-	_, err = db.UpdateNode(ctx, "source", map[string]interface{}{"content": "bravoword"})
-	require.NoError(t, err)
-	barrier.open()
-	require.NoError(t, <-done)
-	settleQueuedRefreshes()
-	_, err = db.storage.GetNode("source")
-	require.ErrorIs(t, err, storage.ErrNotFound)
-	require.Zero(t, svc.FulltextDocCount(), "a node deleted from storage stayed indexed (counted without a search, which would clean the orphan)")
+// A write consumer's refresh must leave search matching storage when a delete
+// races the write. DB.UpdateNode refreshes search after committing, so a delete
+// that commits in between must stay deleted in search (#1482 round 2
+// regression); DB.DeleteNode refreshes search after its storage delete, so an
+// update that commits before that delete must not leave the deleted node
+// indexed. Both orders hold the concurrent write at the barrier, let the other
+// write commit, then release it so its refresh reads storage after both writes.
+func TestDBDeleteAndUpdateRaceLeavesSearchMatchingStorage(t *testing.T) {
+	cases := []struct {
+		name string
+		// pauseUpdate arms the paused write first and lets the other write
+		// commit while it is held; false pauses the delete instead.
+		pauseUpdate bool
+		// pausedWrite runs the write the barrier holds at its commit/store
+		// boundary; otherWrite runs, and must succeed, while it is held.
+		pausedWrite func(ctx context.Context, db *DB) error
+		pausedDone  string
+		otherWrite  func(ctx context.Context, db *DB) error
+		// failure is the assertion message for the leftover search index entry.
+		failure string
+	}{
+		{
+			name:        "update then delete",
+			pauseUpdate: true,
+			pausedWrite: func(ctx context.Context, db *DB) error {
+				_, err := db.UpdateNode(ctx, "source", map[string]interface{}{"content": "bravoword"})
+				return err
+			},
+			pausedDone: "update did not reach its barrier",
+			otherWrite: func(ctx context.Context, db *DB) error { return db.DeleteNode(ctx, "source") },
+			failure:    "an update's late index call resurrected a deleted node (counted without a search, which would clean the orphan)",
+		},
+		{
+			name:        "delete then update",
+			pauseUpdate: false,
+			pausedWrite: func(ctx context.Context, db *DB) error { return db.DeleteNode(ctx, "source") },
+			pausedDone:  "delete did not reach its barrier",
+			otherWrite: func(ctx context.Context, db *DB) error {
+				_, err := db.UpdateNode(ctx, "source", map[string]interface{}{"content": "bravoword"})
+				return err
+			},
+			failure: "a node deleted from storage stayed indexed (counted without a search, which would clean the orphan)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			db, svc := openConsumerDB(t, false)
+			_, err := db.CreateNodeWithID(ctx, "source", []string{"Doc"}, map[string]interface{}{"content": "alphaword"})
+			require.NoError(t, err)
+			require.Eventually(t, func() bool { return consumerDBHits(t, svc, "alphaword") == 1 }, 5*time.Second, 20*time.Millisecond)
+			barrier := installConsumerBarrier(t, db)
+			if tc.pauseUpdate {
+				barrier.updateArmed.Store(true)
+			} else {
+				barrier.deleteArmed.Store(true)
+			}
+			done := make(chan error, 1)
+			go func() { done <- tc.pausedWrite(ctx, db) }()
+			runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, tc.pausedDone)
+			require.NoError(t, tc.otherWrite(ctx, db))
+			barrier.open()
+			require.NoError(t, <-done)
+			settleQueuedRefreshes()
+			_, err = db.storage.GetNode("source")
+			require.ErrorIs(t, err, storage.ErrNotFound)
+			require.Zero(t, svc.FulltextDocCount(), tc.failure)
+		})
+	}
 }
 
 // Storage events from concurrent autocommit writers (external writers,

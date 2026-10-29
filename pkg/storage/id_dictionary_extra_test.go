@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -86,7 +87,7 @@ func TestIDDictionary_DeleteNodeEntryInTxn_RemovesForwardAndReverse(t *testing.T
 	// Allocate a numID for the node.
 	var numAllocated uint64
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		num, err := d.resolveOrAllocateNodeNumIDInTxn(txn, id)
+		num, err := resolveOrAllocateNumericIDInTxn(d, txn, NodeID(id))
 		numAllocated = num
 		return err
 	}))
@@ -102,7 +103,7 @@ func TestIDDictionary_DeleteNodeEntryInTxn_RemovesForwardAndReverse(t *testing.T
 
 	// Delete drops both.
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteNodeEntryInTxn(txn, id)
+		return deleteIDEntryInTxn(txn, &d.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, id, 0, idPairByString)
 	}))
 	_, ok = d.lookupNodeNumID(id)
 	require.False(t, ok)
@@ -111,7 +112,7 @@ func TestIDDictionary_DeleteNodeEntryInTxn_RemovesForwardAndReverse(t *testing.T
 
 	// Deleting an unknown ID is a no-op.
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteNodeEntryInTxn(txn, "test:nonexistent")
+		return deleteIDEntryInTxn(txn, &d.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, "test:nonexistent", 0, idPairByString)
 	}))
 }
 
@@ -122,7 +123,7 @@ func TestIDDictionary_DeleteEdgeEntryInTxn_RemovesForwardAndReverse(t *testing.T
 	const id EdgeID = "test:e-delete"
 	var numAllocated uint64
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		num, err := d.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+		num, err := resolveOrAllocateNumericIDInTxn(d, txn, EdgeID(id))
 		numAllocated = num
 		return err
 	}))
@@ -133,52 +134,67 @@ func TestIDDictionary_DeleteEdgeEntryInTxn_RemovesForwardAndReverse(t *testing.T
 	require.Equal(t, id, gotID)
 
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteEdgeEntryInTxn(txn, id)
+		return deleteIDEntryInTxn(txn, &d.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, id, 0, idPairByString)
 	}))
 	_, ok = d.lookupEdgeIDByNum(numAllocated)
 	require.False(t, ok)
 }
 
-func TestIDDictionary_ForgetNodeCache_DropsInMemoryOnly(t *testing.T) {
-	e := idDictTestEngine(t)
-	d := e.BadgerEngine.idDict
-
-	const id NodeID = "test:n-forget"
-	var num uint64
-	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		var err error
-		num, err = d.resolveOrAllocateNodeNumIDInTxn(txn, id)
-		return err
-	}))
-
-	// forgetNodeCache must drop both in-memory map entries.
-	d.forgetNodeCache(id)
-	_, ok := d.lookupNodeNumID(id)
-	require.False(t, ok)
-	_, ok = d.lookupNodeIDByNum(num)
-	require.False(t, ok)
-
-	// Calling on an unknown ID is harmless.
-	d.forgetNodeCache("test:nope")
-}
-
-func TestIDDictionary_ForgetEdgeCache_DropsInMemoryOnly(t *testing.T) {
-	e := idDictTestEngine(t)
-	d := e.BadgerEngine.idDict
-
-	const id EdgeID = "test:e-forget"
-	var num uint64
-	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		var err error
-		num, err = d.resolveOrAllocateEdgeNumIDInTxn(txn, id)
-		return err
-	}))
-
-	d.forgetEdgeCache(id)
-	_, ok := d.lookupEdgeIDByNum(num)
-	require.False(t, ok)
-
-	d.forgetEdgeCache("test:nope")
+func TestIDDictionary_ForgetCache_DropsInMemoryOnly(t *testing.T) {
+	for _, kind := range []string{"node", "edge"} {
+		t.Run(kind, func(t *testing.T) {
+			e := idDictTestEngine(t)
+			d := e.BadgerEngine.idDict
+			id := "test:" + kind + "-forget"
+			var num uint64
+			var forward []byte
+			var reversePrefix byte
+			require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
+				var err error
+				if kind == "node" {
+					num, err = resolveOrAllocateNumericIDInTxn(d, txn, NodeID(id))
+					forward, reversePrefix = nodeIDForwardKey(NodeID(id)), prefixIDDictNodeReverse
+				} else {
+					num, err = resolveOrAllocateNumericIDInTxn(d, txn, EdgeID(id))
+					forward, reversePrefix = edgeIDForwardKey(EdgeID(id)), prefixIDDictEdgeReverse
+				}
+				return err
+			}))
+			require.Greater(t, num, uint64(0))
+			if kind == "node" {
+				_, present := d.lookupNodeNumID(NodeID(id))
+				require.True(t, present)
+				_, present = d.lookupNodeIDByNum(num)
+				require.True(t, present)
+				d.forgetNodeCache(NodeID(id))
+				_, present = d.lookupNodeNumID(NodeID(id))
+				require.False(t, present)
+				_, present = d.lookupNodeIDByNum(num)
+				require.False(t, present)
+				d.forgetNodeCache("test:nope")
+			} else {
+				_, present := d.lookupEdgeNumID(EdgeID(id))
+				require.True(t, present)
+				_, present = d.lookupEdgeIDByNum(num)
+				require.True(t, present)
+				d.forgetEdgeCache(EdgeID(id))
+				_, present = d.lookupEdgeNumID(EdgeID(id))
+				require.False(t, present)
+				_, present = d.lookupEdgeIDByNum(num)
+				require.False(t, present)
+				d.forgetEdgeCache("test:nope")
+			}
+			require.NoError(t, e.db.View(func(txn *badger.Txn) error {
+				if _, err := txn.Get(forward); err != nil {
+					return err
+				}
+				var numBytes [8]byte
+				binary.BigEndian.PutUint64(numBytes[:], num)
+				_, err := txn.Get(append([]byte{reversePrefix}, numBytes[:]...))
+				return err
+			}))
+		})
+	}
 }
 
 func TestIDDictionary_DeleteEdgeEntryByNumInTxn(t *testing.T) {
@@ -189,12 +205,12 @@ func TestIDDictionary_DeleteEdgeEntryByNumInTxn(t *testing.T) {
 	var num uint64
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
 		var err error
-		num, err = d.resolveOrAllocateEdgeNumIDInTxn(txn, id)
+		num, err = resolveOrAllocateNumericIDInTxn(d, txn, EdgeID(id))
 		return err
 	}))
 
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteEdgeEntryByNumInTxn(txn, num)
+		return deleteIDEntryInTxn(txn, &d.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, EdgeID(""), num, idPairByNumber)
 	}))
 	_, ok := d.lookupEdgeIDByNum(num)
 	require.False(t, ok)
@@ -202,7 +218,7 @@ func TestIDDictionary_DeleteEdgeEntryByNumInTxn(t *testing.T) {
 	// Deleting a numID with no string entry is still safe (deletes the
 	// reverse key only).
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteEdgeEntryByNumInTxn(txn, 999_999)
+		return deleteIDEntryInTxn(txn, &d.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, EdgeID(""), 999_999, idPairByNumber)
 	}))
 }
 
@@ -214,15 +230,56 @@ func TestIDDictionary_DeleteNodeEntryByNumInTxn(t *testing.T) {
 	var num uint64
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
 		var err error
-		num, err = d.resolveOrAllocateNodeNumIDInTxn(txn, id)
+		num, err = resolveOrAllocateNumericIDInTxn(d, txn, NodeID(id))
 		return err
 	}))
 
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		return d.deleteNodeEntryByNumInTxn(txn, num)
+		return deleteIDEntryInTxn(txn, &d.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, NodeID(""), num, idPairByNumber)
 	}))
 	_, ok := d.lookupNodeIDByNum(num)
 	require.False(t, ok)
+}
+
+func TestIDDictionary_DeleteByNumberAfterCacheEviction(t *testing.T) {
+	e := idDictTestEngine(t)
+	d := e.BadgerEngine.idDict
+	const nodeID NodeID = "test:evicted-node"
+	const edgeID EdgeID = "test:evicted-edge"
+	var nodeNum, edgeNum uint64
+	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
+		var err error
+		nodeNum, err = resolveOrAllocateNumericIDInTxn(d, txn, NodeID(nodeID))
+		if err != nil {
+			return err
+		}
+		edgeNum, err = resolveOrAllocateNumericIDInTxn(d, txn, EdgeID(edgeID))
+		return err
+	}))
+	d.forgetNodeCache(nodeID)
+	d.forgetEdgeCache(edgeID)
+	key := func(prefix byte, num uint64) []byte {
+		var suffix [8]byte
+		binary.BigEndian.PutUint64(suffix[:], num)
+		return append([]byte{prefix}, suffix[:]...)
+	}
+	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
+		if err := deleteIDEntryInTxn(txn, &d.nodes, nodeForwardShard, nodeReverseShard, nodeIDForwardKey, prefixIDDictNodeReverse, NodeID(""), nodeNum, idPairByNumber); err != nil {
+			return err
+		}
+		return deleteIDEntryInTxn(txn, &d.edges, edgeForwardShard, edgeReverseShard, edgeIDForwardKey, prefixIDDictEdgeReverse, EdgeID(""), edgeNum, idPairByNumber)
+	}))
+	require.NoError(t, e.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(key(prefixIDDictNodeReverse, nodeNum))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		_, err = txn.Get(key(prefixIDDictEdgeReverse, edgeNum))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		_, err = txn.Get(nodeIDForwardKey(nodeID))
+		require.NoError(t, err)
+		_, err = txn.Get(edgeIDForwardKey(edgeID))
+		require.NoError(t, err)
+		return nil
+	}))
 }
 
 func TestIDDictionary_PopAgedFreelistEntry_RespectsTTL(t *testing.T) {

@@ -159,11 +159,10 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 		if !bound {
 			return nil, false, nil
 		}
-		visible := e.queryVisibleValue(receiver)
-		value, supported := evaluateRowPropertyChain(visible, chain)
+		value, supported := evaluateRowPropertyChain(receiver, chain, e, false)
 		var err error
 		if !supported {
-			err = rowPropertyChainTypeError(visible, chain)
+			err = rowPropertyChainTypeError(e.queryVisibleValue(receiver), chain)
 		}
 		return runtimeRowResult(value, supported, err)
 	}

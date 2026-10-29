@@ -24,7 +24,7 @@ func TestSearchContinuationPageSizeCypher(t *testing.T) {
 			if limit != 500 {
 				options.SearchCursorMaxPageSize = limit
 			}
-			svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(store, 3, "v2", &options)
+			svc := search.NewService(store, 3, &options)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 			exec := NewStorageExecutor(store)

@@ -12,38 +12,21 @@ NornicDB's Write-Ahead Log (WAL) supports automatic compaction to prevent unboun
 
 ## Upgrading and downgrading WAL stores
 
-Ordinary buffered records retain the v3 framing and payload used by the previous
-release. Dictionary changes add v4 control frames that preserve property names
-when a snapshot or WAL is restored into another store. The storage version is
-unchanged, and an existing store's own old-format WAL still recovers at startup.
+v1.4.4 writes typed WAL payloads that older binaries cannot be relied on to
+read. The existing V4 storage migration converts supported historical WAL
+framing without changing existing Badger keys or adding a separate storage
+version. Historical application payload bytes remain intact; new buffered writes use the
+typed payload.
 
-A successful clean shutdown, or successful snapshot compaction, seals the
-dictionary controls into ordinary v3 checkpoints. The previous release can then
-open the store. Stop accepting writes before downgrading: subsequent writes can
-start another v4 epoch.
-
-This also applies with write-behind disabled: restoring a native backup into
-a WAL-backed engine writes a dictionary control. Clean shutdown seals it even
-if no snapshot compaction has occurred. A store whose WAL never received a
-dictionary control, the usual synchronous case, has nothing to seal, and its
-clean shutdown does no extra WAL work.
-
-After an unclean stop, an older release refuses the log without truncating it:
-
-```text
-unsupported WAL version 4 (max supported: 3)
-```
-
-Start this release once and stop it cleanly, then the older release can open the
-store. Do not delete or edit the WAL to bypass that error. Clean conversion uses
-atomic file replacement, converts sealed files first and the active file last,
-and copies ordinary data records without changing them.
-
-Foreign imports and restores invalidate the store's clean ownership proof.
-Ambiguous historical records from another store fail explicitly when they omit
-the property-name bindings needed for recovery. This change prevents new
-corruption; it cannot detect or repair data an older binary already corrupted
-during a cross-store snapshot and WAL restore.
+Before upgrading, create and verify a backup of the database and its matching
+WAL. Start with `--upgrade-storage`; the migration converts the active WAL and
+retained segments, replays acknowledged writes, and retains the original WAL in
+a protected `wal.pre-v4-<id>` directory. This copy may contain plaintext data
+and credentials. Keep it protected and retain the independent pre-upgrade
+database backup and matching WAL for rollback. Restart with the upgrade flag if
+an upgrade is interrupted. Do not mix WALs from different database backups or
+use an older binary to recover a v1.4.4 WAL. See
+[Recovery format compatibility](recovery-format-compatibility.md).
 
 **Problem Solved**: WAL grows forever until manual snapshot + delete
 **Solution**: Automatic periodic snapshots with WAL truncation
@@ -161,17 +144,65 @@ ORDER BY seq;
 - Both yield `txId` (the entry's transaction ID, `""` when it has none), `db`, `kind` (the operation, such as `create_node` or `tx_commit`), `seq` (the WAL sequence), `timestamp` (RFC 3339, UTC) and `payload` (the entry's JSON data).
 - Arguments may be literals, parameters or variables.
 
+### Reading compressed WAL records offline
+
+The WAL is a sequence of individually framed records, not a single compressed
+archive. Write-behind commits use the typed MessagePack recovery representation;
+payloads of at least 512 bytes are normally compressed with Zstandard at its
+default speed level. Smaller payloads, and payloads written when the compressor
+is unavailable, are stored uncompressed. Other record types and property
+dictionary controls have their own payloads. Each frame carries its own length,
+checksums and completion marker, so running `zstd -d` on `wal.log` as a whole
+will not produce readable records.
+
+For an offline inspection, first stop the database or take a consistent copy
+of its complete WAL directory, including `wal.log` and `segments/`. Keep the
+original backup and WAL together. From a NornicDB source checkout matching the
+version that wrote the WAL, run:
+
+```bash
+go run ./scripts/wal-read -dir /path/to/copied/wal -from 1 -to 100 > wal.jsonl
+```
+
+The reader uses the same frame, decompression and typed-payload decoders as
+NornicDB and writes one JSON object per entry. `-from` and `-to` are inclusive;
+use `-to 0` to leave the upper bound open. The output is for inspection, not a
+restorable backup. Buffered records render physical `writes` as a list of
+base64-encoded `key` and `value` bytes and `deletes` as base64-encoded keys;
+these are binary Badger keys, not text. To inspect a key as hexadecimal, copy
+its base64 value from the output and run:
+
+```bash
+python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).hex())' 'BASE64_KEY'
+```
+
+An `entity_commit` payload contains a base64-encoded semantic transaction.
+Decode that value to bytes and pass it to the Go
+`storage.DecodeEntityTransaction` API to inspect its logical operations.
+Property-dictionary authority controls are used by the reader and are not
+emitted as ordinary entries.
+
+The WAL may contain application data. Store the JSON output with the same
+access controls as the database. A read may stop at an incomplete tail or skip
+a damaged regenerable embedding entry, so an inspection is not by itself proof
+that a backup is complete; check recovery diagnostics and verify the backup.
+
 ---
 
 ## How It Works
 
 ### Compaction Process
 
-When a compaction cycle runs, NornicDB flushes any pending writes, then creates a point-in-time snapshot of the current database state. Once the snapshot is safely persisted, the WAL is rewritten to contain only entries that arrived after the snapshot. The old WAL file is replaced via an atomic rename so the operation is crash-safe — at no point can a crash leave the WAL in a partial or corrupt state.
+When a compaction cycle runs, NornicDB flushes any pending writes, then creates a point-in-time snapshot of the current database state. Once the snapshot is safely persisted, the active WAL is rewritten to contain only entries that arrived after the snapshot and replaced via an atomic rename. A sealed segment with entries newer than the snapshot remains in place until a later snapshot covers the whole segment. Covered segments and their manifest are cleaned up separately.
+
+Truncation refuses an invalid manifest, an unsupported WAL format, or an
+unreadable record before replacing the active WAL. Investigate the reported
+error and retain the existing WAL and snapshot for recovery; a failed read is
+not treated as proof that later entries can be discarded.
 
 ### Crash Safety
 
-The truncation process is crash-safe at every step:
+For replacement of the active WAL file:
 
 - **Before rename**: Old WAL is intact
 - **During rename**: Atomic operation (old or new, never partial)

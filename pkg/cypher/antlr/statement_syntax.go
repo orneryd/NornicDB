@@ -595,7 +595,11 @@ func (syntax StatementSyntax) recordCredentials(ctx context.Context) {
 	if set == nil || !syntax.Valid() {
 		return
 	}
+	source := syntax.data.view
+	if retained, ok := cyphertext.RetainedSource(ctx, syntax.data.source, cyphertext.AcceptedSource); ok {
+		source = retained
+	}
 	for _, span := range syntax.data.credentials {
-		set.RecordSource(cyphertext.SourceFor(ctx, syntax.data.source), span.Start, span.End, span.Value, span.Password)
+		set.RecordSource(source, span.Start, span.End, span.Value, span.Password)
 	}
 }

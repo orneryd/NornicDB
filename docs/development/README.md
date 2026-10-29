@@ -8,6 +8,7 @@ Use this section for contributor setup, standards, and test workflows.
 - Coding standards: [code-style.md](code-style.md)
 - Test strategy and commands: [testing.md](testing.md)
 - [Development archive](archive/) contains PR reviews, earlier benchmark baselines, and qualification records.
+- Full-text index Go API: [fulltext-index-api.md](fulltext-index-api.md)
 
 ## Contributor Workflow
 

@@ -17,8 +17,8 @@ func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
 	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	services := map[string]*search.Service{
-		"nornic": search.NewService(storage.NewNamespacedEngine(inner, "nornic")),
-		"tenant": search.NewService(storage.NewNamespacedEngine(inner, "tenant")),
+		"nornic": search.NewService(storage.NewNamespacedEngine(inner, "nornic"), search.DefaultVectorDimensions, nil),
+		"tenant": search.NewService(storage.NewNamespacedEngine(inner, "tenant"), search.DefaultVectorDimensions, nil),
 	}
 	resolve := func(database string) *search.Service { return services[database] }
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "nornic"))
@@ -26,7 +26,7 @@ func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
 	require.Same(t, services["nornic"], exec.search())
 
 	// A reset replaces the database's service: the executor follows.
-	services["nornic"] = search.NewService(storage.NewNamespacedEngine(inner, "nornic"))
+	services["nornic"] = search.NewService(storage.NewNamespacedEngine(inner, "nornic"), search.DefaultVectorDimensions, nil)
 	require.Same(t, services["nornic"], exec.search(), "the executor kept the replaced service")
 
 	used := exec.cloneForStorage(storage.NewNamespacedEngine(inner, "tenant"))
@@ -40,8 +40,8 @@ func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
 func TestSearchCacheKeyTellsReplacedServicesApart(t *testing.T) {
 	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
-	replaced := search.NewService(storage.NewNamespacedEngine(inner, "nornic"))
-	current := search.NewService(storage.NewNamespacedEngine(inner, "nornic"))
+	replaced := search.NewService(storage.NewNamespacedEngine(inner, "nornic"), search.DefaultVectorDimensions, nil)
+	current := search.NewService(storage.NewNamespacedEngine(inner, "nornic"), search.DefaultVectorDimensions, nil)
 	require.Equal(t, replaced.IndexRevision(), current.IndexRevision())
 	require.NotEqual(t, searchCacheKey(replaced), searchCacheKey(current))
 }

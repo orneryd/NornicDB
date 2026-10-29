@@ -1,9 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,6 +11,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Generate route x quota x visibility x entity x write-behind at the public
@@ -70,9 +69,9 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 						var nodeBytes, edgeBytes int64
 						policyBytes = 0
 						measure := func(entity any) int64 {
-							var buf bytes.Buffer
-							require.NoError(t, gob.NewEncoder(&buf).Encode(entity))
-							return int64(buf.Len())
+							encoded, err := msgpack.Marshal(entity)
+							require.NoError(t, err)
+							return int64(len(encoded))
 						}
 						nodes, err := storage.CollectStoredNodes(context.Background(), store)
 						require.NoError(t, err)
