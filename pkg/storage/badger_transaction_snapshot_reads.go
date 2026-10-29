@@ -78,7 +78,7 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 
 func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]string, error) {
 	if tx.engine.writeBehind != nil {
-		node, err := tx.engine.getNodeProjected(identifier, []string{}, storedRead)
+		node, err := tx.engine.getNodeProjected(tx.requestContextLocked(), identifier, []string{}, storedRead)
 		if err != nil {
 			return nil, err
 		}
@@ -304,7 +304,7 @@ func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.allNodes(tx.requestContextLocked())
 	}
 	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
 }
@@ -376,9 +376,9 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
+			return tx.engine.outgoingEdges(tx.requestContextLocked(), nodeID, visibleRead)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
+			return tx.engine.incomingEdges(tx.requestContextLocked(), nodeID, visibleRead)
 		default:
 			return nil, ErrInvalidData
 		}

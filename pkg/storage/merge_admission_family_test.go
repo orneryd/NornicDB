@@ -140,7 +140,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			hash, _ := keys[0].lock.value.(string)
 			require.Equal(t, []NodeID{oddID}, idx.lookupFullHash(hash))
 			require.Equal(t, []NodeID{evenID}, idx.LookupFull(int64(7), even))
-			holder, found, complete := fresh.mergeAdmissionHolder(schema, "test", keys[0], oddProps)
+			holder, found, complete := fresh.mergeAdmissionHolder(context.Background(), schema, "test", keys[0], oddProps)
 			require.True(t, found)
 			require.True(t, complete)
 			require.Equal(t, oddID, holder)

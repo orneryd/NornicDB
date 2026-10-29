@@ -202,7 +202,7 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 	err = b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		var writes []func(txn *badger.Txn) error
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
-			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+			if err := b.checkEmbeddingSourceInTxn(context.Background(), txn, node); err != nil {
 				return err
 			}
 			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))

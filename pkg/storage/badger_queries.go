@@ -1,7 +1,10 @@
 // Package storage provides storage engine implementations for NornicDB.
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -184,16 +187,18 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 // GetNodesByLabelInScope is GetNodesByLabel within one database
 // (ScopedLabelNodeReader).
 func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return b.getNodesByLabelInScope(scope, label, visibleRead)
+	return b.getNodesByLabelInScope(context.Background(), scope, label, visibleRead)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel for integrity work: it also
 // returns the nodes the visibility layer hides (StoredEntityReader).
 func (b *BadgerEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	return b.getNodesByLabelInScope("", label, storedRead)
+	return b.getNodesByLabelInScope(context.Background(), "", label, storedRead)
 }
 
-func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibility) ([]*Node, error) {
+// getNodesByLabelInScope reads one label's nodes in scope; ctx is the read's
+// context.
+func (b *BadgerEngine) getNodesByLabelInScope(ctx context.Context, scope, label string, v readVisibility) ([]*Node, error) {
 	var sourceTs uint64
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
@@ -205,9 +210,13 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	checkTombstones := b.checksIndexTombstones(v)
-	err := b.withReadView(func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) error {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		return nil
 	}, func(txn *badger.Txn) error {
 		sourceTs = txn.ReadTs()
 		nodes = nil
@@ -301,17 +310,17 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 // labelScanPointLookups switch to one pass over the node records when the
 // label is on at least half of the scope's nodes.
 func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return b.streamNodesByLabelProjectedInScope(scope, label, properties, visibleRead, visit)
+	return b.streamNodesByLabelProjectedInScope(context.Background(), scope, label, properties, visibleRead, visit)
 }
 
 // StreamStoredNodesByLabelProjected is StreamNodesByLabelProjected for
 // integrity work: it also visits the nodes the visibility layer hides
 // (StoredEntityReader).
 func (b *BadgerEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return b.streamNodesByLabelProjectedInScope("", label, properties, storedRead, visit)
+	return b.streamNodesByLabelProjectedInScope(context.Background(), "", label, properties, storedRead, visit)
 }
 
-func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
+func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -326,9 +335,13 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	// shadow committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
-	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+	capture := func(w *WriteBehindBuffer) error {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		return nil
 	}
 
 	include := propertyProjectionSet(properties)
@@ -340,7 +353,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	// LIMIT-stopped scan.
 	var covers bool
 	coversDecided := false
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if queryNodes {
 				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
@@ -532,6 +545,11 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
+	return b.allNodes(context.Background())
+}
+
+// allNodes reads every visible node; ctx is the read's context.
+func (b *BadgerEngine) allNodes(ctx context.Context) ([]*Node, error) {
 	var sourceTs uint64
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
@@ -540,13 +558,17 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	var loaded []*Node
 	var overlay []*Node
 	var touched map[NodeID]bool
-	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedNodes})
+	capture := func(w *WriteBehindBuffer) error {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedNodes})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		return nil
 	}
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
@@ -611,21 +633,25 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 
 // AllEdges returns all edges (implements Engine interface).
 func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
-	return b.allEdges(visibleRead)
+	return b.allEdges(context.Background(), visibleRead)
 }
 
-func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
+func (b *BadgerEngine) allEdges(ctx context.Context, v readVisibility) ([]*Edge, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
 	var edges []*Edge
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	capture := func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges})
+	capture := func(w *WriteBehindBuffer) error {
+		pendingEdges, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedEdges})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+		return nil
 	}
 	nowNanos := DecayScoringTime()
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -672,22 +698,21 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 // Relationship types match exactly, as in Neo4j (#862).
 // Results are cached per type to speed up repeated queries.
 func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	return b.getEdgesByType(edgeType, visibleRead)
+	return b.getEdgesByType(context.Background(), edgeType, visibleRead)
 }
 
 // GetStoredEdgesByType is GetEdgesByType for integrity work: it also returns
 // the relationships the visibility layer hides (StoredEntityReader). It never
 // reads or fills the per-type cache, which holds visible results.
 func (b *BadgerEngine) GetStoredEdgesByType(edgeType string) ([]*Edge, error) {
-	return b.getEdgesByType(edgeType, storedRead)
+	return b.getEdgesByType(context.Background(), edgeType, storedRead)
 }
 
-func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edge, error) {
+// getEdgesByType reads the relationships of one type (all of them for "");
+// ctx is the read's context.
+func (b *BadgerEngine) getEdgesByType(ctx context.Context, edgeType string, v readVisibility) ([]*Edge, error) {
 	if edgeType == "" {
-		if v == storedRead {
-			return b.allEdges(storedRead)
-		}
-		return b.AllEdges() // No type filter = all edges
+		return b.allEdges(ctx, v) // No type filter = all edges
 	}
 
 	// With write-behind active, buffered edges are not in the whole-type
@@ -709,9 +734,13 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	gen := b.edgeTypeCacheGen.current()
-	err := b.withReadView(func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType})
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) error {
+		pendingEdges, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+		return nil
 	}, func(txn *badger.Txn) error {
 		sourceTs = txn.ReadTs()
 		prefix := edgeTypeIndexPrefix(edgeType)
@@ -888,7 +917,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 	gen := b.nodeCacheGen.current()
 	var loaded []*Node
 	var current bool
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) error {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: visibleRead}); state.found {
 				if states == nil {
@@ -897,6 +926,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				states[id] = state
 			}
 		}
+		return nil
 	}, func(txn *badger.Txn) error {
 		sourceTs = txn.ReadTs()
 		clear(result)
@@ -964,7 +994,7 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 
 	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]bool, len(ids))
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) error {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}); state.found {
 				if states == nil {
@@ -973,6 +1003,7 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 				states[id] = state
 			}
 		}
+		return nil
 	}, func(txn *badger.Txn) error {
 		for _, id := range ids {
 			if state, found := states[id]; found {
@@ -1008,13 +1039,17 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 
 // GetOutgoingEdges returns all edges where the given node is the source.
 func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(b, adjacencyOutgoing, nodeID, "", nil, visibleRead)
-	return out, err
+	return b.outgoingEdges(context.Background(), nodeID, visibleRead)
 }
 
 // GetStoredOutgoingEdges includes hidden bodies through the shared read view.
 func (b *BadgerEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(b, adjacencyOutgoing, nodeID, "", nil, storedRead)
+	return b.outgoingEdges(context.Background(), nodeID, storedRead)
+}
+
+// outgoingEdges reads nodeID's outgoing edges; ctx is the read's context.
+func (b *BadgerEngine) outgoingEdges(ctx context.Context, nodeID NodeID, v readVisibility) ([]*Edge, error) {
+	out, _, err := readAdjacency(ctx, b, adjacencyOutgoing, nodeID, "", nil, v)
 	return out, err
 }
 
@@ -1023,7 +1058,7 @@ func (b *BadgerEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // entirely, falling back to a single view transaction when either direction
 // misses.
 func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	return readAdjacency(b, adjacencyBoth, nodeID, "", nil, visibleRead)
+	return readAdjacency(context.Background(), b, adjacencyBoth, nodeID, "", nil, visibleRead)
 }
 
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
@@ -1152,9 +1187,13 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		var live []*Edge
 		var suppressed map[EdgeID]struct{}
 		var nodeDeleted bool
-		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-			pendingAdjacency := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
+		view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) error {
+			pendingAdjacency, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
+			if err != nil {
+				return err
+			}
 			live, suppressed, nodeDeleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
+			return nil
 		}, readViewOptions{scope: namespaceForNodeID(nodeID)})
 		if err != nil {
 			return nil, true, err
@@ -1331,18 +1370,27 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 
 // GetIncomingEdges returns all edges where the given node is the target.
 func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(b, adjacencyIncoming, nodeID, "", nil, visibleRead)
-	return in, err
+	return b.incomingEdges(context.Background(), nodeID, visibleRead)
 }
 
 // GetStoredIncomingEdges includes hidden bodies through the shared read view.
 func (b *BadgerEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(b, adjacencyIncoming, nodeID, "", nil, storedRead)
+	return b.incomingEdges(context.Background(), nodeID, storedRead)
+}
+
+// incomingEdges reads nodeID's incoming edges; ctx is the read's context.
+func (b *BadgerEngine) incomingEdges(ctx context.Context, nodeID NodeID, v readVisibility) ([]*Edge, error) {
+	_, in, err := readAdjacency(ctx, b, adjacencyIncoming, nodeID, "", nil, v)
 	return in, err
 }
 
 // GetEdgesBetween returns all edges between two nodes.
 func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+	return b.edgesBetween(context.Background(), startID, endID)
+}
+
+// edgesBetween reads the edges between two nodes; ctx is the read's context.
+func (b *BadgerEngine) edgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error) {
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
 		return nil, err
 	}
@@ -1364,9 +1412,13 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		var live []*Edge
 		var suppressed map[EdgeID]struct{}
 		var sourceDeleted, targetDeleted bool
-		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-			pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+		view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) error {
+			pendingBetween, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+			if err != nil {
+				return err
+			}
 			live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
+			return nil
 		}, readViewOptions{scope: namespaceForNodeID(startID)})
 		if err != nil {
 			return nil, err
@@ -1445,9 +1497,13 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	var live []*Edge
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: source, target: target})
+	view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) error {
+		pendingBetween, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: source, target: target})
+		if err != nil {
+			return err
+		}
 		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
+		return nil
 	}, readViewOptions{scope: namespaceForNodeID(source)})
 	if err != nil {
 		return nil

@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -50,12 +53,18 @@ type badgerReadView struct {
 // overlay source: nil means empty, and the overlay selectors accept nil without
 // allocating. Committed index/cache reads belong outside any nil-overlay guard.
 // Only a complete cached result can return without opening a view or capturing.
-func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
+//
+// ctx is the request: admission and capture observe it, and a capture error
+// (including the request's cancellation) closes the view before returning.
+// Keep ctx separate from the borrowed callbacks in options: neither the request
+// nor the callbacks belong to the returned view's lifetime. A read with no
+// request passes context.Background().
+func (b *BadgerEngine) captureReadView(ctx context.Context, capture func(*WriteBehindBuffer) error, options ...readViewOptions) (*badgerReadView, error) {
 	var opts readViewOptions
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	if err := b.pendingReadConflict(opts); err != nil {
+	if err := b.pendingReadConflict(ctx, opts); err != nil {
 		return nil, err
 	}
 	w := b.writeBehind
@@ -99,12 +108,32 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		if _, idle := w.idleReadEpoch(opts.scope); idle {
 			overlay = nil
 		}
-		capture(overlay)
+		err = b.runCapture(view, capture, overlay)
 	}
 	if opts.longLived {
 		b.txnWG.Done()
 	}
+	if err != nil {
+		view.Close()
+		return nil, err
+	}
 	return view, nil
+}
+
+// runCapture runs capture on a just-opened view. A panic closes the view, and
+// ends a long-lived view's capture lease, before it continues: a crash inside a
+// capture surfaces as that panic and never leaves Close waiting for the view.
+func (b *BadgerEngine) runCapture(view *badgerReadView, capture func(*WriteBehindBuffer) error, overlay *WriteBehindBuffer) error {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if view.longLived {
+				b.txnWG.Done()
+			}
+			view.Close()
+			panic(recovered)
+		}
+	}()
+	return capture(overlay)
 }
 
 func (v *badgerReadView) Close() {
@@ -135,7 +164,9 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	if v.closed {
 		return ErrStorageClosed
 	}
-	if err := v.engine.pendingReadConflict(readViewOptions{scope: v.scope, scopeKind: v.scopeKind}); err != nil {
+	// A later scan of a long-lived view re-admits its scope only; it carries no
+	// node IDs and is not part of the capturing request.
+	if err := v.engine.pendingScopeConflict(v.scopeKind, v.scope); err != nil {
 		return err
 	}
 
@@ -154,11 +185,11 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	})
 }
 
-func (b *BadgerEngine) withReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, options ...readViewOptions) error {
+func (b *BadgerEngine) withReadView(ctx context.Context, capture func(*WriteBehindBuffer) error, read func(*badger.Txn) error, options ...readViewOptions) error {
 	if len(options) != 0 && options[0].current != nil {
-		return b.withCurrentReadView(capture, read, options[0])
+		return b.withCurrentReadView(ctx, capture, read, options[0])
 	}
-	view, err := b.captureReadView(capture, options...)
+	view, err := b.captureReadView(ctx, capture, options...)
 	if err != nil || view == nil {
 		return err
 	}
@@ -171,10 +202,10 @@ func (v *badgerReadView) readAndClose(read func(*badger.Txn) error) error {
 }
 
 // Only materializers opting into current body caches need group validation.
-func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, opts readViewOptions) error {
+func (b *BadgerEngine) withCurrentReadView(ctx context.Context, capture func(*WriteBehindBuffer) error, read func(*badger.Txn) error, opts readViewOptions) error {
 	nodeGen, edgeGen := b.nodeCacheGen.current(), b.edgeCacheGen.current()
 	*opts.current = true
-	view, err := b.captureReadView(capture, opts)
+	view, err := b.captureReadView(ctx, capture, opts)
 	if err != nil || view == nil {
 		return err
 	}
@@ -191,24 +222,42 @@ func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), rea
 
 // pendingReadConflict admits exactly the graph population the capture reads.
 // Bounded ID requests only consult their namespaces when any DROP is pending;
-// the healthy batch path retains one atomic admission check rather than N.
-func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
-	switch opts.scopeKind {
-	case readPrefixScope:
-		return b.pendingPrefixConflict(opts.scope)
-	case readNodeIDsScope:
-		if b.pendingNamespaceConflict("") == nil {
-			return nil
+// the healthy batch path retains one atomic admission check rather than N. Only
+// that per-ID admission observes the request; scope admission is pendingScopeConflict.
+func (b *BadgerEngine) pendingReadConflict(ctx context.Context, opts readViewOptions) error {
+	if opts.scopeKind != readNodeIDsScope {
+		return b.pendingScopeConflict(opts.scopeKind, opts.scope)
+	}
+	if b.pendingNamespaceConflict("") == nil {
+		return nil
+	}
+	// The retained owner decides whether any DROP is pending. Do not
+	// interpret its publication counter at a second read boundary.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, id := range opts.nodeIDs {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		for _, id := range opts.nodeIDs {
-			if id != "" {
-				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
-					return err
-				}
+		if id != "" {
+			if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+				return err
 			}
 		}
-		return nil
+	}
+	return nil
+}
+
+// pendingScopeConflict admits a prefix or namespace scope. A node-ID scope with
+// no IDs (a long-lived view's later scan) admits against any pending DROP.
+func (b *BadgerEngine) pendingScopeConflict(kind readScopeKind, scope string) error {
+	switch kind {
+	case readPrefixScope:
+		return b.pendingPrefixConflict(scope)
+	case readNodeIDsScope:
+		return b.pendingNamespaceConflict("")
 	default:
-		return b.pendingNamespaceConflict(opts.scope)
+		return b.pendingNamespaceConflict(scope)
 	}
 }

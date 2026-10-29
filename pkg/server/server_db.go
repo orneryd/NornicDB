@@ -861,7 +861,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		// Only return 202 for mutations that actually completed through the
 		// eventual-consistency path.
 		for _, stmt := range req.Statements {
-			if isMutationQuery(stmt.Statement) && shouldUseAcceptedStatusForMutation(&response) {
+			if isMutationQuery(r.Context(), stmt.Statement) && shouldUseAcceptedStatusForMutation(&response) {
 				status = http.StatusAccepted
 				w.Header().Set("X-NornicDB-Consistency", "eventual")
 				break

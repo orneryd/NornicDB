@@ -1,11 +1,11 @@
 {
   "pkg/cypher/apoc_load_export.go:callApocLoadJson": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "7fc9da74023acc294fe002f7b19e02ce8218908524aa7849d62de3e84d017dc9"
+    "sha256": "e0a922007802a30d2220633e83ee7e93ec8208ae25e963998894408a995e122c"
   },
   "pkg/cypher/apoc_load_export.go:callApocLoadJsonArray": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "4568ac00bc50fb4c17f85d6a7cda814eee633517ea9700eb57aa0b404181b072"
+    "sha256": "a9f668d263335654b9d25dfc23a764e3d1fe1a483284d34c096ba96bda448e1a"
   },
   "pkg/cypher/cache_key.go:writeCacheKeyValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",

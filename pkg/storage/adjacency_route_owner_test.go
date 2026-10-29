@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -53,7 +54,7 @@ func TestAdjacencyDispatcherPreservesActualDecoratorAndErrorPolicy(t *testing.T)
 		if namespaced {
 			engine = NewNamespacedEngine(d, "test")
 		}
-		out, in, err = readAdjacency(engine, adjacencyBoth, "hub", "", nil, visibleRead)
+		out, in, err = readAdjacency(context.Background(), engine, adjacencyBoth, "hub", "", nil, visibleRead)
 		require.ErrorIs(t, err, failure)
 		require.Equal(t, []string{"out", "in"}, d.calls)
 		if namespaced {
@@ -87,7 +88,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 		return n
 	}
 
-	reader, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	reader, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.NotNil(t, reader.view)
 	defer reader.view.Close()
@@ -111,7 +112,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	require.Equal(t, int64(2), current[0].Properties["v"])
 	_, _, err = b.GetAdjacentEdges("test:hub")
 	require.NoError(t, err)
-	cached, err := b.captureAdjacencyReader("test:hub", true, true, visibleRead)
+	cached, err := b.captureAdjacencyReader(context.Background(), "test:hub", true, true, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, cached.view)
 	require.Zero(t, activeReads())
@@ -127,7 +128,7 @@ func TestAdjacencyNativeReaderOwnsOneSnapshotAndReleasesCacheLease(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:in"), in[0].ID)
 
-	out, in, err = readAdjacency(b, adjacencyIncoming, "test:hub", "", nil, visibleRead)
+	out, in, err = readAdjacency(context.Background(), b, adjacencyIncoming, "test:hub", "", nil, visibleRead)
 	require.NoError(t, err)
 	require.Nil(t, out)
 	require.Equal(t, EdgeID("test:in"), in[0].ID)

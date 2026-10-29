@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	"encoding/binary"
 	"strconv"
 	"testing"
@@ -13,7 +16,7 @@ func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 	b := newReadSnapshotTestEngine(t, false)
 	first, err := b.CreateNode(&Node{ID: "test:reference-first", Labels: []string{"Reference"}})
 	require.NoError(t, err)
-	view, err := b.captureReadView(nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}})
+	view, err := b.captureReadView(context.Background(), nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}})
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	defer view.Close()

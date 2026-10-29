@@ -71,10 +71,11 @@ func endOperatorSpan(span trace.Span, actualRows int64) {
 	span.End()
 }
 
-// recordSpanError marks a span with error status and the error message.
-func recordSpanError(span trace.Span, err error) {
+// recordSpanError marks a span with error status and the error message; ctx
+// is the statement's context.
+func recordSpanError(ctx context.Context, span trace.Span, err error) {
 	if err != nil && span.IsRecording() {
-		message := redactSpanErrorText(err.Error())
+		message := redactSpanErrorText(ctx, err.Error())
 		span.SetStatus(codes.Error, message)
 		// RecordError appends err.Error() after caller attributes, so a message
 		// override cannot hide it. Emit the standard exception event directly,
@@ -94,7 +95,7 @@ func recordSpanError(span trace.Span, err error) {
 // Error prose is not a Cypher statement. Locate its quoted input fragments with
 // the existing scanner, then delegate their projection to the query-literal
 // owner. Parsing the whole prose would discard useful reasons and error codes.
-func redactSpanErrorText(text string) string {
+func redactSpanErrorText(ctx context.Context, text string) string {
 	text = observability.RedactText(text)
 	var out strings.Builder
 	last := 0
@@ -109,7 +110,7 @@ func redactSpanErrorText(text string) string {
 		}
 		end, _ := scanCypherQuotedText(text, i, quote)
 		out.WriteString(text[last:i])
-		out.WriteString(strings.TrimPrefix(RedactLiterals("RETURN "+text[i:end]), "RETURN "))
+		out.WriteString(strings.TrimPrefix(redactLiterals(ctx, "RETURN "+text[i:end], redactGrammarAccepts), "RETURN "))
 		last = end
 		i = end - 1
 	}

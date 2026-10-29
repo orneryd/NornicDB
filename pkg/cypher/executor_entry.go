@@ -260,7 +260,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, executionDuration, retErr == nil)
 		e.observeSlowQueryIfThresholded(executionDuration)
 		redactAdminCommandError(originalCypher, &retErr, statementCredentials(ctx))
-		recordSpanError(execSpan, retErr)
+		recordSpanError(ctx, execSpan, retErr)
 		execSpan.End()
 		if queryLimitCancel != nil {
 			queryLimitCancel()
@@ -853,12 +853,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			// We need to check this early, but we don't know if it's a write query yet
 			// So we'll check it in the write handlers too
 
-			// Apply query timeout and concurrent query limits
-			var err error
-			ctx, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
+			// Apply query timeout and concurrent query limits. A rejected query
+			// keeps its request context: the deferred cleanup above reads it.
+			limitedCtx, cancel, err := qlc.CheckQueryLimits(ctx)
 			if err != nil {
 				return nil, err
 			}
+			ctx, queryLimitCancel = limitedCtx, cancel
 			deadlineCtx = ctx
 		}
 	}

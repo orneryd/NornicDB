@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"errors"
@@ -153,14 +155,21 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	// edge overlay.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	capture := func(w *WriteBehindBuffer) {
+	capture := func(w *WriteBehindBuffer) error {
 		if edgeType != "" {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
+			pendingEdges, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
+			if err != nil {
+				return err
+			}
 			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 		} else {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
+			pendingEdges, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
+			if err != nil {
+				return err
+			}
 			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 		}
+		return nil
 	}
 
 	nowNanos := DecayScoringTime()
@@ -173,7 +182,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		}
 		return visit(edge)
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if edgeType == "" {
 			var offer storedEdgeBodyVisitor
 			if body != nil && v == storedRead {

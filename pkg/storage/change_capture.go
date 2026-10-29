@@ -20,7 +20,7 @@ import (
 // written in the same Badger commit as the change, by BadgerTransaction.Commit
 // alone: the commit's states (newCommitStates) give each entity's state
 // before and after. A write that would bypass a transaction runs in one for
-// such a database (BadgerEngine.inCaptureTransaction). Events are keyed in
+// such a database (BadgerEngine.inMutationTransaction). Events are keyed in
 // the database's commit order: commits of one capturing database take its
 // change log in turn, from before their writes until they end.
 
@@ -349,7 +349,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		capture.wrote = true
 		return w.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
-	labels := newChangeEndpointLabels(b, states)
+	labels := newChangeEndpointLabels(tx.requestContextLocked(), b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
 	seenNodes := make(map[NodeID]bool)
 	seenEdges := make(map[EdgeID]bool)
@@ -498,15 +498,17 @@ func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpoi
 // changeEndpointLabels finds a relationship endpoint's labels: its state
 // at the end of the transaction when the transaction touched it, else its
 // stored node, read once per commit outside the commit's own transaction
-// (which would make the read part of its conflict set).
+// (which would make the read part of its conflict set). ctx is the commit's
+// request context, which those reads observe.
 type changeEndpointLabels struct {
+	ctx    context.Context
 	engine *BadgerEngine
 	states commitStates
 	read   map[NodeID]*Node
 }
 
-func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeEndpointLabels {
-	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID]*Node)}
+func newChangeEndpointLabels(ctx context.Context, engine *BadgerEngine, states commitStates) *changeEndpointLabels {
+	return &changeEndpointLabels{ctx: ctx, engine: engine, states: states, read: make(map[NodeID]*Node)}
 }
 
 func (l *changeEndpointLabels) of(id NodeID) []string {
@@ -531,7 +533,7 @@ func (l *changeEndpointLabels) node(id NodeID) *Node {
 	if node, ok := l.read[id]; ok {
 		return node
 	}
-	node, err := l.engine.GetNodeWithoutEmbeddings(id)
+	node, err := l.engine.readNodeMetadata(l.ctx, id, visibleRead, nodeItemBodyOnly)
 	if err != nil {
 		node = nil
 	}

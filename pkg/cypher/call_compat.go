@@ -198,7 +198,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
@@ -242,7 +242,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 			return result, nil
 		}
 		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+		err := storage.StreamEdgesWithFallback(ctx, e.storage, 1024, func(edge *storage.Edge) error {
 			if !matchesRelationshipTypes(edge, targetTypes) {
 				return nil
 			}
@@ -313,7 +313,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		avgDocLen = float64(totalDocLen) / float64(totalDocs)
 	}
 
-	ctx := &ftEvalCtx{
+	evalCtx := &ftEvalCtx{
 		DefaultFields: targetProperties,
 		avgDocLen:     avgDocLen,
 		totalDocs:     totalDocs,
@@ -326,7 +326,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	}
 	scored := make([]scoredEdge, 0, len(docs))
 	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
+		matched, score := parsed.Match(evalCtx, d.doc)
 		if !matched {
 			continue
 		}
@@ -830,13 +830,13 @@ func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, ar
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "fulltext", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetFulltextIndex(indexName)
 		return ok
 	}); err != nil {
@@ -850,13 +850,13 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteR
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "vector", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetVectorIndex(indexName)
 		return ok
 	}); err != nil {
@@ -873,11 +873,11 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 // an index of that kind exists under the name, and otherwise fails with
 // Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
 // that did not happen and never drops an index of another kind.
-func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
+func (e *StorageExecutor) dropIndexOfKind(ctx context.Context, name, kind string, exists func(*storage.SchemaManager) bool) error {
 	if isCompositeRoot(e.storage) {
 		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
-	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
+	return e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if schema == nil || !exists(schema) {
 			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
 				fmt.Sprintf("there is no %s index named %q", kind, name))

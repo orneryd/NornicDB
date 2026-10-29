@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"bytes"
 	"context"
@@ -1089,26 +1091,26 @@ func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 }
 
 func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	node, _, err := b.readLatestEntity(string(id), false, visibleRead)
+	node, _, err := b.readLatestEntity(context.Background(), string(id), false, visibleRead)
 	return node, err
 }
 
 func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	_, edge, err := b.readLatestEntity(string(id), true, visibleRead)
+	_, edge, err := b.readLatestEntity(context.Background(), string(id), true, visibleRead)
 	return edge, err
 }
 
 // readLatestEntity first uses the captured current-body owner. Only a missing
 // body consults the committed MVCC head and its retained version records, as
 // required for older persisted stores. All paths apply the same read policy.
-func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
+func (b *BadgerEngine) readLatestEntity(ctx context.Context, id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
 	var node *Node
 	var edge *Edge
 	var err error
 	if isEdge {
-		edge, err = b.getEdge(EdgeID(id), v)
+		edge, err = b.getEdge(ctx, EdgeID(id), v)
 	} else {
-		node, err = b.getNode(NodeID(id), v)
+		node, err = b.getNode(ctx, NodeID(id), v)
 	}
 	if err == nil {
 		return node, edge, nil
@@ -1175,7 +1177,7 @@ func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVers
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error) {
-	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
+	if err := b.pendingReadConflict(context.Background(), readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
 		return nil, err
 	}
 

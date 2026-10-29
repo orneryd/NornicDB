@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"errors"
@@ -126,7 +128,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// commit before this acquisition, so revalidate under the existing key order.
 	// Entity and endpoint authority precedes unique values for every native commit.
 	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
-	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
+	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.requestContextLocked(), tx.ID, entityCommitKeys(nodes, edges, endpoints))
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}

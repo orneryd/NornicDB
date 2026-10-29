@@ -2383,7 +2383,7 @@ func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
 		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = toUpper($uid)":  false,
 	} {
 		session := &Session{inTransaction: true}
-		session.recordExplicitTransactionWrite(query, props, true)
+		session.recordExplicitTransactionWrite(context.Background(), query, props, true)
 		if got := session.canRetryMergeCommitConflict(uidUniqueViolation); got != retrySafe {
 			t.Fatalf("%s: retry-safe = %v, want %v", query, got, retrySafe)
 		}
@@ -2392,12 +2392,12 @@ func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
 
 func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
 	session := &Session{inTransaction: true}
-	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", nil, true)
+	session.recordExplicitTransactionWrite(context.Background(), "MERGE (n:TerraformResource {uid: $uid})", nil, true)
 	if !session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
 	}
 
-	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", nil, true)
+	session.recordExplicitTransactionWrite(context.Background(), "CREATE (n:TerraformResource {uid: $uid})", nil, true)
 	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
 		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
@@ -2406,6 +2406,7 @@ func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.
 func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *testing.T) {
 	session := &Session{inTransaction: true}
 	session.recordExplicitTransactionWrite(
+		context.Background(),
 		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
 		nil,
 		true,
@@ -2418,6 +2419,7 @@ func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *test
 func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
 	session := &Session{inTransaction: true}
 	session.recordExplicitTransactionWrite(
+		context.Background(),
 		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
 		nil,
 		true,

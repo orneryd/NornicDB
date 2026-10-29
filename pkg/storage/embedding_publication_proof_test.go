@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"bytes"
 	"context"
@@ -36,7 +38,7 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 				listeners++
 				require.True(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
 				allocs := testing.AllocsPerRun(20, func() {
-					same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
+					same, err := b.embeddingRevisionIsCurrent(context.Background(), accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 					if err != nil || !same {
 						panic("current accepted outcome was rejected")
 					}
@@ -81,7 +83,7 @@ func TestEmbeddingPublicationProofComesFromCommit(t *testing.T) {
 		delivered = true
 		require.Equal(t, committed, accepted.runtimeState().embeddingPublication, "never sample a replacement boundary after committing")
 		require.False(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
-		same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
+		same, err := b.embeddingRevisionIsCurrent(context.Background(), accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 		require.NoError(t, err)
 		require.True(t, same, "an intervening unrelated commit requires fresh validation, not rejection")
 	})
@@ -105,7 +107,7 @@ func TestEmbeddingPublicationProofFallsBackAfterBodyChanges(t *testing.T) {
 				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: updated}))
 			}
 			require.False(t, proof.matches(b, node.ID, revision))
-			same, err := b.embeddingRevisionIsCurrent(node.ID, revision, proof)
+			same, err := b.embeddingRevisionIsCurrent(context.Background(), node.ID, revision, proof)
 			require.False(t, same)
 			if remove {
 				require.ErrorIs(t, err, ErrNotFound)
@@ -157,7 +159,7 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 		done <- b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 			cw.embeddingOutcome = node
 			return cw.writeOnce(func(txn *badger.Txn) error {
-				if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+				if err := b.checkEmbeddingSourceInTxn(context.Background(), txn, node); err != nil {
 					return err
 				}
 				return txn.Set([]byte("publication-proof-outcome"), []byte("later writer"))
@@ -173,7 +175,7 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	b.db.oracle.finish(prior)
 	require.NoError(t, <-done)
 	require.Zero(t, node.runtimeState().embeddingPublication.commitTs, "an unobserved predecessor prevents certification")
-	same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, node.runtimeState().embeddingPublication)
+	same, err := b.embeddingRevisionIsCurrent(context.Background(), node.ID, node.runtimeState().embeddingRevision, node.runtimeState().embeddingPublication)
 	require.NoError(t, err)
 	require.True(t, same, "missing proof uses the fresh metadata path")
 }
@@ -200,7 +202,7 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 				require.NoError(t, b.db.Load(context.Background(), bytes.NewReader(backup.Bytes()), 1))
 			}
 			require.False(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision), "bulk mutation invalidates the publication interval")
-			same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, proof)
+			same, err := b.embeddingRevisionIsCurrent(context.Background(), node.ID, node.runtimeState().embeddingRevision, proof)
 			if operation == "load_older_versions" {
 				require.NoError(t, err)
 				require.True(t, same)

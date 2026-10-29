@@ -715,9 +715,9 @@ func (a *Authenticator) loadUsers() error {
 	return nil
 }
 
-// saveUser saves a user to the system database.
-// Users are stored as nodes with labels ["_User", "_System"].
-func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
+// saveUser saves a user to the system database under ctx, the request's
+// context. Users are stored as nodes with labels ["_User", "_System"].
+func (a *Authenticator) saveUser(ctx context.Context, user *User, transaction storage.Engine) error {
 	mutate := func(view storage.Engine) error {
 		node := mapUserRecord(storeUserRecord, user, nil).Node
 
@@ -742,7 +742,7 @@ func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
 	if transaction != nil {
 		return mutate(transaction)
 	}
-	return WithStoreTransaction(context.Background(), a.storage, mutate)
+	return WithStoreTransaction(ctx, a.storage, mutate)
 }
 
 func (a *Authenticator) deleteUserNode(username string) error {
@@ -831,7 +831,7 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 	}
 
 	// Save to storage
-	if err := a.saveUser(user, nil); err != nil {
+	if err := a.saveUser(context.Background(), user, nil); err != nil {
 		return nil, fmt.Errorf("failed to persist user: %w", err)
 	}
 
@@ -971,7 +971,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 			user.UpdatedAt = time.Now()
 
 			// Persist failed login state
-			a.saveUser(user, nil) // Ignore error - don't fail on storage issues
+			a.saveUser(context.Background(), user, nil) // Ignore error - don't fail on storage issues
 
 			a.logAudit(AuditEvent{
 				EventType: "login",
@@ -1004,7 +1004,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 	user.UpdatedAt = time.Now()
 
 	// Persist login state changes
-	a.saveUser(user, nil) // Ignore error - don't fail authentication on storage issues
+	a.saveUser(context.Background(), user, nil) // Ignore error - don't fail authentication on storage issues
 
 	// Generate JWT token
 	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
@@ -1226,7 +1226,7 @@ func (a *Authenticator) OnPasswordChange(fn func(username string)) {
 // mutateStoredUser owns the locked clone/persist/cache/audit boundary. The
 // operation supplies only its actual field transition and audit details. The
 // optional completion runs after durable success and audit, still under mu.
-func (a *Authenticator) mutateStoredUser(username, operation string, apply func(*User) (AuditEvent, error), complete func()) error {
+func (a *Authenticator) mutateStoredUser(ctx context.Context, username, operation string, apply func(*User) (AuditEvent, error), complete func()) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	user, exists := a.users[username]
@@ -1239,7 +1239,7 @@ func (a *Authenticator) mutateStoredUser(username, operation string, apply func(
 		return err
 	}
 	user.UpdatedAt = time.Now()
-	if err := a.saveUser(user, nil); err != nil {
+	if err := a.saveUser(ctx, user, nil); err != nil {
 		return fmt.Errorf("failed to persist %s: %w", operation, err)
 	}
 	a.users[username] = user
@@ -1254,7 +1254,7 @@ func (a *Authenticator) mutateStoredUser(username, operation string, apply func(
 // ChangePassword updates a user's password and invalidates credential caches
 // only after successful persistence. Failure audit and listeners run under mu.
 func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string) error {
-	return a.mutateStoredUser(username, "password change", func(user *User) (AuditEvent, error) {
+	return a.mutateStoredUser(context.Background(), username, "password change", func(user *User) (AuditEvent, error) {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
 			a.logAudit(AuditEvent{EventType: "password_change", Username: username, UserID: user.ID, Success: false, Details: "old password incorrect"})
 			return AuditEvent{}, ErrInvalidCredentials
@@ -1277,7 +1277,12 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 
 // UpdateRoles changes a user's roles, persisting before live publication.
 func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
-	return a.mutateStoredUser(username, "role change", func(user *User) (AuditEvent, error) {
+	return a.updateRoles(context.Background(), username, newRoles)
+}
+
+// updateRoles is UpdateRoles under ctx, the request's context.
+func (a *Authenticator) updateRoles(ctx context.Context, username string, newRoles []Role) error {
+	return a.mutateStoredUser(ctx, username, "role change", func(user *User) (AuditEvent, error) {
 		oldRoles := user.Roles
 		user.Roles = append([]Role(nil), newRoles...)
 		return AuditEvent{EventType: "role_change", Details: fmt.Sprintf("roles changed from %v to %v", oldRoles, newRoles)}, nil
@@ -1305,6 +1310,11 @@ const (
 //
 //	err := authenticator.ChangeUserState("alice", auth.UserUnlock)
 func (a *Authenticator) ChangeUserState(username string, change UserStateChange) error {
+	return a.changeUserState(context.Background(), username, change)
+}
+
+// changeUserState is ChangeUserState under ctx, the request's context.
+func (a *Authenticator) changeUserState(ctx context.Context, username string, change UserStateChange) error {
 	var operation, eventType string
 	switch change {
 	case UserEnable:
@@ -1316,7 +1326,7 @@ func (a *Authenticator) ChangeUserState(username string, change UserStateChange)
 	default:
 		return fmt.Errorf("invalid user state change %d", change)
 	}
-	return a.mutateStoredUser(username, operation, func(user *User) (AuditEvent, error) {
+	return a.mutateStoredUser(ctx, username, operation, func(user *User) (AuditEvent, error) {
 		if change == UserDisable {
 			user.Disabled = true
 		} else {
@@ -1332,7 +1342,7 @@ func (a *Authenticator) ChangeUserState(username string, change UserStateChange)
 // UpdateUser updates profile information. Empty email preserves the current
 // value; a nonnil metadata map merges its entries into the existing metadata.
 func (a *Authenticator) UpdateUser(username string, email string, metadata map[string]string) error {
-	return a.mutateStoredUser(username, "user update", func(user *User) (AuditEvent, error) {
+	return a.mutateStoredUser(context.Background(), username, "user update", func(user *User) (AuditEvent, error) {
 		if email != "" {
 			user.Email = email
 		}

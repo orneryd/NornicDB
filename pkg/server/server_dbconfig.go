@@ -277,7 +277,7 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStorageResolveFailedEvent(dbName, err))
-		} else if _, err := s.db.EnsureSearchIndexes(nil, dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
+		} else if _, err := s.db.EnsureSearchIndexes(r.Context(), dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStartFailedEvent(dbName, err))
 		} else {
 			rebuildTriggered = true

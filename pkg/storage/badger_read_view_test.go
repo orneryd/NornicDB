@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"testing"
@@ -42,29 +44,33 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			var deleted bool
 			var touchedNodes map[NodeID]bool
 			var touchedEdges map[EdgeID]bool
-			view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+			view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) (err error) {
+				ctx := context.Background()
 				switch class {
 				case "point", "batch-projection":
 					point = w.entityStateLocked(bufferedNodeEntity, "test:a")
 					deleted = w.entityStateLocked(bufferedNodeEntity, "test:gone").deleted
 				case "label":
-					nodes, touchedNodes = w.labelOverlayLocked("Live")
+					nodes, touchedNodes, err = w.labelOverlayLocked(ctx, "Live")
 				case "all-nodes":
-					nodes, touchedNodes = w.allNodesOverlayLocked()
+					nodes, touchedNodes, err = w.allNodesOverlayLocked(ctx)
 				case "type":
-					edges, touchedEdges = w.typeOverlayLocked("REL")
+					edges, touchedEdges, err = w.typeOverlayLocked(ctx, "REL")
 				case "all-edges":
-					edges, touchedEdges = w.allEdgesOverlayLocked()
+					edges, touchedEdges, err = w.allEdgesOverlayLocked(ctx)
 				case "outgoing":
-					edges, _, _ = w.edgeAdjacencyOverlayLocked("test:a", true)
+					edges, _, _, err = w.edgeAdjacencyOverlayLocked(ctx, "test:a", true)
 				case "incoming":
-					edges, _, _ = w.edgeAdjacencyOverlayLocked("test:b", false)
+					edges, _, _, err = w.edgeAdjacencyOverlayLocked(ctx, "test:b", false)
 				case "between":
-					edges, _, _, _ = w.edgesBetweenOverlayLocked("test:a", "test:b")
+					edges, _, _, _, err = w.edgesBetweenOverlayLocked(ctx, "test:a", "test:b")
 				case "node-edge-snapshot":
-					nodes, touchedNodes = w.allNodesOverlayLocked()
-					edges, touchedEdges = w.allEdgesOverlayLocked()
+					if nodes, touchedNodes, err = w.allNodesOverlayLocked(ctx); err != nil {
+						return err
+					}
+					edges, touchedEdges, err = w.allEdgesOverlayLocked(ctx)
 				}
+				return err
 			})
 			require.NoError(t, err)
 			defer view.Close()

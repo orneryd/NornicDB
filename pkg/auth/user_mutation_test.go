@@ -75,7 +75,7 @@ func TestCombinedUserChangePublishesAfterCommit(t *testing.T) {
 	user := users.users["worker"]
 	user.Disabled, user.FailedLogins = true, 3
 	user.LockedUntil = time.Now().Add(time.Hour)
-	require.NoError(t, users.saveUser(user, nil))
+	require.NoError(t, users.saveUser(context.Background(), user, nil))
 	var events []AuditEvent
 	observeStoredUserAudit(t, users, fault.Engine, func(event AuditEvent, node *storage.Node) {
 		require.Equal(t, `["admin"]`, node.Properties["roles"])

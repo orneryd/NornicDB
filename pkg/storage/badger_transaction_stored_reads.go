@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import "context"
 
 // GetStoredNode reads a node through the transaction's snapshot and pending
@@ -50,7 +52,7 @@ func (tx *BadgerTransaction) GetStoredNodesByLabel(label string) ([]*Node, error
 // StreamStoredNodesByLabelProjected preserves label-index and transaction
 // overlay reads while including suppressed and decayed committed nodes.
 func (tx *BadgerTransaction) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return tx.streamNodesByLabelProjected(label, properties, storedRead, visit)
+	return tx.streamNodesByLabelProjected(context.Background(), label, properties, storedRead, visit)
 }
 
 // StreamStoredEdgesByType preserves the transaction's type stream and overlay

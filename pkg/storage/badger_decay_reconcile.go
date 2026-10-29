@@ -1,6 +1,10 @@
 package storage
 
-import badger "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	badger "github.com/dgraph-io/badger/v4"
+)
 
 type SuppressionStateChange struct {
 	EntityID string
@@ -8,19 +12,27 @@ type SuppressionStateChange struct {
 	IsEdge   bool
 }
 
+// namespaceMaintenanceContext is the context of reconciling a namespace's
+// decay suppression when its schema is first used: shared state that later
+// readers depend on, so no request's cancellation may leave it half done and
+// it never takes a request's lifetime. It is never cancelled. The capture
+// census admits it only on ReconcileDecaySuppression's own work.
+func namespaceMaintenanceContext() context.Context { return context.Background() }
+
 // ReconcileDecaySuppression re-evaluates current suppression state for all
 // entities in a namespace after knowledge-policy changes.
 func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 	if !b.decayEnabled || namespace == "" {
 		return nil
 	}
+	ctx := namespaceMaintenanceContext()
 
 	nodeIDs, err := b.collectNamespaceNodeIDs(namespace)
 	if err != nil {
 		return err
 	}
 	for _, nodeID := range nodeIDs {
-		if _, err := b.EnqueueDeindexIfSuppressed(string(nodeID), false); err != nil {
+		if _, err := b.enqueueDeindexIfSuppressed(ctx, string(nodeID), false); err != nil {
 			return err
 		}
 	}
@@ -30,7 +42,7 @@ func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 		return err
 	}
 	for _, edgeID := range edgeIDs {
-		if _, err := b.EnqueueDeindexIfSuppressed(string(edgeID), true); err != nil {
+		if _, err := b.enqueueDeindexIfSuppressed(ctx, string(edgeID), true); err != nil {
 			return err
 		}
 	}

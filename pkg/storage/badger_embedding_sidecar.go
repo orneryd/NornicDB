@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"encoding/binary"
@@ -110,11 +112,11 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		if err := b.ensureOpen(false); err != nil {
 			return err
 		}
-		source, err := b.readNodeMetadata(node.ID, storedRead, nodeItemQueryMetadata)
+		source, err := b.readNodeMetadata(context.Background(), node.ID, storedRead, nodeItemQueryMetadata)
 		if err != nil {
 			return err
 		}
-		if err := b.checkEmbeddingSourceInTxn(nil, node, source); err != nil {
+		if err := b.checkEmbeddingSourceInTxn(context.Background(), nil, node, source); err != nil {
 			return err
 		}
 		if hook := embeddingSourceCheckedHook.Load(); hook != nil {
@@ -185,7 +187,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *com
 		}
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			before := node.UpdatedAt
-			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+			if err := b.checkEmbeddingSourceInTxn(write.ctx, txn, node); err != nil {
 				return err
 			}
 			if writeMeta && !before.Equal(node.UpdatedAt) {
@@ -228,7 +230,7 @@ var embeddingSourceCheckedHook atomic.Pointer[func()]
 // embedding source (the properties and labels the embedding text policy
 // feeds) differs from embedded's, the copy the embedding was computed from
 // (#889, #963). The read is conflict-tracked by txn.
-func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node, logicalSource ...*Node) error {
+func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badger.Txn, embedded *Node, logicalSource ...*Node) error {
 	var stored *Node
 	var physical uint64
 	if len(logicalSource) > 0 {
@@ -263,7 +265,7 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 		var matches bool
 		var err error
 		if len(logicalSource) > 0 {
-			matches, err = b.embeddingRevisionIsCurrent(embedded.ID, attempt.BodyRevision)
+			matches, err = b.embeddingRevisionIsCurrent(ctx, embedded.ID, attempt.BodyRevision)
 		} else {
 			matches, err = attempt.BodyRevision.matches(b, txn, embedded.ID, physical)
 		}
@@ -367,8 +369,9 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	}
 	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) error {
 		state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+		return nil
 	}, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted {

@@ -1,6 +1,9 @@
 package storage
 
-import "sync/atomic"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Tests can park a captured physical read without holding a cache mutex that
 // durability itself must acquire. The cache-only path does not consult it.
@@ -18,7 +21,8 @@ const (
 // readAdjacency owns request routing, direction order and result projection.
 // Only an actual namespace view qualifies IDs. Optional providers are bound on
 // its immediate decorator; native physical readers are never found by unwrap.
-func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+// ctx is the read's context; a read with no request passes context.Background().
+func readAdjacency(ctx context.Context, engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
 	var namespace *NamespacedEngine
 	if n, ok := engine.(*NamespacedEngine); ok {
 		namespace = n
@@ -72,7 +76,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	} else {
 		native, isNative := engine.(*BadgerEngine)
 		if isNative && kind != adjacencyBetween {
-			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility)
+			reader, captureErr := native.captureAdjacencyReader(ctx, start, wantOut, wantIn, visibility)
 			if captureErr != nil {
 				err = captureErr
 			} else {

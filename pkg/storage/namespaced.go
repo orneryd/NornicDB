@@ -389,7 +389,7 @@ func (n *NamespacedEngine) ForEachNodeIDByLabel(label string, visit func(NodeID)
 }
 
 func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(n, adjacencyOutgoing, nodeID, "", nil, visibleRead)
+	out, _, err := readAdjacency(context.Background(), n, adjacencyOutgoing, nodeID, "", nil, visibleRead)
 	return out, err
 }
 
@@ -424,7 +424,7 @@ func (n *NamespacedEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, b
 }
 
 func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, in, err := readAdjacency(n, adjacencyIncoming, nodeID, "", nil, visibleRead)
+	_, in, err := readAdjacency(context.Background(), n, adjacencyIncoming, nodeID, "", nil, visibleRead)
 	return in, err
 }
 
@@ -432,11 +432,11 @@ func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 // the inner engine supports the AdjacentEdgesEngine capability. ID
 // translation and namespace filtering mirror the per-direction methods.
 func (n *NamespacedEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	return readAdjacency(n, adjacencyBoth, nodeID, "", nil, visibleRead)
+	return readAdjacency(context.Background(), n, adjacencyBoth, nodeID, "", nil, visibleRead)
 }
 
 func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	out, _, err := readAdjacency(n, adjacencyBetween, startID, endID, nil, visibleRead)
+	out, _, err := readAdjacency(context.Background(), n, adjacencyBetween, startID, endID, nil, visibleRead)
 	return out, err
 }
 
@@ -467,13 +467,13 @@ func (n *NamespacedEngine) GetNodesByLabelVisibleAt(label string, version MVCCVe
 
 // GetOutgoingEdgesVisibleAt resolves snapshot-visible outgoing adjacency queries within the namespace.
 func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	out, _, err := readAdjacency(n, adjacencyOutgoing, nodeID, "", &version, visibleRead)
+	out, _, err := readAdjacency(context.Background(), n, adjacencyOutgoing, nodeID, "", &version, visibleRead)
 	return out, err
 }
 
 // GetIncomingEdgesVisibleAt resolves snapshot-visible incoming adjacency queries within the namespace.
 func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	_, in, err := readAdjacency(n, adjacencyIncoming, nodeID, "", &version, visibleRead)
+	_, in, err := readAdjacency(context.Background(), n, adjacencyIncoming, nodeID, "", &version, visibleRead)
 	return in, err
 }
 
@@ -488,7 +488,7 @@ func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCC
 
 // GetEdgesBetweenVisibleAt resolves snapshot-visible topology queries within the namespace.
 func (n *NamespacedEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	out, _, err := readAdjacency(n, adjacencyBetween, startID, endID, &version, visibleRead)
+	out, _, err := readAdjacency(context.Background(), n, adjacencyBetween, startID, endID, &version, visibleRead)
 	return out, err
 }
 

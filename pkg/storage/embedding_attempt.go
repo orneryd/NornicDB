@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import "sync/atomic"
 
 // EmbeddingRevision returns runtime snapshot identity without exposing it as
@@ -113,7 +115,7 @@ func (b *BadgerEngine) publishNodeOutcome(node *Node, outcome bool, publish func
 	state := node.runtimeState()
 	attempt := state.embeddingAttempt
 	if outcome {
-		same, err := b.embeddingRevisionIsCurrent(node.ID, state.embeddingRevision, state.embeddingPublication)
+		same, err := b.embeddingRevisionIsCurrent(commitNotificationContext(), node.ID, state.embeddingRevision, state.embeddingPublication)
 		if err != nil || !same {
 			deliverEmbeddingOutcome(attempt, nil)
 			return

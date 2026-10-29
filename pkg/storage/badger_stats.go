@@ -1,6 +1,8 @@
 // Package storage provides storage engine implementations for NornicDB.
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"bytes"
 	"context"
@@ -793,7 +795,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -807,9 +809,13 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if opts.ApplyDecayFilter {
 		v = visibleRead
 	}
-	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+	capture := func(w *WriteBehindBuffer) error {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		return nil
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -830,7 +836,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
 	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
@@ -988,9 +994,13 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	capture := func(w *WriteBehindBuffer) {
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+	capture := func(w *WriteBehindBuffer) error {
+		pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		if err != nil {
+			return err
+		}
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+		return nil
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -1010,7 +1020,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

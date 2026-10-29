@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -162,7 +163,7 @@ func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) strin
 		if captureWrite == nil {
 			captureWrite = apply
 		}
-		if handled, err := b.inMutationTransaction(firstID, false, captureWrite); handled {
+		if handled, err := b.inMutationTransaction(context.Background(), firstID, false, captureWrite); handled {
 			return err
 		}
 	}
@@ -214,7 +215,7 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 		}
 		return nil
 	}
-	if handled, err := b.inMutationTransaction(string(ids[0]), false, func(tx *BadgerTransaction) error { return apply(tx, false) }); handled {
+	if handled, err := b.inMutationTransaction(context.Background(), string(ids[0]), false, func(tx *BadgerTransaction) error { return apply(tx, false) }); handled {
 		return err
 	}
 	return b.inBulkTransaction(firstIDNamespace(ids), func(tx *BadgerTransaction) error { return apply(tx, true) })

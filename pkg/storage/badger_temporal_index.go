@@ -861,7 +861,7 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 		if err := ctx.Err(); err != nil {
 			return deleted, err
 		}
-		if err := b.DeleteNode(nodeID); err != nil {
+		if err := b.deleteNode(ctx, nodeID); err != nil {
 			return deleted, err
 		}
 		deleted++

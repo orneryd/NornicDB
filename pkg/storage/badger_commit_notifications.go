@@ -1,6 +1,11 @@
 package storage
 
-import "sync"
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
+import (
+	"context"
+	"sync"
+)
 
 // A commit reserves its notification position while publishing, then becomes
 // ready after storage locks and the database's quota/accounting lease release.
@@ -224,6 +229,12 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 
 // drainCommitNotifications delivers the ready notifications at the head of
 // the order, unless another goroutine is delivering them already.
+// commitNotificationContext is the ordered drainer's context, its one owner.
+// A drainer publishes the queued notifications of any commit, not only its
+// caller's, and publication is not cancellable by contract, so no request
+// context applies. Drain-path work takes this value, never a fresh context.
+func commitNotificationContext() context.Context { return context.Background() }
+
 func (b *BadgerEngine) drainCommitNotifications() {
 	b.notificationMu.Lock()
 	if b.notificationDraining {

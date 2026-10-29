@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import "context"
 
 // StoredEntityReader reads what storage holds: every node and relationship,
@@ -170,14 +172,14 @@ func CollectStoredEdges(ctx context.Context, engine Engine) ([]*Edge, error) {
 // GetStoredNodesByLabelInScope is GetStoredNodesByLabel within one database
 // (ScopedStoredEntityReader).
 func (b *BadgerEngine) GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return b.getNodesByLabelInScope(scope, label, storedRead)
+	return b.getNodesByLabelInScope(context.Background(), scope, label, storedRead)
 }
 
 // StreamStoredNodesByLabelProjectedInScope is
 // StreamStoredNodesByLabelProjected within one database
 // (ScopedStoredEntityReader).
 func (b *BadgerEngine) StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return b.streamNodesByLabelProjectedInScope(scope, label, properties, storedRead, visit)
+	return b.streamNodesByLabelProjectedInScope(context.Background(), scope, label, properties, storedRead, visit)
 }
 
 // StreamStoredEdgesByTypeInScope is StreamStoredEdgesByType within one

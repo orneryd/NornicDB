@@ -802,7 +802,7 @@ func (s *Server) ensureSearchBuildStartedForKnownDatabases() {
 				localization.ServerSearchReconcileStorageUnavailableEvent(info.Name, err))
 			continue
 		}
-		if _, err := s.db.EnsureSearchIndexes(nil, info.Name, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
+		if _, err := s.db.EnsureSearchIndexes(context.Background(), info.Name, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(context.Background(), slog.LevelWarn,
 				localization.ServerSearchReconcileFailedEvent(info.Name, err))
 		}
@@ -1699,7 +1699,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Load RBAC stores from system DB when available so roles/allowlist/privileges/entitlements APIs
 	// work even with --no-auth (e.g. fetch roles, configure RBAC before enabling auth).
 	if systemStorage, err := dbManager.GetStorage("system"); err == nil {
-		ctx := context.Background()
+		// The loads run under the database's lifetime, like the database
+		// manager above: they end when the database closes.
+		ctx := db.LifetimeContext()
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRolesLoadFailedEvent(loadErr))

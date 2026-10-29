@@ -1,6 +1,8 @@
 // Package storage provides storage engine implementations for NornicDB.
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"context"
 	"errors"
@@ -20,7 +22,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) (err error) {
 
 func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) (err error) {
 	if edge != nil {
-		if handled, err := b.inMutationTransaction(string(edge.ID), false, func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(context.Background(), string(edge.ID), false, func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(edge)
 		}); handled {
 			return err
@@ -250,16 +252,18 @@ func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID, v readVisib
 
 // GetEdge retrieves an edge by ID.
 func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
-	return b.getEdge(id, visibleRead)
+	return b.getEdge(context.Background(), id, visibleRead)
 }
 
 // GetStoredEdge is GetEdge for integrity work: it also returns a relationship
 // the visibility layer hides (StoredEntityReader).
 func (b *BadgerEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
-	return b.getEdge(id, storedRead)
+	return b.getEdge(context.Background(), id, storedRead)
 }
 
-func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
+// getEdge reads one relationship; ctx is the read's context (a read with no
+// request passes context.Background()).
+func (b *BadgerEngine) getEdge(ctx context.Context, id EdgeID, v readVisibility) (*Edge, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
@@ -289,8 +293,9 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) error {
 		state = w.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
+		return nil
 	}, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted {
@@ -316,7 +321,7 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	if edge != nil {
-		if handled, err := b.inMutationTransaction(string(edge.ID), updateRequest.Before != nil, func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(context.Background(), string(edge.ID), updateRequest.Before != nil, func(tx *BadgerTransaction) error {
 			return tx.UpdateEdge(updateRequest)
 		}); handled {
 			return err
@@ -585,14 +590,16 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
-	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
+	if handled, err := b.inMutationTransaction(context.Background(), string(id), false, func(tx *BadgerTransaction) error {
 		return tx.DeleteEdge(id)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) {
+		return b.nativeDeletionFootprint(context.Background(), string(id), true)
+	}})
 	if barrierErr != nil {
 		return barrierErr
 	}

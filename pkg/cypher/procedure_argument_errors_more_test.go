@@ -34,7 +34,10 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 			_, err := exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1", int64(1)})
 			return err
 		},
-		"graph.project rels":   func() error { _, err := exec.callGdsGraphProject([]interface{}{"g", "*", int64(1)}); return err },
+		"graph.project rels": func() error {
+			_, err := exec.callGdsGraphProject(context.Background(), []interface{}{"g", "*", int64(1)})
+			return err
+		},
 		"graph.drop name":      func() error { _, err := exec.callGdsGraphDrop(context.Background(), nil); return err },
 		"fastRP.stream name":   func() error { _, err := exec.callGdsFastRPStream(nil); return err },
 		"fastRP.stream config": func() error { _, err := exec.callGdsFastRPStream([]interface{}{"g", int64(1)}); return err },
@@ -45,10 +48,10 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 	}
 
 	// Projections: none (everything), a map entry without a label override.
-	result, err := exec.callGdsGraphProject([]interface{}{"g_none", nil, nil})
+	result, err := exec.callGdsGraphProject(context.Background(), []interface{}{"g_none", nil, nil})
 	require.NoError(t, err)
 	require.Equal(t, []any{"g_none", int64(3), int64(2)}, result.Rows[0][2:5])
-	result, err = exec.callGdsGraphProject([]interface{}{"g_map", map[string]interface{}{"Person": map[string]interface{}{}}, "KNOWS"})
+	result, err = exec.callGdsGraphProject(context.Background(), []interface{}{"g_map", map[string]interface{}{"Person": map[string]interface{}{}}, "KNOWS"})
 	require.NoError(t, err)
 	require.Equal(t, []any{"g_map", int64(3), int64(2)}, result.Rows[0][2:5])
 

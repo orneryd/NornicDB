@@ -1,6 +1,9 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -45,10 +48,11 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 				calls := 0
 				var ids []EdgeID
 				var hit bool
-				view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+				view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) error {
 					calls++
 					require.Nil(t, w, "only overlay selection is skipped")
 					ids, hit = b.adjCacheLoad("test:holder", true)
+					return nil
 				}, readViewOptions{scope: "test", longLived: longLived})
 				require.NoError(t, err)
 				defer view.Close()
@@ -66,40 +70,47 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 
 func TestReadViewEmptyOverlaySelectors(t *testing.T) {
 	var w *WriteBehindBuffer
+	ctx := context.Background()
 	require.Equal(t, bufferedEntityState{}, w.entityStateLocked(bufferedNodeEntity, "test:n"))
-	nodes, nodeIDs := w.labelOverlayLocked("L")
+	nodes, nodeIDs, err := w.labelOverlayLocked(ctx, "L")
+	require.NoError(t, err)
 	require.Nil(t, nodes)
 	require.Nil(t, nodeIDs)
-	nodes, nodeIDs = w.allNodesOverlayLocked()
+	nodes, nodeIDs, err = w.allNodesOverlayLocked(ctx)
+	require.NoError(t, err)
 	require.Nil(t, nodes)
 	require.Nil(t, nodeIDs)
-	edges, edgeIDs := w.typeOverlayLocked("R")
+	edges, edgeIDs, err := w.typeOverlayLocked(ctx, "R")
+	require.NoError(t, err)
 	require.Nil(t, edges)
 	require.Nil(t, edgeIDs)
-	edges, edgeIDs = w.allEdgesOverlayLocked()
+	edges, edgeIDs, err = w.allEdgesOverlayLocked(ctx)
+	require.NoError(t, err)
 	require.Nil(t, edges)
 	require.Nil(t, edgeIDs)
-	edges, suppressed, deleted := w.edgeAdjacencyOverlayLocked("test:n", true)
+	edges, suppressed, deleted, err := w.edgeAdjacencyOverlayLocked(ctx, "test:n", true)
+	require.NoError(t, err)
 	require.Nil(t, edges)
 	require.Nil(t, suppressed)
 	require.False(t, deleted)
-	edges, suppressed, sourceDeleted, targetDeleted := w.edgesBetweenOverlayLocked("test:a", "test:b")
+	edges, suppressed, sourceDeleted, targetDeleted, err := w.edgesBetweenOverlayLocked(ctx, "test:a", "test:b")
+	require.NoError(t, err)
 	require.Nil(t, edges)
 	require.Nil(t, suppressed)
 	require.False(t, sourceDeleted)
 	require.False(t, targetDeleted)
 	require.Nil(t, w.keyCandidatesLocked("L", "p", int64(1)))
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(*CommitBuffer, func(string)) {
+	require.NoError(t, w.visitEntityOverlayLocked(ctx, bufferedNodeEntity, func(*CommitBuffer, func(string) bool) {
 		t.Fatal("empty overlay must not enumerate candidates")
-	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") })
+	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") }))
 	require.Zero(t, testing.AllocsPerRun(100, func() {
 		w.entityStateLocked(bufferedNodeEntity, "test:n")
-		w.labelOverlayLocked("L")
-		w.allNodesOverlayLocked()
-		w.typeOverlayLocked("R")
-		w.allEdgesOverlayLocked()
-		w.edgeAdjacencyOverlayLocked("test:n", true)
-		w.edgesBetweenOverlayLocked("test:a", "test:b")
+		w.labelOverlayLocked(ctx, "L")
+		w.allNodesOverlayLocked(ctx)
+		w.typeOverlayLocked(ctx, "R")
+		w.allEdgesOverlayLocked(ctx)
+		w.edgeAdjacencyOverlayLocked(ctx, "test:n", true)
+		w.edgesBetweenOverlayLocked(ctx, "test:a", "test:b")
 		w.keyCandidatesLocked("L", "p", int64(1))
 	}))
 }
@@ -132,7 +143,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 				func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
 				func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
 				func() ([]*Edge, error) {
-					out, in, err := readAdjacency(b, adjacencyBoth, "test:a", "", nil, visibleRead)
+					out, in, err := readAdjacency(context.Background(), b, adjacencyBoth, "test:a", "", nil, visibleRead)
 					require.Empty(t, in)
 					return out, err
 				},

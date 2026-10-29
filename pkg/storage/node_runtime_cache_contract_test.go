@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"sync/atomic"
 	"testing"
 
@@ -344,10 +345,10 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 	wantRevision := EmbeddingBodyRevision{physical: physical}
 	for name, read := range map[string]func() (*Node, error){
 		"readNodeMetadata/bodyOnly": func() (*Node, error) {
-			return engine.readNodeMetadata(id, storedRead, nodeItemBodyOnly)
+			return engine.readNodeMetadata(context.Background(), id, storedRead, nodeItemBodyOnly)
 		},
 		"readNodeMetadata/query": func() (*Node, error) {
-			return engine.readNodeMetadata(id, storedRead, nodeItemQueryMetadata)
+			return engine.readNodeMetadata(context.Background(), id, storedRead, nodeItemQueryMetadata)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -555,7 +556,7 @@ func TestNodeRuntimeMetadataChangeKeepsPublicationAcknowledgement(t *testing.T) 
 	require.NotZero(t, proof.commitTs, "the ACK carries its own commit boundary")
 	require.True(t, proof.matches(engine, id, accepted.EmbeddingRevision()))
 	revision := accepted.EmbeddingRevision()
-	same, err := engine.embeddingRevisionIsCurrent(id, revision, proof)
+	same, err := engine.embeddingRevisionIsCurrent(context.Background(), id, revision, proof)
 	require.NoError(t, err)
 	require.True(t, same, "the accepted body is current at publication time")
 	acceptedMetadata := accepted.RuntimeMetadata()

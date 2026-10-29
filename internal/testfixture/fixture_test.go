@@ -1,10 +1,14 @@
 package testfixture
 
+// Context-owner convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 type recordingCloser struct {
@@ -113,5 +117,28 @@ func TestOwnKeepsFixtureUntilExplicitBoundary(t *testing.T) {
 	boundary.Close()
 	if !reflect.DeepEqual(closed, []string{"process"}) {
 		t.Fatalf("closed %v", closed)
+	}
+}
+
+type blockedCloser struct{ release chan struct{} }
+
+func (resource blockedCloser) Close() error {
+	<-resource.release
+	return nil
+}
+
+// A fixture whose close cannot finish fails its owner instead of hanging the
+// test binary (bounded fixture close: Claude, storage-format-owners lane, #1693).
+func TestOwnBoundsBlockedClose(t *testing.T) {
+	previous := closeTimeout
+	closeTimeout = 50 * time.Millisecond
+	defer func() { closeTimeout = previous }()
+	resource := blockedCloser{release: make(chan struct{})}
+	defer close(resource.release)
+	boundary := &checkedBoundary{}
+	Own(boundary, resource)
+	boundary.Close()
+	if len(boundary.failures) != 1 || !strings.Contains(boundary.failures[0], "did not finish within 50ms") {
+		t.Fatalf("blocked close was not reported: %v", boundary.failures)
 	}
 }

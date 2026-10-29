@@ -97,27 +97,25 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 	failure, hasFailure := ctx.Value(expressionFailureKey{}).(*expressionFailure)
 	if hasFailure {
 		failure.mu.Lock()
-		activeEngine := failure.readScopeEngine
-		activeContext := failure.readScopeContext
+		active := failure.readScope
 		failure.mu.Unlock()
-		if activeEngine == be {
-			return storage.InheritQueryRevealScopes(ctx, activeContext), func() {}, nil
+		if active != nil && active.engine == be {
+			return storage.InheritQueryRevealScopes(ctx, active.ctx), func() {}, nil
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
 	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be, reveal: reveal})
 	if hasFailure {
 		failure.mu.Lock()
-		activeEngine := failure.readScopeEngine
-		if activeEngine == nil {
-			failure.readScopeEngine = be
-			failure.readScopeContext = ctx
+		active := failure.readScope
+		if active == nil {
+			failure.readScope = &revealReadScope{engine: be, ctx: ctx}
 			failure.mu.Unlock()
 			return ctx, cleanup, be
 		}
 		failure.mu.Unlock()
 		cleanup()
-		if activeEngine == be {
+		if active.engine == be {
 			return ctx, func() {}, nil
 		}
 	}
@@ -133,9 +131,8 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 		return
 	}
 	failure.mu.Lock()
-	if failure.readScopeEngine == engine {
-		failure.readScopeEngine = nil
-		failure.readScopeContext = nil
+	if failure.readScope != nil && failure.readScope.engine == engine {
+		failure.readScope = nil
 	}
 	failure.mu.Unlock()
 }
