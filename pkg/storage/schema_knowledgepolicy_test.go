@@ -734,7 +734,7 @@ func TestPolicySchemaTransactionFailures(t *testing.T) {
 			if boundary == "read" {
 				transaction.badgerTx.Discard()
 			}
-			view, err := transaction.KnowledgePolicySchema()
+			view, err := transaction.Schema(KnowledgePolicyChanges)
 			if boundary == "namespace" || boundary == "corrupt" || boundary == "read" {
 				require.Error(t, err)
 				return
@@ -762,7 +762,7 @@ func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	require.NoError(t, transaction.SetNamespace("native"))
-	view, err := transaction.KnowledgePolicySchema()
+	view, err := transaction.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.NoError(t, view.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
 		Name: "valid", TargetLabels: []string{"Fact"}, Enabled: true,
@@ -791,12 +791,12 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 		return transaction
 	}
 	first, second := begin("native"), begin("native")
-	firstView, err := first.KnowledgePolicySchema()
+	firstView, err := first.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
-	repeatedView, err := first.KnowledgePolicySchema()
+	repeatedView, err := first.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.Same(t, firstView, repeatedView)
-	secondView, err := second.KnowledgePolicySchema()
+	secondView, err := second.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.False(t, first.HasKnowledgePolicyChanges())
 	require.NoError(t, firstView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
@@ -823,18 +823,18 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	require.Error(t, second.Commit())
 	require.Len(t, committed.ShowPromotionPolicies(), 1)
 	require.Equal(t, "first", committed.ShowPromotionPolicies()[0].Name)
-	_, err = first.KnowledgePolicySchema()
+	_, err = first.Schema(KnowledgePolicyChanges)
 	require.Error(t, err)
 	require.Error(t, firstView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
 	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
 	rolledBack := begin("native")
-	rollbackView, err := rolledBack.KnowledgePolicySchema()
+	rollbackView, err := rolledBack.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.NoError(t, rollbackView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
 	require.NoError(t, rolledBack.Rollback())
 	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
 	other := begin("other")
-	otherView, err := other.KnowledgePolicySchema()
+	otherView, err := other.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.Empty(t, otherView.ShowPromotionPolicies())
 	require.NoError(t, otherView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{

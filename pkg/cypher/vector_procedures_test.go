@@ -467,7 +467,7 @@ func TestCallDbIndexVectorQueryNodesServiceWiring(t *testing.T) {
 					require.NoError(t, err)
 					require.Len(t, res.Rows, 3)
 					require.Equal(t, "doc-00", res.Rows[0][0])
-					require.Nil(t, exec.searchService, "queryNodes must use exact fallback when no DB-owned service is wired, not allocate a throwaway service")
+					require.Nil(t, exec.search(), "queryNodes must use exact fallback when no DB-owned service is wired, not allocate a throwaway service")
 				}
 			},
 		},

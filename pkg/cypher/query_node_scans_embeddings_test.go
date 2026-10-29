@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -104,11 +105,18 @@ func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 			{"USE scans CALL { USE scans.docs MATCH (n:Doc) RETURN n } RETURN n", 4},
 		} {
 			t.Run(fmt.Sprintf("tx=%v/%s", explicit, tc.query), func(t *testing.T) {
+				selected := g.exec
 				if explicit {
-					g.run(t, "BEGIN", nil)
-					defer g.run(t, "ROLLBACK", nil)
+					if strings.HasPrefix(tc.query, "USE scans ") {
+						var err error
+						selected, _, err = g.exec.scopedExecutorForUse("scans", "")
+						require.NoError(t, err)
+					}
+					_, err := selected.Execute(context.Background(), "BEGIN", nil)
+					require.NoError(t, err)
+					defer func() { _, err := selected.Execute(context.Background(), "ROLLBACK", nil); require.NoError(t, err) }()
 				}
-				result, err := g.exec.Execute(context.Background(), tc.query, nil)
+				result, err := selected.Execute(context.Background(), tc.query, nil)
 				require.NoError(t, err, "a property-only query must not read stored vectors")
 				require.Len(t, result.Rows, tc.rows, "property-only reads retain every visible node")
 			})
@@ -207,7 +215,7 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 		t.Run(tc.query, func(t *testing.T) {
 			g := newLargeEmbeddingGraph(t, 2)
 			spy := &queryNodeReadSpy{Engine: g.store}
-			exec := g.exec.cloneForStorage(spy)
+			exec := g.exec.cloneWithStorage(spy, selectedDatabaseStorage)
 			fabric := &cypherFabricExecutor{base: g.exec}
 			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil, nil)
 			require.NoError(t, err)

@@ -114,7 +114,7 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 					return engine.QueryCypher(ctx, statement, params, RemoteAccessWrite)
 				}
 				if explicit {
-					tx, err := engine.BeginCypherTx(ctx)
+					tx, err := engine.BeginCypherTx(ctx, RemoteAccessWrite)
 					require.NoError(t, err)
 					defer func() { _ = tx.Rollback(ctx) }()
 					query = tx.QueryCypher

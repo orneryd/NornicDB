@@ -21,7 +21,7 @@ type snapshotEqualityPopulation struct {
 func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[string]interface{}) ([]*Node, bool, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, false, err
 	}
 	if tx.namespace == "" {

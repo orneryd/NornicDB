@@ -257,7 +257,7 @@ func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3), n.Properties["v"])
 	require.NoError(t, tx.DeleteEdge("test:r"))
-	edges, err := tx.GetOutgoingEdges("test:a")
+	edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	require.Empty(t, edges)
 	_, err = tx.GetEdge("test:r")

@@ -20,10 +20,10 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	if err := wrapper.tx.SetNamespace(e.currentDatabaseName()); err != nil {
+	if err := wrapper.tx.SetNamespace(e.databaseName()); err != nil {
 		return err
 	}
-	view, err := wrapper.tx.Schema()
+	view, err := wrapper.tx.Schema(storage.OrdinarySchemaChanges)
 	if err != nil {
 		return err
 	}
@@ -31,12 +31,12 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (e *StorageExecutor) afterSchemaCommit(ctx context.Context, action func()) {
-	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok && wrapper.schema != nil {
-		wrapper.schemaCommitActions = append(wrapper.schemaCommitActions, action)
-		return
+func (e *StorageExecutor) afterCommit(ctx context.Context, action func() error) error {
+	if wrapper := e.membership(ctx).storage; wrapper != nil {
+		wrapper.commitActions = append(wrapper.commitActions, action)
+		return nil
 	}
-	action()
+	return action()
 }
 
 func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*storage.SchemaManager) error) error {

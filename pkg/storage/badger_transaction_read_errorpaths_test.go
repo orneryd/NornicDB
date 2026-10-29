@@ -21,26 +21,26 @@ func TestBadgerTransaction_ReadEdgeAndAdjacency_ErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	// pinNamespaceFromIDLocked failure through public read methods.
-	_, err = tx.GetOutgoingEdges("unprefixed")
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.GetIncomingEdges("also-unprefixed")
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "also-unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.GetEdgesBetween("test:a", "missingprefix")
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "missingprefix"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
 	require.NoError(t, tx.Rollback())
 
-	// ensureLifecycleActiveLocked early-return path for closed tx.
-	_, err = tx.GetOutgoingEdges("test:a")
+	// ensureOperationAllowedLocked early-return path for closed tx.
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.GetIncomingEdges("test:b")
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.GetEdgesBetween("test:a", "test:b")
+	_, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
 }
 

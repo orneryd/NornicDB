@@ -21,7 +21,7 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	invokeVisit := func(edge *Edge) error {

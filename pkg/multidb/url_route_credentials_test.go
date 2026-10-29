@@ -107,7 +107,7 @@ func TestR73ReviewHTTPQueryCredentials(t *testing.T) {
 	if _, _, err := remote.QueryCypher(context.Background(), "RETURN 1", nil, storage.RemoteAccessRead); err != nil {
 		t.Fatal("implicit remote request failed")
 	}
-	tx, err := remote.BeginCypherTx(context.Background())
+	tx, err := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 	if err != nil {
 		t.Fatal("explicit remote transaction open failed")
 	}

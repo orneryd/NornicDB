@@ -78,7 +78,7 @@ func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T)
 		autoCommit: true,
 	}
 
-	cols, rows, err := cf.ExecuteQuery(context.Background(), "nornic", baseStore, "RETURN 1 AS one", nil)
+	cols, rows, err := cf.ExecuteQueryWithRecord(context.Background(), "nornic", baseStore, "RETURN 1 AS one", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected ExecuteQuery error: %v", err)
 	}

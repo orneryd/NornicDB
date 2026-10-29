@@ -186,11 +186,11 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 	} else if marker, err := os.Lstat(filepath.Join(backup, v4WALBackupComplete)); err != nil || !marker.Mode().IsRegular() {
 		return false, fmt.Errorf("wal: existing V4 backup is incomplete")
 	}
-	manifest, err := loadWALManifest(backup)
+	manifest, err := accessWALManifest(backup, walReadManifest, nil)
 	if err != nil {
 		return false, err
 	}
-	current, err := loadWALManifest(dir)
+	current, err := accessWALManifest(dir, walReadManifest, nil)
 	if err != nil {
 		return false, err
 	}
@@ -320,7 +320,7 @@ func (b *BadgerEngine) v4WALRecoveryState() (catalogPending, formatPending bool,
 // catalog has already been committed. Earlier frames still require the V4
 // catalog replay/transform ordering.
 func walV5OrLaterOnly(dir string) (bool, error) {
-	manifest, err := loadWALManifest(dir)
+	manifest, err := accessWALManifest(dir, walReadManifest, nil)
 	if err != nil {
 		return false, err
 	}

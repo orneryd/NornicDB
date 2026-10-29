@@ -9,13 +9,13 @@ import "fmt"
 func (tx *BadgerTransaction) AdvanceImplicitSnapshot() error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return err
 	}
 	if tx.commitMode != CommitModeImplicit || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 || tx.knowledgeSchemaDirty || len(tx.mergeKeyReleases) > 0 {
 		return fmt.Errorf("cannot advance a written or explicit transaction snapshot: %w", ErrConflict)
 	}
-	if err := tx.refreshSnapshotLocked(); err != nil {
+	if err := tx.advanceSnapshotLocked(false); err != nil {
 		return err
 	}
 	tx.observed = false

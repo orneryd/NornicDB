@@ -230,12 +230,12 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	defer txRead.Rollback()
 	require.False(t, txRead.readTS.IsZero(), "read tx must pin a snapshot version")
 
-	outBefore, err := txRead.GetOutgoingEdges(start)
+	outBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(outBefore),
 		"outgoing adjacency must return only start's own edge, not the 200 unrelated edges")
 
-	inBefore, err := txRead.GetIncomingEdges(target)
+	inBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(inBefore))
 
@@ -250,7 +250,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	require.NoError(t, txInsert.Commit())
 
 	// The read snapshot must not observe the post-begin edge.
-	outAfter, err := txRead.GetOutgoingEdges(start)
+	outAfter, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter),
 		"snapshot read must be stable across a concurrent commit")
@@ -259,7 +259,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	txFresh, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	freshOut, err := txFresh.GetOutgoingEdges(start)
+	freshOut, err := txFresh.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }
@@ -338,7 +338,7 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				edges, err := tx.GetOutgoingEdges(start)
+				edges, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 				if err != nil {
 					b.Fatal(err)
 				}

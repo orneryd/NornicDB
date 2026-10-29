@@ -639,13 +639,13 @@ func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
+	if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation failed: %v", err)
 	}
 	if !tx.deferConstraintValidation {
 		t.Error("deferConstraintValidation should be enabled")
 	}
-	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
+	if err := tx.SetValidationSetting(SkipCreateCommitHeadReload, true); err != nil {
 		t.Fatalf("SetSkipCreateExistenceCheck failed: %v", err)
 	}
 	if !tx.skipCreateExistenceCheck {
@@ -655,10 +655,10 @@ func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := tx.SetDeferredConstraintValidation(false); err != ErrTransactionClosed {
+	if err := tx.SetValidationSetting(DeferredConstraintValidation, false); err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
-	if err := tx.SetSkipCreateExistenceCheck(false); err != ErrTransactionClosed {
+	if err := tx.SetValidationSetting(SkipCreateCommitHeadReload, false); err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
@@ -1608,7 +1608,7 @@ func TestTransaction_ValidateAllConstraints(t *testing.T) {
 	// Enable deferred constraint validation
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	err = tx.SetDeferredConstraintValidation(true)
+	err = tx.SetValidationSetting(DeferredConstraintValidation, true)
 	require.NoError(t, err)
 
 	// Create two nodes with the same unique property — deferred so no error yet

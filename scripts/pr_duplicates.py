@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import graphify_local as gi  # noqa: E402
+import duplicate_ownership as ownership  # noqa: E402
 
 COMMENT_MARKER = "<!-- code-intelligence:duplicates -->"
 
@@ -470,9 +471,10 @@ def ingested_commit(db, repo):
     return (rows[0]["commit"] if rows else None) or None
 
 
-def resolved_owner_calls(graph_path, candidates):
+def resolved_owner_calls(graph_path, candidates, *, extra_callers=None):
     """Resolve existing-owner use from extracted AST calls, never guessed names."""
     callers = {candidate.id: candidate.source_file for candidate in candidates}
+    callers.update(extra_callers or {})
     calls = {}
     if not callers:
         return calls
@@ -608,7 +610,8 @@ def go_forwarding_wrapper(body):
 
 def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False, max_matches=5,
              min_tokens=0, ignore=(), semantic=True, semantic_min_gap=0.15, semantic_min_lead=0.05,
-             semantic_min_hits=5, deadline=None, owner_calls=None, existing_owner_calls=None):
+             semantic_min_hits=5, deadline=None, owner_calls=None, existing_owner_calls=None,
+             ownership_context=None, ownership_proofs=None):
     """Apply the match rules to one candidate's search hits. Returns (Finding | None, moved)."""
     # A semantic-only match to an AST-resolved callee identifies existing reuse.
     # Copied bodies still qualify on code similarity, even if they also call it.
@@ -618,6 +621,14 @@ def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False
               and wrapper is False
               and "." not in hit.label.split("(", 1)[0]
               and similarity(candidate.body, hit.body)["score"] < min_similarity}
+    proofs = {}
+    if ownership_context is not None:
+        for hit in hits:
+            if hit.repo == repo and hit.kind == "function" and hit.id != candidate.id:
+                proof = ownership_context.proof(candidate, hit, min_similarity)
+                if proof:
+                    proofs[hit.id] = proof
+        reused.update(proofs)
     standout = behavior_standout(candidate, [hit for hit in hits if hit.id not in reused],
                                  min_gap=semantic_min_gap, min_lead=semantic_min_lead,
                                  min_hits=semantic_min_hits) if semantic else None
@@ -634,7 +645,10 @@ def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False
         if len(tokens(hit.body)) < min_tokens:
             continue
         if hit.id in reused:
-            if existing_owner_calls is not None and hit.id not in retired:
+            if hit.id in proofs:
+                if ownership_proofs is not None and hit.id not in retired:
+                    ownership_proofs.append(proofs[hit.id])
+            elif existing_owner_calls is not None and hit.id not in retired:
                 existing_owner_calls.append((candidate, hit, owner_calls[hit.id]))
             seen.add(hit.id)
             continue
@@ -677,6 +691,7 @@ class Report:
     warnings: list = field(default_factory=list)
     nothing_compared: str = ""
     existing_owner_calls: list = field(default_factory=list)
+    ownership_proofs: list = field(default_factory=list)
 
     @property
     def refactor_targets(self):
@@ -739,7 +754,10 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
         report.warnings.append(f"Only the {opts['max_candidates']} largest added functions were analyzed; "
                                f"{report.skipped_by_cap} were skipped.")
     retired = retired_ids(db, repo, diff, graph_path)
-    calls = resolved_owner_calls(graph_path, candidates)
+    ownership_context = ownership.GoOwnership(repo_root, graph_path, candidates, similarity, go_forwarding_wrapper)
+    calls = resolved_owner_calls(graph_path, candidates, extra_callers={
+        identity: node["file"] for identity, node in ownership_context.nodes.items()})
+    ownership_context.add_extracted_calls(calls)
     started = clock()
     searches = search_results(db, candidates, opts["search_limit"],
                               int(opts.get("search_workers", 4)),
@@ -760,7 +778,8 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
                                       semantic=bool(opts["semantic"]), semantic_min_gap=opts["semantic_min_gap"],
                                       semantic_min_lead=opts["semantic_min_lead"],
                                       semantic_min_hits=opts["semantic_min_hits"], deadline=getattr(db, "deadline", None),
-                                      owner_calls=calls.get(candidate.id), existing_owner_calls=report.existing_owner_calls)
+                                      owner_calls=calls.get(candidate.id), existing_owner_calls=report.existing_owner_calls,
+                                      ownership_context=ownership_context, ownership_proofs=report.ownership_proofs)
             if moved:
                 report.moved += 1
             if finding:
@@ -859,6 +878,14 @@ def render_summary(report, *, server="https://github.com", max_findings=10):
             lines.append(f"- `{candidate.source_file}` `{candidate.label}` calls `{owner.label}` "
                          f"in `{owner.source_file}` ({location or 'AST call'}); no copied body at the configured code threshold.")
         lines.append("")
+    if report.ownership_proofs:
+        lines += ["### Verified current-source ownership", ""]
+        for proof in report.ownership_proofs:
+            candidate, matched = proof["candidate"], proof["match"]
+            lines.append(f"- `{candidate['file']}` `{candidate['label']}` / "
+                         f"`{matched['file']}` `{matched['label']}`: `{proof['kind']}`; "
+                         "current object/call identities verified, no copied body or forwarding wrapper.")
+        lines.append("")
     for warning in report.warnings:
         lines += [f"> **Note:** {warning}", ""]
     return "\n".join(lines)
@@ -878,7 +905,8 @@ def report_json(report):
             "existing_owner_calls": [{"caller": {"id": c.id, "file": c.source_file, "label": c.label},
                                       "owner": {"id": h.id, "file": h.source_file, "label": h.label},
                                       "call_location": location, "evidence": "extracted_ast_call"}
-                                     for c, h, location in report.existing_owner_calls]}
+                                     for c, h, location in report.existing_owner_calls],
+            "ownership_proofs": report.ownership_proofs}
 
 
 # --------------------------------------------------------------------------------------

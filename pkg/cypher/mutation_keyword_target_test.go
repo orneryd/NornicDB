@@ -43,6 +43,9 @@ func TestKeywordNamedMutationTargetsPublic(t *testing.T) {
 											read = "USE comp.one " + read
 										}
 										if explicit {
+											if route != "native" {
+												e = fabricCallRowsCompositeExecutor(t, e)
+											}
 											_, err := e.Execute(t.Context(), "BEGIN", nil)
 											require.NoError(t, err)
 											t.Cleanup(func() {

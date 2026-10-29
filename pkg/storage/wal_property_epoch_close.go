@@ -217,7 +217,7 @@ func (w *WAL) planPropertyEpochSealLocked(visit func(WALEntry) error) ([]walProp
 			return nil, err
 		}
 	}
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return nil, err
 	}

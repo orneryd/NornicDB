@@ -22,7 +22,7 @@ import (
 func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
-	name := e.currentDatabaseName()
+	name := e.databaseName()
 	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
 		name = selected
 	}
@@ -752,8 +752,9 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 			return err
 		}
 		if entity == storage.ConstraintEntityNode {
-			e.afterSchemaCommit(ctx, func() {
+			return e.afterCommit(ctx, func() error {
 				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
+				return nil
 			})
 		}
 		return nil

@@ -166,7 +166,7 @@ func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelop
 	if err = tx.SetNamespace(envelope.Namespace); err != nil {
 		return nil, err
 	}
-	if err = tx.SetDeferredConstraintValidation(true); err != nil {
+	if err = tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		return nil, err
 	}
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{

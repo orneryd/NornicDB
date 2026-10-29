@@ -1,0 +1,115 @@
+{
+  "checked_commit": "0a56f9ac3a6dee80a4fe7523210bce5296248ea4",
+  "base": "a9265090a5d7bd8e34932cf8f504765c01aa147e",
+  "findings": [
+    {
+      "kind": "reuse",
+      "total_matches": 1,
+      "added": {
+        "label": ".ReserveNodeMutation()",
+        "file": "pkg/search/node_mutations.go",
+        "line": 44
+      },
+      "matches": [
+        {
+          "label": ".ReserveEdgeMutation()",
+          "file": "pkg/search/node_mutations.go",
+          "line": 128,
+          "similarity": 0.652,
+          "basis": "behavior",
+          "lexical": 0.303,
+          "structural": 0.652,
+          "receiverless": 0.652,
+          "score": 0.652,
+          "vector_similarity": 0.732,
+          "vector_rank": 2,
+          "bm25_rank": 7,
+          "rrf_score": 0.0311,
+          "matched_terms": 14
+        }
+      ]
+    },
+    {
+      "kind": "reuse",
+      "total_matches": 1,
+      "added": {
+        "label": "assertReviewerNodeEnvelope()",
+        "file": "pkg/search/rerank_wire_boundary_test.go",
+        "line": 153
+      },
+      "matches": [
+        {
+          "label": "assertReviewerExplicitEnvelope()",
+          "file": "pkg/search/rerank_wire_boundary_test.go",
+          "line": 129,
+          "similarity": 0.276,
+          "basis": "behavior",
+          "lexical": 0.228,
+          "structural": 0.276,
+          "receiverless": 0.276,
+          "score": 0.276,
+          "vector_similarity": 0.802,
+          "vector_rank": 1,
+          "bm25_rank": 5,
+          "rrf_score": 0.0524,
+          "matched_terms": 16
+        }
+      ]
+    },
+    {
+      "kind": "reuse",
+      "total_matches": 1,
+      "added": {
+        "label": "assertReviewerExplicitEnvelope()",
+        "file": "pkg/search/rerank_wire_boundary_test.go",
+        "line": 129
+      },
+      "matches": [
+        {
+          "label": "assertReviewerNodeEnvelope()",
+          "file": "pkg/search/rerank_wire_boundary_test.go",
+          "line": 153,
+          "similarity": 0.274,
+          "basis": "behavior",
+          "lexical": 0.213,
+          "structural": 0.274,
+          "receiverless": 0.274,
+          "score": 0.274,
+          "vector_similarity": 0.753,
+          "vector_rank": 2,
+          "bm25_rank": 2,
+          "rrf_score": 0.0315,
+          "matched_terms": 13
+        }
+      ]
+    },
+    {
+      "kind": "reuse",
+      "total_matches": 1,
+      "added": {
+        "label": "loadWALManifest()",
+        "file": "pkg/storage/wal_segments.go",
+        "line": 45
+      },
+      "matches": [
+        {
+          "label": "writeWALManifest()",
+          "file": "pkg/storage/wal_segments.go",
+          "line": 66,
+          "similarity": 0.14,
+          "basis": "behavior",
+          "lexical": 0.117,
+          "structural": 0.14,
+          "receiverless": 0.14,
+          "score": 0.14,
+          "vector_similarity": 0.715,
+          "vector_rank": 3,
+          "bm25_rank": 2,
+          "rrf_score": 0.0441,
+          "matched_terms": 12
+        }
+      ]
+    }
+  ],
+  "status": "open; fold into next existing fix PR"
+}
