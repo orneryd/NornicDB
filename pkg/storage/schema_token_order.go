@@ -109,6 +109,39 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 	return nil
 }
 
+// RegisterEdgeTokens validates a batch and registers its relationship types in
+// first-seen order. A batch of one type needs just one token lookup.
+func (sm *SchemaManager) RegisterEdgeTokens(edges []*Edge) error {
+	if len(edges) == 0 {
+		return nil
+	}
+	if edges[0] == nil {
+		return ErrInvalidData
+	}
+	first := edges[0].Type
+	for i := 1; i < len(edges); i++ {
+		edge := edges[i]
+		if edge == nil {
+			return ErrInvalidData
+		}
+		if edge.Type == first {
+			continue
+		}
+		names := make([]string, len(edges))
+		for j := 0; j < i; j++ {
+			names[j] = first
+		}
+		for j, next := range edges[i:] {
+			if next == nil {
+				return ErrInvalidData
+			}
+			names[i+j] = next.Type
+		}
+		return sm.RegisterTokens(nil, names)
+	}
+	return sm.RegisterTokens(nil, []string{first})
+}
+
 // OrderTokens returns a copy of in-use names ordered by durable token position.
 // Unknown legacy names follow known names in lexical order. Set relationships
 // for relationship types, or leave it false for labels.

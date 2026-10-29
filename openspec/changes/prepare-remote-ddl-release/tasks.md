@@ -388,3 +388,56 @@ Regenerating the census changed only four source-line positions in each of its
 JSON and Markdown artifacts; the number of recorded field writes stayed 331,
 and `TestStoredEntityWritesAreOrdered` passed with zero census violations.
 The guards themselves were not changed.
+
+The corrected tree `565b0794eaab447122066dc5d468c65ba2a80a6c` passed an
+uncached `GOFLAGS=-count=1 make test` across 128 packages and was pushed as
+`f083c7ae6688092cd524bce0248cf47a48fdfbe2`. The duplicate checker timed out
+connecting to the graph before analyzing that tree; the two historical
+inventories remain open.
+
+The large graph-only profile after that checkpoint showed substantial memory
+work and schema-token registration contention. A follow-up registers a
+homogeneous relationship batch's type once, while mixed batches retain their
+first-seen token order. Focused race checks cover the schema owner and both
+namespaced and transaction bulk writes, including invalid batches and stored
+edge IDs, endpoints and types.
+
+On an Apple M2 Max with `GOMAXPROCS=4`, Qwen stopped and no Docker containers,
+four interleaved 250 ms samples per side of token registration gave the
+following median times and allocations:
+
+| Batch size / types | Before ns/op | After ns/op | Before B/op / allocs | After B/op / allocs |
+| --- | ---: | ---: | ---: | ---: |
+| 1 / 1 | 14.8 | 14.6 | 0 / 0 | 0 / 0 |
+| 100 / 1 | 1,235.5 | 166.9 | 1,792 / 1 | 0 / 0 |
+| 100 / 8 | 1,467.5 | 1,489.5 | 1,792 / 1 | 1,792 / 1 |
+| 100 / 100 | 1,856.5 | 1,761.5 | 1,792 / 1 | 1,792 / 1 |
+| 4,000 / 1 | 47,297.5 | 5,987.5 | 65,536 / 1 | 0 / 0 |
+| 4,000 / 8 | 55,597.5 | 54,640.5 | 65,536 / 1 | 65,536 / 1 |
+| 4,000 / 100 | 69,113 | 68,630.5 | 65,536 / 1 | 65,536 / 1 |
+
+The 48,000-product/48,000-order Northwind seed used 2,000-row batches and
+four sessions. Two alternating samples per side gave graph-only ingest times
+of 6.851/8.080 seconds before and 6.827/7.990 after; with search enabled they
+were 10.592/9.309 before and 9.157/10.545 after. Every run contained 97,440
+nodes and 312,050 relationships. The sample spread does not establish a
+whole-ingest gain, and the approximately five-second target remains open.
+
+One profiled sample per side of the doubled workload used 96,000 products,
+96,000 orders and 4,000-row batches. Graph-only ingest was 15.362 seconds and
+10,389 MiB peak RSS before versus 15.251 seconds and 10,129 MiB after; with
+search it was 21.137 seconds and 12,867 MiB before versus 20.222 seconds and
+12,435 MiB after. All four runs contained 193,440 nodes and 624,475
+relationships. These single profiled samples are diagnostic, not a reliable
+performance claim. CPU, allocation and lock profiles are retained locally.
+The follow-up still requires a fresh integrated suite and checker analysis.
+
+The first uncached full suite for this follow-up, on tree
+`03353d0853352671ee71c12d7f57ccf89af8a53b`, failed the lexical population
+and fixture-ownership guards; the remaining packages passed. Discovery found
+one new lexical candidate: `SchemaManager.RegisterEdgeTokens`, whose tokens
+are graph relationship type names. The reviewed population now records it,
+and the new test's memory engine is registered with the existing fixture
+owner. Both previously failing guards passed focused reruns; neither guard or
+its assertions was changed. A fresh full suite is required on the corrected
+tree.

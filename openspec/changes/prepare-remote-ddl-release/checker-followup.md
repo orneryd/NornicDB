@@ -105,6 +105,16 @@ not covered by this run.
 
 Candidates 23 and 24 were consolidated into one table-driven compressed-vector
 rescore test, preserving both fixtures and their assertions; its focused race
-check passed. The full PR-delta checker still needs to reanalyze the integrated
-current tree before either finding can be marked resolved. Later source changes
-are not covered by this historical inventory.
+check passed. Candidates 10 and 11 now share a table-driven continuation test,
+as do candidates 12 and 13 for invalidation. Candidates 19 and 20 now use one
+search persistence fixture, with the HNSW path selected by the caller. Candidate
+28 now uses one table-driven vector-ID collapse test. The integrated focused
+race run covered those cases and their neighboring tests. Candidates 16 and 17
+were already consolidated into a table-driven scalar and type-intersection
+test at the pushed checkpoint.
+
+The full PR-delta checker still needs to reanalyze the integrated current tree
+before any of these findings can be marked resolved. A checker attempt on the
+pushed tree `565b0794eaab447122066dc5d468c65ba2a80a6c` timed out connecting to
+the graph database before it analyzed code. Later source changes are not covered
+by this historical inventory.

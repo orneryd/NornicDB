@@ -67,18 +67,6 @@ func (s *failedPopulationSnapshot) StreamEdges(ctx context.Context, fn func(*sto
 	return s.ReadSnapshotView.StreamEdges(ctx, fn)
 }
 
-func populationPersistService(t *testing.T, engine storage.Engine, dir string) *Service {
-	t.Helper()
-	svc := NewService(engine, 3, nil)
-	svc.FixVectorDimensions()
-	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
-	svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
-	svc.SetHNSWIndexPath(filepath.Join(dir, "hnsw"))
-	svc.SetPersistenceEnabled(true)
-	t.Cleanup(func() { _ = svc.Close() })
-	return svc
-}
-
 func populationArtifactBytes(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	files := map[string][]byte{}
@@ -106,14 +94,14 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 					require.NoError(t, err)
 				}
 				dir := t.TempDir()
-				seed := populationPersistService(t, e, dir)
+				seed := newSearchPersistenceTestService(t, e, dir, true)
 				require.NoError(t, seed.BuildIndexes(context.Background()))
 				require.NoError(t, seed.Close())
 				before := populationArtifactBytes(t, dir)
 				committedVectors, vectorErr := os.ReadFile(filepath.Join(dir, "vectors.vec"))
 				require.NoError(t, vectorErr)
 				require.Len(t, before, 4)
-				svc := populationPersistService(t, e, dir)
+				svc := newSearchPersistenceTestService(t, e, dir, true)
 				// Force a real scan while valid prior artifacts/settings exist.
 				svc.SetFulltextProperties([]string{"text"})
 				e.active.Store(true)
@@ -170,7 +158,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 				require.Equal(t, committedVectors, vectors[:len(committedVectors)], "failed build replaced committed vector payloads")
 				require.NoError(t, svc.Close())
 				e.active.Store(false)
-				restarted := populationPersistService(t, e, dir)
+				restarted := newSearchPersistenceTestService(t, e, dir, true)
 				require.NoError(t, restarted.BuildIndexes(context.Background()))
 				require.Equal(t, 4, restarted.FulltextDocCount(), "nonempty partial artifacts skipped authoritative rebuild")
 				for _, id := range []string{"nornic:original0", "nornic:original1", "nornic:original2", "nornic:acknowledged"} {
@@ -189,11 +177,11 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
-	seed := populationPersistService(t, e, dir)
+	seed := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, seed.BuildIndexes(context.Background()))
 	require.NoError(t, seed.Close())
 	before := populationArtifactBytes(t, dir)
-	svc := populationPersistService(t, e, dir)
+	svc := newSearchPersistenceTestService(t, e, dir, true)
 	svc.SetFulltextProperties([]string{"text"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -224,7 +212,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
-	seed := populationPersistService(t, e, dir)
+	seed := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, seed.BuildIndexes(context.Background()))
 	require.NoError(t, seed.Close())
 	before := populationArtifactBytes(t, dir)
@@ -233,7 +221,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 	n := triageNode("nornic:acknowledged")
 	_, err = e.CreateNode(n)
 	require.NoError(t, err)
-	svc := populationPersistService(t, e, dir)
+	svc := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, svc.IndexNode(n))
 	svc.PersistIndexesToDisk()
 	require.Equal(t, before, populationArtifactBytes(t, dir))
@@ -252,11 +240,11 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
-	seed := populationPersistService(t, e, dir)
+	seed := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, seed.BuildIndexes(context.Background()))
 	require.NoError(t, seed.Close())
 	before := populationArtifactBytes(t, dir)
-	svc := populationPersistService(t, e, dir)
+	svc := newSearchPersistenceTestService(t, e, dir, true)
 	svc.SetFulltextProperties([]string{"text"})
 	injected := errors.New("final replay rejected")
 	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
@@ -273,7 +261,7 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	svc.PersistIndexesToDisk()
 	require.Equal(t, before, populationArtifactBytes(t, dir), "final replay failure published a replacement checkpoint")
 	require.NoError(t, svc.Close())
-	restarted := populationPersistService(t, e, dir)
+	restarted := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, restarted.BuildIndexes(context.Background()))
 	require.Equal(t, 2, restarted.FulltextDocCount())
 	_, ok := restarted.getVectorLookup()(nodeNamedVectorKey("nornic:acknowledged", "v"))

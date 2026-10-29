@@ -17,7 +17,7 @@ func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("reviewer final-drain I/O failure")
 	reached, published := false, false
 	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {

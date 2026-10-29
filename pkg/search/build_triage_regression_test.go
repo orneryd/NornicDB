@@ -6,7 +6,6 @@ import (
 
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,18 +72,6 @@ func (h *triageSnapshotLog) Handle(_ context.Context, r slog.Record) error {
 	return nil
 }
 
-func newTriageService(t *testing.T, engine storage.Engine) *Service {
-	t.Helper()
-	svc := NewService(engine, 3, nil)
-	svc.FixVectorDimensions()
-	dir := t.TempDir()
-	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
-	svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
-	svc.SetPersistenceEnabled(true)
-	t.Cleanup(func() { _ = svc.Close() })
-	return svc
-}
-
 func triageNode(id string) *storage.Node {
 	return &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": id}, NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}}
 }
@@ -94,7 +81,7 @@ func TestBuildTriageNilContext(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	require.NotPanics(t, func() { require.NoError(t, svc.BuildIndexes(nil)) })
 	require.Zero(t, engine.active.Load())
 }
@@ -104,7 +91,7 @@ func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	h := &triageSnapshotLog{engine: engine}
 	svc.SetLogger(slog.New(h))
 	// Exercise the storage scan and then the saved-index restore route.
@@ -123,7 +110,7 @@ func TestBuildTriageClosesReplacedVectorFileStore(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	previous := svc.vectorFileStore
 	require.NotNil(t, previous)
@@ -141,7 +128,7 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(triageNode("nornic:baseline"))
 			require.NoError(t, err)
-			svc := newTriageService(t, engine)
+			svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(engine.release) }) }
 			t.Cleanup(unblock)
@@ -252,7 +239,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("injected late vector file I/O failure")
 	called := false
 	svc.SetLogger(slog.New(&triageReplayLog{match: message, during: func() {
@@ -292,7 +279,7 @@ func TestBuildTriageFailureDuringBasePersist(t *testing.T) {
 func TestBuildTriageLiveWriteIOError(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := newTriageService(t, engine)
+	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.NoError(t, svc.IndexNode(triageNode("nornic:baseline")))
 	svc.indexMu.Lock()
