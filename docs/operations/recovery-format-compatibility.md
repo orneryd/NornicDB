@@ -9,28 +9,38 @@ property values. Client-facing node and relationship JSON is unchanged.
 ### v1.4.4 backup and restore boundary
 
 Starting with v1.4.4, buffered-commit WAL payloads use the typed MessagePack
-recovery codec and may be compressed. They preserve arbitrary Badger key bytes
-that JSON cannot represent losslessly. The WAL change does not change existing
-Badger keys or require a separate Badger storage-version bump; it is included in
-the existing V4 upgrade arm.
+recovery codec and may be compressed. Semantic entity transactions also use
+MessagePack. They preserve arbitrary Badger key bytes that JSON cannot represent
+losslessly. The WAL change does not change existing Badger keys or require a
+separate Badger storage-version bump; it is included in the existing V4 upgrade
+arm.
 
 Before upgrading, make and verify a backup of the database and its matching WAL.
 Start v1.4.4 with `--upgrade-storage` to authorize the storage upgrade. The V4
 startup migration validates and converts supported older WAL frames, including
 retained segments, to the current framing. It replays acknowledged buffered
-writes before transforming the V4 catalog. The migration preserves historical
-application payload bytes; newly written buffered records use the typed codec. Old
+writes before transforming the V4 catalog. Historical semantic transaction
+payloads are converted to MessagePack, including those in the replication WAL.
+Historical replication direct, bulk, and prefix commands are also converted;
+retired or unknown command kinds stop the upgrade instead of being discarded.
+Other historical recovery payloads retain their existing representation. Old
 JSON cannot reconstruct physical key bytes that an older writer already
 replaced, so an ambiguous record is rejected instead of silently applied.
 
 Before replacing WAL files, the migration keeps a synced copy in a protected
-`wal.before-v4` directory. After a successful upgrade it is retained as
+`wal.before-v4-v6` directory. After a successful storage upgrade it is retained as
 `wal.pre-v4-<id>` beside the active WAL. It may contain unencrypted application
 data and credentials: protect it like the original database and remove it only
 after the upgrade and independent backup have been verified. If the upgrade is
 interrupted, restart with `--upgrade-storage` to resume it. Unsupported future
 formats and corrupt records are rejected; a partial final frame in the active
 WAL is handled as a torn tail. Retained segments are validated strictly.
+
+The authorized upgrade also converts an existing replication WAL, including
+when the database starts in standalone mode, and retains
+`replication/wal.before-v4-v6` as the original copy. If replication used a
+custom `NORNICDB_CLUSTER_DATA_DIR`, keep that setting pointed at the same
+directory during the upgrade. Protect the copy along with the database backup.
 
 Older binaries cannot read the new WAL frames. For rollback, restore the
 pre-upgrade database backup and its matching old WAL together; do not mix files
@@ -63,6 +73,17 @@ older startup repair may treat an unsupported WAL version as a corrupt tail,
 so keep the original files and use the binary that wrote them.
 
 ## Snapshots
+
+Replication adapter snapshots are a separate format from the database
+snapshots described below. In v1.4.4 the adapter writes and reads MessagePack.
+For a caller-owned replication snapshot written by an older adapter, use
+`replication.TranscodeV4ReplicationSnapshot(oldReader, newWriter)` before
+calling `RestoreSnapshot`. Write to a new file, sync and verify that file, and
+retain the old snapshot and matching WAL until the restore has been verified.
+The converter reports invalid or trailing data without writing a result;
+current replication snapshot reads do not automatically fall back to gob.
+Replication properties may be nested at most 1,024 levels. Deeper values are
+rejected before a command is published to the replication WAL.
 
 Both `SaveSnapshot` and `WriteSnapshot` now write framed `NDS2` version 2
 snapshots. Entity frames contain typed storage records; framing, checksums, and

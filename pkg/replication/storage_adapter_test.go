@@ -225,9 +225,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 				node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Updated"}}
 				return fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			}()},
-			{"DeleteNode", CmdDeleteNode, fixtureowner.Encode[any](t, storage.EncodeCommandPayload, struct {
-				NodeID string
-			}{NodeID: "n1"})},
+			{"DeleteNode", CmdDeleteNode, []byte("n1")},
 			{"CreateEdge", CmdCreateEdge, func() []byte {
 				edge := &storage.Edge{ID: storage.EdgeID("e1"), StartNode: storage.NodeID("n1"), EndNode: storage.NodeID("n2"), Type: "KNOWS"}
 				return fixtureowner.Encode(t, storage.EncodeEdgePayload, edge)
@@ -877,11 +875,7 @@ func TestStorageAdapter_WriteSnapshot(t *testing.T) {
 		err := adapter.WriteSnapshot(&buf)
 		require.NoError(t, err)
 
-		var snapshot struct {
-			WALPosition uint64
-			Nodes       []*storage.Node
-			Edges       []*storage.Edge
-		}
+		var snapshot storage.ReplicationSnapshot
 		err = storage.DecodeCommandPayload(buf.Bytes(), &snapshot)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), snapshot.WALPosition)
@@ -893,11 +887,7 @@ func TestStorageAdapter_RestoreSnapshot(t *testing.T) {
 		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
-		snapshot := struct {
-			WALPosition uint64
-			Nodes       []*storage.Node
-			Edges       []*storage.Edge
-		}{
+		snapshot := storage.ReplicationSnapshot{
 			WALPosition: 5,
 			Nodes: []*storage.Node{
 				{ID: storage.NodeID("n1"), Labels: []string{"Test"}},

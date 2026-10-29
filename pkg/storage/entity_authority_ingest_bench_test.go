@@ -9,7 +9,7 @@ import (
 // BenchmarkEntityAuthorityFootprint models the endpoint and relationship
 // identities in one 2,000-row relationship batch, without disk I/O.
 func BenchmarkEntityAuthorityFootprint(b *testing.B) {
-	for _, n := range []int{1, 2000} {
+	for _, n := range []int{1, 2000, 8000} {
 		b.Run(fmt.Sprintf("edges=%d", n), func(b *testing.B) {
 			endpoints := make([]NodeID, 0, 2*n)
 			edges := make([]EdgeID, 0, n)

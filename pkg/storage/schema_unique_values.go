@@ -210,6 +210,23 @@ type uniqueConstraintLockRequest struct {
 	shared bool
 }
 
+// A request batch remains owned by its release closure until the locks are
+// released. Bound retained capacity and clear references before reuse.
+type uniqueConstraintRequestBatch struct {
+	requests []uniqueConstraintLockRequest
+}
+
+var uniqueConstraintRequestPool = sync.Pool{New: func() any { return new(uniqueConstraintRequestBatch) }}
+
+func recycleUniqueConstraintRequests(batch *uniqueConstraintRequestBatch, requests []uniqueConstraintLockRequest) {
+	if batch == nil {
+		return
+	}
+	clear(requests)
+	batch.requests = requests[:0]
+	uniqueConstraintRequestPool.Put(batch)
+}
+
 // appendConstraintValueKeys projects node and relationship VALUE keys for the
 // canonical registry. Entity and endpoint authority belongs to the earlier
 // write/prepare owner; unconstrained images append no keys.
@@ -334,8 +351,19 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
-	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
-	const minPooledKeys, maxPooledKeys = 64, 16384
+	const minRequestPoolKeys, maxRequestPoolKeys = 64, 32768
+	var requestBatch *uniqueConstraintRequestBatch
+	var requests []uniqueConstraintLockRequest
+	if len(keys) >= minRequestPoolKeys && len(keys) <= maxRequestPoolKeys {
+		requestBatch = uniqueConstraintRequestPool.Get().(*uniqueConstraintRequestBatch)
+		if cap(requestBatch.requests) < len(keys) {
+			requestBatch.requests = make([]uniqueConstraintLockRequest, 0, len(keys))
+		}
+		requests = requestBatch.requests[:0]
+	} else {
+		requests = make([]uniqueConstraintLockRequest, 0, len(keys))
+	}
+	const minPooledKeys, maxPooledKeys = 64, 32768
 	pooled := len(keys) >= minPooledKeys && len(keys) <= maxPooledKeys
 	var seen map[uniqueConstraintLockKey]int
 	var table *uniqueConstraintSeenTable
@@ -364,6 +392,7 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 		uniqueConstraintSeenPool.Put(table)
 	}
 	if len(requests) == 0 {
+		recycleUniqueConstraintRequests(requestBatch, requests)
 		return func() {}, nil
 	}
 
@@ -396,11 +425,17 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	for i := range requests {
 		if err := sm.waitForUniqueConstraintLock(ctx, owner, requests[i]); err != nil {
 			sm.releaseUniqueConstraintLocks(owner, requests[:i], requests[i:])
+			recycleUniqueConstraintRequests(requestBatch, requests)
 			return nil, err
 		}
 	}
 	var releaseOnce sync.Once
-	return func() { releaseOnce.Do(func() { sm.releaseUniqueConstraintLocks(owner, requests, nil) }) }, nil
+	return func() {
+		releaseOnce.Do(func() {
+			sm.releaseUniqueConstraintLocks(owner, requests, nil)
+			recycleUniqueConstraintRequests(requestBatch, requests)
+		})
+	}, nil
 }
 
 // lockableUniqueConstraintKey reports whether k can key a constraint lock: its

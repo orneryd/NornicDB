@@ -45,9 +45,8 @@ type Limits struct {
 //
 // MaxBytes Enforcement:
 //
-// MaxBytes enforcement uses exact size calculation, not estimation. The actual
-// serialized size of each node/edge is calculated using gob encoding (matching
-// the storage format). Storage size is tracked incrementally for O(1) limit checks.
+// MaxBytes charges the MessagePack size of canonical logical entities. That
+// quota measure is tracked incrementally; it is not the physical disk size.
 //
 // Example:
 //
@@ -69,8 +68,8 @@ type StorageLimits struct {
 	// When exceeded, create operations fail with: "would exceed max_bytes limit
 	// (current: X bytes, limit: Y bytes, new entity: Z bytes)"
 	//
-	// Size is calculated exactly using gob serialization (matching storage format).
-	// No estimation - the actual size of each entity is known before creation.
+	// Size is the canonical logical entity's MessagePack length, which can differ
+	// from the physical Badger or WAL size.
 	MaxBytes int64 `json:"max_bytes,omitempty"`
 }
 

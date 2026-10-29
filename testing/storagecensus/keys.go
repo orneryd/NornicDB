@@ -92,6 +92,9 @@ var spaceClasses = map[string]string{
 	// This startup-only marker records an admitted V4 WAL replay; it is
 	// deleted atomically with the V4 catalog and schema transaction.
 	`prefixMVCCMeta+"wal-v4-upgrade-pending"`: "store-metadata",
+	// This separate startup-only marker tracks a V4 WAL format conversion
+	// when the catalog is already V4; it is removed after recovery and sync.
+	`prefixMVCCMeta+"wal-v4-msgpack-upgrade-pending"`: "store-metadata",
 	// Retired first bytes (retiredPrefixes).
 	"retired 0x17": "retired",
 }

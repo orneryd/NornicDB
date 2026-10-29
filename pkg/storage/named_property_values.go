@@ -26,6 +26,9 @@ func DecodeNamedMetadata(data []byte) (map[string]any, error) {
 }
 
 func decodeNamedValues(data []byte, decode func(*msgpack.Decoder) (any, error)) (map[string]any, error) {
+	if err := validateMessagePackValue(data); err != nil {
+		return nil, fmt.Errorf("invalid named property values: %w", err)
+	}
 	reader := bytes.NewReader(data)
 	decoder := msgpack.NewDecoder(reader)
 	value, err := decode(decoder)

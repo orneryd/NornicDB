@@ -110,6 +110,13 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 		return nil, fmt.Errorf("decoding tokenized properties: count varint: %w", err)
 	}
 	rest := data[consumed:]
+	// Each entry requires at least a one-byte key token and one value byte.
+	// Cap preallocation by the remaining payload, then parse normally so a
+	// malformed key or truncated value retains its precise diagnostic.
+	outSize := len(rest) / 2
+	if count < uint64(outSize) {
+		outSize = int(count)
+	}
 
 	reader := bytes.NewReader(rest)
 	// Pooled: a scan decodes this once per node, and a new decoder per node
@@ -117,7 +124,6 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	dec := msgpack.GetDecoder()
 	dec.Reset(reader)
 	defer msgpack.PutDecoder(dec)
-	outSize := int(count)
 	if include != nil && len(include) < outSize {
 		outSize = len(include)
 	}
@@ -297,6 +303,9 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 	n, err := dec.DecodeArrayLen()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateMessagePackCollection(dec, n, 1); err != nil {
 		return nil, err
 	}
 	if n <= 0 {
@@ -535,6 +544,9 @@ func isUnsignedIntegerCode(code byte) bool {
 func decodeStrictTypedMap(dec *msgpack.Decoder) (any, error) {
 	n, err := dec.DecodeMapLen()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateMessagePackCollection(dec, n, 2); err != nil {
 		return nil, err
 	}
 	out := make(map[string]any, n)

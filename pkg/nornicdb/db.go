@@ -153,8 +153,16 @@ func DefaultConfig() *Config {
 // Thread Safety:
 //
 //	All methods are thread-safe and can be called concurrently.
+type replicationWALPreparation struct {
+	dir          string
+	mode         string
+	allowUpgrade bool
+}
+
 type DB struct {
 	config *Config
+	// The replication WAL is checked before opening the primary store.
+	preparedReplicationWAL replicationWALPreparation
 	// The boot selection is shared by the native upgrade and the catalog;
 	// server construction must not independently resolve a different key.
 	remoteCredentialKey       string
@@ -622,6 +630,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if err := nornicConfig.ValidateMemoryRecoveryTimings(intervalMS, rearmMS); err != nil {
 		return nil, err
 	}
+	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	preparedWAL := replicationWALPreparation{dir: replicationWALDirectory(dataDir, mode), mode: mode, allowUpgrade: config.Database.AllowStorageUpgrade}
+	if err := prepareReplicationWAL(preparedWAL.dir, preparedWAL.allowUpgrade, preparedWAL.mode); err != nil {
+		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+	}
 	config.Database.DataDir = dataDir
 	// Defensive defaults for the per-DB search-index master switches.
 	// Two distinct cases to handle correctly:
@@ -655,8 +668,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 
 	db := &DB{
-		config:            config,
-		searchWarmupReady: make(chan struct{}),
+		config:                 config,
+		preparedReplicationWAL: preparedWAL,
+		searchWarmupReady:      make(chan struct{}),
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
 	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
@@ -1553,24 +1567,57 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	return badgerOptions, walConfig
 }
 
+func replicationWALDirectory(dataDir, mode string) string {
+	replicationDir := os.Getenv("NORNICDB_CLUSTER_DATA_DIR")
+	if replicationDir == "" {
+		if dataDir == "" {
+			if mode == "" || mode == string(replication.ModeStandalone) {
+				return ""
+			}
+			replicationDir = filepath.Join("data", "replication")
+		} else {
+			replicationDir = filepath.Join(dataDir, "replication")
+		}
+	}
+	return filepath.Join(replicationDir, "wal")
+}
+
+// prepareReplicationWAL checks or upgrades the separate replication log before
+// the primary store can change.
+func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
+	if dir == "" {
+		return nil
+	}
+	if allowUpgrade {
+		_, err := storage.UpgradeWALV4(dir, storage.WALV4UpgradeOptions{Transform: replication.TranscodeV4WALPayload})
+		return err
+	}
+	if mode != "" && mode != string(replication.ModeStandalone) {
+		return storage.ValidateWALFormat(dir, storage.WALValidateCurrent)
+	}
+	return nil
+}
+
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
 	mode := os.Getenv("NORNICDB_CLUSTER_MODE")
+	dataDir, allowUpgrade := "", false
+	if db.config != nil {
+		dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
+	}
+	replicationWALDir := replicationWALDirectory(dataDir, mode)
+	preparation := replicationWALPreparation{dir: replicationWALDir, mode: mode, allowUpgrade: allowUpgrade}
+	if db.preparedReplicationWAL != preparation {
+		if err := prepareReplicationWAL(replicationWALDir, allowUpgrade, mode); err != nil {
+			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
+		}
+		db.preparedReplicationWAL = preparation
+	}
 	if mode == "" || mode == string(replication.ModeStandalone) {
 		return base, nil
 	}
-
 	replCfg := replication.LoadFromEnv()
-
-	// Keep replication state under the DB data dir unless explicitly overridden.
-	if os.Getenv("NORNICDB_CLUSTER_DATA_DIR") == "" {
-		if db.config != nil && db.config.Database.DataDir != "" {
-			replCfg.DataDir = db.config.Database.DataDir + "/replication"
-		} else {
-			replCfg.DataDir = "./data/replication"
-		}
-	}
-
-	adapter, err := replication.NewStorageAdapterWithWAL(base, replCfg.DataDir+"/wal")
+	replCfg.DataDir = filepath.Dir(replicationWALDir)
+	adapter, err := replication.NewStorageAdapterWithWAL(base, replicationWALDir)
 	if err != nil {
 		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}

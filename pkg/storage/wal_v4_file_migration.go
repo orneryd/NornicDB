@@ -153,8 +153,8 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 		if version < 3 {
 			err = json.Unmarshal(payload, &entry)
 		} else {
-			// Versions 3, 4 and 5 use the same raw-Data envelope; only
-			// the outer frame and v4 control semantics differ.
+			// Framed versions from 3 onward use the same raw-Data envelope.
+			// The outer frame and semantic payload may differ.
 			_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, walFormatVersionCurrent)
 		}
 		if err != nil {
@@ -178,6 +178,9 @@ func scanV4MigrationWAL(path string, allowTornTail bool, visit func(WALEntry, *w
 			}
 			epoch = &frame
 		}
+		// Preserve the source version for semantic conversion after property
+		// controls have been validated using current-frame rules above.
+		entry.framingVersion = version
 		end := offset + uint64(length)
 		if err := visit(entry, epoch, offset, end); err != nil {
 			return err
@@ -253,7 +256,7 @@ type v4WALControlRewrite struct {
 // upgradeWALFileV4 writes one fully validated current-frame file beside its
 // untouched source. Callers must publish the staged file only after every WAL
 // file has been validated and the originals durably backed up.
-func upgradeWALFileV4(source, destination string, allowTornTail bool) (resultErr error) {
+func upgradeWALFileV4(source, destination string, allowTornTail bool, transform func(uint8, OperationType, []byte) ([]byte, error)) (resultErr error) {
 	targets, err := planV4WALMigration(source, allowTornTail)
 	if err != nil {
 		return err
@@ -292,6 +295,21 @@ func upgradeWALFileV4(source, destination string, allowTornTail bool) (resultErr
 			}
 			control = &v4WALControlRewrite{offset: offset, through: frame.through, entry: entry, frame: frame}
 		} else {
+			if entry.Operation == OpEntityCommit && entry.framingVersion < walFormatVersionCurrent {
+				converted, convertErr := convertV4SemanticWALRecord(entry)
+				if convertErr != nil {
+					return fmt.Errorf("wal: convert historical entity commit %d: %w", entry.Sequence, convertErr)
+				}
+				entry = converted
+			}
+			if transform != nil && entry.framingVersion < walFormatVersionCurrent {
+				converted, transformErr := transform(entry.framingVersion, entry.Operation, entry.Data)
+				if transformErr != nil {
+					return fmt.Errorf("wal: convert historical payload %d: %w", entry.Sequence, transformErr)
+				}
+				entry.Data = converted
+				entry.Checksum = crc32Checksum(converted)
+			}
 			var err error
 			payload, err = processWALEntryPayload(walPayloadEncode, &buf, &entry, nil, 0)
 			if err != nil {

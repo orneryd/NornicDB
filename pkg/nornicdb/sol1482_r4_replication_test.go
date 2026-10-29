@@ -1,9 +1,7 @@
 package nornicdb
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -32,19 +30,18 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			db.bgWg.Wait()
 			require.NotNil(t, db.replicationAdapter)
 			apply := func(kind replication.CommandType, payload any) {
-				var b bytes.Buffer
-				require.NoError(t, gob.NewEncoder(&b).Encode(payload))
-				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: kind, Data: b.Bytes()}))
+				data := searchConsumerCommandData(t, kind, payload)
+				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: kind, Data: data}))
 			}
-			apply(replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
+			apply(replication.CmdCreateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			svc, err := db.EnsureSearchIndexes(context.Background(), "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
-			apply(replication.CmdUpdateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
+			apply(replication.CmdUpdateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
 			settleQueuedRefreshes()
 			assert.Equal(t, 1, consumerDBHits(t, svc, "newword"), "replicated update did not reach search")
-			apply(replication.CmdDeleteByPrefix, struct{ Prefix string }{"tenant:"})
+			apply(replication.CmdDeleteByPrefix, "tenant:")
 			settleQueuedRefreshes()
 			fresh, err := db.EnsureSearchIndexes(context.Background(), "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)

@@ -101,9 +101,13 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 		if err != nil {
 			return fmt.Errorf("read schema version: %w", err)
 		}
-		pending, err := b.v4WALRecoveryPending()
+		catalogPending, formatPending, err := b.v4WALRecoveryState()
 		if err != nil {
 			return err
+		}
+		pending := catalogPending || formatPending
+		if formatPending && version != storageVersionCatalogV4 {
+			return fmt.Errorf("wal: format-only recovery requires a V4 store")
 		}
 		// The marker is written only after the upgrade gate has admitted the
 		// original attempt, including the empty-store case. A retry must finish
@@ -117,6 +121,13 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 					return err
 				}
 				oldWAL = true
+			}
+		}
+		formatOnly := formatPending
+		if version == storageVersionCatalogV4 && oldWAL && !pending {
+			formatOnly, err = walV5OrLaterOnly(dir)
+			if err != nil {
+				return err
 			}
 		}
 		if version < storageVersionCatalogV4 || pending || oldWAL {
@@ -133,7 +144,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 				// second emptiness check runs.
 				upgradeAuthorized = true
 			}
-			if version == storageVersionCatalogV4 && b.catalogUpgradeV4 == nil {
+			if version == storageVersionCatalogV4 && !formatOnly && b.catalogUpgradeV4 == nil {
 				empty, err := b.isStorageEmpty()
 				if err != nil {
 					return err
@@ -143,11 +154,11 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 				}
 			}
 			b.storageVersion = version
-			recovered, err := b.recoverV4WALAtOpen(allowUpgrade, pending)
+			recovered, err := b.recoverV4WALAtOpen(allowUpgrade, pending, formatOnly)
 			if err != nil {
 				return fmt.Errorf("V4 WAL migration and recovery: %w", err)
 			}
-			replayCurrentCatalog = version == storageVersionCatalogV4 && recovered
+			replayCurrentCatalog = version == storageVersionCatalogV4 && recovered && !formatOnly
 		}
 	}
 	// The migrations rewrite stored state wholesale: a maintenance write

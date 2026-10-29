@@ -19,22 +19,16 @@ func (e *countingReadEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 	return e.Engine.GetNode(id)
 }
 
-func newCountingService(t *testing.T) (*Service, *countingReadEngine, storage.Engine) {
-	t.Helper()
+// A refresh whose node has no pending reservation (a newer refresh, which
+// read storage later, was applied) reads nothing. One superseded by a newer
+// reservation still pending reads: discarding the newer one restores it.
+func TestRetiredRefreshReadsNothing(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	engine := &countingReadEngine{Engine: store}
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	return svc, engine, store
-}
-
-// A refresh whose node has no pending reservation (a newer refresh, which
-// read storage later, was applied) reads nothing. One superseded by a newer
-// reservation still pending reads: discarding the newer one restores it.
-func TestRetiredRefreshReadsNothing(t *testing.T) {
-	svc, engine, store := newCountingService(t)
 	_, err := store.CreateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "word"}})
 	require.NoError(t, err)
 

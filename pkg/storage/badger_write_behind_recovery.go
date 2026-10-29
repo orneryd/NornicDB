@@ -102,7 +102,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			// existing buffered replay does; it must not emit a fresh ACK or
 			// append another buffered record while visiting this WAL.
 			envelope.Mode = CommitModeDirect
-			receipt, err := submitDecodedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			receipt, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
 			if err != nil {
 				return err
 			}

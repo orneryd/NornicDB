@@ -23,14 +23,6 @@ func (c *countingBM25Index) Remove(id string) {
 	c.bm25Index.Remove(id)
 }
 
-func newCountingFulltextService(t *testing.T) (*Service, *countingBM25Index) {
-	t.Helper()
-	svc := NewService(newTestMemoryEngine(t), 3, nil)
-	counting := &countingBM25Index{bm25Index: svc.fulltext()}
-	svc.setFulltext(counting)
-	return svc, counting
-}
-
 // A node's default searchable text lists its other properties in key order.
 func TestExtractSearchableTextOrdersPropertiesByKey(t *testing.T) {
 	svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
@@ -43,7 +35,9 @@ func TestExtractSearchableTextOrdersPropertiesByKey(t *testing.T) {
 // Re-indexing a node keeps its fulltext document when the text hasn't
 // changed, also when its vectors change, and replaces it when the text does.
 func TestIndexNodeKeepsUnchangedFulltextDocument(t *testing.T) {
-	svc, counting := newCountingFulltextService(t)
+	svc := NewService(newTestMemoryEngine(t), 3, nil)
+	counting := &countingBM25Index{bm25Index: svc.fulltext()}
+	svc.setFulltext(counting)
 	node := func(id int64, embedding []float32) *storage.Node {
 		n := &storage.Node{ID: "n1", Labels: []string{"V"}, Properties: map[string]any{"id": id, "x": int64(1)}}
 		if embedding != nil {

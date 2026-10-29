@@ -1046,11 +1046,7 @@ func TestStorageAdapter_RestoreSnapshot_ErrorPaths(t *testing.T) {
 	require.ErrorContains(t, err, "decode snapshot")
 
 	node := &storage.Node{ID: "n1", Labels: []string{"L"}}
-	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
-	}{
+	snapshot := storage.ReplicationSnapshot{
 		WALPosition: 3,
 		Nodes:       []*storage.Node{node, node},
 	}
@@ -1263,32 +1259,32 @@ func TestStorageAdapter_ApplyHelpers_ErrorAndFallbackBranches(t *testing.T) {
 	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdCreateNode, []byte("bad")), "decode node")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdUpdateNode, []byte("bad")), "decode node")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdCreateEdge, []byte("bad")), "decode edge")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdUpdateEdge, []byte("bad")), "decode edge")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdDeleteEdge, []byte("bad")), "decode delete edge request")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdUpdateNode, Data: []byte("bad")}), "decode node")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdUpdateEdge, Data: []byte("bad")}), "decode edge")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteEdge, Data: []byte("bad")}), "decode delete edge request")
 	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredSetProperty, Data: []byte("bad")}), ErrRetiredCommand)
-	require.ErrorContains(t, adapter.applyDeleteByPrefix([]byte("bad")), "decode delete by prefix request")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateNodes, []byte("bad")), "decode bulk create nodes")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateEdges, []byte("bad")), "decode bulk create edges")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkDeleteNodes, []byte("bad")), "decode bulk delete nodes")
-	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkDeleteEdges, []byte("bad")), "decode bulk delete edges")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteByPrefix, Data: []byte("bad")}), "decode delete by prefix request")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateNodes, Data: []byte("bad")}), "decode bulk create nodes")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateEdges, Data: []byte("bad")}), "decode bulk create edges")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkDeleteNodes, Data: []byte("bad")}), "decode bulk delete nodes")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdBulkDeleteEdges, Data: []byte("bad")}), "decode bulk delete edges")
 
 	_, err := adapter.engine.CreateNode(&storage.Node{ID: "raw-fallback-node", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, applyDirectEntityCommand(adapter.engine, CmdDeleteNode, []byte("raw-fallback-node")))
+	require.NoError(t, adapter.ApplyCommand(&Command{Type: CmdDeleteNode, Data: []byte("raw-fallback-node")}))
 	_, err = adapter.engine.GetNode("raw-fallback-node")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	emptyPrefixPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct{ Prefix string }{Prefix: ""})
-	require.ErrorContains(t, adapter.applyDeleteByPrefix(emptyPrefixPayload), "prefix is required")
+	require.ErrorContains(t, adapter.ApplyCommand(&Command{Type: CmdDeleteByPrefix, Data: emptyPrefixPayload}), "prefix is required")
 
 	badNodePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-node")})
-	require.Error(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateNodes, badNodePayload))
+	require.Error(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateNodes, Data: badNodePayload}))
 
 	badEdgePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-edge")})
-	require.Error(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateEdges, badEdgePayload))
+	require.Error(t, adapter.ApplyCommand(&Command{Type: CmdBulkCreateEdges, Data: badEdgePayload}))
 
 	// Edge create should fail when endpoints don't exist.
 	validEdgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})

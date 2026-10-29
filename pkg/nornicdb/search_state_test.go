@@ -1,9 +1,7 @@
 package nornicdb
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -47,17 +45,17 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			t.Helper()
 			switch cmd {
 			case replication.CmdCreateNode:
-				p := payload.(*storage.NodePayload)
-				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties})
+				p := payload.(*storage.Node)
+				_, err := store.CreateNode(p)
 				require.NoError(t, err)
 			case replication.CmdUpdateNode:
-				p := payload.(*storage.NodePayload)
-				require.NoError(t, store.UpdateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties}))
+				p := payload.(*storage.Node)
+				require.NoError(t, store.UpdateNode(p))
 			case replication.CmdDeleteNode:
 				require.NoError(t, store.DeleteNode(storage.NodeID(payload.(string))))
 			case replication.CmdCreateEdge:
-				p := payload.(*storage.EdgePayload)
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(p.ID), StartNode: storage.NodeID(p.StartNode), EndNode: storage.NodeID(p.EndNode), Type: p.Type, Properties: p.Properties}))
+				p := payload.(*storage.Edge)
+				require.NoError(t, store.CreateEdge(p))
 			case replication.CmdDeleteEdge:
 				require.NoError(t, store.DeleteEdge(storage.EdgeID(payload.(string))))
 			case replication.CmdDeleteByPrefix:
@@ -84,20 +82,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			require.True(t, isReplicated, "the configuration under test has no ReplicatedEngine")
 			return db, func(t *testing.T, cmd replication.CommandType, payload any) {
 				t.Helper()
-				var data []byte
-				switch p := payload.(type) {
-				case string:
-					switch cmd {
-					case replication.CmdDeleteNode:
-						data = []byte(p)
-					case replication.CmdDeleteEdge:
-						data = gobBytes(t, struct{ EdgeID string }{p})
-					case replication.CmdDeleteByPrefix:
-						data = gobBytes(t, struct{ Prefix string }{p})
-					}
-				default:
-					data = gobBytes(t, p)
-				}
+				data := searchConsumerCommandData(t, cmd, payload)
 				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: cmd, Data: data}))
 			}
 		}
@@ -124,11 +109,27 @@ func searchConsumerConfigs() []searchConsumerConfig {
 	}
 }
 
-func gobBytes(t *testing.T, payload any) []byte {
+// searchConsumerCommandData encodes the same images and delete commands used by the replication transport.
+func searchConsumerCommandData(t *testing.T, cmd replication.CommandType, payload any) []byte {
 	t.Helper()
-	var b bytes.Buffer
-	require.NoError(t, gob.NewEncoder(&b).Encode(payload))
-	return b.Bytes()
+	var data []byte
+	var err error
+	switch cmd {
+	case replication.CmdCreateNode, replication.CmdUpdateNode:
+		data, err = storage.EncodeNodePayload(payload.(*storage.Node))
+	case replication.CmdCreateEdge:
+		data, err = storage.EncodeEdgePayload(payload.(*storage.Edge))
+	case replication.CmdDeleteNode:
+		data = []byte(payload.(string))
+	case replication.CmdDeleteEdge:
+		data, err = storage.EncodeCommandPayload(struct{ EdgeID string }{payload.(string)})
+	case replication.CmdDeleteByPrefix:
+		data, err = storage.EncodeCommandPayload(struct{ Prefix string }{payload.(string)})
+	default:
+		t.Fatalf("unexpected replication command: %d", cmd)
+	}
+	require.NoError(t, err)
+	return data
 }
 
 // Every storage event and namespace reset reaches search in every production
@@ -146,20 +147,20 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			}
 			vector := make([]float32, dims)
 			vector[0] = 1
-			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
+			apply(t, replication.CmdCreateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
 
-			apply(t, replication.CmdUpdateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
+			apply(t, replication.CmdUpdateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "newword"), "node update")
-			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
+			apply(t, replication.CmdCreateNode, &storage.Node{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "bword"), "node create")
 
-			apply(t, replication.CmdCreateEdge, &storage.EdgePayload{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
+			apply(t, replication.CmdCreateEdge, &storage.Edge{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
 			settleQueuedRefreshes()
 			require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "edge create")
 			apply(t, replication.CmdDeleteEdge, "tenant:r")

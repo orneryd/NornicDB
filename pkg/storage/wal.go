@@ -129,7 +129,7 @@ const (
 
 	// walFormatVersionCurrent identifies the v1.4.4 WAL record contract.
 	// Older frames are converted only by the authorized V4 startup migration.
-	walFormatVersionCurrent uint8 = 5
+	walFormatVersionCurrent uint8 = 6
 
 	// walTrailer is written after every record to detect incomplete writes.
 	// If a crash occurs mid-write, the trailer will be missing or corrupted.

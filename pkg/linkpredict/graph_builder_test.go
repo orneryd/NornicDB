@@ -1,11 +1,14 @@
 package linkpredict
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -215,6 +218,17 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 
 	// Create temp directory for cache
 	cacheDir := t.TempDir()
+	legacyPath := filepath.Join(cacheDir, "graph_cache.gob")
+	var oldCache bytes.Buffer
+	if err := gob.NewEncoder(&oldCache).Encode(struct {
+		Graph     map[string][]string
+		Timestamp time.Time
+	}{Graph: map[string][]string{"stale": {"edge"}}, Timestamp: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, oldCache.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	config := DefaultBuildConfig()
 	config.CachePath = cacheDir
@@ -236,7 +250,7 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 	}
 
 	// Verify cache file exists
-	cachePath := filepath.Join(cacheDir, "graph_cache.gob")
+	cachePath := filepath.Join(cacheDir, "graph_cache.msgpack")
 	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
 		t.Error("Cache file not created")
 	}
@@ -253,8 +267,12 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 	}
 
 	// Verify graphs are equivalent
-	if len(graph1) != len(graph2) {
-		t.Errorf("Graph sizes differ: %d vs %d", len(graph1), len(graph2))
+	if !reflect.DeepEqual(graph1, graph2) {
+		t.Errorf("cached graph differs from the rebuilt graph")
+	}
+	legacy, err := os.ReadFile(legacyPath)
+	if err != nil || !bytes.Equal(legacy, oldCache.Bytes()) {
+		t.Errorf("legacy cache must remain untouched: %v", err)
 	}
 
 	t.Logf("Cache test: hits=%d, misses=%d", stats.CacheHits, stats.CacheMisses)
@@ -285,7 +303,7 @@ func TestGraphBuilder_CacheInvalidation(t *testing.T) {
 	}
 
 	// Verify cache file is gone
-	cachePath := filepath.Join(cacheDir, "graph_cache.gob")
+	cachePath := filepath.Join(cacheDir, "graph_cache.msgpack")
 	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
 		t.Error("Cache file should be deleted")
 	}

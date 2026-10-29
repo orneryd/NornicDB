@@ -242,21 +242,40 @@ func TestFilterByTypeAndProperties_TypeFilter_TypeProperty(t *testing.T) {
 	assert.Equal(t, "nornic:n1", out[0].ID)
 }
 
-// TestFilterByTypeAndProperties_PropertyFilter_ScalarMatch filters on an exact
-// scalar property value.
-func TestFilterByTypeAndProperties_PropertyFilter_ScalarMatch(t *testing.T) {
-	eng := newFilterTestEngine(t)
-	svc := NewService(eng, DefaultVectorDimensions, nil)
-	ctx := context.Background()
-
-	makeNode(t, eng, "nornic:prod", []string{"Svc"}, map[string]any{"env": "prod"})
-	makeNode(t, eng, "nornic:stage", []string{"Svc"}, map[string]any{"env": "staging"})
-
-	results := buildFilterResults("nornic:prod", "nornic:stage")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})
-
-	require.Len(t, out, 1)
-	assert.Equal(t, "nornic:prod", out[0].ID)
+func TestFilterByTypeAndProperties_ScalarAndTypeIntersection(t *testing.T) {
+	type nodeFixture struct{ id, label, environment string }
+	for _, tc := range []struct {
+		name    string
+		nodes   []nodeFixture
+		options SearchOptions
+		wantID  string
+	}{
+		{
+			name:    "scalar property",
+			nodes:   []nodeFixture{{"nornic:prod", "Svc", "prod"}, {"nornic:stage", "Svc", "staging"}},
+			options: SearchOptions{Filters: map[string][]string{"env": {"prod"}}},
+			wantID:  "nornic:prod",
+		},
+		{
+			name:    "type and property intersection",
+			nodes:   []nodeFixture{{"nornic:a", "Service", "prod"}, {"nornic:b", "Service", "dev"}, {"nornic:c", "Database", "prod"}},
+			options: SearchOptions{Types: []string{"service"}, Filters: map[string][]string{"env": {"prod"}}},
+			wantID:  "nornic:a",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := newFilterTestEngine(t)
+			svc := NewService(eng, DefaultVectorDimensions, nil)
+			ids := make([]string, 0, len(tc.nodes))
+			for _, node := range tc.nodes {
+				makeNode(t, eng, node.id, []string{node.label}, map[string]any{"env": node.environment})
+				ids = append(ids, node.id)
+			}
+			out := svc.filterByTypeAndProperties(context.Background(), buildFilterResults(ids...), &tc.options, map[string]bool{})
+			require.Len(t, out, 1)
+			assert.Equal(t, tc.wantID, out[0].ID)
+		})
+	}
 }
 
 // TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR keeps nodes that
@@ -277,27 +296,6 @@ func TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR(t *testing.T) {
 	ids := []string{out[0].ID, out[1].ID}
 	assert.Contains(t, ids, "nornic:n1")
 	assert.Contains(t, ids, "nornic:n2")
-}
-
-// TestFilterByTypeAndProperties_CombinedTypeAndProperty applies both type and
-// property constraints in a single call and verifies the intersection.
-func TestFilterByTypeAndProperties_CombinedTypeAndProperty(t *testing.T) {
-	eng := newFilterTestEngine(t)
-	svc := NewService(eng, DefaultVectorDimensions, nil)
-	ctx := context.Background()
-
-	makeNode(t, eng, "nornic:a", []string{"Service"}, map[string]any{"env": "prod"})
-	makeNode(t, eng, "nornic:b", []string{"Service"}, map[string]any{"env": "dev"})
-	makeNode(t, eng, "nornic:c", []string{"Database"}, map[string]any{"env": "prod"})
-
-	results := buildFilterResults("nornic:a", "nornic:b", "nornic:c")
-	out := svc.filterByTypeAndProperties(ctx, results,
-		&SearchOptions{Types: []string{"service"}, Filters: map[string][]string{"env": {"prod"}}},
-		map[string]bool{})
-
-	// Only "nornic:a" is a Service AND env=prod.
-	require.Len(t, out, 1)
-	assert.Equal(t, "nornic:a", out[0].ID)
 }
 
 // TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter:

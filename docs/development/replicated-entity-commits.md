@@ -72,6 +72,14 @@ with a descriptive `storage.ErrInvalidData` before staging. Existing unlimited,
 uninitialized opaque-engine paths remain available; they do not supply the atomic
 managed-write contract merely by implementing `storage.Engine`.
 
+Go consumers applying a semantic replication payload now call
+`storage.DecodeEntityTransaction(payload)` first and pass its envelope and
+operations to `storage.SubmitAcceptedEntityTransaction(ctx, engine, envelope,
+operations, settle)`. This replaces the former byte-payload parameter and lets
+the replication owner reject malformed data before recording it without decoding
+the same transaction twice. Accepted transactions that later fail locally remain
+available for recovery.
+
 ## Native image interpretation
 
 `BeginEntityTransaction(engine, mode)` binds the originating durability policy.

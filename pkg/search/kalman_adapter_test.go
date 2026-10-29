@@ -462,48 +462,33 @@ func TestKalmanSearchAdapter_SortByScore(t *testing.T) {
 	}
 }
 
-func TestKalmanSearchAdapter_GetPredictedLatency(t *testing.T) {
-	// Enable Kalman filtering
+func TestKalmanSearchAdapter_LatencyForecast(t *testing.T) {
 	cleanup := config.WithKalmanEnabled()
 	defer cleanup()
-
-	engine := newNamespacedEngine(t)
-	service := NewService(engine, DefaultVectorDimensions, nil)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	// Simulate some latency measurements
-	for i := 0; i < 10; i++ {
-		adapter.latencyFilter.Process(float64(10 + i))
-	}
-
-	predicted := adapter.GetPredictedLatency(5)
-
-	// Should predict a reasonable value
-	if predicted < 0 {
-		t.Errorf("Predicted latency should be non-negative, got %f", predicted)
-	}
-}
-
-func TestKalmanSearchAdapter_GetLatencyTrend(t *testing.T) {
-	// Enable Kalman filtering
-	cleanup := config.WithKalmanEnabled()
-	defer cleanup()
-
-	engine := newNamespacedEngine(t)
-	service := NewService(engine, DefaultVectorDimensions, nil)
-	adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
-
-	// Simulate increasing latency (positive trend)
-	for i := 0; i < 10; i++ {
-		adapter.latencyFilter.Process(float64(10 + i*2))
-	}
-
-	trend := adapter.GetLatencyTrend()
-
-	// Should show positive velocity (getting slower)
-	if trend <= 0 {
-		t.Logf("Trend may depend on filter convergence: %f", trend)
-		// Don't fail - filter behavior depends on many factors
+	for _, tc := range []struct {
+		name  string
+		step  int
+		trend bool
+	}{{name: "predicted latency", step: 1}, {name: "latency trend", step: 2, trend: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newNamespacedEngine(t)
+			service := NewService(engine, DefaultVectorDimensions, nil)
+			adapter := NewKalmanSearchAdapter(service, DefaultKalmanSearchConfig())
+			for i := 0; i < 10; i++ {
+				adapter.latencyFilter.Process(float64(10 + i*tc.step))
+			}
+			if tc.trend {
+				trend := adapter.GetLatencyTrend()
+				if trend <= 0 {
+					t.Logf("Trend may depend on filter convergence: %f", trend)
+				}
+				return
+			}
+			predicted := adapter.GetPredictedLatency(5)
+			if predicted < 0 {
+				t.Errorf("Predicted latency should be non-negative, got %f", predicted)
+			}
+		})
 	}
 }
 

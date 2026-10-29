@@ -109,6 +109,9 @@ var fieldClasses = map[string]fieldRow{
 	// bytes, and constraint acquisition clears and reuses its request map.
 	"pkg/storage.bufferedWALDisplayPayload.Deletes": {class: "WAL inspection serialization scratch"},
 	"pkg/storage.uniqueConstraintSeenTable.keys":    {class: "constraint lock request scratch"},
+	// The operation kind belongs to a newly encoded transaction image, not
+	// the stored entity or its publication-order state.
+	"pkg/storage.semanticTransactionChange.Type": {class: "semantic transaction serialization kind"},
 	// QueryCypher owns the resolved mode; Fabric consumes it to claim writes.
 	"pkg/storage.remoteCypherTx.resolvedMode": {class: "resolved remote query mode"},
 

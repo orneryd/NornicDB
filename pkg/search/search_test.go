@@ -4372,49 +4372,59 @@ func TestVectorIndexCosineSimilarityIndirect(t *testing.T) {
 	}
 }
 
-func TestSearchServiceSearchDirect(t *testing.T) {
-	ctx := context.Background()
+func TestSearchDirectModes(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		hybrid        bool
+	}{
+		{name: "search_with_embedding", content: "Machine learning tutorial"},
+		{name: "rrf_with_both_results", content: "Machine learning tutorial content", hybrid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newNamespacedEngine(t)
 
-	t.Run("search_with_embedding", func(t *testing.T) {
-		baseStore := newNamespacedEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
 
-		store := storage.NewNamespacedEngine(baseStore, "test")
+			embedding := make([]float32, 1024)
+			for i := range embedding {
+				embedding[i] = 0.5
+			}
 
-		embedding := make([]float32, 1024)
-		for i := range embedding {
-			embedding[i] = 0.5
-		}
+			_, _ = store.CreateNode(&storage.Node{
+				ID:              "doc-1",
+				Labels:          []string{"Document"},
+				ChunkEmbeddings: [][]float32{embedding},
+				Properties: map[string]interface{}{
+					"content": tc.content,
+				},
+			})
 
-		_, _ = store.CreateNode(&storage.Node{
-			ID:              "doc-1",
-			Labels:          []string{"Document"},
-			ChunkEmbeddings: [][]float32{embedding},
-			Properties: map[string]interface{}{
-				"content": "Machine learning tutorial",
-			},
+			service := NewService(store, DefaultVectorDimensions, nil)
+
+			// Index the node
+			node, _ := store.GetNode("doc-1")
+			service.IndexNode(node)
+
+			queryEmb := make([]float32, 1024)
+			for i := range queryEmb {
+				queryEmb[i] = 0.5
+			}
+
+			opts := &SearchOptions{Limit: 10}
+			var response *SearchResponse
+			var err error
+			if tc.hybrid {
+				opts.RRFK, opts.VectorWeight, opts.BM25Weight = 60, 0.6, 0.4
+				response, err = service.rrfHybridSearch(context.Background(), "machine learning", queryEmb, opts)
+			} else {
+				response, err = service.Search(context.Background(), "machine learning", queryEmb, opts)
+			}
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			t.Logf("Search returned %d results", len(response.Results))
 		})
-
-		service := NewService(store, DefaultVectorDimensions, nil)
-
-		// Index the node
-		node, _ := store.GetNode("doc-1")
-		service.IndexNode(node)
-
-		queryEmb := make([]float32, 1024)
-		for i := range queryEmb {
-			queryEmb[i] = 0.5
-		}
-
-		opts := &SearchOptions{
-			Limit: 10,
-		}
-
-		response, err := service.Search(ctx, "machine learning", queryEmb, opts)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		t.Logf("Search returned %d results", len(response.Results))
-	})
+	}
 }
 
 func TestFulltextSearchWithPrefix(t *testing.T) {
@@ -4434,53 +4444,6 @@ func TestFulltextSearchWithPrefix(t *testing.T) {
 	if len(results) < 2 {
 		t.Errorf("Expected at least 2 results for 'learning', got %d", len(results))
 	}
-}
-
-func TestRRFHybridSearchDirect(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("rrf_with_both_results", func(t *testing.T) {
-		baseStore := newNamespacedEngine(t)
-
-		store := storage.NewNamespacedEngine(baseStore, "test")
-
-		embedding := make([]float32, 1024)
-		for i := range embedding {
-			embedding[i] = 0.5
-		}
-
-		_, _ = store.CreateNode(&storage.Node{
-			ID:              "doc-1",
-			Labels:          []string{"Document"},
-			ChunkEmbeddings: [][]float32{embedding},
-			Properties: map[string]interface{}{
-				"content": "Machine learning tutorial content",
-			},
-		})
-
-		service := NewService(store, DefaultVectorDimensions, nil)
-
-		node, _ := store.GetNode("doc-1")
-		service.IndexNode(node)
-
-		queryEmb := make([]float32, 1024)
-		for i := range queryEmb {
-			queryEmb[i] = 0.5
-		}
-
-		opts := &SearchOptions{
-			Limit:        10,
-			RRFK:         60,
-			VectorWeight: 0.6,
-			BM25Weight:   0.4,
-		}
-
-		response, err := service.rrfHybridSearch(ctx, "machine learning", queryEmb, opts)
-		if err != nil {
-			t.Fatalf("rrfHybridSearch failed: %v", err)
-		}
-		t.Logf("RRF search returned %d results", len(response.Results))
-	})
 }
 
 // =============================================================================

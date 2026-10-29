@@ -173,3 +173,88 @@ Focused public admin-config tests reproduced credential-bearing invalid values
 being echoed to the authenticated submitting administrator. Both normalization
 and unregistered-stemmer diagnostics now use the existing text redactor; the
 focused race tests pass. Cross-user disclosure was not established.
+
+The uncached `GOFLAGS=-count=1 make test` subsequently passed 127 packages on
+tree `c91566569c23c7a08ee34674595c2c645a2c9c98`, committed and pushed as
+`7de84c4c20260311e68e69e2340cc8964a18fe04` to the draft PR. The checker
+inventory above remains open; it does not cover that exact tree. `make verify`
+was deferred by the maintainer.
+
+Post-checkpoint work is in progress. A real replication WAL regression test
+reproduced a reader silently skipping an unreadable or missing command; the
+local correction fails the requested window instead and passes focused and race
+checks. The vector strategy and filter test pairs were consolidated; the
+continuation and counting fixture forwarding helpers were removed. Their
+retained scenarios pass focused race checks. These changes have not yet passed
+the integrated gates or a fresh duplicate check.
+
+A larger isolated Northwind profile used 96,000 products, 96,000 orders and
+4,000-row batches. Both modes preserved 193,440 nodes and 624,475 relationships.
+The pushed baseline took 16.8 seconds graph-only and 21.6 seconds with search;
+peak server RSS was approximately 10.2 and 12.0 GiB, respectively. These are
+single profiled samples, not default-workload results. Lock-request reuse is
+under evaluation with paired runs; its memory and final integrated correctness
+remain open. MessagePack conversion of semantic WAL payloads and migration of
+existing WALs also remain open.
+
+A representation-only 2,000-relationship benchmark compared the current gob
+path (median 4.96 ms, 48,062 allocs, 551,007 wire bytes), nested MessagePack
+(1.69 ms, 14,024 allocs, 544,753 bytes), and direct typed operations (1.49 ms,
+8,002 allocs, 799,825 bytes). This does not prove end-to-end WAL performance.
+A differential probe showed the direct typed path changes integer and typed-list
+representations relative to the existing semantic transaction decoder. It must
+not be adopted until the existing property contract is preserved and tested.
+The fail-first V4 WAL test also confirms that the pushed migration does not yet
+transcode the old semantic envelope and nested gob payload.
+
+The local follow-up now uses a MessagePack semantic transaction and converts
+historical semantic records during the V4 WAL upgrade. Focused race tests cover
+the file conversion, current records, corrupt historical records, already-V4
+startup, interrupted retry, and the authorized replication-WAL startup path.
+The V4 store's existing keys and payloads are not rewritten for a WAL-only
+conversion; a separate temporary recovery marker makes retry durable. The
+replication direct-command and snapshot formats now use MessagePack as well.
+The V4 conversion covers the historical semantic, direct, bulk and prefix
+commands; an explicit converter handles caller-owned replication snapshots.
+Focused race checks cover the migration, typed properties and public adapter
+restore. The integrated suite and current-tree duplicate check remain open.
+
+Quota sizing now measures canonical logical entities with MessagePack. On a
+small-node codec benchmark the median was 5.11 µs, 4,410 B and 39 allocations
+with gob versus 0.68 µs, 864 B and 9 allocations with MessagePack. This changes
+reported logical byte usage and is documented for operators. The rebuildable
+link-prediction graph cache uses MessagePack; a 1,000-node, eight-neighbor cache
+read benchmark measured 494 µs, 727,668 B and 13,205 allocations before versus
+387 µs, 449,107 B and 11,020 allocations after direct graph decoding. These are
+scoped microbenchmarks, not Northwind ingest results. Focused tests pass; neither
+change has received the full-suite or checker gate on the integrated tree.
+
+For the production semantic transaction encoder, five isolated samples on an
+Apple M2 Max with `GOMAXPROCS=2` and 2,000 Northwind-shaped relationships had
+median 4.92 ms, 8,791,225 B and 48,060 allocations for the historical gob
+representation versus 1.27 ms, 2,509,249 B and 24 allocations for MessagePack.
+The encoded recovery payloads were 561,022 and 536,753 bytes respectively.
+This measures encoding only, not disk, replay, replication, or total ingest.
+CPU profiles were recorded for both runs. The default Northwind ingest target
+of five seconds remains unmet.
+
+Replication rejects malformed and excessively nested property messages before
+publishing them. A leader's unaccepted invalid write is rejected before the
+log; an already accepted transaction that cannot apply locally remains recorded
+for recovery. Focused race checks cover both paths. Relationship-search vector
+files still use gob and need a separate lossless conversion; they are not
+rebuildable without an available embedder.
+
+The first uncached integrated `make test` on staged tree
+`07322d8336459c577298043ba24483318a03e22e` failed: three database test files
+still referenced the retired gob command types; the quota matrix measured gob
+instead of MessagePack; two malformed-property tests lost their specific error
+messages; and the lexical and stored-entity census inventories needed review.
+The test consumers now use the current codec (with an explicit historical gob
+fixture only for migration), the quota matrix measures the current quota
+format, and bounded property-map preallocation preserves the original decoder
+diagnostics. The new WAL recovery marker and semantic wire field have explicit
+census classifications, including a negative test for unreviewed keys. Focused
+replication/search, quota-matrix, malformed-property, lexical-inventory and
+fixture-inventory tests passed. Full-suite verification and the duplicate
+checker on the corrected integrated tree remain pending.

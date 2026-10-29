@@ -145,9 +145,10 @@ func testCatalogV4ResumesPendingReplayAfterTransformFailure(t *testing.T, versio
 	node, err := engine.GetNode("system:databases:metadata")
 	require.NoError(t, err)
 	require.Equal(t, "sealed:pending", node.Properties["data"])
-	pending, err := engine.v4WALRecoveryPending()
+	pending, formatPending, err := engine.v4WALRecoveryState()
 	require.NoError(t, err)
 	require.False(t, pending)
+	require.False(t, formatPending)
 	// The explicit close below is the lifetime boundary this fixture is
 	// inspected through, so it is registered without a second owner.
 	require.NoError(t, engine.Close())

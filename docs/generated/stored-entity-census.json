@@ -122,6 +122,11 @@
       "writes": 1
     },
     {
+      "space": "prefixMVCCMeta+\"wal-v4-msgpack-upgrade-pending\"",
+      "class": "store-metadata",
+      "writes": 2
+    },
+    {
       "space": "prefixMVCCMeta+\"wal-v4-upgrade-pending\"",
       "class": "store-metadata",
       "writes": 2
@@ -2247,11 +2252,25 @@
       "where": "pkg/storage.BadgerEngine.persistPropertyIdentityLocked$1 pkg/storage/wal_property_source.go:99"
     },
     {
+      "space": "prefixMVCCMeta+\"wal-v4-msgpack-upgrade-pending\"",
+      "class": "store-metadata",
+      "origin": "pkg/storage/wal_v4_directory_migration.go:378",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:378",
+      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen -"
+    },
+    {
       "space": "prefixMVCCMeta+\"wal-v4-upgrade-pending\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_v4_directory_migration.go:323",
-      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:323",
-      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:323"
+      "origin": "pkg/storage/wal_v4_directory_migration.go:378",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:378",
+      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen -"
+    },
+    {
+      "space": "prefixMVCCMeta+\"wal-v4-msgpack-upgrade-pending\"",
+      "class": "store-metadata",
+      "origin": "pkg/storage/wal_v4_directory_migration.go:402",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:402",
+      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:402"
     }
   ],
   "fieldWrites": [
@@ -2433,13 +2452,13 @@
       "field": "pkg/multidb.databaseLimitChecker.activeQueries",
       "class": "query concurrency",
       "func": "pkg/multidb.databaseLimitChecker.CheckQueryLimits",
-      "pos": "pkg/multidb/enforcement.go:327"
+      "pos": "pkg/multidb/enforcement.go:322"
     },
     {
       "field": "pkg/multidb.databaseLimitChecker.activeQueries",
       "class": "query concurrency",
       "func": "pkg/multidb.databaseLimitChecker.CheckQueryLimits$3",
-      "pos": "pkg/multidb/enforcement.go:345"
+      "pos": "pkg/multidb/enforcement.go:340"
     },
     {
       "field": "pkg/multidb.reservedUsage.bytes",
@@ -2853,19 +2872,19 @@
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:145"
+      "pos": "pkg/storage/migration_runner.go:156"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:213"
+      "pos": "pkg/storage/migration_runner.go:224"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
       "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:282"
+      "pos": "pkg/storage/migration_runner.go:293"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
@@ -2895,7 +2914,7 @@
       "field": "pkg/storage.BadgerTransaction.commitMode",
       "class": "transaction producer durability and ACK policy",
       "func": "pkg/storage.BeginEntityTransaction",
-      "pos": "pkg/storage/accepted_entity_envelope.go:215"
+      "pos": "pkg/storage/accepted_entity_envelope.go:130"
     },
     {
       "field": "pkg/storage.BadgerTransaction.commitMode",
@@ -4206,6 +4225,30 @@
       "pos": "pkg/storage/remote_parameters.go:777"
     },
     {
+      "field": "pkg/storage.semanticTransactionChange.Type",
+      "class": "semantic transaction serialization kind",
+      "func": "pkg/storage.EncodeEntityTransaction",
+      "pos": "pkg/storage/semantic_transaction_wire.go:165"
+    },
+    {
+      "field": "pkg/storage.semanticTransactionChange.Type",
+      "class": "semantic transaction serialization kind",
+      "func": "pkg/storage.EncodeEntityTransaction",
+      "pos": "pkg/storage/semantic_transaction_wire.go:167"
+    },
+    {
+      "field": "pkg/storage.semanticTransactionChange.Type",
+      "class": "semantic transaction serialization kind",
+      "func": "pkg/storage.EncodeEntityTransaction",
+      "pos": "pkg/storage/semantic_transaction_wire.go:188"
+    },
+    {
+      "field": "pkg/storage.semanticTransactionChange.Type",
+      "class": "semantic transaction serialization kind",
+      "func": "pkg/storage.EncodeEntityTransaction",
+      "pos": "pkg/storage/semantic_transaction_wire.go:190"
+    },
+    {
       "field": "pkg/storage.snapshotFrameWriter.scratch",
       "class": "snapshot frame serialization scratch",
       "func": "pkg/storage.snapshotFrameWriter.write",
@@ -4215,7 +4258,7 @@
       "field": "pkg/storage.uniqueConstraintSeenTable.keys",
       "class": "constraint lock request scratch",
       "func": "pkg/storage.SchemaManager.acquireUniqueConstraintCommitLocks",
-      "pos": "pkg/storage/schema_unique_values.go:359"
+      "pos": "pkg/storage/schema_unique_values.go:387"
     }
   ],
   "decisions": [
