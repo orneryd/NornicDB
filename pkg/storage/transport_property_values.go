@@ -222,21 +222,9 @@ type transportUnsigned interface {
 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-func readTransportInteger(dec *msgpack.Decoder) (int64, any, error) {
-	code, err := dec.PeekCode()
-	if err != nil {
-		return 0, nil, err
-	}
-	if !isIntegerCode(code) {
-		return 0, nil, fmt.Errorf("transport integer has invalid MessagePack code %x", code)
-	}
-	var signed int64
-	wide, err := decodeStoredInteger(dec, code, &signed)
-	return signed, wide, err
-}
-
 func decodeTransportSigned[T transportSigned](dec *msgpack.Decoder) (T, error) {
-	signed, wide, err := readTransportInteger(dec)
+	var signed int64
+	wide, err := decodePropertyInteger(dec, uninspectedIntegerCode, &signed)
 	if err != nil {
 		return 0, err
 	}
@@ -248,7 +236,8 @@ func decodeTransportSigned[T transportSigned](dec *msgpack.Decoder) (T, error) {
 }
 
 func decodeTransportUnsigned[T transportUnsigned](dec *msgpack.Decoder) (T, error) {
-	signed, wide, err := readTransportInteger(dec)
+	var signed int64
+	wide, err := decodePropertyInteger(dec, uninspectedIntegerCode, &signed)
 	if err != nil {
 		return 0, err
 	}

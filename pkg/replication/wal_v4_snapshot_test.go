@@ -69,7 +69,7 @@ func (shortSnapshotWriter) Write(data []byte) (int, error) { return len(data) - 
 func TestV4ReplicationSnapshotConversionRejectsInvalidInputAndShortWrites(t *testing.T) {
 	var valid bytes.Buffer
 	require.NoError(t, gob.NewEncoder(&valid).Encode(snapshotPayload{WALPosition: 1}))
-	for _, input := range [][]byte{[]byte("invalid"), append(bytes.Clone(valid.Bytes()), 0xff)} {
+	for _, input := range [][]byte{[]byte("invalid"), append(bytes.Clone(valid.Bytes()), 0xff), append(bytes.Clone(valid.Bytes()), 0)} {
 		var output bytes.Buffer
 		err := TranscodeV4ReplicationSnapshot(bytes.NewReader(input), &output)
 		require.Error(t, err)

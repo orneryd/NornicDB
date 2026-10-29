@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,7 +13,9 @@ import (
 // TestUniqueKeyLocksAreOwned covers the owner-aware constraint key locks
 // (#961): an owner takes a lock it holds again without waiting, another
 // owner waits until every hold is released, a wait ends with its context,
-// and a wait that would close a cycle fails with ErrDeadlock.
+// a wait that would close a cycle fails with ErrDeadlock, and a release
+// callback that outlives its transaction cannot release a newer owner's
+// locks when the request buffer is reused.
 func TestUniqueKeyLocksAreOwned(t *testing.T) {
 	sm := NewSchemaManager()
 	a := uniqueConstraintLockKey{label: "L", property: "k", value: "a"}
@@ -97,6 +100,41 @@ func TestUniqueKeyLocksAreOwned(t *testing.T) {
 		require.Empty(t, sm.uniqueConstraintCommitLocks)
 		require.Empty(t, sm.uniqueConstraintLockWaits)
 		sm.uniqueConstraintCommitLocksMu.Unlock()
+	})
+
+	// A release callback can outlive its transaction. Calling it again after
+	// the request buffer is reused must never release a newer owner's locks.
+	t.Run("reused request buffer preserves ownership", func(t *testing.T) {
+		reuse := NewSchemaManager()
+		keys := make([]uniqueConstraintLockKey, 100)
+		for i := range keys {
+			keys[i] = uniqueConstraintLockKey{entityKind: 1, entityID: fmt.Sprintf("db:node-%d", i)}
+		}
+		first, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "first", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first()
+		second, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "second", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first() // Must not release any request subsequently acquired by second.
+		staleCtx, staleCancel := context.WithCancel(context.Background())
+		staleCancel()
+		if release, err := reuse.acquireUniqueConstraintCommitLocks(staleCtx, "third", keys[:1]); !errors.Is(err, context.Canceled) {
+			if release != nil {
+				release()
+			}
+			second()
+			t.Fatalf("third owner acquired an already held key: %v", err)
+		}
+		second()
+		third, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "third", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		third()
 	})
 }
 

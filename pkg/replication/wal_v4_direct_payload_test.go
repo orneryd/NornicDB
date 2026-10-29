@@ -97,3 +97,22 @@ func TestV4ReplicationWALRejectsRetiredAndUnknownCommands(t *testing.T) {
 		require.ErrorContains(t, err, "unsupported historical replication command")
 	}
 }
+
+func TestV4ReplicationWALRejectsTrailingZeroInHistoricalCommands(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kind    CommandType
+		payload any
+	}{
+		{"bulk delete", CmdBulkDeleteNodes, []storage.NodeID{"test:n"}},
+		{"prefix delete", CmdDeleteByPrefix, struct{ Prefix string }{"test:"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := append(historicalGobCommand(t, tc.payload), 0)
+			record, err := json.Marshal(replicationWALRecord{Command: &Command{Type: tc.kind, Data: payload}})
+			require.NoError(t, err)
+			_, err = TranscodeV4WALPayload(5, "replication_command", record)
+			require.ErrorContains(t, err, "trailing historical replication payload")
+		})
+	}
+}

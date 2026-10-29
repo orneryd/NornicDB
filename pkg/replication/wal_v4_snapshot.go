@@ -1,10 +1,11 @@
 package replication
 
 import (
-	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 
+	"github.com/orneryd/nornicdb/internal/gobcodec"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -14,14 +15,12 @@ import (
 // the converted snapshot has been verified. Current snapshot reads do not
 // fall back to the historical gob format.
 func TranscodeV4ReplicationSnapshot(source io.Reader, destination io.Writer) error {
-	decoder := gob.NewDecoder(source)
 	var snapshot storage.ReplicationSnapshot
-	if err := decoder.Decode(&snapshot); err != nil {
+	if err := gobcodec.Decode(source, &snapshot, gobcodec.RejectTrailing); err != nil {
+		if errors.Is(err, gobcodec.ErrTrailing) {
+			return fmt.Errorf("trailing historical replication snapshot data: %w", err)
+		}
 		return fmt.Errorf("decode historical replication snapshot: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("trailing historical replication snapshot data")
 	}
 	data, err := storage.EncodeCommandPayload(snapshot)
 	if err != nil {

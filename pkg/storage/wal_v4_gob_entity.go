@@ -2,12 +2,12 @@ package storage
 
 import (
 	"bytes"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/gobcodec"
 )
 
 const entityTransactionV4GobVersion uint16 = 1
@@ -50,24 +50,9 @@ type v4GobEntityTransactionEnvelope struct {
 	Changes     []v4GobEntityTransactionChange
 }
 
-// decodeV4GobValue is deliberately confined to the V4 upgrade path. It
-// rejects concatenated values so a successful migration accounts for every
-// byte in a historical payload.
-func decodeV4GobValue(data []byte, value any) error {
-	dec := gob.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(value); err != nil {
-		return err
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("trailing historical gob payload")
-	}
-	return nil
-}
-
 func decodeV4Value(data []byte, value any, allowJSON bool) error {
-	err := decodeV4GobValue(data, value)
-	if err != nil && allowJSON {
+	err := gobcodec.Decode(bytes.NewReader(data), value, gobcodec.RejectTrailing)
+	if err != nil && allowJSON && !errors.Is(err, gobcodec.ErrTrailing) {
 		return json.Unmarshal(data, value)
 	}
 	return err
@@ -130,7 +115,11 @@ func decodeV4EntityChange(kind EntityCommandKind, data []byte, allowJSON bool) (
 		}
 	case EntityDeleteNode:
 		var req struct{ NodeID string }
-		if err := decodeV4Value(data, &req, allowJSON); err != nil || req.NodeID == "" {
+		err := decodeV4Value(data, &req, allowJSON)
+		if errors.Is(err, gobcodec.ErrTrailing) && req.NodeID != "" {
+			return op, err
+		}
+		if err != nil || req.NodeID == "" {
 			if !allowJSON {
 				return op, fmt.Errorf("invalid historical node deletion")
 			}
@@ -175,7 +164,7 @@ func TranscodeV4EntityChange(kind EntityCommandKind, data []byte) ([]byte, error
 func decodeV4GobEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operation, error) {
 	var envelope EntityTransactionEnvelope
 	var historical v4GobEntityTransactionEnvelope
-	if err := decodeV4GobValue(data, &historical); err != nil {
+	if err := gobcodec.Decode(bytes.NewReader(data), &historical, gobcodec.RejectTrailing); err != nil {
 		return envelope, nil, err
 	}
 	envelope = EntityTransactionEnvelope{Mode: historical.Mode, Version: historical.Version, Namespace: historical.Namespace, LogicalTxID: historical.LogicalTxID}

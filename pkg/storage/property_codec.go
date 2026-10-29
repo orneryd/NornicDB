@@ -282,7 +282,7 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	// Uint64 above 2^32-1); only a value above MaxInt64 stays uint64.
 	if isIntegerCode(code) {
 		var signed int64
-		overflow, err := decodeStoredInteger(dec, code, &signed)
+		overflow, err := decodePropertyInteger(dec, code, &signed)
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +347,7 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 			if !isIntegerCode(code) {
 				return errTypedArrayMismatch
 			}
-			overflow, err := decodeStoredInteger(dec, code, slot)
+			overflow, err := decodePropertyInteger(dec, code, slot)
 			alternate = overflow
 			if err != nil {
 				return err
@@ -514,10 +514,24 @@ func isIntegerCode(code byte) bool {
 	return isSignedIntegerCode(code) || isUnsignedIntegerCode(code) || msgpcode.IsFixedNum(code)
 }
 
-// decodeStoredInteger writes fitting values to signed without boxing. Only a
-// Uint64 above MaxInt64 returns an alternate value; scalar consumers box their
-// result at the scalar boundary, while homogeneous arrays keep typed slots.
-func decodeStoredInteger(dec *msgpack.Decoder, code byte, signed *int64) (any, error) {
+// An uninspected code uses MessagePack's reserved, never-encoded byte.
+// Stored-value callers already inspected the code and avoid a second peek.
+const uninspectedIntegerCode byte = 0xc1
+
+// decodePropertyInteger is the shared integer reader for stored properties and
+// transport values. Fitting values are written to signed without boxing; only
+// a Uint64 above MaxInt64 returns an alternate value.
+func decodePropertyInteger(dec *msgpack.Decoder, code byte, signed *int64) (any, error) {
+	if code == uninspectedIntegerCode {
+		var err error
+		code, err = dec.PeekCode()
+		if err != nil {
+			return nil, err
+		}
+		if !isIntegerCode(code) {
+			return nil, fmt.Errorf("transport integer has invalid MessagePack code %x", code)
+		}
+	}
 	if code != msgpcode.Uint64 {
 		value, err := dec.DecodeInt64()
 		*signed = value

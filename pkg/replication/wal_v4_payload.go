@@ -2,11 +2,11 @@ package replication
 
 import (
 	"bytes"
-	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 
+	"github.com/orneryd/nornicdb/internal/gobcodec"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -100,13 +100,12 @@ func TranscodeV4WALPayload(_ uint8, operation storage.OperationType, payload []b
 // Historical replication commands could be gob or JSON. This decoder is
 // never used by current replication traffic or current WAL replay.
 func decodeV4ReplicationValue(data []byte, value any) error {
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(value); err == nil {
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			return fmt.Errorf("trailing historical replication payload")
-		}
+	err := gobcodec.Decode(bytes.NewReader(data), value, gobcodec.RejectTrailing)
+	if err == nil {
 		return nil
+	}
+	if errors.Is(err, gobcodec.ErrTrailing) {
+		return fmt.Errorf("trailing historical replication payload: %w", err)
 	}
 	return json.Unmarshal(data, value)
 }

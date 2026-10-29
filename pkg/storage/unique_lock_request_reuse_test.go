@@ -7,41 +7,6 @@ import (
 	"testing"
 )
 
-// A release callback can outlive its transaction. Calling it again after the
-// request buffer is reused must never release a newer owner's locks.
-func TestUniqueLockRequestReusePreservesOwnership(t *testing.T) {
-	schema := NewSchemaManager()
-	keys := make([]uniqueConstraintLockKey, 100)
-	for i := range keys {
-		keys[i] = uniqueConstraintLockKey{entityKind: 1, entityID: fmt.Sprintf("db:node-%d", i)}
-	}
-	first, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "first", keys)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first()
-	second, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "second", keys)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first() // Must not release any request subsequently acquired by second.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if release, err := schema.acquireUniqueConstraintCommitLocks(ctx, "third", keys[:1]); !errors.Is(err, context.Canceled) {
-		if release != nil {
-			release()
-		}
-		second()
-		t.Fatalf("third owner acquired an already held key: %v", err)
-	}
-	second()
-	third, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "third", keys)
-	if err != nil {
-		t.Fatal(err)
-	}
-	third()
-}
-
 // A canceled acquisition must release every registry reference, including
 // requests that were never acquired before the blocked key.
 func TestUniqueLockRequestReuseAfterCanceledAcquisition(t *testing.T) {

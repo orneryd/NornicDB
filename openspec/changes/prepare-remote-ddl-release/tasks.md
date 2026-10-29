@@ -258,3 +258,32 @@ census classifications, including a negative test for unreviewed keys. Focused
 replication/search, quota-matrix, malformed-property, lexical-inventory and
 fixture-inventory tests passed. Full-suite verification and the duplicate
 checker on the corrected integrated tree remain pending.
+
+The corrected MessagePack checkpoint was committed and pushed as
+`35ed741ebb0c213e8f1a3278c495a784d6d631e1` after an uncached
+`GOFLAGS=-count=1 make test` passed 127 packages on tree
+`d0405685eedbba78b1c186273e25711854fa9763`. The unchanged checker reported
+seven reuse candidates on that staged delta; they are inventoried in
+[checker-msgpack-followup.md](checker-msgpack-followup.md). Its graph was at
+release `a9265090a5d7bd8e34932cf8f504765c01aa147e`, not the comparison head,
+and the SIMD header was partially extracted. The maintainer authorized this
+checkpoint with findings inventoried; neither report establishes a checker pass.
+
+Four later isolated seed-only samples on the pushed commit, with local Qwen
+stopped and no Docker containers running, preserved all expected graph counts.
+At 2,000-row batches the 48,000-product/48,000-order payload took 6.891 seconds
+and 5.70 GiB peak RSS graph-only, or 9.278 seconds and 7.40 GiB with search.
+At 4,000-row batches the 96,000-product/96,000-order payload took 15.463 seconds
+and 10.80 GiB, or 20.145 seconds and 12.68 GiB with search. These are single
+samples, with the larger runs profiled, not a statistically established gain;
+the five-second target remains open.
+
+Follow-up changes consolidate several checker candidates and retain focused
+race coverage. Historical WAL and snapshot conversion now reject trailing zero
+bytes that the previous EOF check accepted, while stored-body gob decoding
+keeps its existing permissive framing. The shared reader also preserves the
+stream position on its permissive path. These changes still require an
+integrated suite. The checker passed the subsequent 31-function staged delta
+on tree `8c1ab3d5865e39b105fe16e9d6b0a4c9c8d01118`; it did not reanalyze the
+unchanged findings in the earlier inventories, and the graph/header extraction
+limitations remain.
