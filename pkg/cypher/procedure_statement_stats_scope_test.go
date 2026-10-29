@@ -73,10 +73,12 @@ func TestProcedureStatementStatsNestedIndependentUnits(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nested_units")
 			failure := errors.New("outer batch failed after the inner commit")
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.ownedunits", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(ctx context.Context, _ *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+				// Exercise independently admitted units through their canonical boundary;
+				// the ordinary implicit callback now correctly joins its inherited owner.
 				outerOwner := NewStorageExecutor(store)
-				_, err := outerOwner.executeWithImplicitTransactionCallback(ctx, "CREATE (:PendingStats)", "CREATE (:PendingStats)", func(outerCtx context.Context, outer *StorageExecutor) (*ExecuteResult, error) {
+				_, err := outerOwner.executePeriodicBatch(ctx, "stats-owned-outer", func(outerCtx context.Context, outer *StorageExecutor) (*ExecuteResult, error) {
 					innerOwner := NewStorageExecutor(store)
-					inner, err := innerOwner.executeWithImplicitTransactionCallback(outerCtx, "CREATE (:DurableStats)", "CREATE (:DurableStats)", func(innerCtx context.Context, inner *StorageExecutor) (*ExecuteResult, error) {
+					inner, err := innerOwner.executePeriodicBatch(outerCtx, "stats-owned-inner", func(innerCtx context.Context, inner *StorageExecutor) (*ExecuteResult, error) {
 						return inner.executeUserStatement(innerCtx, "CREATE (:DurableStats {p:1})", nil)
 					})
 					require.NoError(t, err)

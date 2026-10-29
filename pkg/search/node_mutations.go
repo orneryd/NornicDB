@@ -29,13 +29,103 @@ func (s *Service) unlockMutation(lane *sync.Mutex) {
 	lane.Unlock()
 }
 
+// mutationRegistry binds one identity kind to its service and pending generations.
+// It is embedded in Service; pending is accessed only under nodeMutationMu.
+type mutationRegistry[ID ~string] struct {
+	service *Service
+	pending map[ID]uint64
+}
+
+// identityMutation is a comparable reservation naming one identity generation.
+// Its registry keeps service and map ownership outside the copied token.
+type identityMutation[ID ~string] struct {
+	registry   *mutationRegistry[ID]
+	id         ID
+	generation uint64
+}
+
+// owner returns the issuing service, including for an empty reservation.
+func (mutation identityMutation[ID]) owner() *Service {
+	if mutation.registry == nil {
+		return nil
+	}
+	return mutation.registry.service
+}
+
+// reserveIdentityMutation supersedes older work for id. Caller holds nodeMutationMu.
+func reserveIdentityMutation[ID ~string](s *Service, registry *mutationRegistry[ID], id ID) identityMutation[ID] {
+	if registry.pending == nil {
+		*registry = mutationRegistry[ID]{service: s, pending: make(map[ID]uint64)}
+	}
+	return identityMutation[ID]{
+		registry:   registry,
+		id:         id,
+		generation: reserveMutation(&s.mutationReservations, registry.pending, id),
+	}
+}
+
+// retire reports completion or discard of this reservation. A pending newer
+// reservation does not retire its live predecessors, since its discard can
+// restore one; completion retires the whole predecessor chain.
+func (mutation identityMutation[ID]) retire() bool {
+	s := mutation.owner()
+	if s == nil {
+		return true
+	}
+	lane := s.lockMutation(string(mutation.id))
+	defer s.unlockMutation(lane)
+	return mutation.retiredLocked(s)
+}
+
+// retiredLocked is retire for a caller holding the identity lane.
+func (mutation identityMutation[ID]) retiredLocked(s *Service) bool {
+	return mutationRetired(&s.mutationReservations, mutation.registry.pending, mutation.id, mutation.generation)
+}
+
+// current checks a reservation without retiring it.
+func (mutation identityMutation[ID]) current() bool {
+	s := mutation.owner()
+	if s == nil {
+		return false
+	}
+	lane := s.lockMutation(string(mutation.id))
+	defer s.unlockMutation(lane)
+	return mutation.held(s)
+}
+
+// held is current for a caller holding the identity lane.
+func (mutation identityMutation[ID]) held(s *Service) bool {
+	return mutation.owner() == s && mutation.generation != 0 && mutation.registry.pending[mutation.id] == mutation.generation
+}
+
+// discard retires work that could not be prepared for application. It cannot
+// erase a newer reservation for the same identity.
+func (mutation identityMutation[ID]) discard() {
+	s := mutation.owner()
+	if s == nil {
+		return
+	}
+	lane := s.lockMutation(string(mutation.id))
+	defer s.unlockMutation(lane)
+	mutation.discardLocked(s)
+}
+
+// discardLocked is discard for a caller holding the identity lane.
+func (mutation identityMutation[ID]) discardLocked(s *Service) {
+	discardMutation(&s.mutationReservations, mutation.registry.pending, mutation.id, mutation.generation)
+}
+
+// complete retires this reservation and every older one for its identity.
+// Caller holds nodeMutationMu.
+func (mutation identityMutation[ID]) complete(s *Service) {
+	completeMutation(&s.mutationReservations, mutation.registry.pending, mutation.id)
+}
+
 // NodeMutation is an opaque reservation for a node's next index mutation.
 // Keep the reservation with deferred work, including work already drained from
 // a queue. It belongs only to the service that issued it.
 type NodeMutation struct {
-	service    *Service
-	nodeID     storage.NodeID
-	generation uint64
+	mutation identityMutation[storage.NodeID]
 }
 
 // ReserveNodeMutation supersedes older work for this node. Reservation and
@@ -44,11 +134,7 @@ type NodeMutation struct {
 func (s *Service) ReserveNodeMutation(nodeID storage.NodeID) NodeMutation {
 	lane := s.lockMutation(string(nodeID))
 	defer s.unlockMutation(lane)
-	if s.pendingNodeMutations == nil {
-		s.pendingNodeMutations = make(map[storage.NodeID]uint64)
-	}
-	generation := reserveMutation(&s.mutationReservations, s.pendingNodeMutations, nodeID)
-	return NodeMutation{service: s, nodeID: nodeID, generation: generation}
+	return NodeMutation{mutation: reserveIdentityMutation(s, &s.nodeMutations, nodeID)}
 }
 
 // RefreshNode makes the node's index entries match storage: indexed while it
@@ -67,67 +153,30 @@ func (s *Service) RefreshNode(nodeID storage.NodeID) error {
 // this read misses commits later and reserves a newer refresh of its own,
 // which makes this one a no-op.
 func (s *Service) RefreshNodeWithMutation(mutation NodeMutation) error {
-	if mutation.service != s || s.nodeMutationRetired(mutation) {
+	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	node, err := s.engine.GetNode(mutation.nodeID)
+	node, err := s.engine.GetNode(mutation.mutation.id)
 	if errors.Is(err, storage.ErrNotFound) {
-		return s.RemoveNodeWithMutation(mutation)
+		return s.applyReservedNodeRemoval(mutation)
 	}
 	if err != nil {
 		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 		return err
 	}
-	return s.IndexNodeWithMutation(node, mutation)
-}
-
-// nodeMutationRetired reports completion or discard of this reservation. A
-// pending newer reservation does not retire its live predecessors, since its
-// discard can restore one. Completion retires the whole predecessor chain.
-func (s *Service) nodeMutationRetired(mutation NodeMutation) bool {
-	lane := s.lockMutation(string(mutation.nodeID))
-	defer s.unlockMutation(lane)
-	return mutationRetired(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID, mutation.generation)
-}
-
-// applyReservedIndexMutation completes one node or relationship reservation
-// while retaining the identity lane over its index application. pending names
-// the service's map field so it is read only under nodeMutationMu.
-func applyReservedIndexMutation[ID ~string](s, owner *Service, id ID, generation uint64, pending *map[ID]uint64, apply func() error) error {
-	lane := s.lockMutation(string(id))
-	if owner != s || generation == 0 || (*pending)[id] != generation {
-		s.unlockMutation(lane)
-		return nil
-	}
-	s.nodeMutationMu.Unlock()
-	defer func() {
-		s.nodeMutationMu.Lock()
-		completeMutation(&s.mutationReservations, *pending, id)
-		s.unlockMutation(lane)
-	}()
-	return apply()
-}
-
-func (s *Service) nodeMutationCurrentLocked(mutation NodeMutation) bool {
-	return mutation.service == s && mutation.generation != 0 && s.pendingNodeMutations[mutation.nodeID] == mutation.generation
+	return s.applyReservedNodeIndex(node, mutation)
 }
 
 // DiscardNodeMutation retires work that could not be prepared for application.
 // It cannot erase a newer reservation for the same node.
 func (s *Service) DiscardNodeMutation(mutation NodeMutation) {
-	lane := s.lockMutation(string(mutation.nodeID))
-	defer s.unlockMutation(lane)
-	if mutation.service == s {
-		discardMutation(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID, mutation.generation)
-	}
+	mutation.mutation.discard()
 }
 
 // EdgeMutation is NodeMutation for a relationship's vector and relationship
 // search entries.
 type EdgeMutation struct {
-	service    *Service
-	edgeID     storage.EdgeID
-	generation uint64
+	mutation identityMutation[storage.EdgeID]
 }
 
 // ReserveEdgeMutation supersedes older work for this relationship. Generations
@@ -135,11 +184,7 @@ type EdgeMutation struct {
 func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID) EdgeMutation {
 	lane := s.lockMutation(string(edgeID))
 	defer s.unlockMutation(lane)
-	if s.pendingEdgeMutations == nil {
-		s.pendingEdgeMutations = make(map[storage.EdgeID]uint64)
-	}
-	generation := reserveMutation(&s.mutationReservations, s.pendingEdgeMutations, edgeID)
-	return EdgeMutation{service: s, edgeID: edgeID, generation: generation}
+	return EdgeMutation{mutation: reserveIdentityMutation(s, &s.edgeMutations, edgeID)}
 }
 
 // RefreshEdge makes the relationship's index entries match storage, as
@@ -154,39 +199,18 @@ func (s *Service) RefreshEdge(edgeID storage.EdgeID) error {
 // RefreshEdgeWithMutation applies a relationship refresh reserved earlier;
 // storage is read after the reservation, as in RefreshNodeWithMutation.
 func (s *Service) RefreshEdgeWithMutation(mutation EdgeMutation) error {
-	if mutation.service != s || s.edgeMutationRetired(mutation) {
+	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	edge, err := s.engine.GetEdge(mutation.edgeID)
+	edge, err := s.engine.GetEdge(mutation.mutation.id)
 	if errors.Is(err, storage.ErrNotFound) {
-		return s.removeEdgeWithMutation(mutation)
+		return s.applyReservedEdgeRemoval(mutation)
 	}
 	if err != nil {
 		s.retryRefresh(RefreshRetry{Edge: mutation}, err)
 		return err
 	}
-	return s.indexEdgeWithMutation(edge, mutation)
-}
-
-// edgeMutationRetired is nodeMutationRetired for a relationship.
-func (s *Service) edgeMutationRetired(mutation EdgeMutation) bool {
-	lane := s.lockMutation(string(mutation.edgeID))
-	defer s.unlockMutation(lane)
-	return mutationRetired(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID, mutation.generation)
-}
-
-func (s *Service) edgeMutationCurrentLocked(mutation EdgeMutation) bool {
-	return mutation.service == s && mutation.generation != 0 && s.pendingEdgeMutations[mutation.edgeID] == mutation.generation
-}
-
-// current checks a relationship's reservation without retiring it: the
-// relationship-search part of a write is installed ahead of its vector part,
-// which retires the reservation.
-func (mutation EdgeMutation) current() bool {
-	s := mutation.service
-	lane := s.lockMutation(string(mutation.edgeID))
-	defer s.unlockMutation(lane)
-	return s.edgeMutationCurrentLocked(mutation)
+	return s.applyReservedEdgeIndex(edge, mutation)
 }
 
 // updateRelationshipWithMutation applies the relationship-search part of a
@@ -197,12 +221,12 @@ func (s *Service) updateRelationshipWithMutation(write deferredIndexWrite, mutat
 	if s.relationshipSearch() == nil {
 		return
 	}
-	write.valid = mutation.current
+	write.valid = mutation.mutation.current
 	if queued, _, _ := s.queueBuildWrite(write); queued {
 		return
 	}
-	lane := s.lockMutation(string(mutation.edgeID))
-	if !s.edgeMutationCurrentLocked(mutation) {
+	lane := s.lockMutation(string(mutation.mutation.id))
+	if !mutation.mutation.held(s) {
 		s.unlockMutation(lane)
 		return
 	}
@@ -211,23 +235,40 @@ func (s *Service) updateRelationshipWithMutation(write deferredIndexWrite, mutat
 	s.updateRelationshipNow(write)
 }
 
-func (s *Service) discardEdgeMutation(mutation EdgeMutation) {
-	lane := s.lockMutation(string(mutation.edgeID))
-	defer s.unlockMutation(lane)
-	if mutation.service == s {
-		discardMutation(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID, mutation.generation)
-	}
-}
-
 // claimReservedIndexMutation is the build installer's shared node/relationship
 // claim. Live writes queue behind the build, so completing this reservation and
 // installing its write form the build's single ordered operation.
-func claimReservedIndexMutation[ID ~string](s *Service, pending *map[ID]uint64, id ID, generation uint64) bool {
-	lane := s.lockMutation(string(id))
-	defer s.unlockMutation(lane)
-	if generation == 0 || (*pending)[id] != generation {
+func claimReservedIndexMutation[ID ~string](mutation identityMutation[ID]) bool {
+	s := mutation.owner()
+	if s == nil || mutation.generation == 0 {
 		return false
 	}
-	completeMutation(&s.mutationReservations, *pending, id)
+	lane := s.lockMutation(string(mutation.id))
+	defer s.unlockMutation(lane)
+	if mutation.registry.pending[mutation.id] != mutation.generation {
+		return false
+	}
+	mutation.complete(s)
 	return true
+}
+
+// applyReservedIndexMutation completes one node or relationship reservation
+// while retaining the identity lane over its index application.
+func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply func() error) error {
+	s := mutation.owner()
+	if s == nil || mutation.generation == 0 {
+		return nil
+	}
+	lane := s.lockMutation(string(mutation.id))
+	if mutation.registry.pending[mutation.id] != mutation.generation {
+		s.unlockMutation(lane)
+		return nil
+	}
+	s.nodeMutationMu.Unlock()
+	defer func() {
+		s.nodeMutationMu.Lock()
+		mutation.complete(s)
+		s.unlockMutation(lane)
+	}()
+	return apply()
 }

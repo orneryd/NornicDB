@@ -21,13 +21,13 @@ import (
 // capturesChanges reports whether the executor's database captures changes.
 func (e *StorageExecutor) capturesChanges() bool {
 	capture, ok := storage.ChangeCaptureOf(e.storage)
-	return ok && capture.ChangeCapture(e.currentDatabaseName()) != storage.ChangeCaptureOff
+	return ok && capture.ChangeCapture(e.databaseName()) != storage.ChangeCaptureOff
 }
 
 // changeCapture returns the executor's database and its change-capturing
 // engine; Neo4j's Disabled error when the database doesn't capture changes.
 func (e *StorageExecutor) changeCapture() (storage.ChangeCaptureEngine, string, error) {
-	database := e.currentDatabaseName()
+	database := e.databaseName()
 	capture, ok := storage.ChangeCaptureOf(e.storage)
 	if !ok || capture.ChangeCapture(database) == storage.ChangeCaptureOff {
 		return nil, database, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.Disabled", "Disabled",

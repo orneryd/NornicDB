@@ -534,7 +534,7 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 	// An auto-commit transaction and its statement start together: one
 	// clock reading for both.
 	started := time.Now()
-	runningTransactions.register(ctx, tx, e.currentDatabaseName(), started)
+	runningTransactions.register(ctx, tx, e.databaseName(), started)
 	e.beginTransactionMemory(tx, &statement.statementContext)
 	tx.startQuery(query, &statement.statementContext, started)
 	return &statement.statementContext, runningStatement{tx: tx, statement: &statement.statementContext, autoCommit: true}, nil

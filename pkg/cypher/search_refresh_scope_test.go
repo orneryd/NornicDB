@@ -41,8 +41,14 @@ func TestCypherRefreshAfterCommitResolvesServiceOnce(t *testing.T) {
 }
 
 func TestCypherRefreshDefersTransactionMutations(t *testing.T) {
-	var tx transactionStorageWrapper
-	executor := &StorageExecutor{storage: &tx, searchService: &search.Service{}}
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	transaction, err := base.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transaction.Rollback() })
+	tx := transactionStorageWrapper{tx: transaction, underlying: store, namespace: "test", separator: ":"}
+	executor := NewStorageExecutor(&tx)
+	executor.SetSearchService(&search.Service{})
 	var notifications []string
 	executor.onNodeMutated = func(id string) { notifications = append(notifications, id) }
 	executor.notifyNodeMutated("node")

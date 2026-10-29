@@ -158,65 +158,95 @@ type nonHeaderEngine struct{ Engine }
 // Header listing skips entries it can't resolve and answers an entry without
 // a usable value from the cached or stored record.
 func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
-	eng := newTestEngine(t)
-	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
-		require.NoError(t, err)
+	for _, transactional := range []bool{false, true} {
+		t.Run(map[bool]string{false: "engine", true: "transaction"}[transactional], func(t *testing.T) {
+			eng := newTestEngine(t)
+			for _, id := range []NodeID{"test:a", "test:b"} {
+				_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+				require.NoError(t, err)
+			}
+			if !transactional {
+				for _, id := range []EdgeID{"test:cached", "test:gone"} {
+					require.NoError(t, eng.CreateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+				}
+			}
+			require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+			aNum, _ := eng.idDict.lookupNodeNumID("test:a")
+			bNum, _ := eng.idDict.lookupNodeNumID("test:b")
+			oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
+			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+				if !transactional {
+					for _, id := range []EdgeID{"test:cached", "test:gone"} {
+						num, _ := eng.idDict.lookupEdgeNumID(id)
+						if err := txn.Set(outgoingIndexKey(aNum, num), []byte{}); err != nil {
+							return err
+						}
+					}
+					if err := txn.Delete(edgeKey("test:gone")); err != nil {
+						return err
+					}
+				}
+				// Both readers must resolve the same malformed key, unknown edge and
+				// unknown endpoint. The last one falls back to the valid edge record.
+				if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
+					return err
+				}
+				if err := txn.Set(outgoingIndexKey(aNum, 1<<40), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "K"}, aNum, bNum, 0)); err != nil {
+					return err
+				}
+				return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
+			}))
+			if transactional {
+				tx, err := eng.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.SetNamespace("test"))
+				headers, answered, err := tx.OutgoingEdgeHeaders("test:a")
+				require.NoError(t, err)
+				require.True(t, answered)
+				require.Equal(t, []string{"test:odd:K:test:a->test:b"}, headerSummary(headers))
+				headers, answered, err = tx.OutgoingEdgeHeaders("test:missing")
+				require.NoError(t, err)
+				require.True(t, answered)
+				require.Empty(t, headers)
+				require.NoError(t, tx.Rollback())
+			}
+			// Keep corruption after the first transaction's rollback. A fresh native
+			// snapshot and the engine-current path must both reject the bad record.
+			require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
+			corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
+			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+				if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
+					return err
+				}
+				return txn.Set(outgoingIndexKey(aNum, corruptNum), []byte{})
+			}))
+			eng.edgeCacheMu.Lock()
+			clear(eng.edgeCache)
+			eng.edgeCacheMu.Unlock()
+			var reader EdgeHeaderReader = eng
+			if transactional {
+				tx, err := eng.BeginTransaction()
+				require.NoError(t, err)
+				defer func() { _ = tx.Rollback() }()
+				require.NoError(t, tx.SetNamespace("test"))
+				_, fullErr := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
+				require.Error(t, fullErr)
+				reader = tx
+			} else {
+				eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
+			}
+			_, answered, err := reader.OutgoingEdgeHeaders("test:a")
+			require.Error(t, err)
+			if !transactional {
+				require.True(t, answered)
+				require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error { return txn.Delete(edgeKey("test:corrupt")) }))
+				out, answered, err := reader.OutgoingEdgeHeaders("test:a")
+				require.NoError(t, err)
+				require.True(t, answered)
+				require.Equal(t, []string{"test:cached:K:test:a->test:b", "test:odd:K:test:a->test:b"}, headerSummary(out))
+			}
+		})
 	}
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:gone", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
-	bNum, _ := eng.idDict.lookupNodeNumID("test:b")
-	cachedNum, _ := eng.idDict.lookupEdgeNumID("test:cached")
-	goneNum, _ := eng.idDict.lookupEdgeNumID("test:gone")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		// No value, record in the edge cache.
-		if err := txn.Set(outgoingIndexKey(aNum, cachedNum), []byte{}); err != nil {
-			return err
-		}
-		// No value, record gone.
-		if err := txn.Set(outgoingIndexKey(aNum, goneNum), []byte{}); err != nil {
-			return err
-		}
-		if err := txn.Delete(edgeKey("test:gone")); err != nil {
-			return err
-		}
-		// A malformed key and an unknown relationship.
-		if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
-			return err
-		}
-		return txn.Set(outgoingIndexKey(aNum, 1<<40), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "K"}, aNum, bNum, 0))
-	}))
-	// A relationship with an unreadable record and no value fails the read.
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
-			return err
-		}
-		return txn.Set(outgoingIndexKey(aNum, corruptNum), []byte{})
-	}))
-	// A value naming an endpoint the dictionary doesn't know is answered
-	// from the record.
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
-	}))
-	eng.edgeCacheMu.Lock()
-	clear(eng.edgeCache)
-	eng.edgeCacheMu.Unlock()
-	eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
-	out, answered, err := eng.OutgoingEdgeHeaders("test:a")
-	require.Error(t, err)
-	require.True(t, answered)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(edgeKey("test:corrupt"))
-	}))
-	out, answered, err = eng.OutgoingEdgeHeaders("test:a")
-	require.NoError(t, err)
-	require.True(t, answered)
-	require.Equal(t, []string{"test:cached:K:test:a->test:b", "test:odd:K:test:a->test:b"}, headerSummary(out))
 }
 
 // A record not in the compact format gives an empty adjacency value, and

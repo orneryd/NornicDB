@@ -407,7 +407,9 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 						if (ending == "commit" && (!ok || failed)) || (ending == "rollback" && !failed) || !correct || encrypted {
 							t.Errorf("configured credential did not authenticate the full remote workflow")
 						}
-						investigationAssertHTTPWorkflow(t, target.wire, target.label, ending)
+						// Remote READ participants release their session by rollback, even
+						// when the caller successfully commits its read-only statement.
+						investigationAssertHTTPWorkflow(t, target.wire, target.label, "rollback")
 					})
 				}
 			}
@@ -425,7 +427,7 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 						if !correct || encrypted {
 							t.Error("explicit transaction credentials wrong")
 						}
-						investigationAssertHTTPWorkflow(t, target.wire, target.label, ending)
+						investigationAssertHTTPWorkflow(t, target.wire, target.label, "rollback")
 					})
 				}
 			}
@@ -528,11 +530,17 @@ func investigationAssertHTTPWorkflow(t *testing.T, wire *investigationWire, tran
 		if strings.HasPrefix(event, "POST /db/nornic/tx/") && !strings.Contains(event, "/commit ") {
 			queried = true
 		}
-		if ending == "commit" && strings.Contains(event, "/commit ") {
+		// Catalog preflight reads may use /tx/commit. Only this opened
+		// transaction's ID-bearing terminal request proves its completion.
+		transactionCommit := strings.HasPrefix(event, "POST /db/nornic/tx/") && !strings.HasPrefix(event, "POST /db/nornic/tx/commit ") && strings.Contains(event, "/commit ")
+		if ending == "commit" && transactionCommit {
 			ended = true
 		}
 		if ending == "rollback" && strings.HasPrefix(event, "DELETE ") {
 			ended = true
+		}
+		if ending == "rollback" && transactionCommit {
+			t.Error("rollback workflow unexpectedly sent COMMIT")
 		}
 	}
 	if !opened || !queried || !ended {

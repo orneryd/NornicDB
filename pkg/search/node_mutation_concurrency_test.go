@@ -20,7 +20,7 @@ func TestIndependentSearchMutationReservationsCanProceed(t *testing.T) {
 	defer finish()
 	applyDone := make(chan error, 1)
 	go func() {
-		applyDone <- applyReservedIndexMutation(svc, first.service, first.nodeID, first.generation, &svc.pendingNodeMutations, func() error {
+		applyDone <- applyReservedIndexMutation(first.mutation, func() error {
 			close(entered)
 			<-release
 			return nil

@@ -55,6 +55,14 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	member := e.membership(ctx)
+	if member.storage != nil {
+		ctx = context.WithValue(ctx, ctxKeyTxStorage, member.storage)
+	}
+	if member.statement != nil {
+		ctx = &compositeContext{Context: ctx, statement: member.statement, storage: member.storage}
+	}
+
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
@@ -131,7 +139,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
 	}
-	if err := e.admitTransactionStatement(ctx, cypher); err != nil {
+	if _, err := e.admitTransactionStatement(ctx, cypher); err != nil {
 		return nil, err
 	}
 	routed, err := e.routeAdministrationStatement(ctx, cypher)

@@ -67,7 +67,7 @@ func (e *StorageExecutor) CompositeGraphs() (graphs []string, composite bool) {
 	if !e.sessionIsComposite() {
 		return nil, false
 	}
-	name := e.currentDatabaseName()
+	name := e.databaseName()
 	if e.dbManager != nil {
 		if constituents, err := e.dbManager.GetCompositeConstituents(name); err == nil {
 			for _, raw := range constituents {
@@ -85,52 +85,6 @@ func (e *StorageExecutor) CompositeGraphs() (graphs []string, composite bool) {
 // composite database.
 func (e *StorageExecutor) sessionIsComposite() bool {
 	return isCompositeRoot(e.storage)
-}
-
-func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
-	cloned := NewStorageExecutor(store)
-	cloned.graphIdentityScope = e.graphIdentityScope
-	cloned.ShareStatementCachesFrom(e)
-	cloned.deferFlush = e.deferFlush
-	cloned.ShareEmbedderFrom(e)
-	cloned.sharedExecutor = e.sharedExecutor
-	// Do not propagate the parent's search service to composite engines —
-	// composite search must come from constituent-scoped executors, not
-	// from a parent-namespace-scoped service.
-	if !isCompositeRoot(store) {
-		e.shareSearchFor(cloned, storageDatabaseName(store))
-	}
-	cloned.inferenceManager = e.inferenceManager
-	cloned.onNodeMutated = e.onNodeMutated
-	cloned.inlineEmbeddingTextOptions = e.inlineEmbeddingTextOptions
-	cloned.inlineEmbeddingChunkSize = e.inlineEmbeddingChunkSize
-	cloned.inlineEmbeddingChunkOverlap = e.inlineEmbeddingChunkOverlap
-	cloned.allowLocalAPOCImportFileAccess = e.allowLocalAPOCImportFileAccess
-	cloned.allowLocalAPOCExportFileAccess = e.allowLocalAPOCExportFileAccess
-	cloned.allowRemoteAPOCURLAccess = e.allowRemoteAPOCURLAccess
-	cloned.apocRemoteURLAllowlist = append([]string(nil), e.apocRemoteURLAllowlist...)
-	cloned.apocRemoteHTTPClient = e.apocRemoteHTTPClient
-	cloned.apocRemoteHostResolver = e.apocRemoteHostResolver
-	cloned.apocLocalFileAccessRoot = e.apocLocalFileAccessRoot
-	cloned.defaultEmbeddingDimensions = e.defaultEmbeddingDimensions
-	cloned.dbManager = e.dbManager
-	cloned.vectorRegistry = e.vectorRegistry
-	cloned.vectorIndexSpaces = e.vectorIndexSpaces
-	cloned.txContext = e.txContext
-	cloned.fabricPlanCache = e.fabricPlanCache
-	cloned.hotPathTraceState = e.hotPathTraceState
-
-	e.shellParamsMu.RLock()
-	if len(e.shellParams) > 0 {
-		cloned.shellParams = make(map[string]interface{}, len(e.shellParams))
-		for k, v := range e.shellParams {
-			cloned.shellParams[k] = v
-		}
-	}
-	e.shellParamsMu.RUnlock()
-	cloned.shellParamsByToken = cloneShellParamsByToken(e)
-
-	return cloned
 }
 
 func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (scoped *StorageExecutor, resolved string, retErr error) {
@@ -153,7 +107,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 			if scope == e.statementCacheScope {
 				return
 			}
-			scoped = e.cloneForStorage(e.storage)
+			scoped = e.cloneWithStorage(e.storage, selectedDatabaseStorage)
 		}
 		scoped.statementCacheScope = scope
 	}()
@@ -168,7 +122,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 		if dotIdx := strings.IndexByte(targetDB, '.'); dotIdx > 0 {
 			compositeName := targetDB[:dotIdx]
 			if e.dbManager.IsCompositeDatabase(compositeName) {
-				currentDB := e.currentDatabaseName()
+				currentDB := e.databaseName()
 				if currentDB != "" && e.dbManager.IsCompositeDatabase(currentDB) && !cyphertext.NameEqualFold(currentDB, compositeName) {
 					return nil, "", localizedError(localization.CypherCommandRoutingUseConstituentOutsideComposite(targetDB, compositeName, currentDB), nil)
 				}
@@ -192,7 +146,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 	}
 
 	// The executor's own database runs here.
-	if cyphertext.NameEqualFold(e.currentDatabaseName(), targetDB) {
+	if cyphertext.NameEqualFold(e.databaseName(), targetDB) {
 		return e, targetDB, nil
 	}
 	if e.dbManager != nil {
@@ -204,7 +158,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 		if !ok {
 			return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(targetDB), nil)
 		}
-		return e.cloneForStorage(store), targetDB, nil
+		return e.cloneWithStorage(store, selectedDatabaseStorage), targetDB, nil
 	}
 
 	// Without a database manager (embedded), a namespaced store switches
@@ -213,7 +167,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
-	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
+	return e.cloneWithStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB), selectedDatabaseStorage), targetDB, nil
 }
 
 // TransactionDatabases resolves database names for TransactionDatabaseError:
@@ -273,14 +227,7 @@ func sameTransactionDatabase(databases TransactionDatabases, txDB, target string
 // statement it is nested in (an implicit transaction's storage wrapper
 // carried on ctx), or the transaction pinned to this executor's storage view.
 func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
-	if e.txContext != nil && e.txContext.active {
-		return true
-	}
-	if _, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); nested {
-		return true
-	}
-	_, scoped := e.storage.(*transactionStorageWrapper)
-	return scoped
+	return e.membership(ctx).owned()
 }
 
 // executeOnDatabase is the one database router: it runs query on database
@@ -332,8 +279,12 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 			return nil, ctx, err
 		}
 	}
+	if statement, ownedCtx := e.compositeStatementOf(ctx); statement != nil {
+		selected, selectedCtx, err := statement.on(ownedCtx, resolvedDB, scopedExec, scopedExec.storage)
+		return selected, withExecutionDatabase(selectedCtx, resolvedDB), err
+	}
 	if scopedExec != e && e.inTransaction(ctx) {
-		if err := TransactionDatabaseError(ctx, e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
+		if err := TransactionDatabaseError(ctx, e.dbManager, e.databaseName(), resolvedDB, query); err != nil {
 			return nil, ctx, err
 		}
 	}
@@ -451,7 +402,7 @@ func systemShowTailError(query string) error {
 // run on this executor's own database (a request's or session's database,
 // not one a USE selects): nil unless that is the system database.
 func (e *StorageExecutor) systemDatabaseWriteError(ctx context.Context, query string) error {
-	database := e.currentDatabaseName()
+	database := e.databaseName()
 	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
 		database = "system"
 	}
@@ -477,7 +428,7 @@ func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToke
 		return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(compositeName), nil)
 	}
 
-	return e.cloneForStorage(engine), compositeName, nil
+	return e.cloneWithStorage(engine, selectedDatabaseStorage), compositeName, nil
 }
 
 // resolveCompositeConstituent resolves USE <composite.alias> to a specific
@@ -504,7 +455,7 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
-	return e.cloneForStorage(constituentEngine), fullName, nil
+	return e.cloneWithStorage(constituentEngine, selectedDatabaseStorage), fullName, nil
 }
 
 // USE token recognition stays with the existing USE owner. Consumers locate

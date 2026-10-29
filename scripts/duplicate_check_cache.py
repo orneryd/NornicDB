@@ -2,19 +2,23 @@
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
 
 def receipt(root, tree, head, config, baseline, extra=()):
     scripts=Path(__file__).resolve().parent
-    files=[scripts/name for name in ('pr_duplicates.py','graphify_local.py','code_intelligence.py','duplicate_check_cache.py')]+list(extra)
+    files=[scripts/name for name in ('pr_duplicates.py','graphify_local.py','code_intelligence.py','duplicate_check_cache.py','duplicate_ownership.py')]+list(extra)
+    files += sorted(p for p in (scripts/'go_owner_bindings').glob('*.go') if not p.name.endswith('_test.go'))
     extractor = Path(os.environ.get('CODE_INTEL_GRAPHIFY', config.get('graphify', '/nonexistent')))
     extractor_identity = (str(extractor), extractor.stat().st_size, extractor.stat().st_mtime_ns) if extractor.is_file() else None
     identity={'tree':tree,'head':head,'config':config,'baseline':baseline,
               'policy_env':{k:v for k,v in os.environ.items() if k.startswith('CODE_INTEL_')},
               'code':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
               'graphify': extractor_identity}
+    compiler = Path(shutil.which('go') or '/nonexistent')
+    identity['go_compiler'] = (str(compiler), compiler.stat().st_size, compiler.stat().st_mtime_ns) if compiler.is_file() else None
     key=hashlib.sha256(json.dumps(identity,sort_keys=True,default=str).encode()).hexdigest()
     raw=subprocess.check_output(['git','-C',str(root),'rev-parse','--git-path','nornic-duplicate-pass.json'],text=True).strip()
     path=Path(raw)

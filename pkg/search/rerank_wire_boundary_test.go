@@ -19,10 +19,10 @@ func TestReviewerEnvelopeBoundary(t *testing.T) {
 		for _, testCase := range reviewerEnvelopeCases(provider) {
 			t.Run(provider.name+"/"+testCase.name, func(t *testing.T) {
 				t.Run("explicit", func(t *testing.T) {
-					assertReviewerExplicitEnvelope(t, provider, testCase)
+					assertReviewerEnvelope(t, provider, testCase, false)
 				})
 				t.Run("node_search", func(t *testing.T) {
-					assertReviewerNodeEnvelope(t, provider, testCase)
+					assertReviewerEnvelope(t, provider, testCase, true)
 				})
 			})
 			observations += 2
@@ -40,10 +40,10 @@ func TestReviewerEveryLLMResponseUsesEnvelopeGrammar(t *testing.T) {
 		t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
 			testCase := reviewerEnvelopeCase{name: body, body: body, valid: false}
 			t.Run("explicit", func(t *testing.T) {
-				assertReviewerExplicitEnvelope(t, provider, testCase)
+				assertReviewerEnvelope(t, provider, testCase, false)
 			})
 			t.Run("node_search", func(t *testing.T) {
-				assertReviewerNodeEnvelope(t, provider, testCase)
+				assertReviewerEnvelope(t, provider, testCase, true)
 			})
 		})
 		observations += 2
@@ -126,35 +126,38 @@ func reviewerEnvelopeCases(provider reviewerBoundaryProvider) []reviewerEnvelope
 	return cases
 }
 
-func assertReviewerExplicitEnvelope(t *testing.T, provider reviewerBoundaryProvider, testCase reviewerEnvelopeCase) {
+// assertReviewerEnvelope owns the shared service lifecycle and exercises each
+// public contract: explicit candidates reject invalid envelopes, while node
+// search returns its original ranking and reports the rerank failure.
+func assertReviewerEnvelope(t *testing.T, provider reviewerBoundaryProvider, testCase reviewerEnvelopeCase, nodeSearch bool) {
 	t.Helper()
-	service := NewService(nil, DefaultVectorDimensions, nil)
+	var engine storage.Engine
+	dimensions := DefaultVectorDimensions
+	if nodeSearch {
+		engine = storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+		dimensions = 2
+	}
+	service := NewService(engine, dimensions, nil)
 	t.Cleanup(func() { _ = service.Close() })
-	service.SetReranker(newReviewerBoundaryReranker(t, provider.name, testCase.body))
 	options := DefaultSearchOptions()
 	options.RerankTopK = 3
-	rows, err := service.RerankCandidates(context.Background(), "q", []RerankCandidate{
-		{ID: "a", Content: "alpha", Score: 0.03},
-		{ID: "b", Content: "beta", Score: 0.02},
-		{ID: "c", Content: "gamma", Score: 0.01},
-	}, options)
-	if testCase.valid {
-		if err != nil {
-			t.Fatal(err)
+	if !nodeSearch {
+		service.SetReranker(newReviewerBoundaryReranker(t, provider.name, testCase.body))
+		rows, err := service.RerankCandidates(context.Background(), "q", []RerankCandidate{
+			{ID: "a", Content: "alpha", Score: 0.03},
+			{ID: "b", Content: "beta", Score: 0.02},
+			{ID: "c", Content: "gamma", Score: 0.01},
+		}, options)
+		if testCase.valid {
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertReviewerResultIDs(t, rows, []string{"c", "a", "b"})
+		} else if err == nil || rows != nil {
+			t.Fatalf("malformed/ambiguous response returned partial success: rows=%+v err=%v", rows, err)
 		}
-		assertReviewerResultIDs(t, rows, []string{"c", "a", "b"})
 		return
 	}
-	if err == nil || rows != nil {
-		t.Fatalf("malformed/ambiguous response returned partial success: rows=%+v err=%v", rows, err)
-	}
-}
-
-func assertReviewerNodeEnvelope(t *testing.T, provider reviewerBoundaryProvider, testCase reviewerEnvelopeCase) {
-	t.Helper()
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-	service := NewService(engine, 2, nil)
-	t.Cleanup(func() { _ = service.Close() })
 	fixtures := []struct {
 		content   string
 		embedding []float32
@@ -175,9 +178,7 @@ func assertReviewerNodeEnvelope(t *testing.T, provider reviewerBoundaryProvider,
 			t.Fatal(err)
 		}
 	}
-	options := DefaultSearchOptions()
 	options.Limit = 3
-	options.RerankTopK = 3
 	options.MinRRFScore = 0
 	baseline, err := service.Search(context.Background(), "query", []float32{1, 0}, options)
 	if err != nil {

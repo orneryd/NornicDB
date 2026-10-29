@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
+  knowledge-policy edits. Composite participant callbacks bind their complete
+  terminal contract together; see the [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
+
 - Go entity commits use typed preparation, publication and encoding requests.
   Replication encodes accepted snapshots directly; public diagnostic operation
   images are detached. See the [transaction migration guide](docs/development/replicated-entity-commits.md#typed-go-admission-and-publication).
@@ -86,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve canonical parse diagnostics for malformed statements under both parser
   modes, including extra UNWIND aliases; standalone validator diagnostics retain
   their API identity.
+- Composite statements claim their sole write database at the first actual
+  storage mutation, so zero-row updates do not block a later write. Readers end
+  before the writer commits; failed cleanup and unknown remote commit outcomes
+  remain distinguishable. Issued transaction storage rejects nested transaction
+  control, and transaction scripts retain bound parameters. No storage-format
+  migration is introduced. See [participant lifecycle](docs/development/fabric-participant-lifecycle.md).
 
 - Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
   administration and system history, matching Neo4j collection behavior.

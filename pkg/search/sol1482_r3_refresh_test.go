@@ -161,8 +161,8 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 								}
 							}
 							svc.nodeMutationMu.Lock()
-							require.Empty(t, svc.pendingNodeMutations)
-							require.Empty(t, svc.pendingEdgeMutations)
+							require.Empty(t, svc.nodeMutations.pending)
+							require.Empty(t, svc.edgeMutations.pending)
 							svc.nodeMutationMu.Unlock()
 						})
 					}

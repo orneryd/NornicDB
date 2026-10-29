@@ -102,7 +102,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		// The first two compactions' segments are covered by the last
 		// snapshot; one is kept, the newest.
 		require.Equal(t, nodeIDRange(5, 5), createdNodeIDs(t, wal.config.Dir))
-		manifest, err := loadWALManifest(wal.config.Dir)
+		manifest, err := accessWALManifest(wal.config.Dir, walReadManifest, nil)
 		require.NoError(t, err)
 		require.Len(t, manifest.Segments, 1)
 	})
@@ -110,7 +110,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 	t.Run("nothing sealed yet keeps nothing to remove", func(t *testing.T) {
 		_, wal := newRetentionWALEngine(t, t.TempDir(), time.Hour, 0)
 		require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
-		manifest, err := loadWALManifest(wal.config.Dir)
+		manifest, err := accessWALManifest(wal.config.Dir, walReadManifest, nil)
 		require.NoError(t, err)
 		require.Empty(t, manifest.Segments)
 	})
@@ -183,7 +183,7 @@ func TestManageSnapshotRejectsUnknownModeWithoutChangingWAL(t *testing.T) {
 	err = wal.rotateSegmentLocked(wal.Sequence())
 	wal.mu.Unlock()
 	require.NoError(t, err)
-	manifest, err := loadWALManifest(dir)
+	manifest, err := accessWALManifest(dir, walReadManifest, nil)
 	require.NoError(t, err)
 	require.Len(t, manifest.Segments, 1)
 	segment := filepath.Join(walSegmentsDir(dir), manifest.Segments[0].Path)

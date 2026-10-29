@@ -8,14 +8,24 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// KnowledgePolicySchema returns the transaction's isolated native schema view.
-// Changes are persisted with the transaction and become visible on commit.
-// For example, view, err := tx.KnowledgePolicySchema() obtains the view for a
-// subsequent view.CreatePromotionPolicy(policy) call; rollback discards it.
-func (tx *BadgerTransaction) KnowledgePolicySchema() (*SchemaManager, error) {
+// Schema returns the transaction's isolated schema for purpose. Ordinary DDL
+// admits its writer before creating the view and cannot mix with entity writes.
+// Knowledge-policy reads claim no writer; persisting a policy change admits it.
+// For example, view, err := tx.Schema(KnowledgePolicyChanges) obtains a view
+// for view.CreatePromotionPolicy; rollback discards its persisted changes.
+// DDL uses tx.Schema(OrdinarySchemaChanges), then StageSchemaChanges and Commit.
+func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	operation := transactionRead
+	switch purpose {
+	case OrdinarySchemaChanges:
+		operation = transactionSchemaWrite
+	case KnowledgePolicyChanges:
+	default:
+		return nil, fmt.Errorf("invalid transaction schema purpose: %d", purpose)
+	}
+	if err := tx.ensureOperationAllowedLocked(operation); err != nil {
 		return nil, err
 	}
 	if tx.knowledgeSchema != nil {
@@ -41,7 +51,12 @@ func (tx *BadgerTransaction) KnowledgePolicySchema() (*SchemaManager, error) {
 	view.SetPersister(func(updated *SchemaDefinition) error {
 		tx.mu.Lock()
 		defer tx.mu.Unlock()
-		if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
+			return err
+		}
+		// The change is admitted before it is marshalled or written, so a
+		// refused admission leaves the view and the transaction unchanged.
+		if err := tx.admitWriteLocked(); err != nil {
 			return err
 		}
 		blob, err := json.Marshal(updated)

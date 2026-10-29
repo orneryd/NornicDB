@@ -6,6 +6,21 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import duplicate_check_cache as c
 class CacheTests(unittest.TestCase):
+ def test_ownership_module_helper_and_compiler_changes_invalidate(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);scripts=root/'scripts';scripts.mkdir();helper=scripts/'go_owner_bindings';helper.mkdir()
+   for name in ('pr_duplicates.py','graphify_local.py','code_intelligence.py','duplicate_check_cache.py','duplicate_ownership.py'):
+    (scripts/name).write_text(name)
+   source=helper/'main.go';source.write_text('package main\n')
+   compiler=root/'go';compiler.write_text('compiler one')
+   with patch.object(c,'__file__',str(scripts/'duplicate_check_cache.py')), patch.object(c.subprocess,'check_output',return_value=str(root/'pass.json')), patch.object(c.shutil,'which',return_value=str(compiler)):
+    path,key=c.receipt(root,'tree','head',{},[{'commit':'baseline'}]);c.record(path,key)
+    source.write_text('package main // changed binding logic\n')
+    _,changed=c.receipt(root,'tree','head',{},[{'commit':'baseline'}]);self.assertFalse(c.passed(path,changed))
+    c.record(path,changed);(scripts/'duplicate_ownership.py').write_text('changed proof rules')
+    _,rules=c.receipt(root,'tree','head',{},[{'commit':'baseline'}]);self.assertFalse(c.passed(path,rules))
+    c.record(path,rules);compiler.write_text('compiler two with a different size')
+    _,toolchain=c.receipt(root,'tree','head',{},[{'commit':'baseline'}]);self.assertFalse(c.passed(path,toolchain))
  def test_pass_only_exact_identity_and_changes_invalidate(self):
   with tempfile.TemporaryDirectory() as tmp, patch.object(c.subprocess,'check_output',return_value=str(Path(tmp)/'receipt.json')):
    root=Path(tmp);config={'repo':'o/r'};baseline=[{'commit':'a'}]

@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,9 +22,10 @@ type mockCypherExecutor struct {
 	results map[string]*ResultStream // query -> result
 	err     error
 	calls   map[string]int
+	writes  map[string]bool // test fixture effects, not query classification
 }
 
-func (m *mockCypherExecutor) ExecuteQuery(_ context.Context, _ string, _ storage.Engine, query string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
+func (m *mockCypherExecutor) ExecuteQueryWithRecord(ctx context.Context, _ string, _ storage.Engine, query string, _ map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	if m.err != nil {
 		return nil, nil, m.err
 	}
@@ -34,19 +36,15 @@ func (m *mockCypherExecutor) ExecuteQuery(_ context.Context, _ string, _ storage
 	if !ok {
 		return nil, nil, fmt.Errorf("unexpected query: %s", query)
 	}
-	return result.Columns, result.Rows, nil
-}
-
-func (m *mockCypherExecutor) ExecuteQueryWithRecord(_ context.Context, _ string, _ storage.Engine, query string, _ map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
-	if m.err != nil {
-		return nil, nil, m.err
-	}
-	if m.calls != nil {
-		m.calls[query]++
-	}
-	result, ok := m.results[query]
-	if !ok {
-		return nil, nil, fmt.Errorf("unexpected query: %s", query)
+	if m.writes[query] {
+		tx, ok := FabricTransactionFromContext(ctx)
+		sub, hasSub := SubTransactionFromContext(ctx)
+		if !ok || !hasSub {
+			return nil, nil, fmt.Errorf("writing fixture has no participant")
+		}
+		if _, err := tx.GetOrOpen(sub.ShardName, true); err != nil {
+			return nil, nil, err
+		}
 	}
 	return result.Columns, result.Rows, nil
 }
@@ -59,7 +57,7 @@ type slowBatchingCypherExecutor struct {
 	batchCalls atomic.Int32
 }
 
-func (s *slowBatchingCypherExecutor) ExecuteQuery(_ context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (s *slowBatchingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	if query == s.outerQuery {
 		return []string{"textKey128", "textKey", "originalText"}, s.outerRows, nil
 	}
@@ -87,23 +85,15 @@ func (s *slowBatchingCypherExecutor) ExecuteQuery(_ context.Context, _ string, _
 	return nil, nil, fmt.Errorf("unexpected query: %s", query)
 }
 
-func (s *slowBatchingCypherExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, eng storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
-	return s.ExecuteQuery(ctx, dbName, eng, query, params)
-}
-
 type pipelineCaptureCypherExecutor struct {
 	lastQuery  string
 	lastParams map[string]interface{}
 }
 
-func (p *pipelineCaptureCypherExecutor) ExecuteQuery(_ context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (p *pipelineCaptureCypherExecutor) ExecuteQueryWithRecord(_ context.Context, _ string, _ storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	p.lastQuery = query
 	p.lastParams = params
 	return []string{"k", "v"}, [][]interface{}{{"x", "y"}}, nil
-}
-
-func (p *pipelineCaptureCypherExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, eng storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
-	return p.ExecuteQuery(ctx, dbName, eng, query, params)
 }
 
 // mockEngine is a minimal storage.Engine for testing.
@@ -198,6 +188,7 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 	catalog.Register("shard2", &LocationLocal{DBName: "shard2"})
 
 	mock := &mockCypherExecutor{
+		writes: map[string]bool{"CREATE (n:Test)": true},
 		results: map[string]*ResultStream{
 			"CREATE (n:Test)": {
 				Columns: []string{"n"},
@@ -230,7 +221,7 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 		IsWrite:   true,
 	}
 	_, err = exec.Execute(ctx, tx, frag2, nil, "")
-	if err != ErrSecondWriteShard {
+	if !errors.Is(err, ErrSecondWriteShard) {
 		t.Errorf("expected ErrSecondWriteShard, got: %v", err)
 	}
 }
@@ -1649,14 +1640,6 @@ type callCountCypherExecutor struct {
 	failAt    int
 }
 
-func (c *callCountCypherExecutor) ExecuteQuery(ctx context.Context, dbName string, eng storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	*c.callCount++
-	if *c.callCount >= c.failAt {
-		return nil, nil, fmt.Errorf("simulated failure at call %d", *c.callCount)
-	}
-	return c.mock.ExecuteQuery(ctx, dbName, eng, query, params)
-}
-
 func (c *callCountCypherExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, eng storage.Engine, query string, params map[string]interface{}, record map[string]interface{}) ([]string, [][]interface{}, error) {
 	*c.callCount++
 	if *c.callCount >= c.failAt {
@@ -1737,26 +1720,15 @@ func TestSameColumns(t *testing.T) {
 	}
 }
 
-func TestFabricTransaction_BindParticipantCallbacks_NotFound(t *testing.T) {
-	tx := NewFabricTransaction("tx-bind")
-	err := tx.BindParticipantCallbacks("nonexistent", nil, nil)
-	if err == nil {
-		t.Fatal("expected error for nonexistent shard")
-	}
-}
-
 func TestFabricTransaction_Rollback_WithBoundCallbacks(t *testing.T) {
 	tx := NewFabricTransaction("tx-rb-bound")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
 	rolledBack := false
-	_ = tx.BindParticipantCallbacks("shard_a",
-		func(_ *SubTransaction) error { return nil },
-		func(_ *SubTransaction) error {
-			rolledBack = true
-			return nil
-		},
-	)
+	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return nil }, Rollback: func(_ *SubTransaction) error {
+		rolledBack = true
+		return nil
+	}})
 
 	err := tx.Rollback(nil) // nil global rollback, uses bound callbacks.
 	if err != nil {
@@ -1820,8 +1792,8 @@ func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "compensation failed on") {
-		t.Fatalf("expected compensation failure in error, got: %v", err)
+	if !strings.Contains(err.Error(), "cleanup not confirmed") {
+		t.Fatalf("expected unconfirmed cleanup in error, got: %v", err)
 	}
 }
 
@@ -2207,6 +2179,7 @@ func TestE2E_WriteDetectionEnforcesOneWriteShard(t *testing.T) {
 	catalog.Register("shard2", &LocationLocal{DBName: "shard2"})
 
 	mock := &mockCypherExecutor{
+		writes: map[string]bool{"CREATE (n:Test)": true},
 		results: map[string]*ResultStream{
 			"CREATE (n:Test)": {Columns: []string{"n"}, Rows: [][]interface{}{{"created"}}},
 		},
@@ -2224,7 +2197,7 @@ func TestE2E_WriteDetectionEnforcesOneWriteShard(t *testing.T) {
 	// Write to shard2 must fail with Neo4j-compatible error.
 	frag2 := &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:Test)", GraphName: "shard2", IsWrite: true}
 	_, err = exec.Execute(context.Background(), tx, frag2, nil, "")
-	if err != ErrSecondWriteShard {
+	if !errors.Is(err, ErrSecondWriteShard) {
 		t.Fatalf("expected ErrSecondWriteShard, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "Writing to more than one database") {

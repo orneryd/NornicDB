@@ -26,7 +26,10 @@ func v4MigrationDirectoryFixture(t *testing.T) (string, string, string, []byte, 
 	active := walActivePath(dir)
 	require.NoError(t, os.WriteFile(segment, oldSegment, 0600))
 	require.NoError(t, os.WriteFile(active, oldActive, 0600))
-	require.NoError(t, writeWALManifest(dir, &WALManifest{Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: name}}}))
+	{
+		_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: name}}})
+		require.NoError(t, manifestErr)
+	}
 	return dir, segment, active, oldSegment, oldActive
 }
 

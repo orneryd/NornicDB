@@ -16,7 +16,7 @@ func TestImportedASInProjectionStatements(t *testing.T) {
 				t.Run(q, func(t *testing.T) {
 					e := newFabricCallRowsExecutor(t)
 					bridge := &cypherFabricExecutor{base: e}
-					cols, rows, err := bridge.executeFragmentQuery(t.Context(), e.cloneForStorage(e.storage), q, nil, map[string]interface{}{"as": int64(7)})
+					cols, rows, err := bridge.executeFragmentQuery(t.Context(), e.cloneWithStorage(e.storage, selectedDatabaseStorage), q, nil, map[string]interface{}{"as": int64(7)})
 					require.NoError(t, err)
 					require.Equal(t, []string{"k"}, cols)
 					require.Equal(t, [][]interface{}{{int64(7)}}, rows)

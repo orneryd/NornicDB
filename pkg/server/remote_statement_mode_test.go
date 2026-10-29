@@ -30,7 +30,7 @@ func TestRemoteDynamicHTTPModePreservesStandardUpdateCounters(t *testing.T) {
 			engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: endpoint.URL, Database: "nornic", AuthToken: token})
 			require.NoError(t, err)
 			defer func() { require.NoError(t, engine.Close()) }()
-			tx, err := engine.BeginCypherTx(context.Background())
+			tx, err := engine.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 			require.NoError(t, err)
 			query := "CALL apoc.cypher.run($body,{}) YIELD value RETURN value"
 			_, _, err = tx.QueryCypher(context.Background(), query, map[string]interface{}{"body": tc.body})
@@ -83,7 +83,7 @@ func TestRemotePeriodicCoordinatorMetadataHTTP(t *testing.T) {
 				engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: endpoint.URL, Database: "nornic", AuthToken: token})
 				require.NoError(t, err)
 				defer engine.Close()
-				tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(context.Background()))
+				tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(context.Background()), storage.RemoteAccessWrite)
 				require.NoError(t, err)
 				defer tx.Rollback(context.Background())
 				if clearMetadata {

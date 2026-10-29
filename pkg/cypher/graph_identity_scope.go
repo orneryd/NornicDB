@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -85,6 +86,23 @@ func (e *StorageExecutor) graphFunctionStorage(database string, fallback storage
 			scope.err = localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(scope.database), nil)
 		}
 	})
+	if scope.err == nil {
+		if statement := membershipOfStorage(e.storage).statement; statement != nil {
+			selected, _, err := statement.on(context.Background(), scope.database, e, scope.engine)
+			if err != nil {
+				return nil, err
+			}
+			return selected.storage, nil
+		}
+	}
+	if scope.err == nil {
+		if member := e.membership(context.Background()); member.storage != nil {
+			if err := TransactionDatabaseError(context.Background(), e.dbManager, storageDatabaseName(fallback), scope.database, "RETURN 1"); err != nil {
+				return nil, err
+			}
+			return member.storage, nil
+		}
+	}
 	return scope.engine, scope.err
 }
 

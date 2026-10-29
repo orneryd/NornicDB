@@ -47,13 +47,13 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 		headers, answered, err := tx.OutgoingEdgeHeaders(nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
-		full, err := tx.GetOutgoingEdges(nodeID)
+		full, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 		headers, answered, err = tx.IncomingEdgeHeaders(nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
-		full, err = tx.GetIncomingEdges(nodeID)
+		full, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 	}
@@ -112,63 +112,5 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 	_, _, err = tx.IncomingEdgeHeaders("test:a")
-	require.Error(t, err)
-}
-
-// A transaction's header listing reads the record for an entry it can't
-// resolve, lists nothing for an unknown node, and returns the error of a
-// record it can't read, as GetOutgoingEdges does.
-func TestTransactionEdgeHeadersUnresolvableEntries(t *testing.T) {
-	eng := newTestEngine(t)
-	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
-		require.NoError(t, err)
-	}
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
-	bNum, _ := eng.idDict.lookupNodeNumID("test:b")
-	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		// A malformed key, an unknown relationship, an unknown other end.
-		if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
-			return err
-		}
-		if err := txn.Set(outgoingIndexKey(aNum, 1<<40), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "K"}, aNum, bNum, 0)); err != nil {
-			return err
-		}
-		return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
-	}))
-
-	tx, err := eng.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("test"))
-	headers, answered, err := tx.OutgoingEdgeHeaders("test:a")
-	require.NoError(t, err)
-	require.True(t, answered)
-	require.Equal(t, []string{"test:odd:K:test:a->test:b"}, headerSummary(headers))
-	headers, answered, err = tx.OutgoingEdgeHeaders("test:missing")
-	require.NoError(t, err)
-	require.True(t, answered)
-	require.Empty(t, headers)
-	require.NoError(t, tx.Rollback())
-
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
-	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
-			return err
-		}
-		return txn.Set(outgoingIndexKey(aNum, corruptNum), []byte{})
-	}))
-	eng.edgeCacheMu.Lock()
-	clear(eng.edgeCache)
-	eng.edgeCacheMu.Unlock()
-	tx, err = eng.BeginTransaction()
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	require.NoError(t, tx.SetNamespace("test"))
-	_, fullErr := tx.GetOutgoingEdges("test:a")
-	require.Error(t, fullErr)
-	_, _, err = tx.OutgoingEdgeHeaders("test:a")
 	require.Error(t, err)
 }

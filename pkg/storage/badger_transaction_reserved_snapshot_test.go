@@ -29,7 +29,7 @@ func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	require.NoError(t, reader.SetNamespace(peer.namespace))
-	candidates, err := reader.GetOutgoingEdges(source)
+	candidates, err := reader.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: source})
 	require.NoError(t, err)
 	require.Len(t, candidates, 1, "unpublished deletion is not yet visible")
 	require.Equal(t, edgeID, candidates[0].ID)

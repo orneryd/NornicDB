@@ -25,10 +25,13 @@ func TestTruncateAfterSnapshotRejectsInvalidManifestWithoutChangingWAL(t *testin
 	before, err := os.ReadFile(walActivePath(dir))
 	require.NoError(t, err)
 	require.NotEmpty(t, before)
-	require.NoError(t, writeWALManifest(dir, &WALManifest{
-		Version:  walManifestVersion,
-		Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: "../outside.wal"}},
-	}))
+	{
+		_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+			Version:  walManifestVersion,
+			Segments: []WALSegment{{FirstSeq: 1, LastSeq: 1, Path: "../outside.wal"}},
+		})
+		require.NoError(t, manifestErr)
+	}
 
 	err = wal.ManageSnapshot(0, WALSnapshotTruncate)
 	require.ErrorContains(t, err, "invalid segment path")
@@ -73,12 +76,12 @@ func TestTruncateAfterSnapshotPreservesUncoveredSegments(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, wal.Close()) })
 	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
 	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 2}))
-	before, err := loadWALManifest(dir)
+	before, err := accessWALManifest(dir, walReadManifest, nil)
 	require.NoError(t, err)
 	require.Len(t, before.Segments, 2)
 
 	require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
-	after, err := loadWALManifest(dir)
+	after, err := accessWALManifest(dir, walReadManifest, nil)
 	require.NoError(t, err)
 	require.Len(t, after.Segments, 1)
 	require.Equal(t, before.Segments[1].Path, after.Segments[0].Path)
@@ -100,7 +103,7 @@ func TestTruncateAfterSnapshotKeepsSegmentSpanningSnapshot(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, wal.Close()) })
 			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
 			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 2}))
-			manifest, err := loadWALManifest(dir)
+			manifest, err := accessWALManifest(dir, walReadManifest, nil)
 			require.NoError(t, err)
 			require.Len(t, manifest.Segments, 1)
 			segment := filepath.Join(walSegmentsDir(dir), manifest.Segments[0].Path)
@@ -109,7 +112,10 @@ func TestTruncateAfterSnapshotKeepsSegmentSpanningSnapshot(t *testing.T) {
 				require.NoError(t, os.Remove(walManifestPath(dir)))
 			case "understated range":
 				manifest.Segments[0].LastSeq = 1
-				require.NoError(t, writeWALManifest(dir, manifest))
+				{
+					_, manifestErr := accessWALManifest(dir, walPublishManifest, manifest)
+					require.NoError(t, manifestErr)
+				}
 			}
 			require.NoError(t, wal.ManageSnapshot(1, WALSnapshotTruncate))
 			require.FileExists(t, segment)
@@ -135,7 +141,7 @@ func TestTruncateAfterSnapshotKeepsSegmentsAcrossReplacementFailures(t *testing.
 			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 2}))
 			cfg.MaxEntries = 0
 			require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 3}))
-			manifest, err := loadWALManifest(dir)
+			manifest, err := accessWALManifest(dir, walReadManifest, nil)
 			require.NoError(t, err)
 			require.Len(t, manifest.Segments, 2)
 			uncovered := filepath.Join(walSegmentsDir(dir), manifest.Segments[1].Path)

@@ -539,7 +539,7 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -949,7 +949,7 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 	}
 	_ = syncDir(segmentDir)
 
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
@@ -979,7 +979,7 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 	sort.Slice(manifest.Segments, func(i, j int) bool {
 		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
 	})
-	if err := writeWALManifest(w.config.Dir, manifest); err != nil {
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
 		return err
 	}
 
@@ -1594,7 +1594,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 	if err != nil {
 		return fmt.Errorf("wal: cannot truncate unreadable active WAL: %w", err)
 	}
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return fmt.Errorf("wal: cannot load segments for truncation: %w", err)
 	}
@@ -1728,7 +1728,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 	if snapshotSeq > manifest.RetiredThrough {
 		manifest.RetiredThrough = snapshotSeq
 	}
-	if err := writeWALManifest(w.config.Dir, manifest); err != nil {
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
 		return fmt.Errorf("wal: failed to publish truncated segments: %w", err)
 	}
 	for _, segment := range coveredSegments {
@@ -1784,7 +1784,7 @@ func (w *WAL) retainSealedSegmentsLocked(snapshotSeq uint64) error {
 		return nil
 	}
 
-	manifest, err := loadWALManifest(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
@@ -1836,7 +1836,7 @@ func (w *WAL) retainSealedSegmentsLocked(snapshotSeq uint64) error {
 		return manifest.Segments[i].FirstSeq < manifest.Segments[j].FirstSeq
 	})
 
-	if err := writeWALManifest(w.config.Dir, manifest); err != nil {
+	if _, err := accessWALManifest(w.config.Dir, walPublishManifest, manifest); err != nil {
 		return err
 	}
 	for _, seg := range candidates {
@@ -2998,7 +2998,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 
 	// Replay WAL entries after snapshot
 	activePath := walActivePath(walDir)
-	manifest, err := loadWALManifest(walDir)
+	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return nil, result, fmt.Errorf("wal: failed to load recovery manifest: %w", err)
 	}

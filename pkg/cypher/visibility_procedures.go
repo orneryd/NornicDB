@@ -53,7 +53,7 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	default:
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityEntityRequired(procedure), nil)
 	}
-	engine := manualSuppressionEngine(e.storage)
+	engine := manualSuppressionEngine(e.getStorage(ctx))
 	if engine == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityUnsupported(procedure), nil)
 	}
@@ -66,10 +66,12 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 		e.InvalidateCommittedWriteCaches()
 		return nil
 	}
-	if e.txContext != nil && e.txContext.active && e.txContext.storageWrapper != nil {
-		// An entity the transaction deleted is gone by then; nothing to do.
-		e.txContext.storageWrapper.schemaCommitActions = append(e.txContext.storageWrapper.schemaCommitActions, func() { _ = run() })
-	} else if err := run(); err != nil {
+	if wrapper := e.membership(ctx).storage; wrapper != nil {
+		if err := wrapper.tx.AdmitWrite(); err != nil {
+			return nil, err
+		}
+	}
+	if err := e.afterCommit(ctx, run); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

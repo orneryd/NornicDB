@@ -1290,7 +1290,7 @@ func shouldUseAcceptedStatusForMutation(resp *TransactionResponse) bool {
 // executeTxStatements runs a request's statements in an explicit
 // transaction, in order, and stops at the first one that fails, as Neo4j
 // does: the statements after it are not run. It reports whether a statement
-// failed; the caller then rolls the transaction back (rollbackFailedTransaction).
+// failed; the caller then rolls the transaction back (rollbackRequestTransaction).
 func (s *Server) executeTxStatements(
 	ctx context.Context,
 	authToken string,
@@ -1514,7 +1514,7 @@ func (s *Server) runOneShotTransaction(
 					Message: "Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)",
 				}}
 			}
-			if rollbackErr := s.txSessions.RollbackAndDelete(ctx, session); rollbackErr != nil {
+			if rollbackErr := s.rollbackRequestTransaction(ctx, session, nil); rollbackErr != nil {
 				return nil, executor, rollbackErr
 			}
 			session = nil
@@ -1527,7 +1527,7 @@ func (s *Server) runOneShotTransaction(
 	}
 	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, run, localize, response) {
 		if session != nil {
-			s.rollbackFailedTransaction(r.Context(), session, response)
+			s.rollbackRequestTransaction(r.Context(), session, response)
 		}
 		return
 	}
@@ -1596,17 +1596,24 @@ func applyResultMetadata(response *TransactionResponse, metadata map[string]inte
 	}
 }
 
-// rollbackFailedTransaction ends an HTTP request's transaction after a
+// rollbackRequestTransaction ends an HTTP request's transaction after a
 // statement in it failed, as Neo4j's HTTP API does: the transaction is rolled
 // back and forgotten, so nothing it wrote is kept, and a later request to it
 // (a statement, commit or rollback) gets
 // Neo.ClientError.Transaction.TransactionNotFound. The response's receipt and
 // optimistic metadata described writes that are now discarded, so they are
 // dropped.
-func (s *Server) rollbackFailedTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
-	_ = s.txSessions.RollbackAndDelete(ctx, session)
-	response.Receipt = nil
-	response.Optimistic = nil
+func (s *Server) rollbackRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) error {
+	err := s.txSessions.RollbackAndDelete(ctx, session)
+	if response != nil {
+		if err != nil {
+			code, message := mapSessionExecError(err)
+			response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+		}
+		response.Receipt = nil
+		response.Optimistic = nil
+	}
+	return err
 }
 
 // transactionExpires formats an explicit transaction's expiry as an HTTP
@@ -1656,7 +1663,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 	if len(req.Statements) > 0 {
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
-			s.rollbackFailedTransaction(r.Context(), txSession, &response)
+			s.rollbackRequestTransaction(r.Context(), txSession, &response)
 		}
 		response.Transaction.Expires = transactionExpires(txSession.Expiration())
 	}
@@ -1681,8 +1688,8 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil {
-		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
-		s.writeNeo4jInvalidTransactionBody(w, r, err)
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
 
@@ -1696,7 +1703,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	}
 
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackFailedTransaction(r.Context(), tx, &response)
+		s.rollbackRequestTransaction(r.Context(), tx, &response)
 	}
 	response.Transaction.Expires = transactionExpires(tx.Expires)
 
@@ -1727,14 +1734,14 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
-		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
-		s.writeNeo4jInvalidTransactionBody(w, r, err)
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
 
 	// Execute optional final statements in transaction context first.
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackFailedTransaction(r.Context(), tx, &response)
+		s.rollbackRequestTransaction(r.Context(), tx, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
 		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
@@ -1758,12 +1765,11 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
-
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 	}
+	s.rollbackRequestTransaction(r.Context(), tx, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
 }

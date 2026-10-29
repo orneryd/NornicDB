@@ -61,9 +61,9 @@ type observedRemoteEngine struct {
 	closes int
 }
 
-func (e *observedRemoteEngine) BeginCypherTx(ctx context.Context) (storage.RemoteCypherTx, error) {
+func (e *observedRemoteEngine) BeginCypherTx(ctx context.Context, mode storage.RemoteAccessMode) (storage.RemoteCypherTx, error) {
 	e.begins++
-	return e.RemoteEngine.BeginCypherTx(ctx)
+	return e.RemoteEngine.BeginCypherTx(ctx, mode)
 }
 
 func (e *observedRemoteEngine) Close() error {
@@ -72,9 +72,13 @@ func (e *observedRemoteEngine) Close() error {
 }
 
 func TestRemoteFactoryDecorators(t *testing.T) {
-	for _, ending := range []string{"commit", "rollback", "early_rollback"} {
+	for _, ending := range []string{"commit", "write_commit", "rollback", "early_rollback"} {
 		t.Run(ending, func(t *testing.T) {
-			commit := ending == "commit"
+			commit := ending == "commit" || ending == "write_commit"
+			mode := storage.RemoteAccessRead
+			if ending == "write_commit" {
+				mode = storage.RemoteAccessWrite
+			}
 			const password = "synthetic-decorator-password-491628"
 			var opens, queries, commits, rollbacks atomic.Int32
 			var remote *httptest.Server
@@ -152,7 +156,7 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 			defer cancelStatement()
 			ctx := WithSubTransaction(WithFabricTransaction(statementCtx, transaction), sub)
 			for query := 0; query < 2; query++ {
-				result, err := executor.Execute(ctx, loc, "RETURN 'decorated-result' AS marker", nil, "", storage.RemoteAccessRead)
+				result, err := executor.Execute(ctx, loc, "RETURN 'decorated-result' AS marker", nil, "", mode)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{"decorated-result"}}, result.Rows)
 			}
@@ -170,7 +174,7 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 			require.Equal(t, 1, wrapped.begins)
 			require.EqualValues(t, 1, opens.Load())
 			require.EqualValues(t, 3, queries.Load())
-			if commit {
+			if ending == "write_commit" {
 				require.EqualValues(t, 1, commits.Load())
 				require.EqualValues(t, 0, rollbacks.Load())
 			} else {

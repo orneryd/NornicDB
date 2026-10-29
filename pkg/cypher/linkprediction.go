@@ -393,7 +393,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		if err != nil {
 			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 		}
-		reader := e.cloneForStorage(view)
+		reader := e.cloneWithStorage(view, selectedDatabaseStorage)
 		graph = built
 		degrees := make(map[storage.NodeID]int)
 		degree = func(node storage.NodeID) int {

@@ -334,7 +334,9 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
 		participant := ParticipantKeyFromLocation(loc)
-		sub, err := tx.GetOrOpen(participant, f.IsWrite)
+		// Opening a participant does not mean it changed anything. Its storage
+		// adapter claims the writer when the first mutation is staged.
+		sub, err := tx.GetOrOpen(participant, false)
 		if err != nil {
 			return nil, nil, ctx, err
 		}

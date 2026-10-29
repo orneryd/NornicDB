@@ -839,12 +839,15 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		requireRecoveryStoresClosed(t)
 
 		dir := t.TempDir()
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version: walManifestVersion,
-			Segments: []WALSegment{
-				{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
-			},
-		}))
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version: walManifestVersion,
+				Segments: []WALSegment{
+					{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
+				},
+			})
+			require.NoError(t, manifestErr)
+		}
 
 		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")

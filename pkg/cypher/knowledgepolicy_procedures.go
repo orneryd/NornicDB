@@ -33,12 +33,12 @@ func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engin
 	}
 	namespace := database
 	if namespace == "" {
-		namespace = e.currentDatabaseName()
+		namespace = e.databaseName()
 	}
 	if err := transaction.SetNamespace(namespace); err != nil {
 		return nil, nil, err
 	}
-	schema, err := transaction.KnowledgePolicySchema()
+	schema, err := transaction.Schema(storage.KnowledgePolicyChanges)
 	return engine, schema, err
 }
 

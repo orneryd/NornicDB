@@ -29,7 +29,7 @@ func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
 	services["nornic"] = search.NewService(storage.NewNamespacedEngine(inner, "nornic"), search.DefaultVectorDimensions, nil)
 	require.Same(t, services["nornic"], exec.search(), "the executor kept the replaced service")
 
-	used := exec.cloneForStorage(storage.NewNamespacedEngine(inner, "tenant"))
+	used := exec.cloneWithStorage(storage.NewNamespacedEngine(inner, "tenant"), selectedDatabaseStorage)
 	require.Same(t, services["tenant"], used.search(), "USE of another database searched the executor's own database")
 	tx := exec.cloneWithStorage(storage.NewNamespacedEngine(inner, "nornic"))
 	require.Same(t, services["nornic"], tx.search())

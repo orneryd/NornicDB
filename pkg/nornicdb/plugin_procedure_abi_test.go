@@ -16,11 +16,21 @@ func TestPluginCanonicalProcedureABI(t *testing.T) {
 	t.Cleanup(cypher.ClearUserProcedures)
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	e := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "plugin_abi"))
+	store := storage.NewNamespacedEngine(base, "plugin_abi")
+	e := cypher.NewStorageExecutor(store)
+	_, err := store.CreateNode(&storage.Node{ID: "committed", Labels: []string{"PluginABI"}})
+	require.NoError(t, err)
+	wantCount := int64(1)
 	type key struct{}
 	ctx := context.WithValue(context.Background(), key{}, "actual context")
 	handler := cypher.ProcedureHandler(func(actual context.Context, exec *cypher.StorageExecutor, query string, args []interface{}) (*cypher.ExecuteResult, error) {
-		require.Same(t, e, exec)
+		// The canonical ABI supplies the statement's typed executor view. A
+		// controller pointer is not a transaction capability: fresh-context
+		// reentry must retain the issued storage and see its pending writes.
+		require.IsType(t, e, exec)
+		observed, err := exec.Execute(context.Background(), "MATCH (n:PluginABI) RETURN count(n)", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{wantCount}}, observed.Rows)
 		require.Equal(t, "actual context", actual.Value(key{}))
 		require.Contains(t, query, "custom.actualContext")
 		return &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{args[0]}}}, nil
@@ -33,6 +43,20 @@ func TestPluginCanonicalProcedureABI(t *testing.T) {
 	require.Error(t, err)
 	_, err = e.Execute(ctx, "CALL custom.actualcontext(7)", nil)
 	require.Error(t, err)
+	_, err = e.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = e.Execute(ctx, "CREATE (:PluginABI)", nil)
+	require.NoError(t, err)
+	wantCount = 2
+	r, err = e.Execute(ctx, "CALL custom.actualContext(7) YIELD value RETURN value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(7)}}, r.Rows)
+	require.True(t, e.HasActiveTransaction())
+	_, err = e.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	observed, err := e.Execute(ctx, "MATCH (n:PluginABI) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, observed.Rows)
 }
 
 type invalidProcedureFixture struct{}

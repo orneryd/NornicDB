@@ -238,10 +238,6 @@ type recordingCypherExecutor struct {
 	databases []string
 }
 
-func (r *recordingCypherExecutor) ExecuteQuery(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	return r.ExecuteQueryWithRecord(ctx, dbName, engine, query, params, nil)
-}
-
 func (r *recordingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, dbName string, _ storage.Engine, _ string, _ map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 	r.databases = append(r.databases, dbName)
 	return []string{"db"}, [][]interface{}{{dbName}}, nil

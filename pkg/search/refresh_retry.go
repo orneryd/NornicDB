@@ -10,22 +10,18 @@ type RefreshRetry struct {
 }
 
 func (r RefreshRetry) Key() string {
-	if r.Node.service != nil {
-		return "n:" + string(r.Node.nodeID)
+	if r.Node.mutation.owner() != nil {
+		return "n:" + string(r.Node.mutation.id)
 	}
-	return "e:" + string(r.Edge.edgeID)
+	return "e:" + string(r.Edge.mutation.id)
 }
 
 func (r RefreshRetry) Current() bool {
-	if s := r.Node.service; s != nil {
-		lane := s.lockMutation(string(r.Node.nodeID))
-		defer s.unlockMutation(lane)
-		return s.nodeMutationCurrentLocked(r.Node)
+	if s := r.Node.mutation.owner(); s != nil {
+		return r.Node.mutation.current()
 	}
-	if s := r.Edge.service; s != nil {
-		lane := s.lockMutation(string(r.Edge.edgeID))
-		defer s.unlockMutation(lane)
-		return s.edgeMutationCurrentLocked(r.Edge)
+	if s := r.Edge.mutation.owner(); s != nil {
+		return r.Edge.mutation.current()
 	}
 	return false
 }
@@ -33,28 +29,28 @@ func (r RefreshRetry) Current() bool {
 // Retired distinguishes completed or discarded work from a live predecessor
 // temporarily superseded by a newer reservation.
 func (r RefreshRetry) Retired() bool {
-	if s := r.Node.service; s != nil {
-		return s.nodeMutationRetired(r.Node)
+	if s := r.Node.mutation.owner(); s != nil {
+		return r.Node.mutation.retire()
 	}
-	if s := r.Edge.service; s != nil {
-		return s.edgeMutationRetired(r.Edge)
+	if s := r.Edge.mutation.owner(); s != nil {
+		return r.Edge.mutation.retire()
 	}
 	return true
 }
 
 // NewerThan compares reservations issued for the same entity by one service.
 func (r RefreshRetry) NewerThan(other RefreshRetry) bool {
-	if r.Node.service != nil {
-		return r.Node.service == other.Node.service && r.Node.nodeID == other.Node.nodeID && r.Node.generation > other.Node.generation
+	if r.Node.mutation.owner() != nil {
+		return r.Node.mutation.owner() == other.Node.mutation.owner() && r.Node.mutation.id == other.Node.mutation.id && r.Node.mutation.generation > other.Node.mutation.generation
 	}
-	return r.Edge.service != nil && r.Edge.service == other.Edge.service && r.Edge.edgeID == other.Edge.edgeID && r.Edge.generation > other.Edge.generation
+	return r.Edge.mutation.owner() != nil && r.Edge.mutation.owner() == other.Edge.mutation.owner() && r.Edge.mutation.id == other.Edge.mutation.id && r.Edge.mutation.generation > other.Edge.mutation.generation
 }
 
 func (r RefreshRetry) Discard() {
-	if s := r.Node.service; s != nil {
-		s.DiscardNodeMutation(r.Node)
-	} else if s := r.Edge.service; s != nil {
-		s.discardEdgeMutation(r.Edge)
+	if s := r.Node.mutation.owner(); s != nil {
+		r.Node.mutation.discard()
+	} else if s := r.Edge.mutation.owner(); s != nil {
+		r.Edge.mutation.discard()
 	}
 }
 
@@ -76,7 +72,7 @@ func (s *Service) SetRefreshRetry(retry RefreshRetryFunc) {
 	}
 	s.SetRefreshRetryOwner(func(work RefreshRetry, err error) {
 		work.Discard()
-		retry(work.Node.nodeID, work.Edge.edgeID, err)
+		retry(work.Node.mutation.id, work.Edge.mutation.id, err)
 	})
 }
 

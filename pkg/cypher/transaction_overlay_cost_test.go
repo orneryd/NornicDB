@@ -25,7 +25,7 @@ func TestTransactionOverlayOutgoingCostIsLocal(t *testing.T) {
 		require.NoError(t, err)
 	}
 	read := func() {
-		edges, err := tx.GetOutgoingEdges("test:isolated")
+		edges, err := tx.ReadEdges(storage.TransactionEdgeRead{Kind: storage.TransactionReadOutgoing, Node: "test:isolated"})
 		if err != nil || len(edges) != 0 {
 			t.Fatalf("isolated node: edges=%d, err=%v", len(edges), err)
 		}

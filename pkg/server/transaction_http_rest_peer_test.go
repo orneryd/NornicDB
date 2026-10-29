@@ -46,7 +46,7 @@ func TestCurrentHTTPPeerPreservesPositionalProvenance(t *testing.T) {
 			defer remote.Close()
 			var rows [][]interface{}
 			if explicit {
-				tx, openErr := remote.BeginCypherTx(context.Background())
+				tx, openErr := remote.BeginCypherTx(context.Background(), storage.RemoteAccessWrite)
 				require.NoError(t, openErr)
 				defer tx.Rollback(context.Background())
 				_, rows, err = tx.QueryCypher(context.Background(), "RETURN v", nil)

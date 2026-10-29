@@ -187,37 +187,50 @@ func TestFabricTransaction_CommitAfterCommit(t *testing.T) {
 	}
 }
 
+// The bound participant callbacks are the transaction's terminal contract:
+// COMMIT runs only the bound commit (never the rollback) and the transaction
+// reports committed, exactly once.
 func TestFabricTransaction_CommitUsesBoundParticipantCallbacks(t *testing.T) {
-	tx := NewFabricTransaction("tx-009b")
-	_, err := tx.GetOrOpen("shard_a", true)
-	if err != nil {
-		t.Fatalf("GetOrOpen failed: %v", err)
-	}
+	recorder := &participantRecorder{order: &[]string{}}
+	fixture := newParticipantCallbacksFixture(t, "tx-009b", []participantShard{{"shard_a", true}}, recorder.callback())
 
-	committed := false
-	rolledBack := false
-	if err := tx.BindParticipantCallbacks(
-		"shard_a",
-		func(_ *SubTransaction) error {
-			committed = true
-			return nil
-		},
-		func(_ *SubTransaction) error {
-			rolledBack = true
-			return nil
-		},
-	); err != nil {
-		t.Fatalf("BindParticipantCallbacks failed: %v", err)
-	}
-
-	if err := tx.Commit(nil, nil); err != nil {
+	if err := fixture.tx.Commit(nil, nil); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if !committed {
+	if recorder.commits != 1 {
 		t.Fatal("expected bound commit callback to run")
 	}
-	if rolledBack {
+	if recorder.rollbacks != 0 {
 		t.Fatal("did not expect rollback callback during successful commit")
+	}
+	if got := *recorder.order; len(got) != 1 || got[0] != "commit" {
+		t.Fatalf("terminal callbacks ran %v, want exactly one commit", got)
+	}
+	if state := fixture.tx.State(); state != "committed" {
+		t.Fatalf("expected committed, got %s", state)
+	}
+	if sub, ok := fixture.tx.SubTransactions()["shard_a"]; !ok || sub.State != "committed" {
+		t.Fatalf("expected the bound participant committed, got %+v", sub)
+	}
+}
+
+// Binding is refused for a shard the transaction never opened: the unknown
+// participant is named in the error and gains no callbacks.
+func TestFabricTransaction_BindParticipantCallbacks_NotFound(t *testing.T) {
+	tx := NewFabricTransaction("tx-bind")
+	recorder := &participantRecorder{}
+	err := tx.BindParticipantCallbacks("nonexistent", recorder.callback())
+	if err == nil || !strings.Contains(err.Error(), "nonexistent") {
+		t.Fatalf("expected the unknown participant named in the error, got %v", err)
+	}
+	if subs := tx.SubTransactions(); len(subs) != 0 {
+		t.Fatalf("a refused binding created participants: %v", subs)
+	}
+	if err := tx.Rollback(nil); err != nil {
+		t.Fatalf("rollback after a refused binding failed: %v", err)
+	}
+	if recorder.commits != 0 || recorder.rollbacks != 0 {
+		t.Fatalf("a refused binding ran callbacks: commits=%d rollbacks=%d", recorder.commits, recorder.rollbacks)
 	}
 }
 
@@ -286,7 +299,7 @@ func TestFabricTransaction_CommitFailureRollsBackRemaining(t *testing.T) {
 	}
 }
 
-func TestFabricTransaction_CommitFailureCompensatesCommittedShards(t *testing.T) {
+func TestFabricTransaction_CommitFailureFinalizesUnfinishedShards(t *testing.T) {
 	tx := NewFabricTransaction("tx-013")
 
 	_, _ = tx.GetOrOpen("shard_a", false)
@@ -314,15 +327,15 @@ func TestFabricTransaction_CommitFailureCompensatesCommittedShards(t *testing.T)
 		t.Fatalf("expected rolledback state, got %s", tx.State())
 	}
 
-	if len(rolledBack) != 2 {
-		t.Fatalf("expected compensation rollback on all participants, got %v", rolledBack)
+	if len(committed) != 2 || committed[0] != "shard_a" || committed[1] != "shard_b" {
+		t.Fatalf("reader completion order: %v", committed)
 	}
-
+	if len(rolledBack) != 1 || rolledBack[0] != "shard_b" {
+		t.Fatalf("only unfinished participant should roll back: %v", rolledBack)
+	}
 	state := tx.SubTransactions()
-	for name, sub := range state {
-		if sub.State != "rolledback" {
-			t.Fatalf("expected subtransaction %s to be rolledback, got %s", name, sub.State)
-		}
+	if state["shard_a"].State != "committed" || state["shard_b"].State != "rolledback" {
+		t.Fatalf("completed reader and failed reader outcomes must remain distinct: %v", state)
 	}
 }
 
@@ -373,13 +386,10 @@ func TestFabricTransaction_CommitWithBoundRollbackOnFailure(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", false)
 
 	boundRolledBack := false
-	_ = tx.BindParticipantCallbacks("shard_b",
-		func(_ *SubTransaction) error { return fmt.Errorf("shard_b commit fail") },
-		func(_ *SubTransaction) error {
-			boundRolledBack = true
-			return nil
-		},
-	)
+	_ = tx.BindParticipantCallbacks("shard_b", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return fmt.Errorf("shard_b commit fail") }, Rollback: func(_ *SubTransaction) error {
+		boundRolledBack = true
+		return nil
+	}})
 
 	err := tx.Commit(nil, nil) // nil global callbacks → uses bound.
 	if err == nil {
@@ -456,10 +466,7 @@ func TestFabricTransaction_Commit_NilGlobalUseBoundRollbackOnFail(t *testing.T) 
 	tx := NewFabricTransaction("tx-021")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	_ = tx.BindParticipantCallbacks("shard_a",
-		func(_ *SubTransaction) error { return nil },
-		nil,
-	)
+	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return nil }, Rollback: nil})
 
 	// shard_a commits successfully with bound callback, then rolls back
 	// with nil rollback → no panic.

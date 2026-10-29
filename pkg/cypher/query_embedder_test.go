@@ -14,7 +14,7 @@ func TestQueryEmbedderSharedBeforeReadiness(t *testing.T) {
 	base := NewStorageExecutor(store)
 	scoped := NewStorageExecutor(store)
 	scoped.ShareEmbedderFrom(base)
-	clones := []*StorageExecutor{scoped, scoped.cloneForStorage(store), scoped.cloneWithStorage(store)}
+	clones := []*StorageExecutor{scoped, scoped.cloneWithStorage(store, selectedDatabaseStorage), scoped.cloneWithStorage(store)}
 	for _, exec := range clones {
 		require.Nil(t, exec.GetEmbedder())
 		_, err := exec.Execute(context.Background(), "RETURN 1", nil)

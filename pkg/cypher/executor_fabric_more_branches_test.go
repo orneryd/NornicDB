@@ -117,7 +117,7 @@ func TestFabricHelpers_TransactionOwnerAndCallbacks(t *testing.T) {
 	require.NoError(t, err)
 	c.base.txContext = &TransactionContext{active: true, tx: tx}
 	require.Same(t, tx, c.fabricTransaction())
-	require.NoError(t, c.fabricTransaction().BindParticipantCallbacks("s1", func(*fabric.SubTransaction) error { return nil }, func(*fabric.SubTransaction) error { return nil }))
-	err = c.fabricTransaction().BindParticipantCallbacks("missing", nil, nil)
+	require.NoError(t, c.fabricTransaction().BindParticipantCallbacks("s1", fabric.ParticipantCallbacks{Commit: func(*fabric.SubTransaction) error { return nil }, Rollback: func(*fabric.SubTransaction) error { return nil }}))
+	err = c.fabricTransaction().BindParticipantCallbacks("missing", fabric.ParticipantCallbacks{Commit: nil, Rollback: nil})
 	require.Error(t, err)
 }

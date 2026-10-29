@@ -124,7 +124,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 	applied, receiptErr := func() (bool, error) {
 		tx.mu.Lock()
 		defer tx.mu.Unlock()
-		if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 			return false, err
 		}
 		if tx.namespace == "" || logicalID == "" {
@@ -170,7 +170,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		}
 	}
 	tx.mu.Lock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		tx.mu.Unlock()
 		return nil, err
 	}

@@ -8,9 +8,19 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	// admissionMatrixLabel is the only label either matrix writes, so the
+	// independent shard read cannot mistake fixture data for product output.
+	admissionMatrixLabel = "U5AdmissionMatrix"
+	// admissionMatrixShard is inspected directly instead of through the
+	// caller's potentially pending transaction wrapper.
+	admissionMatrixShard = "admission_shard"
 )
 
 func newProcedureAdmissionExecutor(t *testing.T, composite bool) (*StorageExecutor, storage.Engine) {
@@ -18,11 +28,11 @@ func newProcedureAdmissionExecutor(t *testing.T, composite bool) (*StorageExecut
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "admission_shard"}))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: admissionMatrixShard}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "admission_comp", []multidb.ConstituentRef{{
-		Alias: "one", DatabaseName: "admission_shard", Type: "local", AccessMode: "read_write",
+		Alias: "one", DatabaseName: admissionMatrixShard, Type: "local", AccessMode: "read_write",
 	}}))
-	database := "admission_shard"
+	database := admissionMatrixShard
 	if composite {
 		database = "admission_comp"
 	}
@@ -31,9 +41,89 @@ func newProcedureAdmissionExecutor(t *testing.T, composite bool) (*StorageExecut
 	exec := NewStorageExecutor(store)
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	exec.SetAllowLocalAPOCFileAccess(true)
-	shard, err := manager.GetStorage("admission_shard")
+	shard, err := manager.GetStorage(admissionMatrixShard)
 	require.NoError(t, err)
 	return exec, shard
+}
+
+// admissionMatrixCase describes one grid cell. Only the per-case behaviour that
+// genuinely differs between the two matrices is supplied; the lifecycle around
+// it (executor creation, optional BEGIN, executing admissionMatrixQuery,
+// optional COMMIT and the independent shard read) is owned by the shared
+// fixture.
+type admissionMatrixCase struct {
+	// query builds the statement the lifecycle executes, including any
+	// controlled rejection guard.
+	query func() string
+	// params supplies the statement/merge/file arguments of the invocation.
+	params func(t *testing.T) map[string]interface{}
+	// setup runs after the executor exists and before BEGIN. It is how the
+	// controlled-handler matrix installs its contract handler.
+	setup func(t *testing.T)
+	// observe runs once the invocation returned and before COMMIT. It carries
+	// assertions that only make sense while the caller's transaction is still
+	// open, such as which shard owns the work or whether a handler ran.
+	observe func(t *testing.T, err error)
+	// scopeRejected reports that a managed periodic scope must reject the whole
+	// invocation before any action runs. Such a cell is asserted by
+	// requireBatchScopeRejected and by its observe callback, and returns
+	// without COMMIT or post-commit persistence expectations.
+	scopeRejected bool
+	// wantNodes derives the independently read shard population. It is unused
+	// for scopeRejected cells.
+	wantNodes func() int
+	// afterCommit runs after the optional COMMIT for persistence assertions
+	// beyond the independently read shard population.
+	afterCommit func(t *testing.T, shard storage.Engine, reject bool)
+}
+
+// runAdmissionMatrixCase executes one grid cell through the canonical fixture
+// lifecycle and asserts the shared admission and transaction expectations.
+func runAdmissionMatrixCase(t *testing.T, composite, explicit, reject bool, failure error, tc admissionMatrixCase) error {
+	t.Helper()
+	exec, shard := newProcedureAdmissionExecutor(t, composite)
+	ctx := context.Background()
+	if tc.setup != nil {
+		tc.setup(t)
+	}
+	if explicit {
+		_, err := exec.Execute(ctx, "BEGIN", nil)
+		require.NoError(t, err)
+	}
+	var params map[string]interface{}
+	if tc.params != nil {
+		params = tc.params(t)
+	}
+	_, err := exec.Execute(ctx, tc.query(), params)
+	if tc.observe != nil {
+		tc.observe(t, err)
+	}
+	if tc.scopeRejected {
+		requireBatchScopeRejected(t, exec, shard, explicit, err)
+		return err
+	}
+	if reject {
+		require.ErrorContains(t, err, failure.Error())
+	} else {
+		require.NoError(t, err)
+	}
+	if explicit {
+		_, err = exec.Execute(ctx, "COMMIT", nil)
+		if reject {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	if tc.wantNodes != nil {
+		nodes, err := shard.GetNodesByLabel(admissionMatrixLabel)
+		require.NoError(t, err)
+		require.Len(t, nodes, tc.wantNodes())
+	}
+	if tc.afterCommit != nil {
+		tc.afterCommit(t, shard, reject)
+	}
+	return err
 }
 
 func admissionMatrixQuery(call string, composite, reject bool) string {
@@ -103,78 +193,66 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 				for _, explicit := range []bool{false, true} {
 					for _, reject := range []bool{false, true} {
 						t.Run(fmt.Sprintf("%s/dynamicWrite=%v/fabric=%v/explicit=%v/failure=%v", origin.Name, dynamicWrite, composite, explicit, reject), func(t *testing.T) {
-							exec, shard := newProcedureAdmissionExecutor(t, composite)
 							alias := fmt.Sprintf("u5matrix.contract%d", index)
-							cleanupAdmissionProcedure(t, alias)
-							spec := origin
-							spec.Name, spec.Signature = alias, alias+"() :: (value :: INTEGER)"
-							spec.Params = nil
-							spec.Returns = []ProcedureColumn{{Name: "value", Type: "INTEGER"}}
-							spec.MinArgs, spec.MaxArgs = 0, 0
-							call := "CALL " + alias + "() YIELD value"
-							if spec.ExecutesStatements {
-								spec.MinArgs, spec.MaxArgs = 2, 2
-								spec.Signature = alias + "(statement :: STRING, params :: MAP) :: (value :: INTEGER)"
-								spec.Params = []ProcedureParam{{Name: "statement", Type: "STRING"}, {Name: "params", Type: "MAP"}}
-								call = "CALL " + alias + "($statement,{}) YIELD value"
-							}
 							writes := origin.Mode == ProcedureModeWrite || origin.ExecutesStatements && dynamicWrite
 							invoked, transactional := false, false
-							require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
-								invoked, transactional = true, nested.inTransaction(ctx)
-								if origin.ExecutesStatements {
-									result, err := nested.Execute(ctx, args[0].(string), nil)
-									transactional = nested.inTransaction(ctx)
-									return result, err
-								}
-								if origin.OwnsTransactions {
-									return nested.executePeriodicBatch(ctx, origin.Name, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
-										transactional = batch.inTransaction(batchCtx)
-										return batch.Execute(batchCtx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
-									})
-								}
-								if writes {
-									return nested.Execute(ctx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
-								}
-								return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
-							}))
-							ctx := context.Background()
-							if explicit {
-								_, err := exec.Execute(ctx, "BEGIN", nil)
-								require.NoError(t, err)
-							}
-							statement := "RETURN 1 AS value"
-							if dynamicWrite {
-								statement = "CREATE (:U5AdmissionMatrix) RETURN 1 AS value"
-							}
-							_, err := exec.Execute(ctx, admissionMatrixQuery(call, composite, reject), map[string]interface{}{"statement": statement})
-							if origin.OwnsTransactions && composite {
-								requireBatchScopeRejected(t, exec, shard, explicit, err)
-								require.False(t, invoked, "scope rejection must precede the registered handler")
-								return
-							}
-							if reject {
-								require.ErrorContains(t, err, failure.Error())
-							} else {
-								require.NoError(t, err)
-							}
-							require.True(t, invoked, "the contract handler must actually run")
-							require.Equal(t, explicit || writes || origin.ExecutesStatements && !composite, transactional, "genuine READ contracts must not become write participants")
-							if explicit {
-								_, err = exec.Execute(ctx, "COMMIT", nil)
-								if reject {
-									require.Error(t, err)
-								} else {
-									require.NoError(t, err)
-								}
-							}
-							nodes, err := shard.GetNodesByLabel("U5AdmissionMatrix")
-							require.NoError(t, err)
-							want := 0
-							if writes && (!reject || origin.OwnsTransactions && !explicit) {
-								want = 1
-							}
-							require.Len(t, nodes, want)
+							call, spec := admissionMatrixContract(index, origin)
+							runAdmissionMatrixCase(t, composite, explicit, reject, failure, admissionMatrixCase{
+								query: func() string { return admissionMatrixQuery(call, composite, reject) },
+								params: func(*testing.T) map[string]interface{} {
+									statement := "RETURN 1 AS value"
+									if dynamicWrite {
+										statement = "CREATE (:" + admissionMatrixLabel + ") RETURN 1 AS value"
+									}
+									return map[string]interface{}{"statement": statement}
+								},
+								// The controlled handler is registered per case because it
+								// must report this case's invocation and transaction state.
+								setup: func(t *testing.T) {
+									cleanupAdmissionProcedure(t, alias)
+									require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+										defer func() {
+											if composite && !writes {
+												owner, ok := fabric.FabricTransactionFromContext(ctx)
+												require.True(t, ok)
+												require.Empty(t, owner.WriteShard(), "a genuine READ contract must claim no writer")
+											}
+										}()
+
+										invoked, transactional = true, nested.inTransaction(ctx)
+										if origin.ExecutesStatements {
+											result, err := nested.Execute(ctx, args[0].(string), nil)
+											transactional = nested.inTransaction(ctx)
+											return result, err
+										}
+										if origin.OwnsTransactions {
+											return nested.executePeriodicBatch(ctx, origin.Name, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
+												transactional = batch.inTransaction(batchCtx)
+												return batch.Execute(batchCtx, "CREATE (:"+admissionMatrixLabel+") RETURN 1 AS value", nil)
+											})
+										}
+										if writes {
+											return nested.Execute(ctx, "CREATE (:"+admissionMatrixLabel+") RETURN 1 AS value", nil)
+										}
+										return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
+									}))
+								},
+								observe: func(t *testing.T, _ error) {
+									if origin.OwnsTransactions && composite {
+										require.False(t, invoked, "scope rejection must precede the registered handler")
+										return
+									}
+									require.True(t, invoked, "the contract handler must actually run")
+									require.Equal(t, composite || explicit || writes || origin.ExecutesStatements, transactional, "composite procedure work owns storage without necessarily claiming a writer")
+								},
+								scopeRejected: origin.OwnsTransactions && composite,
+								wantNodes: func() int {
+									if writes && (!reject || origin.OwnsTransactions && !explicit) {
+										return 1
+									}
+									return 0
+								},
+							})
 						})
 					}
 				}
@@ -182,6 +260,27 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 		}
 		t.Logf("registry matrix origin=%s mode=%s dynamic=%v: success/failure x native/Fabric x auto/explicit", origin.Name, origin.Mode, origin.ExecutesStatements)
 	}
+}
+
+// admissionMatrixContract derives the controlled invocation and the equivalent
+// registry contract for one matrix origin. The controlled handler keeps the
+// origin's admission-relevant shape while dropping the argument requirements
+// that only its shipped handler can satisfy.
+func admissionMatrixContract(index int, origin ProcedureSpec) (string, ProcedureSpec) {
+	alias := fmt.Sprintf("u5matrix.contract%d", index)
+	spec := origin
+	spec.Name, spec.Signature = alias, alias+"() :: (value :: INTEGER)"
+	spec.Params = nil
+	spec.Returns = []ProcedureColumn{{Name: "value", Type: "INTEGER"}}
+	spec.MinArgs, spec.MaxArgs = 0, 0
+	call := "CALL " + alias + "() YIELD value"
+	if spec.ExecutesStatements {
+		spec.MinArgs, spec.MaxArgs = 2, 2
+		spec.Signature = alias + "(statement :: STRING, params :: MAP) :: (value :: INTEGER)"
+		spec.Params = []ProcedureParam{{Name: "statement", Type: "STRING"}, {Name: "params", Type: "MAP"}}
+		call = "CALL " + alias + "($statement,{}) YIELD value"
+	}
+	return call, spec
 }
 
 func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
@@ -214,55 +313,40 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 			for _, explicit := range []bool{false, true} {
 				for _, reject := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v", procedure.Name, composite, explicit, reject), func(t *testing.T) {
-						exec, shard := newProcedureAdmissionExecutor(t, composite)
-						ctx := context.Background()
-						file := filepath.Join(t.TempDir(), "import.json")
-						require.NoError(t, os.WriteFile(file, []byte(`{"nodes":[{"id":"imported1","labels":["U5AdmissionMatrix"]},{"id":"4:foreign:opaque","labels":["U5AdmissionMatrix"]}],"relationships":[{"id":"rel:1","type":"R","startNode":"imported1","endNode":"4:foreign:opaque"}]}`), 0600))
-						if explicit {
-							_, err := exec.Execute(ctx, "BEGIN", nil)
-							require.NoError(t, err)
-						}
-						_, err := exec.Execute(ctx, admissionMatrixQuery(call, composite, reject), map[string]interface{}{
-							"statement": "CREATE (:U5AdmissionMatrix) RETURN 1 AS value",
-							"merge":     "MERGE (:U5AdmissionMatrix {id:1}) RETURN 1 AS value", "file": file,
+						runAdmissionMatrixCase(t, composite, explicit, reject, failure, admissionMatrixCase{
+							query: func() string { return admissionMatrixQuery(call, composite, reject) },
+							params: func(t *testing.T) map[string]interface{} {
+								file := filepath.Join(t.TempDir(), "import.json")
+								require.NoError(t, os.WriteFile(file, []byte(`{"nodes":[{"id":"imported1","labels":["U5AdmissionMatrix"]},{"id":"4:foreign:opaque","labels":["U5AdmissionMatrix"]}],"relationships":[{"id":"rel:1","type":"R","startNode":"imported1","endNode":"4:foreign:opaque"}]}`), 0600))
+								return map[string]interface{}{
+									"statement": "CREATE (:" + admissionMatrixLabel + ") RETURN 1 AS value",
+									"merge":     "MERGE (:" + admissionMatrixLabel + " {id:1}) RETURN 1 AS value", "file": file,
+								}
+							},
+							scopeRejected: procedure.OwnsTransactions && composite,
+							wantNodes: func() int {
+								want := 1
+								if procedure.Name == "apoc.import.json" {
+									want = 2
+								}
+								if reject && (!procedure.OwnsTransactions || explicit) {
+									want = 0
+								}
+								return want
+							},
+							afterCommit: func(t *testing.T, shard storage.Engine, reject bool) {
+								if procedure.Name == "apoc.import.json" && !reject {
+									for _, id := range []storage.NodeID{"imported1", "4:foreign:opaque"} {
+										_, err := shard.GetNode(id)
+										require.NoError(t, err, "supplied node ID %s", id)
+									}
+									edge, err := shard.GetEdge("rel:1")
+									require.NoError(t, err)
+									require.Equal(t, storage.NodeID("imported1"), edge.StartNode)
+									require.Equal(t, storage.NodeID("4:foreign:opaque"), edge.EndNode)
+								}
+							},
 						})
-						if procedure.OwnsTransactions && composite {
-							requireBatchScopeRejected(t, exec, shard, explicit, err)
-							return
-						}
-						if reject {
-							require.ErrorContains(t, err, failure.Error())
-						} else {
-							require.NoError(t, err)
-						}
-						if explicit {
-							_, err = exec.Execute(ctx, "COMMIT", nil)
-							if reject {
-								require.Error(t, err)
-							} else {
-								require.NoError(t, err)
-							}
-						}
-						nodes, err := shard.GetNodesByLabel("U5AdmissionMatrix")
-						require.NoError(t, err)
-						want := 1
-						if procedure.Name == "apoc.import.json" {
-							want = 2
-						}
-						if reject && (!procedure.OwnsTransactions || explicit) {
-							want = 0
-						}
-						require.Len(t, nodes, want)
-						if procedure.Name == "apoc.import.json" && !reject {
-							for _, id := range []storage.NodeID{"imported1", "4:foreign:opaque"} {
-								_, err := shard.GetNode(id)
-								require.NoError(t, err, "supplied node ID %s", id)
-							}
-							edge, err := shard.GetEdge("rel:1")
-							require.NoError(t, err)
-							require.Equal(t, storage.NodeID("imported1"), edge.StartNode)
-							require.Equal(t, storage.NodeID("4:foreign:opaque"), edge.EndNode)
-						}
 					})
 				}
 			}
@@ -277,7 +361,7 @@ func requireBatchScopeRejected(t *testing.T, exec *StorageExecutor, shard storag
 		_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
 		require.NoError(t, err)
 	}
-	nodes, readErr := shard.GetNodesByLabel("U5AdmissionMatrix")
+	nodes, readErr := shard.GetNodesByLabel(admissionMatrixLabel)
 	require.NoError(t, readErr)
 	require.Empty(t, nodes, "scope rejection must precede independent writes")
 }

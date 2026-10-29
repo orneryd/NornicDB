@@ -40,8 +40,8 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
-	require.NoError(t, tx.SetDeferredConstraintValidation(true))
-	require.NoError(t, tx.SetSkipCreateExistenceCheck(true))
+	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
+	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 
 	// Old readTS to force SI conflicts against current heads.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}

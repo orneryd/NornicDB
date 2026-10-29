@@ -144,9 +144,15 @@ func TestWALPropertyEpochSealingFailureKeepsControls(t *testing.T) {
 			case "bad manifest":
 				require.NoError(t, os.WriteFile(walManifestPath(wal.Config().Dir), []byte("not JSON"), 0600))
 			case "invalid segment":
-				require.NoError(t, writeWALManifest(wal.Config().Dir, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}}))
+				{
+					_, manifestErr := accessWALManifest(wal.Config().Dir, walPublishManifest, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}})
+					require.NoError(t, manifestErr)
+				}
 			case "missing segment":
-				require.NoError(t, writeWALManifest(wal.Config().Dir, &WALManifest{Segments: []WALSegment{{Path: "seg-00000000000000000001-00000000000000000001.wal", FirstSeq: 1, LastSeq: 1}}}))
+				{
+					_, manifestErr := accessWALManifest(wal.Config().Dir, walPublishManifest, &WALManifest{Segments: []WALSegment{{Path: "seg-00000000000000000001-00000000000000000001.wal", FirstSeq: 1, LastSeq: 1}}})
+					require.NoError(t, manifestErr)
+				}
 			case "sync failure":
 				require.NoError(t, wal.file.Close())
 			}

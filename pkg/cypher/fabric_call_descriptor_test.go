@@ -184,14 +184,21 @@ func TestFabricForeachWriteOccupiesWriteShard(t *testing.T) {
 	for _, action := range []string{"CREATE (:FabricForeachWrite)", "MERGE (:FabricForeachWrite)", "SET n.v = 1", "REMOVE n.v", "DELETE n"} {
 		body := "FOREACH (x IN [1] | " + action + ")"
 		if !strings.HasPrefix(action, "CREATE") && !strings.HasPrefix(action, "MERGE") {
-			body = "MATCH (n:FabricForeachMissing) FOREACH (x IN [1] | " + action + ")"
+			body = "MATCH (n:FabricForeachTarget {action: $action}) FOREACH (x IN [1] | " + action + ")"
 		}
 		t.Run(action, func(t *testing.T) {
+			params := map[string]interface{}{"action": action}
+			if strings.HasPrefix(action, "SET") || strings.HasPrefix(action, "REMOVE") || strings.HasPrefix(action, "DELETE") {
+				// Exercise a real mutation. A zero-row UPDATE correctly leaves
+				// the write slot available and is covered by the atomicity AC.
+				_, err := exec.Execute(ctx, "USE comp.one CREATE (:FabricForeachTarget {action:$action,v:0})", params)
+				require.NoError(t, err)
+			}
 			runExec := fabricCallRowsCompositeExecutor(t, exec)
 			_, err := runExec.Execute(ctx, "BEGIN", nil)
 			require.NoError(t, err)
 			defer func() { _, _ = runExec.Execute(ctx, "ROLLBACK", nil) }()
-			_, err = runExec.Execute(ctx, "USE comp.one "+body, nil)
+			_, err = runExec.Execute(ctx, "USE comp.one "+body, params)
 			require.NoError(t, err)
 			_, err = runExec.Execute(ctx, "USE comp.two CREATE (:FabricForeachWrite)", nil)
 			require.ErrorContains(t, err, second)

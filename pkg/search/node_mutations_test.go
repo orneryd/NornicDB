@@ -37,10 +37,10 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					require.NoError(t, engine.DeleteNode(old.ID))
 					require.NoError(t, svc.RefreshNode(old.ID))
 				}
-				// An old drain can arrive after the latest generation was applied
+				// A reserved write can arrive after the latest generation was applied
 				// and its bookkeeping retired. It must still remain obsolete.
-				require.NoError(t, svc.IndexNodeWithMutation(old, reservation))
-				require.NoError(t, svc.RemoveNodeWithMutation(reservation))
+				require.NoError(t, svc.applyReservedNodeIndex(old, reservation))
+				require.NoError(t, svc.applyReservedNodeRemoval(reservation))
 				if remove {
 					require.Zero(t, svc.EmbeddingCount())
 				} else {
@@ -55,7 +55,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					require.Empty(t, response.Results)
 				}
 				svc.nodeMutationMu.Lock()
-				require.Empty(t, svc.pendingNodeMutations)
+				require.Empty(t, svc.nodeMutations.pending)
 				svc.nodeMutationMu.Unlock()
 			})
 		}
@@ -81,7 +81,11 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 						_, _ = engine.CreateNode(node)
 					}
 					_ = svc.RefreshNode(node.ID)
-					_ = svc.IndexNodeWithMutation(node, reservation)
+					if stored, err := engine.GetNode(node.ID); err == nil {
+						_ = svc.applyReservedNodeIndex(stored, reservation)
+					} else {
+						_ = svc.applyReservedNodeRemoval(reservation)
+					}
 				}
 			}()
 		}
@@ -91,7 +95,9 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 			stale := svc.ReserveNodeMutation(id)
 			_ = engine.DeleteNode(id)
 			require.NoError(t, svc.RefreshNode(id))
-			require.NoError(t, svc.IndexNodeWithMutation(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
+			// The older reservation is obsolete: handing it a payload must not
+			// restore the deleted vector.
+			require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
 		}
 		require.Zero(t, svc.EmbeddingCount())
 	})
@@ -108,7 +114,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	older := svc.ReserveNodeMutation("source")
 	rejected := svc.ReserveNodeMutation("source")
 	svc.DiscardNodeMutation(rejected)
-	require.NoError(t, svc.IndexNodeWithMutation(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
+	require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
 	require.Equal(t, 1, svc.EmbeddingCount(), "a rejected reservation superseded the older write")
 }
 
@@ -134,7 +140,7 @@ func TestRefreshNodeFollowsStorage(t *testing.T) {
 	require.NoError(t, svc.RefreshNodeWithMutation(stale))
 	require.Zero(t, svc.EmbeddingCount(), "a superseded refresh applied after the newer one retired")
 	svc.nodeMutationMu.Lock()
-	require.Empty(t, svc.pendingNodeMutations)
+	require.Empty(t, svc.nodeMutations.pending)
 	svc.nodeMutationMu.Unlock()
 }
 

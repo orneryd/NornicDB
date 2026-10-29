@@ -134,6 +134,17 @@ The detector uses the reference action's analysis, not just an embedding thresho
 4. Exclude the candidate itself, touched/retired symbols and recognized moves.
    Test code and production code are compared separately.
 
+For Go candidates, current-source ownership evidence additionally uses the Go
+toolchain's object bindings. A shadowed local or callback and an inferred graph
+edge do not establish a call to an owner. The report records verified owner calls,
+extracted owners whose surviving callers use them, and test/benchmark pairs with
+the same constructed resource and shared execution owner. Copied bodies,
+forwarding wrappers, repeated state changes and unowned query execution still
+block; similarity thresholds and candidate selection are unchanged. The Go
+toolchain must be available when checking Go candidates. Successful-check receipts
+also invalidate when the ownership implementation, binding helper or compiler
+changes; compiled-helper caching never substitutes for a successful check.
+
 **Both a single existing match (reuse candidate) and multiple matches (refactor
 target) block the commit.** Fold the implementation into the existing owner and
 rerun the check. Authentication, extraction, missing-baseline and incomplete-analysis

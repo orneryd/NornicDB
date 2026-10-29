@@ -5,25 +5,16 @@ import (
 	"reflect"
 )
 
-// Schema returns an isolated view for an ordinary schema-write transaction.
-// Ordinary schema changes cannot be mixed with entity writes. For example,
-// obtain view with tx.Schema(), call view.AddPropertyIndex and backfill it,
-// then tx.StageSchemaChanges() and tx.Commit(); rollback discards the changes.
-// Native knowledge-policy-only updates can instead use KnowledgePolicySchema.
-func (tx *BadgerTransaction) Schema() (*SchemaManager, error) {
-	tx.mu.Lock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		tx.mu.Unlock()
-		return nil, err
-	}
-	if len(tx.operations) > 0 {
-		tx.mu.Unlock()
-		return nil, mixedSchemaAndDataError(true)
-	}
-	tx.schemaTransaction = true
-	tx.mu.Unlock()
-	return tx.KnowledgePolicySchema()
-}
+// SchemaPurpose identifies the edits made through an isolated transaction schema.
+type SchemaPurpose uint8
+
+const (
+	// KnowledgePolicyChanges reads an isolated schema without claiming a writer;
+	// persisting a policy change performs admission before staging it.
+	KnowledgePolicyChanges SchemaPurpose = iota
+	// OrdinarySchemaChanges admits a schema writer and excludes entity writes.
+	OrdinarySchemaChanges
+)
 
 func mixedSchemaAndDataError(schemaAfterData bool) error {
 	message := "Tried to execute Write query after executing Schema modification"
@@ -33,18 +24,8 @@ func mixedSchemaAndDataError(schemaAfterData bool) error {
 	return fmt.Errorf("Neo.ClientError.Transaction.ForbiddenDueToTransactionType: %s", message)
 }
 
-func (tx *BadgerTransaction) ensureDataWriteAllowedLocked() error {
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return err
-	}
-	if tx.schemaTransaction {
-		return mixedSchemaAndDataError(false)
-	}
-	return nil
-}
-
 // StageSchemaChanges captures ordinary DDL and its runtime backfills for commit.
-// Obtain the isolated view with Schema, apply and backfill the
+// Obtain the isolated view with Schema(OrdinarySchemaChanges), apply and backfill the
 // schema change, then call StageSchemaChanges before Commit. Rollback discards
 // the captured state; unchanged committed indexes keep their live caches.
 func (tx *BadgerTransaction) StageSchemaChanges() error {
@@ -58,13 +39,9 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 	defer view.mu.RUnlock()
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionSchemaWrite); err != nil {
 		return err
 	}
-	if len(tx.operations) > 0 {
-		return mixedSchemaAndDataError(true)
-	}
-	tx.schemaTransaction = true
 	if !tx.knowledgeSchemaDirty {
 		return nil
 	}

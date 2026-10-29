@@ -268,9 +268,9 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	defer txRead.Rollback()
 
-	outBefore, err := txRead.GetOutgoingEdges(start)
+	outBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
-	inBefore, err := txRead.GetIncomingEdges(target)
+	inBefore, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(outBefore))
 	require.Equal(t, []string{string(firstEdgeID)}, sortedEdgeIDStrings(inBefore))
@@ -284,9 +284,9 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, txInsert.CreateEdge(&Edge{ID: laterEdgeID, StartNode: start, EndNode: laterTarget, Type: "LINKS"}))
 	require.NoError(t, txInsert.Commit())
 
-	outAfter, err := txRead.GetOutgoingEdges(start)
+	outAfter, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
-	inAfter, err := txRead.GetIncomingEdges(laterTarget)
+	inAfter, err := txRead.ReadEdges(TransactionEdgeRead{Kind: TransactionReadIncoming, Node: laterTarget})
 	require.NoError(t, err)
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter))
 	require.Empty(t, inAfter)
@@ -294,7 +294,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	txFresh, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	freshOut, err := txFresh.GetOutgoingEdges(start)
+	freshOut, err := txFresh.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(firstEdgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }

@@ -47,7 +47,7 @@ type RemoteEngineConfig struct {
 	HTTPClient *http.Client
 }
 
-// RemoteAccessMode is the caller's required routing intent for one implicit
+// RemoteAccessMode is the caller's required routing intent for one implicit or explicit
 // remote query. The transport never infers intent from statement text.
 type RemoteAccessMode uint8
 
@@ -79,6 +79,7 @@ type RemoteCypherMode interface{ ResolvedWriteMode() (write, known bool) }
 // RemoteEngine implements Engine by forwarding operations to a remote NornicDB instance
 // via Bolt protocol (preferred) or HTTP tx API (fallback), auto-detected from the URI scheme.
 type RemoteEngine struct {
+	owner     any
 	transport remoteTransport
 	schema    *SchemaManager
 }
@@ -407,6 +408,7 @@ type httpTransport struct {
 type remoteTxRequest struct {
 	Statements          []remoteStatement      `json:"statements"`
 	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
+	AccessMode          string                 `json:"accessMode,omitempty"`
 }
 
 type remoteTxResponse struct {
@@ -594,8 +596,11 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 }
 
 // openTransaction exchanges HTTP's explicit-transaction handshake and returns its URLs.
-func (h *httpTransport) openTransaction(ctx context.Context) (_ string, _ string, err error) {
+func (h *httpTransport) openTransaction(ctx context.Context, mode RemoteAccessMode) (_ string, _ string, err error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}, TransactionMetadata: coordinatorTransactionMetadata(ctx)}
+	if mode == RemoteAccessRead {
+		openBody.AccessMode = "READ"
+	}
 	raw, err := jsontext.Marshal(openBody)
 	if err != nil {
 		return "", "", err
@@ -609,6 +614,9 @@ func (h *httpTransport) openTransaction(ctx context.Context) (_ string, _ string
 		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if mode == RemoteAccessRead {
+		req.Header.Set("access-mode", "READ")
+	}
 	if h.user != "" || h.password != "" {
 		req.SetBasicAuth(h.user, h.password)
 	} else if h.authToken != "" {
@@ -1358,12 +1366,25 @@ func (r *RemoteEngine) QueryCypher(ctx context.Context, statement string, params
 	return r.transport.query(ctx, statement, params, mode)
 }
 
-// BeginCypherTx opens an explicit remote transaction handle.
-func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
+// BeginCypherTx opens an explicit remote transaction in the required access mode.
+// RemoteAccessRead selects a READ session; RemoteAccessWrite selects WRITE.
+// The mode remains fixed for this handle's lifetime. For example:
+//
+// tx, err := remote.BeginCypherTx(ctx, RemoteAccessRead)
+// if err != nil { return err }
+// defer tx.Rollback(ctx)
+// _, rows, err := tx.QueryCypher(ctx, "MATCH (n) RETURN n LIMIT 10", nil)
+func (r *RemoteEngine) BeginCypherTx(ctx context.Context, mode RemoteAccessMode) (_ RemoteCypherTx, err error) {
+	if mode != RemoteAccessRead && mode != RemoteAccessWrite {
+		return nil, fmt.Errorf("invalid remote access mode: %d", mode)
+	}
 	if ctx == nil {
 		var cancel context.CancelFunc
 		ctx, cancel = defaultCtx()
 		defer cancel()
+	}
+	if runner, ok := r.transport.(runnerTransport); ok {
+		return joinedCypherTx{run: runner.run, mode: mode}, nil
 	}
 	t := &remoteCypherTx{}
 	switch wire := r.transport.(type) {
@@ -1380,14 +1401,18 @@ func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (_ RemoteCypherTx, err
 		}
 	}()
 	if t.transport != nil {
-		t.executeURL, t.commitURL, err = t.transport.openTransaction(ctx)
+		t.executeURL, t.commitURL, err = t.transport.openTransaction(ctx, mode)
 		if err != nil {
 			return nil, err
 		}
 		t.rollbackURL = t.executeURL
 	} else {
 		wire := r.transport.(*boltTransport)
-		t.session = wire.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: wire.database, AccessMode: neo4j.AccessModeWrite})
+		accessMode := neo4j.AccessModeWrite
+		if mode == RemoteAccessRead {
+			accessMode = neo4j.AccessModeRead
+		}
+		t.session = wire.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: wire.database, AccessMode: accessMode})
 		t.tx, err = t.session.BeginTransaction(ctx, neo4j.WithTxMetadata(coordinatorTransactionMetadata(ctx)))
 		if err != nil {
 			_ = t.session.Close(ctx)
