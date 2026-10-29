@@ -83,6 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve canonical parse diagnostics for malformed statements under both parser
+  modes, including extra UNWIND aliases; standalone validator diagnostics retain
+  their API identity.
+
 - Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
   administration and system history, matching Neo4j collection behavior.
 - Recheck transaction detachment under the publication lock and detach returned

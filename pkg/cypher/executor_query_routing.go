@@ -480,7 +480,14 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 
 	var parserError error
 	if validator == syntaxValidANTLR && !isNornicExtensionStatement(cypher) {
-		parserError = antlr.ValidateContext(ctx, cypher, cyphertext.AcceptedSource)
+		if mode == syntaxStatement {
+			// Execution admits the canonical statement product, just as the
+			// native readers do. ValidateContext's API-specific diagnostic
+			// wrapper belongs only to isolated validator consumers.
+			_, parserError = antlr.ParseSyntax(ctx, cypher, antlr.StatementEntry, false, cyphertext.AcceptedSource)
+		} else {
+			parserError = antlr.ValidateContext(ctx, cypher, cyphertext.AcceptedSource)
+		}
 		if parserError == context.Canceled || parserError == context.DeadlineExceeded {
 			return parserError
 		}
