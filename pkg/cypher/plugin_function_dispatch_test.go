@@ -10,7 +10,8 @@ import (
 
 // withPluginFunctions installs a plugin lookup over functions, keyed by name
 // as registered.
-func withPluginFunctions(t *testing.T, functions map[string]interface{}) {
+// Author: Codex NOR-184 lane, 2026-10-29: share the fixture with benchmarks.
+func withPluginFunctions(t testing.TB, functions map[string]interface{}) {
 	t.Helper()
 	previous := PluginFunctionLookup
 	PluginFunctionLookup = func(name string) (interface{}, bool) {
