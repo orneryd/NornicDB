@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1168,7 +1169,7 @@ func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 func (w *WALEngine) Close() error {
 	// Seal admission before draining registered native frames. Registration uses
 	// the same WAL mutex, so no pending frame can appear after this cut.
-	_ = w.wal.Close()
+	walErr := w.wal.Close()
 	w.stopEntityWait()
 	w.pendingEntityCommits.Range(func(_, value any) bool {
 		accepted := value.(*walAcceptedEntityCommit)
@@ -1179,7 +1180,7 @@ func (w *WALEngine) Close() error {
 	})
 	// A snapshot worker may have been waiting behind an accepted mutation lease.
 	w.DisableAutoCompaction()
-	return w.engine.Close()
+	return errors.Join(walErr, w.engine.Close())
 }
 
 // GetWAL returns the underlying WAL for direct access.

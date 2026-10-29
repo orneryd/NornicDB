@@ -198,6 +198,7 @@ type BadgerEngine struct {
 	notificationDraining               bool
 	closeMu                            sync.Mutex
 	txnWG                              sync.WaitGroup
+	retirementErr                      error // b.mu; joined after admitted helpers complete
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its

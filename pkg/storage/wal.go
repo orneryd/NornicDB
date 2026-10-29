@@ -1036,11 +1036,9 @@ func (w *WAL) Close() error {
 	}
 
 	// Final sync
-	if err := w.syncLocked(); err != nil {
-		// Log but continue closing
-	}
-
-	return w.file.Close()
+	syncErr := w.syncLocked()
+	closeErr := w.file.Close()
+	return errors.Join(syncErr, closeErr)
 }
 
 // Stats returns current WAL statistics.

@@ -9,6 +9,7 @@ import (
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 const (
@@ -59,6 +60,7 @@ type transactionLifecycle struct {
 	cancel                  context.CancelFunc
 	cleanupBase             context.Context
 	timer                   *time.Timer
+	timerRelease            func()
 	executor                TransactionalExecutor
 	startedAt               time.Time
 	database                string
@@ -84,6 +86,21 @@ func (l *transactionLifecycle) begin(
 ) error {
 	if parent == nil {
 		parent = context.Background()
+	}
+	var timerRelease func()
+	timerTransferred := false
+	if timeout > 0 {
+		var accepted bool
+		timerRelease, accepted = util.RetainWork(parent)
+		if !accepted {
+			return context.Canceled
+		}
+		timerRelease = sync.OnceFunc(timerRelease)
+		defer func() {
+			if !timerTransferred {
+				timerRelease()
+			}
+		}()
 	}
 
 	l.mu.Lock()
@@ -162,7 +179,9 @@ func (l *transactionLifecycle) begin(
 		if l.afterFunc != nil {
 			afterFunc = l.afterFunc
 		}
-		l.timer = afterFunc(remaining, func() { l.expireGeneration(generation) })
+		l.timerRelease = timerRelease
+		l.timer = afterFunc(remaining, func() { defer timerRelease(); l.expireGeneration(generation) })
+		timerTransferred = true
 	} else {
 		l.timer = nil
 	}
@@ -491,8 +510,11 @@ func (l *transactionLifecycle) finishTimedOut(reason transactionTerminalReason) 
 // stopTimerLocked disarms the deadline while lifecycle ownership is held.
 func (l *transactionLifecycle) stopTimerLocked() {
 	if l.timer != nil {
-		l.timer.Stop()
+		if l.timer.Stop() && l.timerRelease != nil {
+			l.timerRelease()
+		}
 		l.timer = nil
+		l.timerRelease = nil
 	}
 }
 

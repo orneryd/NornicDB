@@ -6,8 +6,9 @@ import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
-	"sync"
 	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // vectorFileReadLease is an immutable snapshot used by HNSW construction.
@@ -19,8 +20,7 @@ type vectorFileReadLease struct {
 	idToOrdinal map[string]int64
 	data        []byte
 	unmap       func() error
-	closeOnce   sync.Once
-	closeErr    error
+	closeOnce   util.OnceCompletion
 }
 
 // errVectorFileUnmapped marks a readable file the platform would not map, for
@@ -68,13 +68,14 @@ func (l *vectorFileReadLease) Close() error {
 	if l == nil {
 		return nil
 	}
-	l.closeOnce.Do(func() {
+	return l.closeOnce.Do(func() error {
+		var err error
 		if l.unmap != nil {
-			l.closeErr = l.unmap()
+			err = l.unmap()
 		}
 		l.data = nil
+		return err
 	})
-	return l.closeErr
 }
 
 func (l *vectorFileReadLease) Lookup(id string) ([]float32, bool) {

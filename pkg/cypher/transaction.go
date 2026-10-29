@@ -49,6 +49,7 @@ func clientTransactionCommand(ctx context.Context, query string) error {
 
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
+	lifetime context.Context
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
 	tx               interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
@@ -181,7 +182,7 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
-		return e.handleBegin()
+		return e.handleBegin(ctx)
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
 		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
@@ -192,7 +193,11 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 }
 
 // handleBegin starts a new explicit transaction.
-func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleBegin(contexts ...context.Context) (*ExecuteResult, error) {
+	var lifetime context.Context
+	if len(contexts) > 0 {
+		lifetime = fabric.TransactionLifetimeFromContext(contexts[0])
+	}
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
 	}
@@ -231,9 +236,10 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 		e.txContext = &TransactionContext{
-			tx:     fabricTx,
-			engine: engine,
-			active: true,
+			lifetime: lifetime,
+			tx:       fabricTx,
+			engine:   engine,
+			active:   true,
 		}
 		return &ExecuteResult{
 			Columns: []string{"status"},
@@ -282,10 +288,11 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}
 	txCtx := &TransactionContext{
-		tx:     tx,
-		engine: e.storage,
-		active: true,
-		txID:   tx.ID,
+		lifetime: lifetime,
+		tx:       tx,
+		engine:   e.storage,
+		active:   true,
+		txID:     tx.ID,
 	}
 	if wal, dbName := e.resolveWALAndDatabase(); wal != nil {
 		walSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: tx.ID, Metadata: nil}, dbName)

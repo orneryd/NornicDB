@@ -36,6 +36,10 @@ type Replicator interface {
 	// This should be called after the storage engine is ready.
 	Start(ctx context.Context) error
 
+	// LifetimeContext is the immutable context canceled by this owner's Shutdown.
+	// It is available before Start; accepted work must not replace its parent.
+	LifetimeContext() context.Context
+
 	// Apply applies a write command to the cluster.
 	// Returns ErrNotLeader if this node cannot accept writes.
 	// The command is replicated according to the replication mode.
@@ -72,6 +76,14 @@ type Replicator interface {
 
 	// NodeID returns this node's unique identifier.
 	NodeID() string
+}
+
+// lifecycleAttempt is the actual completion and result of one admitted native
+// lifecycle operation. Each component publishes it under its existing mutex;
+// the component's existing worker wait group retains the executing operation.
+type lifecycleAttempt struct {
+	done chan struct{}
+	err  error
 }
 
 // Command represents a write operation to be replicated.
@@ -306,11 +318,13 @@ func NewReplicator(config *Config, storage Storage) (Replicator, error) {
 // It implements the Replicator interface with zero overhead.
 // All writes are applied directly to storage without any replication.
 type StandaloneReplicator struct {
-	config  *Config
-	storage Storage
-	mu      sync.RWMutex
-	started bool
-	closed  bool
+	config      *Config
+	storage     Storage
+	mu          sync.RWMutex
+	started     bool
+	closed      bool
+	workContext context.Context
+	stopWork    context.CancelFunc
 
 	// metrics is the Plan-04-06 observation seam. Standalone never
 	// publishes per-peer or transition metrics (no peers, no role
@@ -327,11 +341,17 @@ func (r *StandaloneReplicator) SetReplicatorMetrics(bag *observability.Replicati
 
 // NewStandaloneReplicator creates a new standalone (no-op) replicator.
 func NewStandaloneReplicator(config *Config, storage Storage) *StandaloneReplicator {
+	workContext, stopWork := context.WithCancel(context.Background())
 	return &StandaloneReplicator{
-		config:  config,
-		storage: storage,
+		config:      config,
+		storage:     storage,
+		workContext: workContext,
+		stopWork:    stopWork,
 	}
 }
+
+// LifetimeContext returns the standalone owner's immutable shutdown context.
+func (r *StandaloneReplicator) LifetimeContext() context.Context { return r.workContext }
 
 // Start initializes the standalone replicator (no-op).
 func (r *StandaloneReplicator) Start(ctx context.Context) error {
@@ -420,9 +440,12 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	r.closed = true
+	stopWork := r.stopWork
+	r.mu.Unlock()
+	if stopWork != nil {
+		stopWork()
+	}
 	return nil
 }
 

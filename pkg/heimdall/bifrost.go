@@ -3,6 +3,7 @@ package heimdall
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -27,6 +28,9 @@ type BifrostClient struct {
 	LastPing    time.Time
 
 	mu      sync.Mutex
+	stateMu sync.Mutex
+	users   sync.WaitGroup
+	retired bool
 	canRead func() bool
 }
 
@@ -54,14 +58,12 @@ func NewBifrost(cfg Config) *Bifrost {
 
 // RegisterClient adds a new connected client.
 func (b *Bifrost) RegisterClient(id string, w http.ResponseWriter, f http.Flusher) {
-	_ = b.registerClient(id, w, f, nil, nil)
+	GetSubsystemManager().recordOutcome("register Bifrost client", b.registerClient(id, w, f, nil, nil))
 }
 
 // registerClient publishes the connection only after its initial message has
 // been flushed. All later writers share the client's serialization lock.
 func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flusher, canRead func() bool, initial *BifrostMessage) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	client := &BifrostClient{
 		ID:          id,
 		Writer:      w,
@@ -79,8 +81,30 @@ func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flushe
 			return err
 		}
 	}
+	b.mu.Lock()
+	previous := b.clients[id]
 	b.clients[id] = client
+	b.mu.Unlock()
+	if previous != nil {
+		previous.retire()
+	}
 	return nil
+}
+
+func (c *BifrostClient) acquire() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.retired {
+		return false
+	}
+	c.users.Add(1)
+	return true
+}
+func (c *BifrostClient) retire() {
+	c.stateMu.Lock()
+	c.retired = true
+	c.stateMu.Unlock()
+	c.users.Wait()
 }
 
 func (c *BifrostClient) write(data []byte) error {
@@ -96,8 +120,12 @@ func (c *BifrostClient) write(data []byte) error {
 // UnregisterClient removes a disconnected client.
 func (b *Bifrost) UnregisterClient(id string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	client := b.clients[id]
 	delete(b.clients, id)
+	b.mu.Unlock()
+	if client != nil {
+		client.retire()
+	}
 }
 
 // === BifrostBridge Interface Implementation ===
@@ -177,9 +205,12 @@ func (b *Bifrost) ConnectionCount() int {
 // broadcast sends a message to all connected clients via SSE.
 func (b *Bifrost) broadcast(msg BifrostMessage) error {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if len(b.clients) == 0 {
+	clients := make([]*BifrostClient, 0, len(b.clients))
+	for _, client := range b.clients {
+		clients = append(clients, client)
+	}
+	b.mu.RUnlock()
+	if len(clients) == 0 {
 		// No clients connected - not an error, just no-op
 		return nil
 	}
@@ -189,18 +220,23 @@ func (b *Bifrost) broadcast(msg BifrostMessage) error {
 		return err
 	}
 
-	var lastErr error
-	for _, client := range b.clients {
-		if client.canRead != nil && !client.canRead() {
+	var outcomes error
+	for _, client := range clients {
+		if !client.acquire() {
 			continue
 		}
-		if err := client.write(sseData); err != nil {
-			lastErr = err
-			continue
-		}
+		func() {
+			defer client.users.Done()
+			if client.canRead != nil && !client.canRead() {
+				return
+			}
+			if err := client.write(sseData); err != nil {
+				outcomes = errors.Join(outcomes, fmt.Errorf("Bifrost client %s: %w", client.ID, err))
+			}
+		}()
 	}
 
-	return lastErr
+	return outcomes
 }
 
 func encodeBifrostMessage(msg BifrostMessage) ([]byte, error) {
