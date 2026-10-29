@@ -158,6 +158,10 @@
   other: "ya existe un nodo con {{.Property}}={{.Value}} en la transacción"
 - id: storage.validation.node_unique_existing
   other: "ya existe un nodo con {{.Property}}={{.Value}} (nodeID: {{.NodeID}})"
+- id: storage.validation.node_unique_conflict
+  other: "ya existe un nodo con {{.Property}}={{.Value}}"
+- id: storage.validation.node_key_conflict
+  other: "ya existe un nodo con la clave {{.Properties}}={{.Values}}"
 - id: storage.validation.node_unique_concurrent
   other: "ya existe un nodo con {{.Property}}={{.Value}} (reclamado por una confirmación simultánea)"
 - id: storage.validation.node_key_null

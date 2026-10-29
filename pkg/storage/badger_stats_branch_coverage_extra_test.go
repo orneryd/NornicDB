@@ -150,24 +150,23 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 		return nil
 	}))
 
-	t.Run("iterate nodes skips malformed entries", func(t *testing.T) {
+	t.Run("iterate nodes reports malformed entries", func(t *testing.T) {
 		seen := 0
 		err := engine.IterateNodes(func(*Node) bool {
 			seen++
 			return true
 		})
-		require.NoError(t, err)
-		require.GreaterOrEqual(t, seen, 2)
+		require.Error(t, err)
 	})
 
-	t.Run("stream nodes handles canceled context and malformed entries", func(t *testing.T) {
+	t.Run("stream nodes reports canceled context and malformed entries", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		err := engine.StreamNodes(ctx, func(*Node) error { return nil })
 		require.ErrorIs(t, err, context.Canceled)
 
 		err = engine.StreamNodes(context.Background(), func(*Node) error { return nil })
-		require.NoError(t, err)
+		require.Error(t, err)
 	})
 
 	t.Run("stream edges handles canceled context and decode errors", func(t *testing.T) {
@@ -179,6 +178,10 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 		err = engine.StreamEdges(context.Background(), func(*Edge) error { return nil })
 		require.NoError(t, err)
 	})
+
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(nodeKey("test:bad-node"))
+	}))
 
 	t.Run("stream node chunks stop paths", func(t *testing.T) {
 		// Stop on full chunk path (len(chunk) >= chunkSize).
@@ -217,7 +220,7 @@ func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
 
 		// Decode-success entry with empty Node.ID and embeddings:
-		// append empty ID to nodeIDs, then GetNode("") fails and hits skip branch.
+		// append empty ID to nodeIDs, then the required point read fails.
 		emptyIDNode := &Node{ID: "", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{9}}}
 		enc, _, err := engine.encodeNodeInTxn(txn, "tenant", emptyIDNode)
 		require.NoError(t, err)
@@ -226,6 +229,13 @@ func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
 	}))
 
 	cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant:")
+	require.ErrorIs(t, err, ErrInvalidID)
+	// Repair the invalid fixture entry and finish the public operation. Counts
+	// report only completed clears, including any before the earlier failure.
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(nodeKey("tenant:empty-id-record"))
+	}))
+	remaining, err := engine.ClearAllEmbeddingsForPrefix("tenant:")
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, cleared, 1)
+	require.Equal(t, 1, cleared+remaining)
 }

@@ -14,7 +14,7 @@ type storageEventCallback interface {
 // and callback lifetime policies.
 func subscribeStorageEvent[Callback storageEventCallback](targets []storageEventTarget, callback Callback, register func(StorageEventNotifier, Callback)) {
 	for _, target := range targets {
-		if notifier, ok := target.engine.(StorageEventNotifier); ok {
+		if notifier, ok := ViewMetadataForEngine[StorageEventNotifier](target.engine); ok {
 			register(notifier, scopeStorageEvent(callback, target.views))
 		}
 	}

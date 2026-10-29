@@ -5,6 +5,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type transactionHTTPOrderedMap struct {
@@ -12,7 +13,30 @@ type transactionHTTPOrderedMap struct {
 	values map[string]interface{}
 }
 
+// httpEntitySource carries a formatter's terminal error, not a read-view capture.
+// Its resolver reads only the original issued view selected by the executor.
+type httpEntitySource struct {
+	resolve func(storage.NodeID, storage.EdgeID) (string, error)
+	err     error
+}
+
+func (source *httpEntitySource) database(fallback string, nodeID storage.NodeID, edgeID storage.EdgeID) string {
+	if source.err != nil {
+		return fallback
+	}
+	database, err := source.resolve(nodeID, edgeID)
+	if err != nil {
+		source.err = err
+		return fallback
+	}
+	if database != "" {
+		return database
+	}
+	return fallback
+}
+
 type transactionHTTPValueState struct {
+	source       *httpEntitySource
 	rest         bool
 	graph        *GraphResult
 	mapKeyOrders map[uintptr][]string

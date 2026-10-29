@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/httpresponse"
+	storagecap "github.com/orneryd/nornicdb/pkg/storage"
 	"net/http"
 	"time"
 
@@ -82,7 +83,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 
-	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
+	totalNodeCount, totalEdgeCount, databaseCount, err := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
+	if err != nil {
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+		return
+	}
 	if r.Context().Err() != nil {
 		return
 	}
@@ -192,7 +197,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		body = observability.RenderLegacy(registry, time.Now())
 	} else {
 		canRead := s.databaseReadPredicate(getClaims(r))
-		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
+		nodes, edges, databases, err := s.readableDatabaseCounts(r, true, canRead)
+		if err != nil {
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			return
+		}
 		if r.Context().Err() != nil {
 			return
 		}
@@ -233,23 +242,21 @@ func (s *Server) obsRegistryForHandler() *prometheus.Registry {
 // /status and legacy /metrics. Each namespace passes databaseReadAccess before
 // reading cached prefix counts; aliases/composites cannot double-count storage.
 // Status excludes system; metrics includes it only when the caller can read it.
-func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int) {
+func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int, readErr error) {
 	// Calculate stats across the caller's readable physical databases.
 	// Primary source: storage-maintained cached per-namespace counters
 	// (NodeCountByPrefix/EdgeCountByPrefix), which are incrementally updated.
 	// Fallback: physical database engines when prefix counts are unavailable.
 
 	usedCachedPrefixCounts := false
+	var prefixErr error
 	if base := s.db.GetBaseStorageForManager(); base != nil {
-		if lister, ok := base.(interface{ ListNamespaces() []string }); ok {
-			if statsEngine, ok := base.(interface {
-				NodeCountByPrefix(prefix string) (int64, error)
-				EdgeCountByPrefix(prefix string) (int64, error)
-			}); ok {
+		if lister, ok := storagecap.ViewMetadataForEngine[interface{ ListNamespaces() []string }](base); ok {
+			if storagecap.HasReadCapability[storagecap.PrefixStatsEngine](base) {
 				for _, ns := range lister.ListNamespaces() {
 					select {
 					case <-r.Context().Done():
-						return
+						return 0, 0, 0, r.Context().Err()
 					default:
 					}
 					if ns == "" || (!includeSystem && ns == "system") {
@@ -260,13 +267,17 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 					}
 					databaseCount++
 					prefix := ns + ":"
-					if n, err := statsEngine.NodeCountByPrefix(prefix); err == nil {
+					if n, err := storagecap.ReadWithCapability(base, func(reader storagecap.PrefixStatsEngine) (int64, error) { return reader.NodeCountByPrefix(prefix) }, nil); err == nil {
 						totalNodeCount += n
 						usedCachedPrefixCounts = true
+					} else {
+						prefixErr = err
 					}
-					if e, err := statsEngine.EdgeCountByPrefix(prefix); err == nil {
+					if e, err := storagecap.ReadWithCapability(base, func(reader storagecap.PrefixStatsEngine) (int64, error) { return reader.EdgeCountByPrefix(prefix) }, nil); err == nil {
 						totalEdgeCount += e
 						usedCachedPrefixCounts = true
+					} else {
+						prefixErr = err
 					}
 				}
 			}
@@ -274,12 +285,13 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 	}
 
 	// Fallback when cached prefix counters are not available.
-	if !usedCachedPrefixCounts && s.dbManager != nil {
+	if (!usedCachedPrefixCounts || prefixErr != nil) && s.dbManager != nil {
+		totalNodeCount, totalEdgeCount, databaseCount = 0, 0, 0
 		databases := s.dbManager.ListDatabases()
 		for _, dbInfo := range databases {
 			select {
 			case <-r.Context().Done():
-				return
+				return 0, 0, 0, r.Context().Err()
 			default:
 			}
 			dbName := dbInfo.Name
@@ -294,17 +306,24 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 			}
 			engine, err := s.dbManager.GetStorage(dbName)
 			if err != nil {
-				continue
+				return 0, 0, 0, err
 			}
 			databaseCount++
 			if nodes, err := engine.NodeCount(); err == nil {
 				totalNodeCount += nodes
+			} else {
+				return 0, 0, 0, err
 			}
 			if edges, err := engine.EdgeCount(); err == nil {
 				totalEdgeCount += edges
+			} else {
+				return 0, 0, 0, err
 			}
 		}
 	}
 
+	if prefixErr != nil && s.dbManager == nil {
+		return 0, 0, 0, prefixErr
+	}
 	return
 }

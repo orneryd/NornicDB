@@ -2,7 +2,9 @@ package util
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -10,8 +12,82 @@ import (
 
 // DecodeMsgpackBytes decodes database-owned MessagePack state from memory.
 func DecodeMsgpackBytes(data []byte, dst any) error {
-	return msgpack.NewDecoder(bytes.NewReader(data)).Decode(dst)
+	return DecodeMsgpackBytesWithContext(nil, data, dst)
 }
+
+// DecodeMsgpackBytesWithContext uses the same database decoder while carrying
+// cancellation through actual scalar, element and byte reads.
+func DecodeMsgpackBytesWithContext(ctx context.Context, data []byte, dst any) error {
+	return msgpack.NewDecoder(ReaderWithContext(ctx, bytes.NewReader(data))).Decode(dst)
+}
+
+// ReaderWithContext preserves a byte scanner when present, so decoding an
+// in-memory value checks cancellation without buffering an excluded payload.
+// The reader shape is bound once; reads perform no capability discovery.
+func ReaderWithContext(ctx context.Context, reader io.Reader) io.Reader {
+	if ctx == nil {
+		return reader
+	}
+	base := contextReader{ctx: ctx, reader: reader}
+	size, sized := reader.(interface{ Len() int })
+	if scanner, ok := reader.(io.ByteScanner); ok {
+		scanned := contextByteScanner{contextReader: base, scanner: scanner}
+		if sized {
+			return &contextSizedByteScanner{contextByteScanner: scanned, size: size}
+		}
+		return &scanned
+	}
+	if sized {
+		return &contextSizedReader{contextReader: base, size: size}
+	}
+	return &base
+}
+
+// WriterWithContext carries cancellation through actual encoder writes. A nil
+// context retains the ordinary writer, just as ReaderWithContext does.
+func WriterWithContext(ctx context.Context, writer io.Writer) io.Writer {
+	if ctx == nil {
+		return writer
+	}
+	return &contextWriter{ctx: ctx, writer: writer}
+}
+
+type contextWriter struct {
+	ctx    context.Context
+	writer io.Writer
+}
+
+func (w *contextWriter) Write(value []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.writer.Write(value)
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(value []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(value)
+}
+
+type contextByteScanner struct {
+	contextReader
+	scanner io.ByteScanner
+}
+
+func (r *contextByteScanner) ReadByte() (byte, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.scanner.ReadByte()
+}
+func (r *contextByteScanner) UnreadByte() error { return r.scanner.UnreadByte() }
 
 // DecodeMsgpackFile decodes database-owned MessagePack state from a file.
 func DecodeMsgpackFile(file *os.File, dst any) error {
@@ -20,3 +96,21 @@ func DecodeMsgpackFile(file *os.File, dst any) error {
 	}
 	return msgpack.NewDecoder(file).Decode(dst)
 }
+
+// Bounded property decoding consumes the source's remaining byte count. Keep
+// that contract only when the original reader has it; unknown streams do not
+// acquire a fabricated bound. Shape selection occurs once at wrapping.
+// Author: Lane #1644 (Codex).
+type contextSizedReader struct {
+	contextReader
+	size interface{ Len() int }
+}
+
+func (r *contextSizedReader) Len() int { return r.size.Len() }
+
+type contextSizedByteScanner struct {
+	contextByteScanner
+	size interface{ Len() int }
+}
+
+func (r *contextSizedByteScanner) Len() int { return r.size.Len() }

@@ -273,6 +273,8 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	require.NoError(t, WithStoreTransaction(ctx, base, func(view storage.Engine) error {
+		_, exposesCommittedStore := capabilityForTest[*storage.MemoryEngine](storage.NewTracedEngine(view))
+		require.False(t, exposesCommittedStore, "system mutations retain their transaction view")
 		_, err := view.CreateNode(&storage.Node{ID: "role:ops", Labels: []string{roleLabel}, Properties: map[string]any{"name": "ops"}})
 		require.NoError(t, err)
 		require.Len(t, view.GetAllNodes(), 1)

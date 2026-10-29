@@ -98,12 +98,7 @@ func (b *BadgerEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
 	b.mu.RLock()
 	controller := b.lifecycleController
 	b.mu.RUnlock()
-	if provider, ok := controller.(interface {
-		TopLifecycleDebtKeys(int) []MVCCLifecycleDebtKey
-	}); ok {
-		return provider.TopLifecycleDebtKeys(limit)
-	}
-	return nil
+	return ReadValueWithCapability(controller, func(reader MVCCLifecycleDebtEngine) []MVCCLifecycleDebtKey { return reader.TopLifecycleDebtKeys(limit) }, nil)
 }
 
 func (b *BadgerEngine) acquireSnapshotReader(info SnapshotReaderInfo) (func(), error) {

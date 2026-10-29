@@ -105,8 +105,8 @@ func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *te
 		visited = true
 		return nil
 	})
-	require.ErrorIs(t, err, ErrNotImplemented)
-	require.False(t, visited)
+	require.NoError(t, err, "ordinary projected operation uses each child's core kernel")
+	require.False(t, visited, "both independent seeded views are empty")
 }
 
 func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {

@@ -145,7 +145,7 @@ func canCarryManagedEmbeddings(judge Engine, prev, node *Node) bool {
 		return false
 	}
 	same := EmbeddingSourceMatches(prev, node, defaultEmbeddingTextPolicy)
-	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
+	if engine, ok := OwnedCapability[embeddingSourceJudge](UnwrapEngine(judge)); ok {
 		same = engine.sameEmbeddingSource(prev, node)
 	}
 	return same

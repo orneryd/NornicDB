@@ -28,22 +28,21 @@ type snapshotEdgeTranscoder struct {
 // writeBody expands the V2 header and dictionary names, copying property bytes
 // only when the strict property reader would reproduce them exactly. Complex
 // values whose normalization has not been proved use the ordinary frame writer.
-func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, id EdgeID, body []byte, ids *NamespacedEngine, write func(byte, any) error) (bool, error) {
+func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, source embeddingRecordReader, id EdgeID, body []byte, ids *NamespacedEngine, write func(byte, any) error) (bool, error) {
 	namespace := namespaceForEdgeID(id)
 	edge := &t.edge
 	start, end, offset, err := decodeEdgeCompactHeaderInto(body, edgeFormatCompactV2, edge)
 	if err != nil {
 		return false, err
 	}
-	var ok bool
 	edge.ID = id
-	edge.StartNode, ok = b.idDict.lookupNodeIDByNum(start)
-	if !ok {
-		return false, fmt.Errorf("compact edge: start numID %d not in dict", start)
+	edge.StartNode, err = source.nodeID(start)
+	if err != nil {
+		return false, err
 	}
-	edge.EndNode, ok = b.idDict.lookupNodeIDByNum(end)
-	if !ok {
-		return false, fmt.Errorf("compact edge: end numID %d not in dict", end)
+	edge.EndNode, err = source.nodeID(end)
+	if err != nil {
+		return false, err
 	}
 	t.properties = t.properties[:0]
 	defer func() {

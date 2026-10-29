@@ -8,6 +8,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -99,9 +100,13 @@ func decodeStoredTime(decoder *msgpack.Decoder, value reflect.Value, length int)
 // is no longer a runtime serializer choice — msgpack is the only format
 // the engine emits.
 func encodeValue(value any) ([]byte, error) {
+	return encodeValueWithContext(nil, value)
+}
+
+func encodeValueWithContext(ctx context.Context, value any) ([]byte, error) {
 	encoder := getValueEncoder()
 	defer putValueEncoder(encoder)
-	payload, err := encoder.encode(value)
+	payload, err := encoder.encodeWithContext(ctx, value)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +133,17 @@ func putValueEncoder(encoder *valueEncoder) {
 }
 
 func (e *valueEncoder) encode(value any) ([]byte, error) {
+	return e.encodeWithContext(nil, value)
+}
+
+func (e *valueEncoder) encodeWithContext(ctx context.Context, value any) ([]byte, error) {
+	if err := copyContextError(ctx); err != nil {
+		return nil, err
+	}
 	e.reset()
+	if ctx != nil {
+		e.msgpack.Reset(util.WriterWithContext(ctx, &e.buffer))
+	}
 	if err := e.msgpack.Encode(value); err != nil {
 		return nil, err
 	}
@@ -153,6 +168,14 @@ func (e *valueEncoder) reset() {
 // in-place migration tool can read old data; the engine's hot path will
 // only ever see msgpack bodies in databases written by current code.
 func decodeValue(data []byte, value any) error {
+	return decodeValueWithContext(nil, data, value)
+}
+func decodeValueWithContext(ctx context.Context, data []byte, value any) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	headerSerializer, payload, ok, err := splitSerializationHeader(data)
 	if err != nil {
 		return err
@@ -160,15 +183,15 @@ func decodeValue(data []byte, value any) error {
 	if ok {
 		switch headerSerializer {
 		case serializerIDMsgpack:
-			return util.DecodeMsgpackBytes(payload, value)
+			return util.DecodeMsgpackBytesWithContext(ctx, payload, value)
 		case serializerIDGob:
-			return gobcodec.Decode(bytes.NewReader(payload), value, gobcodec.AllowTrailing)
+			return gobcodec.Decode(util.ReaderWithContext(ctx, bytes.NewReader(payload)), value, gobcodec.AllowTrailing)
 		default:
 			return fmt.Errorf("unsupported storage serializer id: %d", headerSerializer)
 		}
 	}
 	// Legacy fallback: pre-header gob bodies.
-	return gobcodec.Decode(bytes.NewReader(data), value, gobcodec.AllowTrailing)
+	return gobcodec.Decode(util.ReaderWithContext(ctx, bytes.NewReader(data)), value, gobcodec.AllowTrailing)
 }
 
 // splitSerializationHeader returns the serializer id from the leading

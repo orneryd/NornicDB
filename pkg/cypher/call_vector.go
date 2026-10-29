@@ -235,6 +235,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	seenOrphans := make(map[string]bool)
 	for _, hit := range hits {
 		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, err
+		}
 		if err != nil || node == nil {
 			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
 				if !seenOrphans[hit.ID] {

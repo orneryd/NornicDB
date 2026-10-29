@@ -3,7 +3,7 @@ package multidb
 import (
 	"context"
 
-	"strings"
+	"errors"
 	"time"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -14,13 +14,34 @@ import (
 // bytes in DatabaseManager metadata for O(1) reads.
 type sizeTrackingEngine struct {
 	storage.Engine
-	manager    *DatabaseManager
-	dbName     string
-	checker    *databaseLimitChecker
-	writeMu    *writeAdmission
-	runtime    *managedDatabaseRuntime
-	runtimeErr error
-	info       *DatabaseInfo
+	readBinding storage.ReadBindingSlot
+	manager     *DatabaseManager
+	dbName      string
+	checker     *databaseLimitChecker
+	writeMu     *writeAdmission
+	runtime     *managedDatabaseRuntime
+	runtimeErr  error
+	info        *DatabaseInfo
+}
+
+// sizeTrackingEngine declares every optional method; admission is derived from this policy.
+var sizeTrackingEngineReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "EdgeCountByTypeInNamespace EdgeCountByStartLabelInNamespace EdgeCountByEndLabelInNamespace", Disposition: storage.CapabilityTransparent, Scope: "The maintainer namespace-counter owner retains explicit namespace/tier point-read semantics; common cursor admission adds no scan or counter state."},
+	{Methods: "ReadStored StoredReadPolicy", Disposition: storage.CapabilityTransparent, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "SetManualSuppression", Disposition: storage.CapabilityRefused, Scope: "Exact visibility metadata mutation; stored quota/accounting population is unchanged."},
+	{Methods: "CommitTransaction ForEachNodeIDByLabel GetEdgeCurrentHead GetEdgeLatestVisible GetEdgeVisibleAt " +
+		"GetEdgesBetweenVisibleAt GetEdgesByTypeVisibleAt GetIncomingEdgesVisibleAt GetInnerEngine GetNodeCurrentHead " +
+		"GetNodeLatestVisible GetNodeVisibleAt GetNodesByLabelVisibleAt GetOutgoingEdgesVisibleAt GetQueryLimitChecker " +
+		"GetQueryNode GraphMutationVersion LifecycleStatus MatchEdgesBetween Namespace " +
+		"NodeCountByLabel OpenReadSnapshot PauseLifecycle PropertyKeyKnown RecordMaterializedAccess " +
+		"RegisterSnapshotReader ResumeLifecycle SetLifecycleSchedule StreamEdges StreamEdgesByType " +
+		"StreamNodeChunks StreamNodes StreamNodesByLabelProjected StreamNodesByPrefix SubscribeEvents " +
+		"TopLifecycleDebtKeys TriggerPruneNow",
+		Disposition: storage.CapabilityTransparent, Scope: "Read view delegates to ReadCapabilitySource; writes and decorator metadata retain their exact owner."},
+}
+
+func (*sizeTrackingEngine) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return sizeTrackingEngineReadPolicy.Copy()
 }
 
 var _ storage.Engine = (*sizeTrackingEngine)(nil)
@@ -37,7 +58,7 @@ var _ storage.ProjectedLabelNodeReader = (*sizeTrackingEngine)(nil)
 var _ storage.PropertyKeyLookup = (*sizeTrackingEngine)(nil)
 
 func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbName string, checkers ...*databaseLimitChecker) storage.Engine {
-	wrapped := &sizeTrackingEngine{
+	wrapped := &sizeTrackingEngine{writeMu: &writeAdmission{},
 		Engine:  engine,
 		manager: manager,
 		dbName:  dbName,
@@ -62,14 +83,15 @@ func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbNa
 		}
 		// Catalog writes retain their existing internal native journal owner.
 		if dbName != manager.configSystemDatabase() {
-			if registrar, ok := owner.observer.(interface {
+			if registrar, ok := storage.OwnedCapability[interface {
 				RegisterManagedEntityPreparer(string, storage.ManagedEntityPrepare, storage.ManagedEntityInitialize)
-			}); ok {
+			}](owner.observer); ok {
 				registrar.RegisterManagedEntityPreparer(dbName, wrapped.prepareManagedDirect, wrapped.initializeManagedUsage)
 			}
 		}
 	}
 
+	wrapped.readBinding.Store(storage.RebindReadView(wrapped))
 	return wrapped
 }
 
@@ -85,27 +107,30 @@ func (t *sizeTrackingEngine) GetInnerEngine() storage.Engine {
 	return t.Engine
 }
 
+// ReadCapabilitySource keeps delegated reads transparent while writes continue
+// through this wrapper's admission and size accounting.
+func (t *sizeTrackingEngine) ReadCapabilitySource() (storage.Engine, bool) {
+	return t.GetInnerEngine(), true
+}
+
 // GetQueryNode forwards the query-row node read (storage.QueryNodeReader),
 // else reads the full node.
 func (t *sizeTrackingEngine) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
-	if reader, ok := t.Engine.(storage.QueryNodeReader); ok {
+	return storage.ReadWithCapability(t.Engine, func(reader storage.QueryNodeReader) (*storage.Node, error) {
 		return reader.GetQueryNode(id)
-	}
-	return t.Engine.GetNode(id)
+	}, func() (*storage.Node, error) { return t.Engine.GetNode(id) })
 }
 
 // RecordMaterializedAccess preserves result-access accounting across the
 // database size-tracking wrapper.
 func (t *sizeTrackingEngine) RecordMaterializedAccess(entityID string) {
-	if recorder, ok := t.Engine.(interface{ RecordMaterializedAccess(string) }); ok {
-		recorder.RecordMaterializedAccess(entityID)
-	}
+	storage.RecordMaterializedAccess(t.Engine, entityID)
 }
 
 // RegisterSnapshotReader preserves MVCC lifecycle admission and tracking across
 // size-tracking wrapper boundaries.
 func (t *sizeTrackingEngine) RegisterSnapshotReader(info storage.SnapshotReaderInfo) func() {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleEngine); ok {
+	if provider, ok := storage.ViewMetadataForEngine[storage.MVCCLifecycleEngine](t.Engine); ok {
 		return provider.RegisterSnapshotReader(info)
 	}
 	return func() {}
@@ -113,7 +138,7 @@ func (t *sizeTrackingEngine) RegisterSnapshotReader(info storage.SnapshotReaderI
 
 // LifecycleStatus delegates lifecycle status when supported by the wrapped engine.
 func (t *sizeTrackingEngine) LifecycleStatus() map[string]interface{} {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleEngine); ok {
+	if provider, ok := storage.ViewMetadataForEngine[storage.MVCCLifecycleEngine](t.Engine); ok {
 		return provider.LifecycleStatus()
 	}
 	return map[string]interface{}{"enabled": false}
@@ -121,7 +146,7 @@ func (t *sizeTrackingEngine) LifecycleStatus() map[string]interface{} {
 
 // TriggerPruneNow delegates lifecycle prune-now when supported by the wrapped engine.
 func (t *sizeTrackingEngine) TriggerPruneNow(ctx context.Context) error {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleEngine); ok {
+	if provider, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](t.Engine); ok {
 		return provider.TriggerPruneNow(ctx)
 	}
 	return nil
@@ -129,21 +154,21 @@ func (t *sizeTrackingEngine) TriggerPruneNow(ctx context.Context) error {
 
 // PauseLifecycle delegates lifecycle pause when supported by the wrapped engine.
 func (t *sizeTrackingEngine) PauseLifecycle() {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleEngine); ok {
+	if provider, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](t.Engine); ok {
 		provider.PauseLifecycle()
 	}
 }
 
 // ResumeLifecycle delegates lifecycle resume when supported by the wrapped engine.
 func (t *sizeTrackingEngine) ResumeLifecycle() {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleEngine); ok {
+	if provider, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](t.Engine); ok {
 		provider.ResumeLifecycle()
 	}
 }
 
 // SetLifecycleSchedule delegates lifecycle cadence updates when supported by the wrapped engine.
 func (t *sizeTrackingEngine) SetLifecycleSchedule(interval time.Duration) error {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleScheduleEngine); ok {
+	if provider, ok := storage.OwnedCapability[storage.MVCCLifecycleScheduleEngine](t.Engine); ok {
 		return provider.SetLifecycleSchedule(interval)
 	}
 	return nil
@@ -151,51 +176,27 @@ func (t *sizeTrackingEngine) SetLifecycleSchedule(interval time.Duration) error 
 
 // TopLifecycleDebtKeys delegates lifecycle debt inspection when supported by the wrapped engine.
 func (t *sizeTrackingEngine) TopLifecycleDebtKeys(limit int) []storage.MVCCLifecycleDebtKey {
-	if provider, ok := t.Engine.(storage.MVCCLifecycleDebtEngine); ok {
-		return provider.TopLifecycleDebtKeys(limit)
-	}
-	return nil
+	return storage.ReadValueWithCapability(t.Engine, func(reader storage.MVCCLifecycleDebtEngine) []storage.MVCCLifecycleDebtKey {
+		return reader.TopLifecycleDebtKeys(limit)
+	}, nil)
 }
 
 // StreamNodes delegates streaming iteration to the wrapped engine when available.
-func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
-		return streamer.StreamNodes(ctx, fn)
-	}
-	// Fallback to engine-agnostic helper.
+func (t *sizeTrackingEngine) StreamNodes(ctx context.Context, fn func(*storage.Node) error) error {
 	return storage.StreamNodesWithFallback(ctx, t.Engine, 1000, fn)
 }
 
 // StreamEdges delegates streaming iteration to the wrapped engine when available.
-func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(edge *storage.Edge) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
-		return streamer.StreamEdges(ctx, fn)
+func (t *sizeTrackingEngine) StreamEdges(ctx context.Context, fn func(*storage.Edge) error) error {
+	err := storage.StreamEdgesWithFallback(ctx, t.Engine, 1000, fn)
+	if errors.Is(err, storage.ErrIterationStopped) {
+		return nil
 	}
-	edges, err := t.Engine.AllEdges()
-	if err != nil {
-		return err
-	}
-	for _, edge := range edges {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if err := fn(edge); err != nil {
-			if err == storage.ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
 // StreamNodeChunks delegates chunked streaming to wrapped engine when available.
 func (t *sizeTrackingEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*storage.Node) error) error {
-	if streamer, ok := t.Engine.(storage.StreamingEngine); ok {
-		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
-	}
 	if chunkSize <= 0 {
 		chunkSize = 1
 	}
@@ -220,17 +221,8 @@ func (t *sizeTrackingEngine) StreamNodeChunks(ctx context.Context, chunkSize int
 }
 
 // StreamNodesByPrefix preserves prefix-scoped streaming when supported by wrapped engine.
-func (t *sizeTrackingEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(node *storage.Node) error) error {
-	if prefixStreamer, ok := t.Engine.(storage.PrefixStreamingEngine); ok {
-		return prefixStreamer.StreamNodesByPrefix(ctx, prefix, fn)
-	}
-	// Fallback to full stream + prefix filter.
-	return t.StreamNodes(ctx, func(node *storage.Node) error {
-		if prefix == "" || strings.HasPrefix(string(node.ID), prefix) {
-			return fn(node)
-		}
-		return nil
-	})
+func (t *sizeTrackingEngine) StreamNodesByPrefix(ctx context.Context, prefix string, fn func(*storage.Node) error) error {
+	return t.Engine.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, fn)
 }
 
 // StreamNodesWithOptions delegates the unified options-driven scan to the
@@ -247,84 +239,63 @@ func (t *sizeTrackingEngine) StreamNodesWithOptions(ctx context.Context, opts st
 // fail this type assertion and fall back to a whole-namespace StreamNodes
 // scan (O(store) instead of O(label); see #561).
 func (t *sizeTrackingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	if reader, ok := t.Engine.(storage.ProjectedLabelNodeReader); ok {
-		return reader.StreamNodesByLabelProjected(label, properties, visit)
-	}
-	return storage.ErrNotImplemented
+	return storage.VisitWithCapability(t.Engine, func(reader storage.ProjectedLabelNodeReader, deliver func(*storage.Node) error) error {
+		return reader.StreamNodesByLabelProjected(label, properties, deliver)
+	}, nil, visit)
 }
 
 // ForEachNodeIDByLabel preserves label->ID lookup capabilities across wrapper
 // boundaries so LIMIT + label paths can avoid full node decode.
 func (t *sizeTrackingEngine) ForEachNodeIDByLabel(label string, visit func(storage.NodeID) bool) error {
-	if lookup, ok := t.Engine.(storage.LabelNodeIDLookupEngine); ok {
-		return lookup.ForEachNodeIDByLabel(label, visit)
-	}
-	ids, err := storage.NodeIDsByLabel(t.Engine, label, 0)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if visit != nil && !visit(id) {
-			return nil
-		}
-	}
-	return nil
+	return storage.VisitNodeIDsByLabel(t.Engine, label, visit)
 }
 
 func (t *sizeTrackingEngine) GetNodeLatestVisible(id storage.NodeID) (*storage.Node, error) {
-	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCVisibilityEngine) (*storage.Node, error) {
 		return provider.GetNodeLatestVisible(id)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() (*storage.Node, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetNodeVisibleAt(id storage.NodeID, version storage.MVCCVersion) (*storage.Node, error) {
-	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCVisibilityEngine) (*storage.Node, error) {
 		return provider.GetNodeVisibleAt(id, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() (*storage.Node, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetEdgeLatestVisible(id storage.EdgeID) (*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCVisibilityEngine) (*storage.Edge, error) {
 		return provider.GetEdgeLatestVisible(id)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() (*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetEdgeVisibleAt(id storage.EdgeID, version storage.MVCCVersion) (*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCVisibilityEngine) (*storage.Edge, error) {
 		return provider.GetEdgeVisibleAt(id, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() (*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCIndexedVisibilityEngine) ([]*storage.Node, error) {
 		return provider.GetNodesByLabelVisibleAt(label, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() ([]*storage.Node, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
 		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() ([]*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
 		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() ([]*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
 		return provider.GetEdgesByTypeVisibleAt(edgeType, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() ([]*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 // MatchEdgesBetween keeps projected edge-between matching on the wrapped
@@ -334,24 +305,21 @@ func (t *sizeTrackingEngine) MatchEdgesBetween(startID, endID storage.NodeID, ed
 }
 
 func (t *sizeTrackingEngine) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := t.Engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
 		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
-	}
-	return nil, storage.ErrNotImplemented
+	}, func() ([]*storage.Edge, error) { return nil, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetNodeCurrentHead(id storage.NodeID) (storage.MVCCHead, error) {
-	if provider, ok := t.Engine.(storage.MVCCHeadEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCHeadEngine) (storage.MVCCHead, error) {
 		return provider.GetNodeCurrentHead(id)
-	}
-	return storage.MVCCHead{}, storage.ErrNotImplemented
+	}, func() (storage.MVCCHead, error) { return storage.MVCCHead{}, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCCHead, error) {
-	if provider, ok := t.Engine.(storage.MVCCHeadEngine); ok {
+	return storage.ReadWithCapability(t.Engine, func(provider storage.MVCCHeadEngine) (storage.MVCCHead, error) {
 		return provider.GetEdgeCurrentHead(id)
-	}
-	return storage.MVCCHead{}, storage.ErrNotImplemented
+	}, func() (storage.MVCCHead, error) { return storage.MVCCHead{}, storage.ErrNotImplemented })
 }
 
 func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
@@ -590,21 +558,14 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 // it instead of scanning the label. An engine without one counts its label's
 // nodes.
 func (t *sizeTrackingEngine) NodeCountByLabel(label string) (int64, error) {
-	if counter, ok := t.Engine.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
-		return counter.NodeCountByLabel(label)
-	}
-	nodes, err := t.Engine.GetNodesByLabel(label)
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(nodes)), nil
+	return storage.CountNodesWithLabel(context.Background(), t.Engine, label)
 }
 
 // Namespace preserves the wrapped engine's namespace (its database name), so
 // what a caller reads through this wrapper is the database it tracks; it is
 // "" when the wrapped engine has none, which every caller treats as unknown.
 func (t *sizeTrackingEngine) Namespace() string {
-	if scoped, ok := t.Engine.(interface{ Namespace() string }); ok {
+	if scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](t.Engine); ok {
 		return scoped.Namespace()
 	}
 	return ""
@@ -612,7 +573,7 @@ func (t *sizeTrackingEngine) Namespace() string {
 
 // GraphMutationVersion preserves query-cache invalidation through this wrapper.
 func (t *sizeTrackingEngine) GraphMutationVersion() (uint64, bool) {
-	provider, ok := t.Engine.(storage.GraphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.GraphMutationVersionProvider](t.Engine)
 	if !ok {
 		return 0, false
 	}
@@ -623,7 +584,7 @@ func (t *sizeTrackingEngine) GraphMutationVersion() (uint64, bool) {
 // (storage.PropertyKeyLookup), so Cypher's SET counter sees the key names
 // through the server's wrapper as it does on the namespaced engine (#907).
 func (t *sizeTrackingEngine) PropertyKeyKnown(name string) bool {
-	lookup, ok := t.Engine.(storage.PropertyKeyLookup)
+	lookup, ok := storage.ViewMetadataForEngine[storage.PropertyKeyLookup](t.Engine)
 	return ok && lookup.PropertyKeyKnown(name)
 }
 
@@ -648,4 +609,34 @@ func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
 		return ErrDatabaseNotFound
 	}
 	return t.runtime.initializeManagedUsage(ctx, managedEntityOwnerFor(t.Engine).boundary)
+}
+func (t *sizeTrackingEngine) CapabilityOwnerSource(policy storage.OwnerPolicy) (storage.Engine, bool) {
+	return t.GetInnerEngine(), true
+}
+
+func (*sizeTrackingEngine) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineDecorator, ReadState: storage.BindingDelegated, Membership: storage.BindingDelegated, Controller: storage.BindingDelegated, PendingActions: storage.BindingDelegated, SchemaPublication: storage.BindingDelegated, ReadLease: storage.BindingDelegated, StatementMode: storage.BindingDelegated, Identity: storage.BindingDelegated, Enforcement: storage.BindingDelegated, CompoundDependencies: storage.BindingDelegated, SameVersionFallback: storage.BindingDelegated, Delivery: storage.BindingDelegated, ExactEffects: storage.BindingOwned, FullRead: storage.BindingOwned, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+
+func (t *sizeTrackingEngine) ReadCapabilityBinding() *storage.ReadViewBinding {
+	return t.readBinding.Binding(t, t.Engine)
+}
+
+func (t *sizeTrackingEngine) PublishReadCapabilityBinding(binding *storage.ReadViewBinding) {
+	t.readBinding.Store(binding)
+}
+
+// Stored integrity facts may not bypass this view.
+func (t *sizeTrackingEngine) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.StoredReadPolicyForEngine(t.Engine)
+}
+func (t *sizeTrackingEngine) ReadStored(ctx context.Context, r storage.StoredReadRequest) (storage.StoredReadResult, error) {
+	return storage.ReadStored(ctx, t.Engine, r)
+}
+
+func (t *sizeTrackingEngine) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error {
+	if owner, ok := storage.OwnedCapability[storage.ManualSuppressionEngine](t.Engine); ok {
+		return owner.SetManualSuppression(kind, id, suppressed)
+	}
+	return storage.ErrNotImplemented
 }

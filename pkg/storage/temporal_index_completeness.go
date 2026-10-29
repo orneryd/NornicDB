@@ -113,7 +113,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 	if engine == nil || schema == nil {
 		return nil
 	}
-	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
+	badgerEngine, _ := OwnedCapability[*BadgerEngine](UnwrapEngine(engine))
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
@@ -155,15 +155,8 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 // engineScope is the database a scoped wrapper of the engine serves, or nil
 // (the whole store) for an unscoped engine.
 func engineScope(engine Engine) []string {
-	for current := engine; current != nil; {
-		if scoped, ok := current.(interface{ Namespace() string }); ok {
-			return []string{scoped.Namespace()}
-		}
-		wrapper, ok := current.(EngineUnwrapper)
-		if !ok {
-			return nil
-		}
-		current = wrapper.GetInnerEngine()
+	if scoped, ok := ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
+		return []string{scoped.Namespace()}
 	}
 	return nil
 }

@@ -20,18 +20,25 @@ func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
 
 	exec := NewStorageExecutor(store)
 
-	seed := exec.seedNodeFromIDString(" n1 ")
+	seed, err := exec.seedNodeFromIDString(" n1 ")
+	require.NoError(t, err)
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 
-	seed = exec.seedNodeFromIDString("bolt:db:tail")
+	seed, err = exec.seedNodeFromIDString("bolt:db:tail")
+	require.NoError(t, err)
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("tail"), seed.ID)
 
-	require.Nil(t, exec.seedNodeFromIDString("   "))
-	require.Nil(t, exec.seedNodeFromMap(map[string]interface{}{"id": "missing"}))
+	empty, err := exec.seedNodeFromIDString("   ")
+	require.NoError(t, err)
+	require.Nil(t, empty)
+	empty, err = exec.seedNodeFromMap(map[string]interface{}{"id": "missing"})
+	require.NoError(t, err)
+	require.Nil(t, empty)
 
-	seed = exec.seedNodeFromMap(map[string]interface{}{"_nodeId": "n1"})
+	seed, err = exec.seedNodeFromMap(map[string]interface{}{"_nodeId": "n1"})
+	require.NoError(t, err)
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 

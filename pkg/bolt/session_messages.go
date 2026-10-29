@@ -358,6 +358,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 	s.lastQueryDatabase = resultDatabase
+	s.lastEntitySource = s.recordEntityDatabaseResolver(resultDatabase, executor)
 	if s.inTransaction {
 		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
@@ -378,10 +379,11 @@ func (s *Session) handleRun(data []byte) error {
 			s.resultStreams = make(map[int64]*resultStream)
 		}
 		s.resultStreams[statementID] = &resultStream{
-			result:   result,
-			delivery: delivery,
-			isWrite:  isWrite,
-			database: resultDatabase,
+			result:       result,
+			delivery:     delivery,
+			isWrite:      isWrite,
+			database:     resultDatabase,
+			entitySource: s.lastEntitySource,
 		}
 		if resultMemoryLease != nil {
 			if s.resultMemoryLeases == nil {
@@ -772,12 +774,13 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 		return resultStream{}, -1, false
 	}
 	return resultStream{
-		result:   s.lastResult,
-		delivery: s.lastDelivery,
-		index:    s.resultIndex,
-		isWrite:  s.lastQueryIsWrite,
-		database: s.lastQueryDatabase,
-		lazy:     s.lastLazy,
+		result:       s.lastResult,
+		delivery:     s.lastDelivery,
+		index:        s.resultIndex,
+		isWrite:      s.lastQueryIsWrite,
+		database:     s.lastQueryDatabase,
+		entitySource: s.lastEntitySource,
+		lazy:         s.lastLazy,
 	}, -1, true
 }
 
@@ -796,8 +799,10 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.lastResult = stream.result
 		s.resultIndex = stream.index
 		s.lastLazy = stream.lazy
+		s.lastEntitySource = stream.entitySource
 	} else {
 		s.lastResult = nil
+		s.lastEntitySource = nil
 		s.lastResultMemoryLease = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
@@ -858,8 +863,8 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
-			return err
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.entitySource, stream.delivery); err != nil {
+			return s.failRecordProjection(statementID, stream, err)
 		}
 		stream.index += remaining
 	} else {
@@ -871,8 +876,8 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row, stream.database, stream.delivery); err != nil {
-				return err
+			if err := s.writeRecordNoFlush(row, stream.database, stream.entitySource, stream.delivery); err != nil {
+				return s.failRecordProjection(statementID, stream, err)
 			}
 
 			stream.index++
@@ -1036,7 +1041,9 @@ func (s *Session) handleDiscard(data []byte) error {
 			discardCount = options.limit - discarded
 		}
 		if options.limit > 0 && (stream.lazy != nil || discardCount < remaining) {
-			s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount])
+			if err := s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount]); err != nil {
+				return s.failRecordProjection(statementID, stream, err)
+			}
 		}
 		stream.index += discardCount
 		discarded += discardCount
@@ -1136,6 +1143,7 @@ func (s *Session) handleReset(data []byte) error {
 	}
 	s.failedUntilReset = false
 	s.lastResult = nil
+	s.lastEntitySource = nil
 	s.resultIndex = 0
 	if err := s.sendSuccessNoFlush(nil); err != nil {
 		return err
@@ -1446,24 +1454,57 @@ func (s *Session) handleRollback(data []byte) error {
 
 // sendRecord sends a RECORD response.
 // Uses buffer pooling to reduce allocations for high-frequency record sending.
-func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabaseResolver {
-	if s.server == nil || s.server.dbManager == nil {
-		return nil
-	}
-	engine, err := s.server.dbManager.GetStorage(dbName)
-	if err != nil {
-		return nil
-	}
-	composite, ok := engine.(*storage.CompositeEngine)
-	if !ok {
-		return nil
-	}
-	return func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
-		if nodeID != "" {
-			return composite.ConstituentDatabaseForNode(nodeID)
+func (s *Session) recordEntityDatabaseResolver(dbName string, executors ...QueryExecutor) *boltEntityDatabaseResolver {
+	var engine storage.Engine
+	var selectionErr error
+	if len(executors) > 0 {
+		if provider, ok := executors[0].(interface {
+			FunctionStorage(string) (storage.Engine, error)
+		}); ok {
+			engine, selectionErr = provider.FunctionStorage(dbName)
 		}
-		return composite.ConstituentDatabaseForEdge(edgeID)
 	}
+	if engine == nil && selectionErr == nil && s.server != nil && s.server.dbManager != nil {
+		engine, selectionErr = s.server.dbManager.GetStorage(dbName)
+	}
+	composite := engine != nil && storage.CompositeDatabaseOf(engine) != ""
+	if !composite && selectionErr == nil {
+		return noEntityDatabaseResolver
+	}
+	resolver := &boltEntityDatabaseResolver{}
+	resolver.resolve = func(nodeID storage.NodeID, edgeID storage.EdgeID) (string, error) {
+		if selectionErr != nil {
+			return "", selectionErr
+		}
+		if !composite {
+			return dbName, nil
+		}
+		if nodeID != "" {
+			node, err := engine.GetNode(nodeID)
+			if errors.Is(err, storage.ErrNotFound) {
+				return dbName, nil
+			}
+			if err != nil {
+				return "", err
+			}
+			if node != nil {
+				return node.Database, nil
+			}
+		} else if edgeID != "" {
+			edge, err := engine.GetEdge(edgeID)
+			if errors.Is(err, storage.ErrNotFound) {
+				return dbName, nil
+			}
+			if err != nil {
+				return "", err
+			}
+			if edge != nil {
+				return edge.Database, nil
+			}
+		}
+		return dbName, nil
+	}
+	return resolver
 }
 
 func (s *Session) sendRecord(fields []any) error {
@@ -1475,7 +1516,11 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+	resolver := s.recordEntityDatabaseResolver(s.database, s.executor)
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, resolver)
+	if resolver != nil && resolver.err != nil {
+		return &entityProjectionError{resolver.err}
+	}
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -1487,7 +1532,7 @@ func (s *Session) sendRecord(fields []any) error {
 // It is used by PULL streaming to batch many records into a single flush
 // (the final SUCCESS message flushes everything). dbName is the database the
 // active result stream ran on (its entities carry its element ids, #745).
-func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) writeRecordNoFlush(fields []any, dbName string, resolver *boltEntityDatabaseResolver, delivery ...*resultstream.Delivery) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1495,7 +1540,13 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	if resolver == nil {
+		resolver = s.recordEntityDatabaseResolver(dbName, s.executor)
+	}
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+	if resolver != nil && resolver.err != nil {
+		return &entityProjectionError{resolver.err}
+	}
 
 	err := s.writeMessageNoFlush(buf)
 	if err == nil && len(delivery) > 0 && delivery[0] != nil {
@@ -1510,11 +1561,13 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
 // Uses buffer pooling to reduce allocations per record. dbName is the
 // database the active result stream ran on (#745 element ids).
-func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) sendRecordsBatched(rows [][]any, dbName string, resolver *boltEntityDatabaseResolver, delivery ...*resultstream.Delivery) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	resolver := s.recordEntityDatabaseResolver(dbName)
+	if resolver == nil {
+		resolver = s.recordEntityDatabaseResolver(dbName, s.executor)
+	}
 
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
@@ -1529,6 +1582,10 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*r
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
 		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+		if resolver != nil && resolver.err != nil {
+			s.recordBuf = buf[:0]
+			return &entityProjectionError{resolver.err}
+		}
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.
@@ -1889,4 +1946,18 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 	}
 	s.identity, s.identityAuth = identity, s.authResult
 	return identity
+}
+
+// Only storage projection failures use the existing query-failure terminal;
+// socket failures retain their transport error and connection cleanup.
+func (s *Session) failRecordProjection(statementID int64, stream resultStream, err error) error {
+	var projection *entityProjectionError
+	if !errors.As(err, &projection) {
+		return err
+	}
+	if stream.delivery != nil {
+		stream.delivery.Fail()
+	}
+	s.finishResultStream(statementID, stream)
+	return s.sendRunQueryFailure(projection.err, "")
 }

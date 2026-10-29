@@ -18,12 +18,13 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 		if w == nil {
 			return
 		}
+		var captured bufferedEntityResult
 		if valueKey, ok := indexValueKey(values[0]); ok {
-			pending = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey}).nodes
+			captured = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey})
 		} else {
-			pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
-			pending, _ = pendingNodes.nodes, pendingNodes.nodesTouched
+			captured = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
 		}
+		pending = captured.nodes
 		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {
 			states[id] = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})

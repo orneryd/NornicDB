@@ -20,20 +20,39 @@ import (
 // fully-qualified IDs like "<db>:<id>") so multi-database isolation is preserved.
 type ReplicatedEngine struct {
 	storage.Engine
+	readBinding storage.ReadBindingSlot
 
 	replicator Replicator
 	timeout    time.Duration
+}
+
+// ReplicatedEngine declares every optional method; admission is derived from this policy.
+var replicatedEngineReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "EdgeCountByTypeInNamespace EdgeCountByStartLabelInNamespace EdgeCountByEndLabelInNamespace", Disposition: storage.CapabilityTransparent, Scope: "The maintainer namespace-counter owner retains explicit namespace/tier point-read semantics; common cursor admission adds no scan or counter state."},
+	{Methods: "CheckEntityCommitAdmission", Disposition: storage.CapabilityRefused, Scope: "Leader admission belongs to the exact entity submitter, not data-read discovery."},
+	{Methods: "ForwardEntityChanges", Disposition: storage.CapabilityRefused, Scope: "Stored-image forwarding retains the original managed publication route."},
+	{Methods: "SubmitEntityCommit", Disposition: storage.CapabilityRefused, Scope: "The managed replication terminal owns the prepared commit and its receipt."},
+	{Methods: "ReadStored StoredReadPolicy", Disposition: storage.CapabilityTransparent, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "Backup GetInnerEngine GraphMutationVersion GraphMutationVersionInNamespace IsLeader " +
+		"OpenReadSnapshot Restore SubscribeEvents",
+		Disposition: storage.CapabilityTransparent, Scope: "Read view delegates to ReadCapabilitySource; writes and decorator metadata retain their exact owner."},
+}
+
+func (*ReplicatedEngine) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return replicatedEngineReadPolicy.Copy()
 }
 
 func NewReplicatedEngine(inner storage.Engine, replicator Replicator, timeout time.Duration) *ReplicatedEngine {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &ReplicatedEngine{
+	view := &ReplicatedEngine{
 		Engine:     inner,
 		replicator: replicator,
 		timeout:    timeout,
 	}
+	view.readBinding.Store(storage.RebindReadView(view))
+	return view
 }
 
 // GetInnerEngine exposes the local storage chain for maintenance operations.
@@ -44,13 +63,19 @@ func (e *ReplicatedEngine) GetInnerEngine() storage.Engine {
 	return e.Engine
 }
 
+// ReadCapabilitySource exposes the delegated local read view. Replicated writes
+// remain operations of this engine, independently of read capability discovery.
+func (e *ReplicatedEngine) ReadCapabilitySource() (storage.Engine, bool) {
+	return e.GetInnerEngine(), true
+}
+
 // Backup delegates a native backup to the local storage chain. Replication
 // writes are already applied locally before their acknowledgement returns.
 func (e *ReplicatedEngine) Backup(path string) error {
 	if e == nil || e.Engine == nil {
 		return storage.ErrStorageClosed
 	}
-	if backupable, ok := e.Engine.(interface{ Backup(string) error }); ok {
+	if backupable, ok := storage.OwnedCapability[interface{ Backup(string) error }](e.Engine); ok {
 		return backupable.Backup(path)
 	}
 	return storage.ErrNotImplemented
@@ -61,7 +86,7 @@ func (e *ReplicatedEngine) Restore(path string) error {
 	if e == nil || e.Engine == nil {
 		return storage.ErrStorageClosed
 	}
-	if restorable, ok := e.Engine.(interface{ Restore(string) error }); ok {
+	if restorable, ok := storage.OwnedCapability[interface{ Restore(string) error }](e.Engine); ok {
 		return restorable.Restore(path)
 	}
 	return storage.ErrNotImplemented
@@ -69,7 +94,7 @@ func (e *ReplicatedEngine) Restore(path string) error {
 
 // GraphMutationVersion exposes graph mutations applied to the local engine.
 func (e *ReplicatedEngine) GraphMutationVersion() (uint64, bool) {
-	provider, ok := e.Engine.(storage.GraphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.GraphMutationVersionProvider](e.Engine)
 	if !ok {
 		return 0, false
 	}
@@ -79,7 +104,7 @@ func (e *ReplicatedEngine) GraphMutationVersion() (uint64, bool) {
 // GraphMutationVersionInNamespace preserves database-scoped invalidation
 // through the replication wrapper.
 func (e *ReplicatedEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
-	provider, ok := e.Engine.(storage.NamespaceGraphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.NamespaceGraphMutationVersionProvider](e.Engine)
 	if !ok {
 		return 0, false
 	}
@@ -177,4 +202,32 @@ func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error
 		return err
 	}
 	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+}
+func (e *ReplicatedEngine) CapabilityOwnerSource(policy storage.OwnerPolicy) (storage.Engine, bool) {
+	// Active replication owns physical mutations. It has no native transaction
+	// adapter, so discovery cannot authorize a local raw commit around it.
+	if policy == storage.CommitOwnerPolicy && e.replicator != nil {
+		return nil, false
+	}
+	return e.GetInnerEngine(), true
+}
+
+func (*ReplicatedEngine) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineDecorator, ReadState: storage.BindingDelegated, Membership: storage.BindingDelegated, Controller: storage.BindingDelegated, PendingActions: storage.BindingDelegated, SchemaPublication: storage.BindingDelegated, ReadLease: storage.BindingDelegated, StatementMode: storage.BindingDelegated, Identity: storage.BindingDelegated, Enforcement: storage.BindingDelegated, CompoundDependencies: storage.BindingDelegated, SameVersionFallback: storage.BindingDelegated, Delivery: storage.BindingDelegated, ExactEffects: storage.BindingOwned, FullRead: storage.BindingOwned, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+
+func (e *ReplicatedEngine) ReadCapabilityBinding() *storage.ReadViewBinding {
+	return e.readBinding.Binding(e, e.Engine)
+}
+
+func (e *ReplicatedEngine) PublishReadCapabilityBinding(binding *storage.ReadViewBinding) {
+	e.readBinding.Store(binding)
+}
+
+// Stored integrity facts may not bypass this view.
+func (e *ReplicatedEngine) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.StoredReadPolicyForEngine(e.Engine)
+}
+func (e *ReplicatedEngine) ReadStored(ctx context.Context, r storage.StoredReadRequest) (storage.StoredReadResult, error) {
+	return storage.ReadStored(ctx, e.Engine, r)
 }

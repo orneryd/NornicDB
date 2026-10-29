@@ -145,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently. Preserve replacement property-index entries after deletion.
 - Persist replacement transaction embedding chunks and remove obsolete chunks
   across repeated updates, rollback and database reopen.
+- Declare optional read admission at each storage boundary and check completeness
+  against compiled method sets. Untyped relationship MATCH retains pending writes,
+  and imported composite entities retain their source policy and decay metadata.
+  Keep admission lookups allocation-free, preserve wrapper-owned query deadlines,
+  and retain ordinary scoped schema, temporal and streaming-count fallbacks.
 
 - Preserve hidden stored node and relationship identity, quota usage and cascades.
   Order buffered, direct and maintenance writes together so flushes and restarts
@@ -311,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
   and preserve canonical query visibility before selecting scalar endpoint properties (#1496, #1497).
 
+- Preserve optional engine reads and composite targeting through transparent storage decorators; execute reads through their scoped owner, preserve predicate and visitor refusals without replay, and retain requested historical versions. Validate namespace results before translation and keep constituent identity in maintenance callbacks.
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 

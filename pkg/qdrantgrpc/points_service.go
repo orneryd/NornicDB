@@ -277,7 +277,10 @@ func (s *PointsService) Get(ctx context.Context, req *qpb.GetPoints) (*qpb.GetRe
 		nodeID := pointIDToNodeID(pid)
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 
 		out := &qpb.RetrievedPoint{
@@ -607,7 +610,10 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 
 		if overwrite {
@@ -621,7 +627,9 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 			}
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -663,13 +671,18 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		for _, k := range req.Keys {
 			delete(node.Properties, k)
 		}
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -711,11 +724,16 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
 		}
@@ -760,7 +778,10 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		nodeID := pointIDToNodeID(pv.Id)
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 
 		names, vecs, err := extractVectors(ctx, s.config.Localizer, pv.Vectors)
@@ -775,7 +796,9 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 
 		upsertNodeVectors(node, names, vecs)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
@@ -824,11 +847,16 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 	for _, nodeID := range nodeIDs {
 		node, err := store.GetNode(nodeID)
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		deleteNodeVectors(node, req.Vectors.Names)
 		node.UpdatedAt = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
+		}
 
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err), grpcresponse.QdrantSourceFallback)
@@ -1253,7 +1281,10 @@ func (s *PointsService) recommendQueryVector(
 		}
 		node, err := store.GetNode(pointIDToNodeID(id))
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		if emb, ok := nodeVectorByName(node, using); ok {
 			vectorsPos = append(vectorsPos, emb)
@@ -1278,7 +1309,10 @@ func (s *PointsService) recommendQueryVector(
 		}
 		node, err := store.GetNode(pointIDToNodeID(id))
 		if err != nil {
-			continue
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 		if emb, ok := nodeVectorByName(node, using); ok {
 			vectorsNeg = append(vectorsNeg, emb)

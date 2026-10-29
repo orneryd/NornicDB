@@ -76,7 +76,7 @@ func statementTypeError(ctx context.Context, query, kind, previousKind string, t
 	previous := "Administration command"
 	if previousKind == "Data" {
 		previous = "Read query"
-		if writes, ok := transaction.(interface{ OperationCount() int }); ok && writes.OperationCount() > 0 {
+		if writes, ok := storage.OwnedCapability[interface{ OperationCount() int }](transaction); ok && writes.OperationCount() > 0 {
 			previous = "Write query"
 		}
 	}
@@ -120,20 +120,21 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 		return nil, err
 	}
 	e.txContext = owner.txContext
+	e.txContext.controller = e
 	e.txContext.statementKind = "Administration"
 	tx := e.txContext.tx.(*storage.BadgerTransaction)
 	if err := tx.SetMetadata(metadata); err != nil {
 		return nil, err
 	}
 	namespace := ""
-	if scoped, ok := system.(interface{ Namespace() string }); ok {
+	if scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](system); ok {
 		namespace = scoped.Namespace()
 	}
 	separator := ""
 	if namespace != "" {
 		separator = ":"
 	}
-	e.txContext.storageWrapper = &transactionStorageWrapper{tx: tx, underlying: system, namespace: namespace, separator: separator}
+	e.txContext.storageWrapper = &transactionStorageWrapper{lifecycleOwner: e.txContext, controller: e, tx: tx, underlying: system, namespace: namespace, separator: separator}
 	e.txContext.storageWrapper.initNamespacePrefix()
 	return e, nil
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -20,12 +21,14 @@ const (
 // for materializers with no user callbacks; it permits current body-cache reads,
 // validated as one group, with a strict snapshot retry if a cache changes.
 type readViewOptions struct {
-	scopeKind readScopeKind
-	nodeIDs   []NodeID
-	longLived bool
-	scope     string
-	cached    func(*WriteBehindBuffer) (bool, error)
-	current   *bool
+	ctx        context.Context // admission only; never retained as a view lifetime
+	scopeKind  readScopeKind
+	nodeIDs    []NodeID
+	captureTxn func(*badger.Txn, *WriteBehindBuffer) error
+	longLived  bool
+	scope      string
+	cached     func(*WriteBehindBuffer) (bool, error)
+	current    *bool
 }
 
 type badgerReadView struct {
@@ -100,6 +103,15 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			overlay = nil
 		}
 		capture(overlay)
+	}
+	if opts.captureTxn != nil {
+		if err := opts.captureTxn(txn, w); err != nil {
+			if opts.longLived {
+				b.txnWG.Done()
+			}
+			view.Close()
+			return nil, err
+		}
 	}
 	if opts.longLived {
 		b.txnWG.Done()
@@ -200,7 +212,19 @@ func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
 		if b.pendingNamespaceConflict("") == nil {
 			return nil
 		}
+		// The retained owner decides whether any DROP is pending. Do not
+		// interpret its publication counter at a second read boundary.
+		if opts.ctx != nil {
+			if err := opts.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		for _, id := range opts.nodeIDs {
+			if opts.ctx != nil {
+				if err := opts.ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if id != "" {
 				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 					return err

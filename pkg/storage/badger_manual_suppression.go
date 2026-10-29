@@ -334,7 +334,7 @@ func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
-	inner, ok := n.inner.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](n.inner)
 	if !ok {
 		return ErrNotImplemented
 	}
@@ -347,7 +347,7 @@ func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppr
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
-	inner, ok := w.engine.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](w.engine)
 	if !ok {
 		return ErrNotImplemented
 	}

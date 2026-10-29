@@ -2,8 +2,11 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
@@ -31,6 +34,8 @@ import (
 // it: a body is written with tokens that already exist. Not safe for
 // concurrent use; one per scan.
 type projectedNodeDecoder struct {
+	ctx     context.Context
+	work    *StoredReadWork
 	b       *BadgerEngine
 	include map[string]struct{}
 	filter  func(map[string]interface{}) bool
@@ -98,23 +103,12 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 		return nil, nil
 	}
 	d.useNamespace(key[1:])
-	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
-	}
-	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
-	}
-	rest := data[1:]
-	propsLen, n := binary.Uvarint(rest)
-	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[n:]
-	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
 	clear(d.scratch)
-	kept, err := d.decodeProperties(rest[:propsLen])
+	kept, err := d.decodeProperties(envelope.properties)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +116,7 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 		return nil, nil
 	}
 	node := &Node{}
-	if err := decodeValue(rest[propsLen:], node); err != nil {
+	if err := decodeValue(envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = make(map[string]interface{}, len(d.scratch))
@@ -148,6 +142,11 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 	d.reader.Reset(rest)
 	dec := d.dec
 	for i := uint64(0); i < count; i++ {
+		if d.ctx != nil {
+			if err := d.ctx.Err(); err != nil {
+				return false, err
+			}
+		}
 		offset := len(rest) - d.reader.Len()
 		if offset >= len(rest) {
 			return false, fmt.Errorf("decoding tokenized properties: ran out of bytes after %d/%d entries", i, count)
@@ -160,7 +159,7 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		d.reader.Reset(rest[offset+n:])
 		property, wanted := d.tokens[token]
 		if !wanted {
-			if err := dec.Skip(); err != nil {
+			if err := skipStoredMsgpackValue(&d.reader); err != nil {
 				return false, fmt.Errorf("decoding tokenized properties: skip key %d value: %w", token, err)
 			}
 			continue
@@ -168,9 +167,14 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		if property.hasEquals && !msgpackStringEquals(rest[offset+n:], property.equals) {
 			return false, nil
 		}
+		before := d.reader.Len()
 		value, err := decodeStrictTypedValue(dec)
 		if err != nil {
 			return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
+		}
+		if d.work != nil {
+			d.work.PropertyValues++
+			d.work.PropertyBytes += uint64(before - d.reader.Len())
 		}
 		d.scratch[property.name] = restoreStoredTemporalValue(value)
 	}
@@ -202,4 +206,266 @@ func msgpackStringEquals(raw []byte, s string) bool {
 		return false
 	}
 	return size == len(s) && len(raw)-header >= size && string(raw[header:header+size]) == s
+}
+
+// NodeEnvelope contains borrowed V2 property and metadata payloads. Keep the
+// input alive and unchanged while using either view. Payload interpretation and
+// field selection belong to the consumer; framing belongs to SplitNodeEnvelope.
+type NodeEnvelope struct {
+	properties []byte
+	metadata   []byte
+}
+
+// PropertyPayload returns the borrowed serialized property payload.
+func (e NodeEnvelope) PropertyPayload() []byte { return e.properties }
+
+// MetadataPayload returns the borrowed metadata payload, including its serializer header.
+func (e NodeEnvelope) MetadataPayload() []byte { return e.metadata }
+
+// SplitNodeEnvelope validates the V2 format byte and property-length framing.
+// It never decodes properties or metadata and never copies payloads. Full,
+// projected, metadata-only and WAL consumers share this owner. Other stored
+// operation clients must reuse it rather than implement another splitter.
+func SplitNodeEnvelope(data []byte) (NodeEnvelope, error) {
+	envelope, failure := splitNodeEnvelope(data)
+	switch failure {
+	case nodeEnvelopeEmpty:
+		return NodeEnvelope{}, fmt.Errorf("node body empty")
+	case nodeEnvelopeWrongFormat:
+		return NodeEnvelope{}, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
+	case nodeEnvelopeShortVarint, nodeEnvelopeOverflowVarint:
+		return NodeEnvelope{}, fmt.Errorf("node body: malformed properties length varint")
+	case nodeEnvelopeShortProperties:
+		return NodeEnvelope{}, fmt.Errorf("node body: properties payload truncated")
+	}
+	return envelope, nil
+}
+
+// nodeEnvelopeFailure preserves protocol-specific diagnostics without a second
+// framing reader. The exported reader and WAL bind these same parser facts.
+type nodeEnvelopeFailure uint8
+
+const (
+	nodeEnvelopeValid nodeEnvelopeFailure = iota
+	nodeEnvelopeEmpty
+	nodeEnvelopeWrongFormat
+	nodeEnvelopeShortVarint
+	nodeEnvelopeOverflowVarint
+	nodeEnvelopeShortProperties
+)
+
+func splitNodeEnvelope(data []byte) (NodeEnvelope, nodeEnvelopeFailure) {
+	if len(data) == 0 {
+		return NodeEnvelope{}, nodeEnvelopeEmpty
+	}
+	if data[0] != nodeFormatTokenizedV1 {
+		return NodeEnvelope{}, nodeEnvelopeWrongFormat
+	}
+	rest := data[1:]
+	propsLen, n := binary.Uvarint(rest)
+	if n == 0 {
+		return NodeEnvelope{}, nodeEnvelopeShortVarint
+	}
+	if n < 0 {
+		return NodeEnvelope{}, nodeEnvelopeOverflowVarint
+	}
+	rest = rest[n:]
+	if uint64(len(rest)) < propsLen {
+		return NodeEnvelope{}, nodeEnvelopeShortProperties
+	}
+	return NodeEnvelope{properties: rest[:propsLen], metadata: rest[propsLen:]}, nodeEnvelopeValid
+}
+
+// storedNodeMetadata is the metadata-only decoder mode. It has no property,
+// embedding-metadata or vector carrier. Excluded envelope fields are advanced
+// over in the borrowed bytes, rather than decoded or copied into skip buffers.
+// Labels and ID are owned by the result, independent of the input's lifetime.
+// #1644's stored operation can expose this mode without another body grammar.
+type storedNodeMetadata struct {
+	ID                   NodeID
+	Labels               []string
+	VisibilitySuppressed bool
+}
+
+func decodeNodeMetadata(data []byte) (storedNodeMetadata, error) {
+	return decodeNodeMetadataMode(context.Background(), data, true, nil)
+}
+func decodeNodeFactMetadata(ctx context.Context, data []byte, work *StoredReadWork) (storedNodeMetadata, error) {
+	return decodeNodeMetadataMode(ctx, data, false, work)
+}
+
+// The same envelope grammar serves the label reader's visibility metadata and
+// the stored operation's ID/labels mode. Stored facts finish before arbitrary
+// EmbedMeta or vector fields; they never visit the excluded payload.
+func decodeNodeMetadataMode(ctx context.Context, data []byte, visibility bool, work *StoredReadWork) (storedNodeMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return storedNodeMetadata{}, err
+	}
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return storedNodeMetadata{}, err
+	}
+	serializer, payload, ok, err := splitSerializationHeader(envelope.metadata)
+	if err != nil {
+		return storedNodeMetadata{}, err
+	}
+	if !ok || serializer != serializerIDMsgpack {
+		return storedNodeMetadata{}, fmt.Errorf("node metadata requires the stored MessagePack format")
+	}
+	if work != nil {
+		work.EnvelopeParses++
+	}
+	reader := bytes.NewReader(payload)
+	dec := msgpack.NewDecoder(reader)
+	count, err := dec.DecodeMapLen()
+	if err != nil {
+		return storedNodeMetadata{}, err
+	}
+	var metadata storedNodeMetadata
+	idSeen, labelsSeen := false, false
+	for i := 0; i < count; i++ {
+		if err := ctx.Err(); err != nil {
+			return storedNodeMetadata{}, err
+		}
+		name, err := dec.DecodeString()
+		if err != nil {
+			return storedNodeMetadata{}, err
+		}
+		if !visibility && name != "ID" && name != "Labels" {
+			return storedNodeMetadata{}, ErrNotImplemented
+		}
+		switch name {
+		case "ID":
+			id, e := dec.DecodeString()
+			metadata.ID = NodeID(id)
+			idSeen = true
+			err = e
+			if work != nil {
+				work.MetadataBytes += uint64(len(id))
+			}
+		case "Labels":
+			var n int
+			n, err = dec.DecodeArrayLen()
+			if err != nil {
+				break
+			}
+			if n >= 0 {
+				metadata.Labels = make([]string, 0, n)
+				for j := 0; j < n; j++ {
+					if e := ctx.Err(); e != nil {
+						return storedNodeMetadata{}, e
+					}
+					label, e := dec.DecodeString()
+					if e != nil {
+						return storedNodeMetadata{}, e
+					}
+					metadata.Labels = append(metadata.Labels, strings.Clone(label))
+					if work != nil {
+						work.MetadataBytes += uint64(len(label))
+					}
+				}
+			}
+			labelsSeen = true
+		case "VisibilitySuppressed":
+			metadata.VisibilitySuppressed, err = dec.DecodeBool()
+		default:
+			err = skipStoredMsgpackValue(reader)
+		}
+		if err != nil {
+			return storedNodeMetadata{}, err
+		}
+		if !visibility && idSeen && labelsSeen {
+			return metadata, nil
+		}
+	}
+	return metadata, nil
+}
+
+// skipStoredMsgpackValue skips one value in borrowed body bytes. The library's
+// Decoder.Skip copies scalar/string/binary payloads into its read buffer; a
+// metadata-only read must instead advance past them without such a copy. It
+// reads tags and container lengths, with no extension or property value decoder.
+// This storage decoder helper owns that exclusion for every metadata consumer.
+func skipStoredMsgpackValue(reader *bytes.Reader) error {
+	pending := uint64(1)
+	for pending != 0 {
+		code, err := reader.ReadByte()
+		if err != nil {
+			return err
+		}
+		pending--
+		var size, children uint64
+		var width int
+		switch {
+		case msgpcode.IsFixedNum(code):
+		case msgpcode.IsFixedString(code):
+			size = uint64(code & msgpcode.FixedStrMask)
+		case msgpcode.IsFixedArray(code):
+			children = uint64(code & msgpcode.FixedArrayMask)
+		case msgpcode.IsFixedMap(code):
+			children = 2 * uint64(code&msgpcode.FixedMapMask)
+		default:
+			switch code {
+			case msgpcode.Nil, msgpcode.False, msgpcode.True:
+			case msgpcode.Uint8, msgpcode.Int8:
+				size = 1
+			case msgpcode.Uint16, msgpcode.Int16:
+				size = 2
+			case msgpcode.Uint32, msgpcode.Int32, msgpcode.Float:
+				size = 4
+			case msgpcode.Uint64, msgpcode.Int64, msgpcode.Double:
+				size = 8
+			case msgpcode.Str8, msgpcode.Bin8, msgpcode.Ext8:
+				width = 1
+			case msgpcode.Str16, msgpcode.Bin16, msgpcode.Ext16, msgpcode.Array16, msgpcode.Map16:
+				width = 2
+			case msgpcode.Str32, msgpcode.Bin32, msgpcode.Ext32, msgpcode.Array32, msgpcode.Map32:
+				width = 4
+			case msgpcode.FixExt1:
+				size = 2
+			case msgpcode.FixExt2:
+				size = 3
+			case msgpcode.FixExt4:
+				size = 5
+			case msgpcode.FixExt8:
+				size = 9
+			case msgpcode.FixExt16:
+				size = 17
+			default:
+				return fmt.Errorf("node metadata: invalid MessagePack code 0x%02x", code)
+			}
+		}
+		if width != 0 {
+			for i := 0; i < width; i++ {
+				octet, err := reader.ReadByte()
+				if err != nil {
+					return err
+				}
+				size = size<<8 | uint64(octet)
+			}
+			switch code {
+			case msgpcode.Array16, msgpcode.Array32:
+				children, size = size, 0
+			case msgpcode.Map16, msgpcode.Map32:
+				children, size = 2*size, 0
+			case msgpcode.Ext8, msgpcode.Ext16, msgpcode.Ext32:
+				size++ // extension type byte
+			}
+		}
+		if size > uint64(reader.Len()) {
+			return io.ErrUnexpectedEOF
+		}
+		if size != 0 {
+			if _, err := reader.Seek(int64(size), io.SeekCurrent); err != nil {
+				return err
+			}
+		}
+		pending += children
+		// Every remaining child needs at least its own tag byte. This also
+		// bounds malformed container counts without allocating a traversal stack.
+		if pending > uint64(reader.Len()) {
+			return io.ErrUnexpectedEOF
+		}
+	}
+	return nil
 }

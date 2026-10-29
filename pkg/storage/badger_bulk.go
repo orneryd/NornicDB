@@ -197,22 +197,7 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 		return nil
 	}
 	apply := func(tx *BadgerTransaction, filter bool) error {
-		var seen map[T]struct{}
-		if filter {
-			seen = make(map[T]struct{}, len(ids))
-		}
-		for _, id := range ids {
-			if filter {
-				if _, repeated := seen[id]; repeated || id == "" {
-					continue
-				}
-				seen[id] = struct{}{}
-			}
-			if err := remove(tx, id); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
-		}
-		return nil
+		return applyBulkDeletion(ids, filter, func(id T) error { return remove(tx, id) })
 	}
 	if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error { return apply(tx, false) }); handled {
 		return err
@@ -225,15 +210,53 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 // ============================================================================
 
 // GetInDegree returns the number of incoming edges to a node.
+//
+// Deprecated: Use GetIncomingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
 	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: true})
 	return int(count)
 }
 
 // GetOutDegree returns the number of outgoing edges from a node.
+//
+// Deprecated: Use GetOutgoingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
 	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: false})
 	return int(count)
 }
 
 // ============================================================================
+
+// applyBulkDeletion owns the native batch input policy. The callback carries
+// the existing transaction/point authority; this helper never commits or unwraps.
+func applyBulkDeletion[ID ~string](ids []ID, filter bool, remove func(ID) error) error {
+	var seen map[ID]struct{}
+	if filter {
+		seen = make(map[ID]struct{}, len(ids))
+	}
+	for _, id := range ids {
+		if filter {
+			if _, repeated := seen[id]; repeated || id == "" {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+		if err := remove(id); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+// BulkDeleteNodes stages native bulk deletion in this transaction, using the
+// same point mutation authority as DeleteGraphNode. Empty/repeated/missing IDs
+// are skipped. The existing transaction owner decides commit or rollback.
+func (tx *BadgerTransaction) BulkDeleteNodes(ids []NodeID) error {
+	tx.mu.Lock()
+	err := tx.ensureDataWriteAllowedLocked()
+	tx.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return applyBulkDeletion(ids, true, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+}

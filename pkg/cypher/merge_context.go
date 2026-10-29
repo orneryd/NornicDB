@@ -5,6 +5,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"strings"
@@ -33,13 +34,13 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -53,7 +54,15 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
 	// step still enforces every non-indexed predicate.
 	if len(nodeInfo.labels) > 0 {
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+		indexes := schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0])
+		selectionErr := ctx.Err()
+		if selectionErr != nil {
+			return nil, false, selectionErr
+		}
+		for _, idx := range indexes {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if idx == nil || len(idx.Properties) < 2 {
 				// Arity-1 indexes are served by the per-property loop below,
 				// whose authoritative-miss logic handles values an index can't
@@ -62,6 +71,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			}
 			covered := 0
 			for covered < len(idx.Properties) {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				if _, ok := nodeInfo.properties[idx.Properties[covered]]; !ok {
 					break
 				}
@@ -75,6 +87,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			// the caller's scan must decide.
 			authoritative := true
 			for i := 0; i < covered; i++ {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				if !propertyIndexMissIsAuthoritative(nodeInfo.properties[idx.Properties[i]]) {
 					authoritative = false
 					break
@@ -85,12 +100,21 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			}
 			values := make([]interface{}, covered)
 			for i := 0; i < covered; i++ {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			ids, err := e.compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
+			if err != nil {
+				return nil, false, err
+			}
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
 			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				set[id] = struct{}{}
 			}
 			idSets = append(idSets, set)
@@ -98,18 +122,30 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	}
 
 	for prop, val := range nodeInfo.properties {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		var ids []storage.NodeID
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
+				var err error
+				ids, err = e.propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
+				if err != nil {
+					return nil, false, err
+				}
 				probed = true
 			}
 		} else {
-			labels := e.indexCandidateLabels(schema, nil, prop)
-			if labellessPropertyIndexUsable(store, labels...) {
+			labels := e.indexCandidateLabels(ctx, schema, nil, prop)
+			if e.labellessPropertyIndexUsable(ctx, store, labels...) {
+				var err error
 				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+				err = ctx.Err()
+				if err != nil {
+					return nil, false, err
+				}
 				probed = true
 			}
 		}
@@ -123,26 +159,38 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			set[id] = struct{}{}
 		}
 		idSets = append(idSets, set)
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
 	smallest := 0
 	for i, s := range idSets {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if len(s) < len(idSets[smallest]) {
 			smallest = i
 		}
 	}
 	out := make([]*storage.Node, 0, len(idSets[smallest]))
 	for id := range idSets[smallest] {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		hit := true
 		for i, s := range idSets {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if i == smallest {
 				continue
 			}
@@ -155,12 +203,15 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			continue
 		}
 		n, err := e.getQueryNode(store, id)
-		if err != nil || n == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if n == nil {
 			continue
 		}
 		out = append(out, n)
 	}
-	return out, true
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -306,9 +357,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 			edge = createdEdge
 			if !created {
-				if reporter, ok := store.(interface {
+				if reporter, ok := storage.OwnedCapability[interface {
 					EdgeCreateWasNoOp(storage.EdgeID) bool
-				}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+				}](store); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
 					result.Stats.relationshipMergeNoOp = true
 				}
 			}
@@ -353,7 +404,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := prepareMergeKeys(ctx, store, labels, matchProps, mergeNodeWritesFromContext(ctx).writes(varName)); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(ctx, store, labels, matchProps)
 		if err != nil {
 			return nil, err
 		}
@@ -372,13 +423,13 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(ctx, store, labels, matchProps)
 			if findErr != nil {
 				return nil, findErr
 			}

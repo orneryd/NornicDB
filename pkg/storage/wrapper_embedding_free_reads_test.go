@@ -295,8 +295,10 @@ func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
 		fixtureowner.Own(b, badger)
 	}
 	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, badger.Close()) })
 	walLog, err := NewWAL(b.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, walLog.Close()) })
 	wal := NewWALEngine(badger, walLog)
 	tenant := NewNamespacedEngine(wal, "benchmark")
 

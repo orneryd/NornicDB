@@ -113,7 +113,7 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			}
 			if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
 				if found && existingNode != excludeNodeID {
-					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
+					return uniqueConstraintViolation(c.Label, prop, value)
 				}
 				continue
 			}
@@ -264,14 +264,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 
 		if existingValue, ok := existingNode.Properties[property]; ok {
 			if compareValues(existingValue, value) {
-				return &ConstraintViolationError{
-					Type:       ConstraintUnique,
-					Label:      label,
-					Properties: []string{property},
-					// Wire contract: "Node with ... already exists" is matched by downstream
-					// Bolt classifiers. See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-					Message: fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", property, value, existingNode.ID),
-				}
+				return uniqueConstraintViolation(label, property, value)
 			}
 		}
 	}
@@ -330,14 +323,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 			}
 		}
 		if match {
-			return &ConstraintViolationError{
-				Type:       ConstraintNodeKey,
-				Label:      label,
-				Properties: properties,
-				// Wire contract: "Node with ... already exists" is matched downstream.
-				// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-				Message: fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", properties, values, existingNode.ID),
-			}
+			return nodeKeyConstraintViolation(ConstraintNodeKey, label, properties, values)
 		}
 	}
 

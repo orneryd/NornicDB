@@ -27,3 +27,15 @@ func (o *Observer) QueryCypher(ctx context.Context, source string, params map[st
 	o.Calls++
 	return o.RemoteEngine.QueryCypher(ctx, source, params, mode)
 }
+
+// EngineCapabilityPolicy classifies this test-only query observer explicitly.
+// It retains the remote read/membership view and owns QueryCypher observation.
+// Author: Lane #1644 (Codex); the remote transport remains the maintainer's owner.
+func (o *Observer) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	policy := o.RemoteEngine.EngineCapabilityPolicy()
+	policy.Kind = storage.EngineDecorator
+	return policy
+}
+func (*Observer) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.RefusedStoredReadPolicy()
+}

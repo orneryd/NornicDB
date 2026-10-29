@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -89,9 +90,9 @@ func TestReadViewEmptyOverlaySelectors(t *testing.T) {
 	require.False(t, sourceDeleted)
 	require.False(t, targetDeleted)
 	require.Nil(t, w.keyCandidatesLocked("L", "p", int64(1)))
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(*CommitBuffer, func(string)) {
+	require.NoError(t, w.visitEntityOverlayLocked(context.Background(), bufferedNodeEntity, func(*CommitBuffer, func(string) bool) {
 		t.Fatal("empty overlay must not enumerate candidates")
-	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") })
+	}, func(string, bufferedEntityState) { t.Fatal("empty overlay must not visit entities") }))
 	require.Zero(t, testing.AllocsPerRun(100, func() {
 		w.entityStateLocked(bufferedNodeEntity, "test:n")
 		w.labelOverlayLocked("L")

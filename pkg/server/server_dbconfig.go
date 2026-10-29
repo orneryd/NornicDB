@@ -86,7 +86,10 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		s.writeBoundaryNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Database.DatabaseNotFound", err)
 		return
 	}
-	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
+	lce, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](storageEngine)
+	if suffix == "mvcc" || suffix == "mvcc/status" {
+		lce, ok = storage.ViewMetadataForEngine[storage.MVCCLifecycleEngine](storageEngine)
+	}
 	if !ok {
 		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "database": dbName})
 		return
@@ -129,7 +132,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
-		scheduler, ok := storageEngine.(storage.MVCCLifecycleScheduleEngine)
+		scheduler, ok := storage.OwnedCapability[storage.MVCCLifecycleScheduleEngine](storageEngine)
 		if !ok {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", localization.MVCCScheduleUnsupported())
 			return
@@ -158,7 +161,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 			s.writeNeo4jGetRequired(w, r, "Neo.ClientError.General.BadRequest")
 			return
 		}
-		provider, ok := storageEngine.(storage.MVCCLifecycleDebtEngine)
+		ok := storage.HasReadCapability[storage.MVCCLifecycleDebtEngine](storageEngine)
 		if !ok {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", localization.MVCCDebtUnsupported())
 			return
@@ -176,7 +179,9 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		if limit > maxDebtKeyLimit {
 			limit = maxDebtKeyLimit
 		}
-		keys := provider.TopLifecycleDebtKeys(limit)
+		keys := storage.ReadValueWithCapability(storageEngine, func(reader storage.MVCCLifecycleDebtEngine) []storage.MVCCLifecycleDebtKey {
+			return reader.TopLifecycleDebtKeys(limit)
+		}, nil)
 		if keys == nil {
 			keys = []storage.MVCCLifecycleDebtKey{}
 		}

@@ -21,7 +21,7 @@ import (
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, config, err := e.readAlgorithmGraph("apoc.algo.louvain", args)
+	graph, nodes, config, err := e.readAlgorithmGraph(ctx, "apoc.algo.louvain", args)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,10 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	weightProp, _ := config["weightProperty"].(string)
 
 	// Run Louvain algorithm
-	communities := graph.computeLouvain(nodes, weightProp)
+	communities, err := graph.computeLouvain(nodes, weightProp)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build result
 	rows := graphAlgorithmRows(nodes, communities)
@@ -48,9 +51,9 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // helps, then merges each community into one node; levels repeat until a
 // level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
 // numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) (map[storage.NodeID]int, error) {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
 	index := make(map[storage.NodeID]int, len(nodes))
 	unique := make([]*storage.Node, 0, len(nodes))
@@ -65,7 +68,10 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		// Enumerate physical relationships once. Undirected expansion and
 		// degree/weight accounting belong to louvain.RunUndirected;
 		// outgoing+incoming incidence lists repeat a physical self-loop.
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		edges, err := e.storage.GetOutgoingEdges(node.ID)
+		if err != nil {
+			return nil, err
+		}
 		relationships = append(relationships, edges...)
 	}
 	membership := louvain.Final(louvain.RunUndirected(len(unique), len(relationships), func(i int) (int, int, float64, bool) {
@@ -84,7 +90,7 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 	for i, node := range unique {
 		result[node.ID] = membership[i]
 	}
-	return result
+	return result, nil
 }
 
 // =============================================================================
@@ -97,12 +103,15 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.labelPropagation", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.labelPropagation", args)
 	if err != nil {
 		return nil, err
 	}
 
-	communities := graph.computeLabelPropagation(nodes)
+	communities, err := graph.computeLabelPropagation(nodes)
+	if err != nil {
+		return nil, err
+	}
 
 	rows := graphAlgorithmRows(nodes, communities)
 
@@ -112,10 +121,10 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 	}, nil
 }
 
-func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) (map[storage.NodeID]int, error) {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
 
 	// Initialize: each node gets its own label
@@ -132,7 +141,10 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 		for _, node := range nodes {
 			// Count neighbor labels
 			labelCount := make(map[int]int)
-			edges := e.getNodeEdges(node.ID)
+			edges, err := e.getNodeEdges(node.ID)
+			if err != nil {
+				return nil, err
+			}
 
 			for _, edge := range edges {
 				neighbor := edge.EndNode
@@ -170,7 +182,7 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 	}
 
 	// Communities numbered by their first node in the given order (#1183).
-	return renumberInNodeOrder(nodes, labels)
+	return renumberInNodeOrder(nodes, labels), nil
 }
 
 // =============================================================================
@@ -180,12 +192,15 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.wcc", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.wcc", args)
 	if err != nil {
 		return nil, err
 	}
 
-	components := graph.computeWCC(nodes)
+	components, err := graph.computeWCC(nodes)
+	if err != nil {
+		return nil, err
+	}
 
 	rows := graphAlgorithmRows(nodes, components)
 
@@ -195,10 +210,10 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 	}, nil
 }
 
-func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *StorageExecutor) computeWCC(nodes []*storage.Node) (map[storage.NodeID]int, error) {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
 
 	// Union-Find structure
@@ -237,7 +252,10 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 
 	// Process all edges
 	for _, node := range nodes {
-		edges := e.getNodeEdges(node.ID)
+		edges, err := e.getNodeEdges(node.ID)
+		if err != nil {
+			return nil, err
+		}
 		for _, edge := range edges {
 			neighbor := edge.EndNode
 			if edge.StartNode != node.ID {
@@ -265,5 +283,5 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 		}
 	}
 
-	return result
+	return result, nil
 }

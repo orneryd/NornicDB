@@ -892,8 +892,11 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 				return decodeErr
 			})
 		}
-		if err != nil || node == nil {
-			return nil // Skip invalid nodes
+		if err != nil {
+			return err
+		}
+		if node == nil {
+			return nil
 		}
 		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
 			return nil
@@ -1114,38 +1117,13 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 
 	cleared := 0
 
-	// First, collect all node IDs that have embeddings
+	// Enumerate through the existing captured stored stream: ACK-only nodes
+	// shadow persisted bodies exactly as they do for every other full scan.
+	// Keep only IDs while the capture is held; mutations run after it closes.
 	var nodeIDs []NodeID
-	err := b.withView(func(txn *badger.Txn) error {
-		keyPrefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			// Extract nodeID from key (skip prefix byte)
-			key := item.Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
-			if idPrefix != "" && !strings.HasPrefix(string(nodeID), idPrefix) {
-				continue
-			}
-
-			err := item.Value(func(val []byte) error {
-				node, err := b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				if err != nil {
-					return nil // Skip invalid nodes
-				}
-				if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-					nodeIDs = append(nodeIDs, node.ID)
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
+	err := b.StreamNodesWithOptions(context.Background(), StreamNodesOptions{Prefix: idPrefix, WithEmbeddings: true}, func(node *Node) error {
+		if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
+			nodeIDs = append(nodeIDs, node.ID)
 		}
 		return nil
 	})
@@ -1157,8 +1135,11 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	// must not keep an embedding of the model being replaced.
 	for _, id := range nodeIDs {
 		node, err := b.GetStoredNode(id)
+		if errors.Is(err, ErrNotFound) {
+			continue // A concurrently deleted node has no embedding to clear.
+		}
 		if err != nil {
-			continue // Skip if node no longer exists
+			return cleared, err
 		}
 		node.ChunkEmbeddings = nil
 		if err := b.UpdateNode(node); err != nil {
@@ -1167,7 +1148,7 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 				"node_id", string(id),
 				slog.Any("error", err),
 			)
-			continue
+			return cleared, err
 		}
 		cleared++
 	}

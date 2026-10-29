@@ -420,7 +420,7 @@ func (b *BadgerEngine) loadEmbeddingSidecar(read embeddingRecordReader, node *No
 		return nil, false, fmt.Errorf("failed to get embedding metadata for node %s: %w", nodeID, err)
 	}
 	var meta map[string]any
-	if err := record.value(func(data []byte) error { return decodeValue(data, &meta) }); err != nil {
+	if err := record.value(func(data []byte) error { return decodeValueWithContext(read.ctx, data, &meta) }); err != nil {
 		return nil, false, fmt.Errorf("failed to decode embedding metadata for node %s: %w", nodeID, err)
 	}
 	return validateEmbeddingSidecarMeta(meta, node)

@@ -96,7 +96,10 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 		// No peer can commit a key this transaction already holds.
 		return nil
 	}
-	nodeID, found, complete := tx.mergeAdmissionHolder(schema, namespace, key, props)
+	nodeID, found, complete, holderErr := tx.mergeAdmissionHolderWithContext(ctx, schema, namespace, key, props)
+	if holderErr != nil {
+		return holderErr
+	}
 	if found && !write {
 		return tx.catchUpToNode(nodeID)
 	}
@@ -118,7 +121,11 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	}
 	tx.mergeKeyReleases[key.lock] = release
 	tx.mu.Unlock()
-	if nodeID, found, _ := tx.mergeAdmissionHolder(schema, namespace, key, props); found {
+	nodeID, found, _, holderErr = tx.mergeAdmissionHolderWithContext(ctx, schema, namespace, key, props)
+	if holderErr != nil {
+		return holderErr
+	}
+	if found {
 		if write {
 			if err := tx.settleBufferedNode(nodeID); err != nil {
 				return err
@@ -165,24 +172,39 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 }
 
 // mergeAdmissionHolder reads key's committed holder, outside the transaction
-// snapshot. Scalar admission retains its existing cache contract; composite
-// admission takes the candidate of the constraint's complete equality index
-// that commit validation would reject the tuple for (committedKeyHolder).
-func (tx *BadgerTransaction) mergeAdmissionHolder(schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool) {
+// snapshot. Scalar and composite indexes supply candidates; the visible point
+// owner decides whether a candidate is an admission holder. Physical uniqueness
+// remains the commit validator's separate responsibility.
+func (tx *BadgerTransaction) mergeAdmissionHolderWithContext(ctx context.Context, schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool, error) {
 	label, properties := key.lock.label, key.properties
 	if len(properties) == 1 {
-		nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, properties[0], props[properties[0]])
-		return nodeID, found, complete
+		id, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, properties[0], props[properties[0]])
+		if !found {
+			return id, false, complete, nil
+		}
+		holder, err := tx.engine.committedKeyHolder(id, namespace, label, properties, props)
+		if err != nil || holder == nil {
+			return "", false, complete, err
+		}
+		return id, true, complete, nil
 	}
 	idx := schema.filledKeyIndex(label, properties)
 	if idx == nil {
-		return "", false, false
+		return "", false, false, nil
 	}
 	hash, _ := key.lock.value.(string)
-	for _, id := range idx.lookupFullHash(hash) {
-		if tx.engine.committedKeyHolder(id, namespace, label, properties, props) != nil {
-			return id, true, true
+	ids := idx.lookupFullHash(hash)
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return "", false, true, err
+		}
+		holder, err := tx.engine.committedKeyHolder(id, namespace, label, properties, props)
+		if err != nil {
+			return "", false, true, err
+		}
+		if holder != nil {
+			return id, true, true, nil
 		}
 	}
-	return "", false, true
+	return "", false, true, nil
 }

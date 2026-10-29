@@ -51,6 +51,8 @@ func clientTransactionCommand(ctx context.Context, query string) error {
 type TransactionContext struct {
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
+	controller       *StorageExecutor
+	commitOwner      storage.TransactionCommitter
 	tx               interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
 	engine           storage.Engine // Engine owning this transaction's commit.
 	storageWrapper   *transactionStorageWrapper
@@ -107,7 +109,7 @@ func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error 
 		// other transactions' MERGEs of those keys waiting until the client
 		// rolls it back. Local keys are released first: they never wait on a
 		// remote.
-		if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
+		if releaser, ok := storage.OwnedCapability[interface{ ReleaseMergeKeys() }](tx.tx); ok {
 			releaser.ReleaseMergeKeys()
 		}
 		for _, participant := range tx.fabricLocalTxExec {
@@ -193,6 +195,9 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 
 // handleBegin starts a new explicit transaction.
 func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
+	if e.storageMembership().Status != storage.MembershipUnowned {
+		return nil, storage.ErrNotImplemented
+	}
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
 	}
@@ -201,27 +206,14 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	// underlying snapshot. Writes are committed synchronously by their
 	// statements, so a snapshot opened here observes every acknowledged write.
 
-	// Unwrap engine wrappers (WAL/Namespaced) recursively.
 	engine := e.storage
 	namespaceHint := ""
-	visited := map[storage.Engine]bool{}
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-		if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
-			if namespaceHint == "" {
-				namespaceHint = namespacedEngine.Namespace()
-			}
-		}
-		if wrapper, ok := engine.(storage.EngineUnwrapper); ok {
-			engine = wrapper.GetInnerEngine()
-			continue
-		}
-		break
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
+		namespaceHint = ns.Namespace()
 	}
-
 	// Composite engines use FabricTransaction coordinator semantics.
 	// This supports explicit BEGIN/COMMIT/ROLLBACK at API level for composite routes.
-	if _, ok := engine.(*storage.CompositeEngine); ok {
+	if _, ok := storage.ViewMetadataForEngine[*storage.CompositeEngine](engine); ok {
 		var fabricTx *fabric.FabricTransaction
 		openSnapshot := func() error {
 			fabricTx = fabric.NewFabricTransaction(fmt.Sprintf("fabtx-%d", time.Now().UnixNano()))
@@ -231,9 +223,10 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 		e.txContext = &TransactionContext{
-			tx:     fabricTx,
-			engine: engine,
-			active: true,
+			controller: e,
+			tx:         fabricTx,
+			engine:     engine,
+			active:     true,
 		}
 		return &ExecuteResult{
 			Columns: []string{"status"},
@@ -242,14 +235,14 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	}
 
 	// Start transaction for any engine that supports BeginTransaction.
-	txEngine, ok := engine.(interface {
+	txEngine, ok := storage.TransactionOwnerForEngine[interface {
 		BeginTransaction() (*storage.BadgerTransaction, error)
-	})
+	}](engine)
 	if !ok {
 		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 	if namespaceHint != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
+		if primer, ok := storage.OwnedCapability[interface{ EnsureNamespaceMVCC(string) error }](txEngine); ok {
 			if err := primer.EnsureNamespaceMVCC(namespaceHint); err != nil {
 				return nil, localizedError(localization.CypherTransactionsPrimeNamespaceFailed(err), err)
 			}
@@ -257,7 +250,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	}
 	// With write-behind buffering, drain acknowledged autocommit writes so
 	// the explicit snapshot observes every acknowledged statement.
-	if drainer, ok := engine.(interface{ FlushWriteBehind() error }); ok {
+	if drainer, ok := storage.OwnedCapability[interface{ FlushWriteBehind() error }](engine); ok {
 		if err := drainer.FlushWriteBehind(); err != nil {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
@@ -282,10 +275,12 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}
 	txCtx := &TransactionContext{
-		tx:     tx,
-		engine: e.storage,
-		active: true,
-		txID:   tx.ID,
+		controller:  e,
+		commitOwner: e.boundCommitOwner(),
+		tx:          tx,
+		engine:      e.storage,
+		active:      true,
+		txID:        tx.ID,
 	}
 	if wal, dbName := e.resolveWALAndDatabase(); wal != nil {
 		walSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: tx.ID, Metadata: nil}, dbName)
@@ -307,6 +302,9 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 
 // handleCommit commits the active transaction.
 func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, error) {
+	if e.txContext != nil && e.txContext.controller != nil && e.txContext.controller != e {
+		return nil, storage.ErrNotImplemented
+	}
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -431,6 +429,9 @@ func commitFailureWroteNothing(localTx bool, err error) bool {
 
 // handleRollback rolls back the active transaction.
 func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
+	if e.txContext != nil && e.txContext.controller != nil && e.txContext.controller != e {
+		return nil, storage.ErrNotImplemented
+	}
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -509,7 +510,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// the same Badger transaction a second time. Only reuse the wrapper that
 	// belongs to the active explicit transaction; stale wrappers from reused
 	// contexts must fall back to a fresh wrapper for the current tx.
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok &&
+	if txWrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](ctx.Value(ctxKeyTxStorage)); ok &&
 		txWrapper != nil &&
 		txWrapper.tx == tx {
 		txExec := e.cloneWithStorage(txWrapper)
@@ -532,6 +533,9 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// (including RETURN literals) from allocating and reseeding a 1000-entry
 	// transaction lookup cache.
 	txWrapper := e.transactionStorageFor(tx)
+	txWrapper.leaseMu.Lock()
+	txWrapper.statementMode, _ = ctx.Value(resolvedStatementModeKey{}).(*resolvedStatementMode)
+	txWrapper.leaseMu.Unlock()
 
 	// Pass the wrapper through context (same pattern as implicit transactions)
 	// This is thread-safe and allows getStorage() to automatically use the transaction
@@ -566,6 +570,7 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 		separator = ""
 	}
 	wrapper := &transactionStorageWrapper{
+		lifecycleOwner: e.txContext, controller: e.txContext.controller,
 		tx: tx, underlying: e.storage, namespace: engines.namespace, separator: separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}

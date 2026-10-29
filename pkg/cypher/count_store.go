@@ -62,11 +62,11 @@ func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatte
 	if !countStoreDescribesReads(ctx, store) {
 		return 0, false, nil
 	}
-	counter, ok := store.(interface{ NodeCountByLabel(string) (int64, error) })
+	ok := storage.HasReadCapability[interface{ NodeCountByLabel(string) (int64, error) }](store)
 	if !ok {
 		return 0, false, nil
 	}
-	count, err := counter.NodeCountByLabel(node.labels[0])
+	count, err := storage.CountNodesWithLabel(ctx, store, node.labels[0])
 	return count, true, err
 }
 

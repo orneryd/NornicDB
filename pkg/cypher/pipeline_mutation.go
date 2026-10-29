@@ -84,13 +84,15 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
 	// store without transactions checks here.
 	var connected map[storage.NodeID]struct{}
+	var connectedDeleter storage.ConnectedNodeDeleter
 	if !detach {
-		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
+		var deferred bool
+		if connectedDeleter, deferred = storage.OwnedCapability[storage.ConnectedNodeDeleter](store); deferred {
 			var err error
-			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
+			if connected, err = connectedDeleteTargets(ctx, store, nodeIDs, edgeIDs); err != nil {
 				return nil, true, err
 			}
-		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
+		} else if err := validateNoResidualRelationships(ctx, store, nodeIDs, edgeIDs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -110,21 +112,35 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
-			incident, err := connectingRelationships(store, nodeID)
+			incident, err := connectingRelationships(ctx, store, nodeID)
 			if err != nil {
 				return nil, true, err
 			}
 			for _, edge := range incident {
-				deletedEdges[deleteEdgeLookupID(store, edge)] = struct{}{}
+				deletedEdges[e.deleteEdgeLookupID(store, edge)] = struct{}{}
 			}
 		}
 	}
 	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
+	ordinaryDeleteNode := store.DeleteNode
+	if contextual, ok := storage.OwnedCapability[interface {
+		DeleteNodeWithContext(context.Context, storage.NodeID) error
+	}](store); ok {
+		ordinaryDeleteNode = func(id storage.NodeID) error { return contextual.DeleteNodeWithContext(ctx, id) }
+	}
+	deleteConnectedNode := func(id storage.NodeID) error { return connectedDeleter.DeleteGraphNode(id, storage.RejectConnected) }
+	if contextual, ok := storage.OwnedCapability[interface {
+		DeleteGraphNodeWithContext(context.Context, storage.NodeID, storage.NodeDeletionMode) error
+	}](store); ok {
+		deleteConnectedNode = func(id storage.NodeID) error {
+			return contextual.DeleteGraphNodeWithContext(ctx, id, storage.RejectConnected)
+		}
+	}
 	for _, nodeID := range nodeIDs {
-		deleteNode := store.DeleteNode
+		deleteNode := ordinaryDeleteNode
 		if _, stillConnected := connected[nodeID]; stillConnected {
 			deleteNode = func(id storage.NodeID) error {
-				return store.(storage.ConnectedNodeDeleter).DeleteGraphNode(id, storage.RejectConnected)
+				return deleteConnectedNode(id)
 			}
 		}
 		if err := deleteNode(nodeID); err != nil {
@@ -702,7 +718,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties, mergeNodeWritesFromContext(ctx).writes(variable)); err != nil {
 						return nil, nil, err
 					}
-					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
+					matches, scanned, findErr := e.findMergeNodesScanned(ctx, e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}

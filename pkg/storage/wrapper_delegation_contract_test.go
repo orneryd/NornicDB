@@ -4,9 +4,9 @@ package storage
 // every optional capability interface exposed by the production wrapper stack
 // (WAL, Async, Namespaced, Composite, size-tracking) MUST be handled — never
 // answered with ErrNotImplemented when the wrapped engine supports the
-// operation — and MUST be delegated to the inner engine. The spy at the bottom
-// of each stack records every call, so a wrapper that stubs a method instead of
-// delegating fails this test.
+// operation. Transparent operations delegate to the inner engine; namespace
+// aggregates/listings are scoped and unscoped debt diagnostics are refused.
+// The spy records delegation and verifies that refused global reads never run.
 //
 // Stacks under test:
 //
@@ -761,8 +761,13 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("GetNodeProjected", err)
 			require.NoError(t, engine.IterateNodes(func(node *Node) bool { return true }))
 			check("IterateNodes", nil)
-			_ = engine.PendingEmbeddingsCount()
-			check("PendingEmbeddingsCount", nil)
+			if stack == "namespaced+wal" {
+				require.Equal(t, CountPendingEmbeddingIDs(engine, nil), engine.PendingEmbeddingsCount())
+				require.Zero(t, spy.count("PendingEmbeddingsCount"), "namespace counts must not use a global aggregate")
+			} else {
+				_ = engine.PendingEmbeddingsCount()
+				check("PendingEmbeddingsCount", nil)
+			}
 			// The sidecar writeback never stages a node body: it lands in the
 			// embedding key space immediately and must be visible through the
 			// stack (a flush is still run to settle async staging of the create).
@@ -773,8 +778,13 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			require.NoError(t, err)
 			require.NotNil(t, updated)
 			require.NotEmptyf(t, updated.ChunkEmbeddings, "%s.UpdateNodeEmbeddingSidecar must persist embeddings through the stack", stack)
-			_ = engine.ListNamespaces()
-			check("ListNamespaces", nil)
+			if stack == "namespaced+wal" {
+				require.Equal(t, []string{namespace}, engine.ListNamespaces())
+				require.Zero(t, spy.count("ListNamespaces"), "namespace lists must not expose the global population")
+			} else {
+				_ = engine.ListNamespaces()
+				check("ListNamespaces", nil)
+			}
 			_ = engine.GetSchemaForNamespace("tenant")
 			check("GetSchemaForNamespace", nil)
 			_, err = engine.NodeCountByPrefix("")
@@ -865,8 +875,13 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			check("ResumeLifecycle", nil)
 			require.NoError(t, engine.SetLifecycleSchedule(time.Minute))
 			check("SetLifecycleSchedule", nil)
-			_ = engine.TopLifecycleDebtKeys(2)
-			check("TopLifecycleDebtKeys", nil)
+			if stack == "namespaced+wal" {
+				require.Nil(t, engine.TopLifecycleDebtKeys(2))
+				require.Zero(t, spy.count("TopLifecycleDebtKeys"), "namespace views must refuse global debt diagnostics")
+			} else {
+				_ = engine.TopLifecycleDebtKeys(2)
+				check("TopLifecycleDebtKeys", nil)
+			}
 
 			// Legacy stream methods are thin wrappers over the unified
 			// StreamNodesWithOptions kernel: on the wrapper stacks the kernel

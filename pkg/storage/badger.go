@@ -174,6 +174,7 @@ type BadgerEngine struct {
 	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
 	dropPrefixTailHook    func(string) error
 	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]
+	storedReadID          atomic.Uint64 // Stable process identity; never reuses an engine address.
 
 	db      *managedBadgerDB
 	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants

@@ -130,13 +130,13 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 
 	t.Run("namespace list and schema forwards", func(t *testing.T) {
 		namespaces := nsA.ListNamespaces()
-		require.Contains(t, namespaces, "a")
-		require.Contains(t, namespaces, "b")
+		require.Equal(t, []string{"a"}, namespaces, "the scoped view must not expose other namespaces")
 		require.NotNil(t, nsA.GetSchemaForNamespace("a"))
+		require.Nil(t, nsA.GetSchemaForNamespace("b"))
 	})
 
-	t.Run("pending embeddings count matches inner", func(t *testing.T) {
-		require.Equal(t, badger.PendingEmbeddingsCount(), nsA.PendingEmbeddingsCount())
+	t.Run("pending embeddings count matches scoped IDs", func(t *testing.T) {
+		require.Equal(t, nsA.CountPendingEmbeddingIDs(nil), nsA.PendingEmbeddingsCount())
 	})
 
 	t.Run("embedding update rejects missing and persists existing", func(t *testing.T) {

@@ -34,7 +34,7 @@ func TestManagedEmbeddingContentIsExcludedFromSearchTextAndResults(t *testing.T)
 	require.NoError(t, err)
 
 	opts := &SearchOptions{Limit: 1, ExcludeProperties: []string{"_embedding_content"}}
-	results := service.enrichResults(context.Background(), []rrfResult{{ID: string(node.ID), RRFScore: 1}}, opts, nil, hitMatchQuery{})
+	results := mustSearchRead[[]SearchResult](t)(service.enrichResults(context.Background(), []rrfResult{{ID: string(node.ID), RRFScore: 1}}, opts, nil, hitMatchQuery{}))
 	require.Len(t, results, 1)
 	require.NotContains(t, results[0].Properties, "_embedding_content")
 	require.Equal(t, "Architecture diagram", results[0].Properties["title"])

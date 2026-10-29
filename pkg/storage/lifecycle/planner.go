@@ -73,7 +73,7 @@ func (p *PrunePlanner) Plan(ctx context.Context, engine LifecycleStorageEngine, 
 	if safeFloorForNamespace == nil {
 		safeFloorForNamespace = func(string) storage.MVCCVersion { return maxVersion() }
 	}
-	err := engine.IterateMVCCHeads(ctx, func(logicalKey []byte, head storage.MVCCHead) error {
+	err := storage.VisitMVCCHeads(engine, ctx, func(logicalKey []byte, head storage.MVCCHead) error {
 		if !p.shouldScanKey(logicalKey) {
 			return nil
 		}
@@ -81,7 +81,7 @@ func (p *PrunePlanner) Plan(ctx context.Context, engine LifecycleStorageEngine, 
 		versions := make([]versionInfo, 0, 8)
 		var debtBytes int64
 		var tombstoneDepth int
-		if err := engine.IterateMVCCVersions(ctx, logicalKey, func(version storage.MVCCVersion, tombstoned bool, sizeBytes int64) error {
+		if err := storage.VisitMVCCVersions(engine, ctx, logicalKey, func(version storage.MVCCVersion, tombstoned bool, sizeBytes int64) error {
 			versions = append(versions, versionInfo{version: version, tombstoned: tombstoned, sizeBytes: sizeBytes})
 			debtBytes += sizeBytes
 			if tombstoned {

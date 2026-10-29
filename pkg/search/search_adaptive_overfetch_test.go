@@ -283,7 +283,7 @@ func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		results     []indexResult
-		postProcess func([]indexResult) []indexResult
+		postProcess func([]indexResult) ([]indexResult, error)
 		wantLimits  []int
 		wantIDs     []string
 		wantRetries int
@@ -296,8 +296,8 @@ func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 				{ID: "doc-2", Score: 0.8},
 				{ID: "doc-3", Score: 0.7},
 			},
-			postProcess: func(results []indexResult) []indexResult {
-				return results[1:]
+			postProcess: func(results []indexResult) ([]indexResult, error) {
+				return results[1:], nil
 			},
 			wantLimits:  []int{2, 4},
 			wantIDs:     []string{"doc-1", "doc-2"},

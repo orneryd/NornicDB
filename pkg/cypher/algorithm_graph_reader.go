@@ -1,12 +1,15 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // readAlgorithmGraph is the call contract and relationship reader shared by the
 // six whole-graph APOC extension algorithms. Existing (nodes, config) calls keep
 // their configuration; (nodes, types, config) adds the documented type filter.
 // Omitted/null types and ["*"] select all types; [] selects no relationships.
-func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
+func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
 	var config map[string]interface{}
 	var types map[string]struct{}
 	second := procedureArgument(args, 1)
@@ -43,7 +46,7 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
 		}
 	}
-	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
+	graph, nodes, err := e.algorithmIdentityInput(ctx, procedure, args)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -57,8 +60,21 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 // multiplicity and relationship properties for the consuming algorithm. Never
 // mutate a storage-owned slice or retain a graph-sized cross-read identity set.
 type algorithmRelationshipReader struct {
+	namespace carriedNamespace
 	storage.Engine
 	types map[string]struct{}
+}
+
+// algorithmRelationshipReader declares every optional method; admission is derived from this policy.
+var algorithmRelationshipReaderReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "ReadStored StoredReadPolicy", Disposition: storage.CapabilityRefused, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "Namespace", Disposition: storage.CapabilityOwned, Scope: "Carried namespace identity; the filtered data view stays owned."},
+	{Methods: "SubscribeEvents",
+		Disposition: storage.CapabilityOwned, Scope: "Relationship type filtering remains in core Engine reads; scoped event subscription stays on the view."},
+}
+
+func (*algorithmRelationshipReader) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return algorithmRelationshipReaderReadPolicy.Copy()
 }
 
 func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
@@ -89,3 +105,18 @@ func (r *algorithmRelationshipReader) SubscribeEvents(handlers storage.EventHand
 }
 
 var _ storage.EventSubscriber = (*algorithmRelationshipReader)(nil)
+
+func (*algorithmRelationshipReader) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineView, ReadState: storage.BindingCarried, Membership: storage.BindingCarried, Controller: storage.BindingRefused, PendingActions: storage.BindingCarried, SchemaPublication: storage.BindingCarried, ReadLease: storage.BindingCarried, StatementMode: storage.BindingCarried, Identity: storage.BindingCarried, Enforcement: storage.BindingCarried, CompoundDependencies: storage.BindingCarried, SameVersionFallback: storage.BindingCarried, Delivery: storage.BindingCarried, ExactEffects: storage.BindingCarried, FullRead: storage.BindingCarried, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+
+// Stored integrity facts may not bypass this view.
+func (r *algorithmRelationshipReader) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.RefusedStoredReadPolicy()
+}
+func (r *algorithmRelationshipReader) ReadStored(ctx context.Context, _ storage.StoredReadRequest) (storage.StoredReadResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, storage.ErrNotImplemented
+}

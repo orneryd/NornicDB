@@ -53,7 +53,13 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 			for _, view := range views {
 				t.Run(view.name, func(t *testing.T) {
 					require.Equal(t, view.count, CountPendingEmbeddingIDs(view.store, nil))
-					require.Equal(t, 1, CountPendingEmbeddingIDs(view.store, func(id []byte) bool { return string(id) != "a" }),
+					require.Equal(t, 1, CountPendingEmbeddingIDs(view.store, func(id []byte) bool {
+						local := string(id)
+						if _, _, value, qualified := ParseElementID(local); qualified {
+							local = value
+						}
+						return local != "a"
+					}),
 						"IDs owned by claims or DLQ must not also count in MAIN")
 				})
 			}

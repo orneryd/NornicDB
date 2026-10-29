@@ -245,6 +245,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	physicalOperations := tx.physicalOperationsLocked()
 	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
 	var version MVCCVersion
+	var endpointLabels *changeEndpointLabels
 	if hasWrites {
 		if tx.namespace == "" {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -257,6 +258,12 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			return err
 		}
 		defer tx.endChangeCaptureLocked(false)
+		if tx.changeCapture != nil {
+			endpointLabels, err = newChangeEndpointLabels(context.Background(), tx.engine, newCommitStates(physicalOperations), physicalOperations, tx.engine.GetSchemaForNamespace(tx.namespace))
+			if err != nil {
+				return tx.abortCommitLocked(fmt.Errorf("reading stored CDC endpoints: %w", err))
+			}
+		}
 		version, err = tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now())
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -329,7 +336,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
 		}
-		if err := tx.writeChangeEventsLocked(&cw.batchWriter, physicalOperations, version.CommitTimestamp); err != nil {
+		if err := tx.writeChangeEventsLocked(&cw.batchWriter, physicalOperations, version.CommitTimestamp, endpointLabels); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("writing change events: %w", err))
 		}
 	}

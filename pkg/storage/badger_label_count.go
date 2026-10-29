@@ -44,21 +44,20 @@ type storedNodeLabels struct {
 }
 
 func decodeStoredNodeLabels(data []byte) ([]string, error) {
-	if len(data) < 1 || data[0] != nodeFormatTokenizedV1 {
+	envelope, failure := splitNodeEnvelope(data)
+	// Preserve the label reader's release diagnostics and metadata decoder.
+	// Only the shared owner interprets format/length framing.
+	switch failure {
+	case nodeEnvelopeEmpty, nodeEnvelopeWrongFormat:
 		return nil, fmt.Errorf("node body has unexpected format")
-	}
-	rest := data[1:]
-	propertiesLength, size := binary.Uvarint(rest)
-	if size <= 0 {
+	case nodeEnvelopeShortVarint, nodeEnvelopeOverflowVarint:
 		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[size:]
-	if uint64(len(rest)) < propertiesLength {
+	case nodeEnvelopeShortProperties:
 		return nil, fmt.Errorf("node body: properties payload truncated")
 	}
 
 	var node storedNodeLabels
-	if err := decodeValue(rest[propertiesLength:], &node); err != nil {
+	if err := decodeValue(envelope.metadata, &node); err != nil {
 		return nil, err
 	}
 	return node.Labels, nil
@@ -387,11 +386,11 @@ func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, erro
 				continue
 			}
 			if err := it.Item().Value(func(val []byte) error {
-				node, decodeErr := b.decodeNode(namespace, val)
+				labels, decodeErr := decodeStoredNodeLabels(val)
 				if decodeErr != nil {
 					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
 				}
-				for _, label := range uniqueLabels(node.Labels) {
+				for _, label := range uniqueLabels(labels) {
 					counts[namespace+"\x00"+label]++
 				}
 				return nil

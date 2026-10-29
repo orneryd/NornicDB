@@ -146,6 +146,7 @@ func (s *Session) clearExplicitTransactionState() {
 	s.txWriteInfos = nil
 	s.pendingFlush = false
 	s.lastResult = nil
+	s.lastEntitySource = nil
 	s.resultIndex = 0
 	s.resultStreams = nil
 	s.queryId = 0

@@ -12,6 +12,7 @@ package storage
 // lock, so they never wait for the flush.
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -88,7 +89,17 @@ type bufferedCommit struct {
 
 // CommitBuffer is one generation of buffered committed writes. It is
 // append-only while active and read-only while draining.
+// bufferedEntityID keeps node/edge provenance distinct even for equal IDs.
+type bufferedEntityID struct {
+	kind bufferedEntityKind
+	id   string
+}
+
 type CommitBuffer struct {
+	// versions is read provenance folded by the EXISTING generation owner.
+	// It stores only the issued ACK version, never another body or write order.
+	versions map[bufferedEntityID]MVCCVersion
+
 	readScopes map[string]struct{}
 	commits    []bufferedCommit
 
@@ -200,6 +211,23 @@ func (b *CommitBuffer) Commits() []bufferedCommit {
 func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 	b.commits = append(b.commits, c)
 	for _, op := range c.ops {
+		switch op.Type {
+		case OpCreateNode, OpUpdateNode:
+			if op.Node != nil {
+				b.recordEntityVersion(bufferedNodeEntity, string(op.Node.ID), c.version)
+			}
+		case OpDeleteNode:
+			b.recordEntityVersion(bufferedNodeEntity, string(op.NodeID), c.version)
+			for _, id := range op.DeletedEdgeIDs {
+				b.recordEntityVersion(bufferedEdgeEntity, string(id), c.version)
+			}
+		case OpCreateEdge, OpUpdateEdge:
+			if op.Edge != nil {
+				b.recordEntityVersion(bufferedEdgeEntity, string(op.Edge.ID), c.version)
+			}
+		case OpDeleteEdge:
+			b.recordEntityVersion(bufferedEdgeEntity, string(op.EdgeID), c.version)
+		}
 		visitOperationTotalCounts(op, b.totalCounts.add)
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
@@ -310,6 +338,7 @@ func (b *CommitBuffer) addNode(n *Node) {
 	if _, exists := b.nodes[n.ID]; !exists {
 		b.totalCounts.add(string(n.ID), false, 1)
 	}
+	delete(b.versions, bufferedEntityID{bufferedNodeEntity, string(n.ID)})
 	copyNode := *n
 	b.clearEntityDeletion(bufferedNodeEntity, string(n.ID))
 	b.nodes[n.ID] = &copyNode
@@ -336,6 +365,7 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 	if _, exists := b.edges[e.ID]; !exists {
 		b.totalCounts.add(string(e.ID), true, 1)
 	}
+	delete(b.versions, bufferedEntityID{bufferedEdgeEntity, string(e.ID)})
 	copyEdge := *e
 	b.clearEntityDeletion(bufferedEdgeEntity, string(e.ID))
 	b.edges[e.ID] = &copyEdge
@@ -368,6 +398,8 @@ func (b *CommitBuffer) addDelete(key string) {
 	if key == "" {
 		return
 	}
+	delete(b.versions, bufferedEntityID{bufferedNodeEntity, key})
+	delete(b.versions, bufferedEntityID{bufferedEdgeEntity, key})
 	b.deletes[key] = bufferedNodeEntity | bufferedEdgeEntity
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpDelete, id: key})
 }
@@ -1096,10 +1128,12 @@ func (w *WriteBehindBuffer) labelOverlayLocked(label string, prefixes ...string)
 func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
+	_ = w.visitEntityOverlayLocked(context.Background(), bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.nodesByLabel[label]
 		for i := len(ids) - 1; i >= 0; i-- {
-			emit(string(ids[i]))
+			if !emit(string(ids[i])) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[NodeID(id)] = true
@@ -1123,10 +1157,12 @@ func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...strin
 	}
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	_ = w.visitEntityOverlayLocked(context.Background(), bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.edgesByType[edgeType]
 		for i := len(ids) - 1; i >= 0; i-- {
-			emit(string(ids[i]))
+			if !emit(string(ids[i])) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[EdgeID(id)] = true
@@ -1190,9 +1226,11 @@ func (w *WriteBehindBuffer) allNodesOverlayLocked(prefixes ...string) ([]*Node, 
 func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
-	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
+	_ = w.visitEntityOverlayLocked(context.Background(), bufferedNodeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.nodes {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[NodeID(id)] = true
@@ -1220,9 +1258,11 @@ func (w *WriteBehindBuffer) allEdgesOverlayLocked(prefixes ...string) ([]*Edge, 
 func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	_ = w.visitEntityOverlayLocked(context.Background(), bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		for id := range buf.edges {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		touched[EdgeID(id)] = true
@@ -1381,22 +1421,29 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 }
 
 func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
-	if w == nil {
-		return nil, nil, false
-	}
-	return w.selectEdgeAdjacencyOverlayLocked(nodeID, outgoing)
+	live, suppressed, nodeDeleted, _ = w.edgeAdjacencyOverlayLockedWithContext(context.Background(), nodeID, outgoing)
+	return
 }
 
-func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
+func (w *WriteBehindBuffer) edgeAdjacencyOverlayLockedWithContext(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
+	if w == nil {
+		return nil, nil, false, ctx.Err()
+	}
+	return w.selectEdgeAdjacencyOverlayLockedWithContext(ctx, nodeID, outgoing)
+}
+
+func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLockedWithContext(ctx context.Context, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool, err error) {
 	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
-	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+	err = w.visitEntityOverlayLocked(ctx, bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string) bool) {
 		ids := buf.incomingByNode[nodeID]
 		if outgoing {
 			ids = buf.outgoingByNode[nodeID]
 		}
 		for _, id := range ids {
-			emit(string(id))
+			if !emit(string(id)) {
+				return
+			}
 		}
 	}, func(id string, state bufferedEntityState) {
 		// Both replacements and tombstones shadow the committed identity.
@@ -1409,7 +1456,10 @@ func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outg
 			live = append(live, edge)
 		}
 	})
-	return live, suppressed, nodeDeleted
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return live, suppressed, nodeDeleted, nil
 }
 
 // EdgesBetweenOverlay returns the buffered live edges from source to target
@@ -1607,4 +1657,19 @@ func (w *WriteBehindBuffer) setDispatch(dispatch func()) {
 	w.mu.Lock()
 	w.dispatch = dispatch
 	w.mu.Unlock()
+}
+
+func (b *CommitBuffer) recordEntityVersion(kind bufferedEntityKind, id string, version MVCCVersion) {
+	if id == "" {
+		return
+	}
+	key := bufferedEntityID{kind, id}
+	if version.IsZero() {
+		delete(b.versions, key)
+		return
+	}
+	if b.versions == nil {
+		b.versions = make(map[bufferedEntityID]MVCCVersion)
+	}
+	b.versions[key] = version
 }

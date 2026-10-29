@@ -16,8 +16,11 @@ func isOrdinarySchemaDDL(query string) bool {
 }
 
 func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
-	wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper)
+	wrapper, ok := e.schemaMember()
 	if !ok {
+		if e.storageMembership().Status != storage.MembershipUnowned {
+			return storage.ErrNotImplemented
+		}
 		return nil
 	}
 	if err := wrapper.tx.SetNamespace(e.currentDatabaseName()); err != nil {
@@ -32,7 +35,7 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 }
 
 func (e *StorageExecutor) afterSchemaCommit(ctx context.Context, action func()) {
-	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok && wrapper.schema != nil {
+	if wrapper, ok := e.schemaMember(); ok && wrapper.schema != nil {
 		wrapper.schemaCommitActions = append(wrapper.schemaCommitActions, action)
 		return
 	}
@@ -49,7 +52,7 @@ func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*stora
 	if err := mutation(schema); err != nil {
 		return err
 	}
-	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+	if wrapper, ok := e.schemaMember(); ok {
 		return wrapper.tx.StageSchemaChanges()
 	}
 	return nil

@@ -47,21 +47,23 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		return err
 	}
 	if version != nil {
-		provider, ok := engine.(MVCCIndexedVisibilityEngine)
-		if !ok {
-			return nil, nil, ErrNotImplemented
-		}
 		if kind == adjacencyBoth {
 			return nil, nil, ErrInvalidData
 		}
 		err = consume(func(outgoing bool) ([]*Edge, error) {
 			if kind == adjacencyBetween {
-				return provider.GetEdgesBetweenVisibleAt(start, end, *version)
+				return ReadWithCapability(engine, func(provider historicalBetweenEdges) ([]*Edge, error) {
+					return provider.GetEdgesBetweenVisibleAt(start, end, *version)
+				}, nil)
 			}
 			if outgoing {
-				return provider.GetOutgoingEdgesVisibleAt(start, *version)
+				return ReadWithCapability(engine, func(provider historicalOutgoingEdges) ([]*Edge, error) {
+					return provider.GetOutgoingEdgesVisibleAt(start, *version)
+				}, nil)
 			}
-			return provider.GetIncomingEdgesVisibleAt(start, *version)
+			return ReadWithCapability(engine, func(provider historicalIncomingEdges) ([]*Edge, error) {
+				return provider.GetIncomingEdgesVisibleAt(start, *version)
+			}, nil)
 		})
 	} else {
 		native, isNative := engine.(*BadgerEngine)
@@ -80,14 +82,8 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 				}
 			}
 		} else {
-			var combined AdjacentEdgesEngine
-			if kind == adjacencyBoth {
-				combined, _ = engine.(AdjacentEdgesEngine)
-			}
-			if combined != nil {
-				out, in, err = combined.GetAdjacentEdges(start)
-			} else {
-				err = consume(func(outgoing bool) ([]*Edge, error) {
+			ordinary := func() error {
+				return consume(func(outgoing bool) ([]*Edge, error) {
 					if kind == adjacencyBetween {
 						return engine.GetEdgesBetween(start, end)
 					}
@@ -96,6 +92,16 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 					}
 					return engine.GetIncomingEdges(start)
 				})
+			}
+			if kind == adjacencyBoth {
+				type adjacencyResult struct{ out, in []*Edge }
+				value, readErr := ReadWithCapability(engine, func(provider AdjacentEdgesEngine) (adjacencyResult, error) {
+					out, in, err := provider.GetAdjacentEdges(start)
+					return adjacencyResult{out, in}, err
+				}, func() (adjacencyResult, error) { err := ordinary(); return adjacencyResult{out, in}, err })
+				out, in, err = value.out, value.in, readErr
+			} else {
+				err = ordinary()
 			}
 		}
 	}

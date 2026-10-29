@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/labelrouting"
@@ -35,7 +36,7 @@ func NewQueryAnalyzer() *QueryAnalyzer {
 
 // SetLabelRouting configures label-based routing.
 func (a *QueryAnalyzer) SetLabelRouting(label string, constituents []string) {
-	a.labelRouting.Set(label, constituents)
+	a.labelRouting.Set(label, slices.Clone(constituents))
 }
 
 // SetPropertyRouting configures property-based routing.

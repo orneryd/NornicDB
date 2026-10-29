@@ -57,22 +57,29 @@ import (
 // vectors (link prediction, vector scoring, search indexing) reads with
 // GetNode.
 func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
-	if reader := e.queryNodeReader(store); reader != nil {
-		return reader.GetQueryNode(id)
+	if e == nil {
+		return store.GetNode(id)
+	}
+	if e.storageExecution == nil {
+		e.storageExecution = bindStorageExecution(e.storage)
+	}
+	op := e.storageExecution.queryRead(store)
+	if op.supported && (op.member || e.readOnlyQueryNodes) {
+		return op.read(id)
 	}
 	return store.GetNode(id)
 }
 
-// queryNodeReader is the shared read decision for point reads and MATCH scans.
-func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNodeReader {
-	if wrapper, ok := store.(*transactionStorageWrapper); ok {
-		return wrapper
+// The read adapter and structural request are retained by the issued executor.
+func (e *StorageExecutor) queryNodeReader(store storage.Engine) bool {
+	if e == nil {
+		return false
 	}
-	if e != nil && e.readOnlyQueryNodes {
-		reader, _ := store.(storage.QueryNodeReader)
-		return reader
+	if e.storageExecution == nil {
+		e.storageExecution = bindStorageExecution(e.storage)
 	}
-	return nil
+	op := e.storageExecution.queryRead(store)
+	return op.supported && (op.member || e.readOnlyQueryNodes)
 }
 
 // streamQueryNodes carries the query-node read contract to storage. Each
@@ -95,7 +102,7 @@ func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
 	if info == nil || !info.IsReadOnly || !info.HasMatch || info.HasCall {
 		return false
 	}
-	_, ok := e.storage.(storage.QueryNodeReader)
+	ok := storage.HasReadCapability[storage.QueryNodeReader](e.storage)
 	return ok
 }
 
@@ -106,14 +113,10 @@ type materializedAccessRecorder interface {
 // recordMaterializedResultAccess records an access (ON ACCESS policies) for
 // every node and relationship a result returns.
 func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) {
-	if result == nil {
+	if !resultHasMaterializedEntities(result) || !storage.HasReadCapability[materializedAccessRecorder](e.storage) {
 		return
 	}
-	recorder, ok := e.storage.(materializedAccessRecorder)
-	if !ok || recorder == nil {
-		return
-	}
-	materializedRows(recorder, result.Rows)
+	materializedRows(materializedAccessOperation{e.storage}, result.Rows)
 }
 
 // resultHasMaterializedEntities reports whether result returns a node or a
@@ -227,7 +230,7 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		return false
 	}
 	if recorder != nil {
-		recorder.RecordMaterializedAccess(id)
+		storage.RecordMaterializedAccess(recorder, id)
 	}
 	return true
 }
@@ -423,4 +426,10 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 	head, _ := splitNodePatternProperties(pattern)
 	_, labels, _ := parseNodeHead(head)
 	return labels
+}
+
+type materializedAccessOperation struct{ engine storage.Engine }
+
+func (r materializedAccessOperation) RecordMaterializedAccess(id string) {
+	storage.RecordMaterializedAccess(r.engine, id)
 }

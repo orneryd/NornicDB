@@ -141,6 +141,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// statement returns is that owner's transaction timeout (#1339); a
 	// deadline no owner installed (a caller's own budget, a dependency's
 	// timeout) keeps its error as it is.
+	var bindingErr error
+	ctx, bindingErr = e.boundExecutionContext(ctx)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
 	deadlineCtx := ctx
 	defer func() {
 		if retErr != nil {
@@ -179,7 +184,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 
 	// TRC-17: propagate span context to the storage layer so storage spans
 	// nest as children of the cypher execute span.
-	if te, ok := e.storage.(*storage.TracedEngine); ok {
+	if te, ok := storage.OwnedCapability[*storage.TracedEngine](e.storage); ok {
 		te.SetContext(ctx)
 	}
 
@@ -654,7 +659,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// and so is a statement that reads or writes no graph (RETURN 1,
 	// UNWIND graph.names() AS g RETURN g), which runs on the composite
 	// itself, as in Neo4j.
-	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(cypher) {
+	if e.compositeRoot() && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(cypher) {
 		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
@@ -833,13 +838,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 
 	// Check query limits if storage engine supports it
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
-	if namespacedEngine, ok := e.storage.(interface {
-		GetQueryLimitChecker() interface {
-			CheckQueryRate() error
-			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
-			GetQueryLimits() interface{}
-		}
-	}); ok {
+	if namespacedEngine := e.queryLimitProvider(); namespacedEngine != nil {
 		if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
 			// Check query rate limit
 			if err := qlc.CheckQueryRate(); err != nil {
@@ -869,7 +868,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
+	ctx, finishMode, releaseMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
+	if releaseMode != nil {
+		defer releaseMode()
+	}
 	if modeErr != nil {
 		return nil, modeErr
 	}
@@ -914,13 +916,16 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	resultCacheKey := ""
 	if e.canUseResultCache(ctx, info, cypher) {
 		resultCacheKey = resultCacheEntryKey(ctx, cypher, params)
+		if limit := e.maxResults(); limit > 0 {
+			resultCacheKey += ":maxresults:" + strconv.FormatInt(limit, 10)
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
 		}
-		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
+		if provider, ok := viewMetadataForExecutor[storage.GraphMutationVersionProvider](e); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
@@ -1038,14 +1043,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 // maxResults is the database's result-row limit (0 for none): the result of
 // a statement is cut to it.
 func (e *StorageExecutor) maxResults() int64 {
-	namespacedEngine, ok := e.storage.(interface {
-		GetQueryLimitChecker() interface {
-			CheckQueryRate() error
-			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
-			GetQueryLimits() interface{}
-		}
-	})
-	if !ok {
+	namespacedEngine := e.queryLimitProvider()
+	if namespacedEngine == nil {
 		return 0
 	}
 	qlc := namespacedEngine.GetQueryLimitChecker()

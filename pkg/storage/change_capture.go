@@ -324,13 +324,16 @@ func (tx *BadgerTransaction) endChangeCaptureLocked(committed bool) {
 // order the transaction first touched them; the relationships a node delete
 // removes come before it. It runs before the commit's buffered writes, so a
 // cascaded relationship's stored record is still its state before.
-func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations []Operation, commitTime time.Time) error {
+func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations []Operation, commitTime time.Time, labels *changeEndpointLabels) error {
 	capture := tx.changeCapture
 	if capture == nil {
 		return nil
 	}
+	if labels == nil {
+		return ErrInvalidData
+	}
 	b := tx.engine
-	states := newCommitStates(operations)
+	states := labels.states
 	base := ChangeEvent{
 		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
 		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
@@ -347,7 +350,6 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		capture.wrote = true
 		return w.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
-	labels := newChangeEndpointLabels(b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
 	seenNodes := make(map[NodeID]bool)
 	seenEdges := make(map[EdgeID]bool)
@@ -493,18 +495,80 @@ func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpoi
 	return event, true
 }
 
-// changeEndpointLabels finds a relationship endpoint's labels: its state
-// at the end of the transaction when the transaction touched it, else its
-// stored node, read once per commit outside the commit's own transaction
-// (which would make the read part of its conflict set).
+// changeEndpointLabels holds the commit's selected endpoint facts. Unchanged
+// endpoints come from one stored operation captured before commit-phase writes;
+// touched endpoints retain the commit's existing canonical images.
 type changeEndpointLabels struct {
-	engine *BadgerEngine
 	states commitStates
 	read   map[NodeID]*Node
 }
 
-func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeEndpointLabels {
-	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID]*Node)}
+func newChangeEndpointLabels(ctx context.Context, engine *BadgerEngine, states commitStates, operations []Operation, schema *SchemaManager) (*changeEndpointLabels, error) {
+	labels := &changeEndpointLabels{states: states, read: make(map[NodeID]*Node)}
+	request := StoredReadRequest{Mode: StoredMetadataOnly}
+	nodes := map[NodeID]bool{}
+	add := func(node *Edge) {
+		if node == nil {
+			return
+		}
+		for _, id := range []NodeID{node.StartNode, node.EndNode} {
+			if _, touched := states.finalNodes[id]; !touched && !nodes[id] {
+				nodes[id] = true
+				request.Nodes = append(request.Nodes, id)
+			}
+		}
+	}
+	for _, edge := range states.finalEdges {
+		add(edge)
+	}
+	for _, edge := range states.committedEdges {
+		add(edge)
+	}
+	for _, op := range operations {
+		request.Edges = append(request.Edges, op.DeletedEdgeIDs...)
+	}
+	if len(request.Nodes) == 0 && len(request.Edges) == 0 {
+		return labels, nil
+	}
+	properties := map[string]bool{}
+	if schema != nil {
+		for _, constraint := range schema.GetAllConstraints() {
+			if constraint.Type != ConstraintNodeKey {
+				continue
+			}
+			for _, key := range constraint.Properties {
+				if !properties[key] {
+					properties[key] = true
+					request.NodeProperties = append(request.NodeProperties, key)
+				}
+			}
+		}
+	}
+	if len(request.NodeProperties) > 0 {
+		request.Mode = StoredSelectedProperties
+		sort.Strings(request.NodeProperties)
+	}
+	result, err := ReadStored(ctx, engine, request)
+	if err != nil {
+		return nil, err
+	}
+	switch value := result.(type) {
+	case StoredMetadata:
+		for _, fact := range value.Nodes {
+			if fact.Exists {
+				labels.read[fact.ID] = &Node{ID: fact.ID, Labels: fact.Labels}
+			}
+		}
+	case StoredProjection:
+		for _, node := range value.Nodes {
+			if node.Fact.Exists {
+				labels.read[node.Fact.ID] = &Node{ID: node.Fact.ID, Labels: node.Fact.Labels, Properties: node.Properties}
+			}
+		}
+	default:
+		return nil, ErrInvalidData
+	}
+	return labels, nil
 }
 
 func (l *changeEndpointLabels) of(id NodeID) []string {
@@ -526,15 +590,7 @@ func (l *changeEndpointLabels) node(id NodeID) *Node {
 			return node
 		}
 	}
-	if node, ok := l.read[id]; ok {
-		return node
-	}
-	node, err := l.engine.GetNodeWithoutEmbeddings(id)
-	if err != nil {
-		node = nil
-	}
-	l.read[id] = node
-	return node
+	return l.read[id]
 }
 
 // changeKeys reads an entity's key-constraint property values from its
@@ -814,19 +870,7 @@ func (j *changeRetentionJob) RunOnce(now time.Time) {
 // ChangeCaptureOf returns the change-capturing engine under engine's
 // wrappers (namespace, async, WAL, tracing), if it has one.
 func ChangeCaptureOf(engine Engine) (ChangeCaptureEngine, bool) {
-	for engine != nil {
-		if capture, ok := engine.(ChangeCaptureEngine); ok {
-			return capture, true
-		}
-		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := wrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
-	}
-	return nil, false
+	// Capture configuration is physical wrapper metadata. The common cursor
+	// asks each exact outer owner first; data-read transparency grants no effects.
+	return engineCapability[ChangeCaptureEngine](engine, capabilityIdentityOwner, nil)
 }

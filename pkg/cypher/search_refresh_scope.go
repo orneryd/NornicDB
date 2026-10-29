@@ -23,7 +23,7 @@ func (s cypherRefreshScope) PrepareSearchRefresh(_ context.Context, request sear
 	if request.PostCommit {
 		return request.PostCommitService, false, nil
 	}
-	if tx, ok := s.executor.storage.(*transactionStorageWrapper); ok {
+	if tx, ok := s.executor.pendingMember(); ok {
 		if s.executor.searchResolver != nil || s.executor.searchService != nil {
 			tx.deferSearchRefresh(request.Node, request.Edge)
 		}

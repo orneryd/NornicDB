@@ -158,6 +158,10 @@
   other: "Node with {{.Property}}={{.Value}} already exists in transaction"
 - id: storage.validation.node_unique_existing
   other: "Node with {{.Property}}={{.Value}} already exists (nodeID: {{.NodeID}})"
+- id: storage.validation.node_unique_conflict
+  other: "Node with {{.Property}}={{.Value}} already exists"
+- id: storage.validation.node_key_conflict
+  other: "Node with key {{.Properties}}={{.Values}} already exists"
 - id: storage.validation.node_unique_concurrent
   other: "Node with {{.Property}}={{.Value}} already exists (claimed by concurrent commit)"
 - id: storage.validation.node_key_null

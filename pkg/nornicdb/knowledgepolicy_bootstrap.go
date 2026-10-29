@@ -14,7 +14,7 @@ func maybeBootstrapDefaultKnowledgePolicy(ctx context.Context, base storage.Engi
 	if namespace == "" {
 		namespace = "nornic"
 	}
-	provider, ok := base.(storage.NamespaceSchemaProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.NamespaceSchemaProvider](base)
 	if !ok {
 		return nil
 	}

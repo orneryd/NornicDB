@@ -189,10 +189,9 @@ var ErrReadSnapshotUnsupported = errors.New("storage: read snapshots are not sup
 // OpenReadSnapshot opens a read snapshot of engine, or returns
 // ErrReadSnapshotUnsupported when engine has no ReadSnapshotter.
 func OpenReadSnapshot(ctx context.Context, engine any) (ReadSnapshotView, error) {
-	if snapshotter, ok := engine.(ReadSnapshotter); ok {
+	return ReadWithCapability(engine, func(snapshotter ReadSnapshotter) (ReadSnapshotView, error) {
 		return snapshotter.OpenReadSnapshot(ctx)
-	}
-	return nil, ErrReadSnapshotUnsupported
+	}, func() (ReadSnapshotView, error) { return nil, ErrReadSnapshotUnsupported })
 }
 
 // OpenReadSnapshot forwards to the engine the WAL writes through: the WAL
@@ -226,7 +225,7 @@ type namespacedReadSnapshot struct {
 }
 
 func (s *namespacedReadSnapshot) IterateNodes(fn func(*Node) bool) error {
-	return s.inner.IterateNodes(func(node *Node) bool {
+	return VisitWhileWithCapability(s.inner, func(reader ReadSnapshotView, deliver func(*Node) bool) error { return reader.IterateNodes(deliver) }, nil, func(node *Node) bool {
 		if node == nil || !s.n.hasNodePrefix(node.ID) {
 			return true
 		}
@@ -235,8 +234,10 @@ func (s *namespacedReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 }
 
 func (s *namespacedReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
-	return s.inner.StreamEdges(ctx, func(edge *Edge) error {
-		if edge == nil || !s.n.hasEdgePrefix(edge.ID) {
+	return VisitWithCapability(s.inner, func(reader ReadSnapshotView, deliver func(*Edge) error) error {
+		return reader.StreamEdges(ctx, deliver)
+	}, nil, func(edge *Edge) error {
+		if edge == nil || !s.n.edgeInScope(edge) {
 			return nil
 		}
 		return fn(s.n.toUserEdge(edge))

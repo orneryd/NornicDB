@@ -64,16 +64,16 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 		underlyingEngine := db.GetStorage()
 
 		// Unwrap NamespacedEngine if present (from db.GetStorage())
-		if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
+		if namespacedEngine, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](underlyingEngine); ok {
 			underlyingEngine = namespacedEngine.GetInnerEngine()
 		}
 
 		// Unwrap WALEngine if present
-		if walEngine, ok := underlyingEngine.(storage.EngineUnwrapper); ok {
+		if walEngine, ok := storage.OwnedCapability[storage.EngineUnwrapper](underlyingEngine); ok {
 			underlyingEngine = walEngine.GetInnerEngine()
 		}
 
-		if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
+		if notifier, ok := storage.ViewMetadataForEngine[storage.StorageEventNotifier](underlyingEngine); ok {
 			// Helpers expose user-facing IDs while retaining the namespace as the
 			// event's database routing key.
 			unprefixNodeID := func(id storage.NodeID) storage.NodeID {

@@ -47,6 +47,7 @@ func TestMergeCacheAndIndexHelpers(t *testing.T) {
 	all, err := store.GetNodesByLabel("L")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
-	loaded := exec.loadMergeCandidateNodes(store, []storage.NodeID{all[0].ID, all[1].ID, all[0].ID})
+	loaded, loadErr := exec.loadMergeCandidateNodes(t.Context(), store, []storage.NodeID{all[0].ID, all[1].ID, all[0].ID})
+	require.NoError(t, loadErr)
 	require.Len(t, loaded, 2)
 }

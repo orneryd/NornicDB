@@ -62,7 +62,18 @@ func (domain graphIdentityDomain) foreignQualifier(database string) bool {
 }
 
 func (e *StorageExecutor) FunctionStorage(database string) (storage.Engine, error) {
-	return e.graphFunctionStorage(database, e.storage)
+	issued := e.storage
+	if e.storageMembership().Status == storage.MembershipUnowned && e.txContext != nil && e.txContext.active {
+		switch tx := e.txContext.tx.(type) {
+		case *storage.BadgerTransaction:
+			issued = e.transactionStorageFor(tx)
+		case *fabric.FabricTransaction:
+			if composite, ok := e.storage.(*storage.CompositeEngine); ok {
+				issued = composite.WithMembership(e.txContext)
+			}
+		}
+	}
+	return e.graphFunctionStorage(database, issued)
 }
 
 func (e *StorageExecutor) graphFunctionStorage(database string, fallback storage.Engine) (storage.Engine, error) {
