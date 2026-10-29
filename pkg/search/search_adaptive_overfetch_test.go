@@ -193,33 +193,47 @@ func TestResolveAdaptiveOverfetchAllowsConfiguredBudgetAboveDefault(t *testing.T
 	require.Equal(t, 10_000, config.maxLimit)
 }
 
-func TestAdaptiveVectorSearchUsesIVFPQRerankDepthIndependentOfResultLimit(t *testing.T) {
-	index := &IVFPQIndex{
-		profile:      IVFPQProfile{Dimensions: 1, NProbe: 1, RerankTopK: 3},
-		centroids:    [][]float32{{1}},
-		centroidNorm: [][]float32{{1}},
-		codebooks: []ivfpqCodebook{
-			{SubDim: 1, Codeword: [][]float32{{0}, {1}}},
-		},
-		lists: []ivfpqList{
-			{IDs: []string{"doc-1", "doc-2", "doc-3"}, CodeSize: 1, Codes: []byte{1, 1, 1}},
-		},
+func TestCompressedVectorRescoreFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		ids               []string
+		rerank            int
+		maxCandidateLimit int
+	}{
+		{"rerank depth independent of result limit", []string{"doc-1", "doc-2", "doc-3"}, 3, 1},
+		{"rescore floor before trimming", []string{"doc-1", "doc-2", "doc-3", "doc-4", "doc-5"}, 5, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codes := make([]byte, len(tc.ids))
+			for i := range codes {
+				codes[i] = 1
+			}
+			index := &IVFPQIndex{
+				profile:      IVFPQProfile{Dimensions: 1, NProbe: 1, RerankTopK: tc.rerank},
+				centroids:    [][]float32{{1}},
+				centroidNorm: [][]float32{{1}},
+				codebooks:    []ivfpqCodebook{{SubDim: 1, Codeword: [][]float32{{0}, {1}}}},
+				lists:        []ivfpqList{{IDs: tc.ids, CodeSize: 1, Codes: codes}},
+			}
+			service := NewService(newTestMemoryEngine(t), 1, nil)
+			pipeline := NewVectorSearchPipeline(NewIVFPQCandidateGen(index, 1), &IdentityExactScorer{})
+			opts := adaptiveOverfetchTestOptions(1)
+			opts.MaxCandidateLimit = tc.maxCandidateLimit
+			results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1}, opts, nil, nil)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			if tc.rerank == 3 {
+				require.Equal(t, 3, resolveVectorAdaptiveOverfetch(opts, pipeline).initialLimit)
+				require.Equal(t, 3, resolveVectorAdaptiveOverfetch(opts, pipeline).maxLimit)
+				deeper := adaptiveOverfetchTestOptions(4)
+				deeper.MaxCandidateLimit = 0
+				require.GreaterOrEqual(t, resolveVectorAdaptiveOverfetch(deeper, pipeline).initialLimit, 4)
+			} else {
+				require.Equal(t, 5, stats.rawCandidates)
+				require.Zero(t, stats.retries)
+			}
+		})
 	}
-	service := NewService(newTestMemoryEngine(t), 1, nil)
-	pipeline := NewVectorSearchPipeline(NewIVFPQCandidateGen(index, 1), &IdentityExactScorer{})
-	opts := adaptiveOverfetchTestOptions(1)
-	opts.MaxCandidateLimit = 1
-
-	results, _, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1}, opts, nil, nil)
-
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, 3, resolveVectorAdaptiveOverfetch(opts, pipeline).initialLimit)
-	require.Equal(t, 3, resolveVectorAdaptiveOverfetch(opts, pipeline).maxLimit)
-
-	deeper := adaptiveOverfetchTestOptions(4)
-	deeper.MaxCandidateLimit = 0
-	require.GreaterOrEqual(t, resolveVectorAdaptiveOverfetch(deeper, pipeline).initialLimit, 4)
 }
 
 func TestCompressedVectorSearchPlansRescoreFloorForSmallRequest(t *testing.T) {
@@ -235,31 +249,6 @@ func TestCompressedVectorSearchPlansRescoreFloorForSmallRequest(t *testing.T) {
 	require.Equal(t, 10, config.target)
 	require.Equal(t, 2_000, config.initialLimit)
 	require.Equal(t, 2_000, config.maxLimit)
-}
-
-func TestCompressedVectorSearchRescoresFloorBeforeTrimmingResults(t *testing.T) {
-	index := &IVFPQIndex{
-		profile:      IVFPQProfile{Dimensions: 1, NProbe: 1, RerankTopK: 5},
-		centroids:    [][]float32{{1}},
-		centroidNorm: [][]float32{{1}},
-		codebooks: []ivfpqCodebook{
-			{SubDim: 1, Codeword: [][]float32{{0}, {1}}},
-		},
-		lists: []ivfpqList{
-			{IDs: []string{"doc-1", "doc-2", "doc-3", "doc-4", "doc-5"}, CodeSize: 1, Codes: []byte{1, 1, 1, 1, 1}},
-		},
-	}
-	service := NewService(newTestMemoryEngine(t), 1, nil)
-	pipeline := NewVectorSearchPipeline(NewIVFPQCandidateGen(index, 1), &IdentityExactScorer{})
-	opts := adaptiveOverfetchTestOptions(1)
-	opts.MaxCandidateLimit = 0
-
-	results, stats, err := service.adaptiveVectorSearch(context.Background(), pipeline, []float32{1}, opts, nil, nil)
-
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, 5, stats.rawCandidates)
-	require.Zero(t, stats.retries)
 }
 
 func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {

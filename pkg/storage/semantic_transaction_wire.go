@@ -13,33 +13,19 @@ import (
 type semanticPropertyValues struct{ values map[string]any }
 
 func (p semanticPropertyValues) EncodeMsgpack(enc *msgpack.Encoder) error {
+	isolated := false
 	for _, value := range p.values {
-		if err := validateSemanticPropertyDepth(value, 0); err != nil {
+		needsIsolation, err := inspectPropertyEncoding(value, 0, maxTransportPropertyDepth)
+		if err != nil {
 			return err
 		}
+		isolated = isolated || needsIsolation
 	}
-	return enc.Encode(encodeStoredTemporalValue(p.values))
-}
-
-func validateSemanticPropertyDepth(value any, depth int) error {
-	if depth > maxTransportPropertyDepth {
-		return fmt.Errorf("replication property nesting depth exceeds %d", maxTransportPropertyDepth)
+	values := encodeStoredTemporalValue(p.values)
+	if !isolated {
+		return enc.Encode(values)
 	}
-	switch value := value.(type) {
-	case []any:
-		for _, item := range value {
-			if err := validateSemanticPropertyDepth(item, depth+1); err != nil {
-				return err
-			}
-		}
-	case map[string]any:
-		for _, item := range value {
-			if err := validateSemanticPropertyDepth(item, depth+1); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return encodeIsolatedPropertyValue(enc, values, -1, maxTransportPropertyDepth)
 }
 
 func (p *semanticPropertyValues) DecodeMsgpack(dec *msgpack.Decoder) error {

@@ -100,3 +100,11 @@ not covered by this run.
 | 83 | reuse | `pkg/search/chunked_search_rank_test.go` — `TestSearchTextChunksKeepsRankProvenance()` | `pkg/search/chunked_search_rank_test.go` — `TestSearchTextChunksKeepsVectorSimilarity()` |
 | 84 | reuse | `pkg/search/unchanged_fulltext_reindex_test.go` — `TestExtractSearchableTextOrdersPropertiesByKey()` | `pkg/indexing/config_test.go` — `TestExtractSearchableText()` |
 | 85 | reuse | `pkg/search/continuation_exhaustion_test.go` — `testContinuationDefaultHNSWPopulation()` | `pkg/search/continuation_exhaustion_test.go` — `TestContinuationDefaultHNSWFinishesFinitePopulation()` |
+
+## Work after this inventory
+
+Candidates 23 and 24 were consolidated into one table-driven compressed-vector
+rescore test, preserving both fixtures and their assertions; its focused race
+check passed. The full PR-delta checker still needs to reanalyze the integrated
+current tree before either finding can be marked resolved. Later source changes
+are not covered by this historical inventory.

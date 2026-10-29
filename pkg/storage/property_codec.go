@@ -61,6 +61,12 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 	scratch := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(scratch, uint64(len(props)))
 	buf.Write(scratch[:n])
+	if len(props) == 0 {
+		return buf.Bytes(), nil
+	}
+	encoder := msgpack.GetEncoder()
+	defer msgpack.PutEncoder(encoder)
+	var valueBuf bytes.Buffer
 	for name, val := range props {
 		id, err := b.propKeyDict.resolveOrAllocateInTxn(txn, namespace, name)
 		if err != nil {
@@ -68,11 +74,42 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 		}
 		n := binary.PutUvarint(scratch, id)
 		buf.Write(scratch[:n])
-		valBytes, err := msgpack.Marshal(encodeStoredTemporalValue(val))
-		if err != nil {
-			return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
+		// Each value gets its own empty writer, as with Marshal: a custom
+		// typed-property encoder can use or reset that writer without
+		// changing the surrounding tokenized body. Reuse its capacity.
+		valueBuf.Reset()
+		encoder.Reset(&valueBuf)
+		converted := encodeStoredTemporalValue(val)
+		var encodeErr error
+		if isSimplePropertyEncoding(val) {
+			encodeErr = encoder.Encode(converted)
+		} else {
+			switch val.(type) {
+			case []any, map[string]any:
+				// A custom value nested in a collection must not share the
+				// collection's writer or encoder state with its siblings.
+				needsIsolation, err := inspectPropertyEncoding(val, 0, -1)
+				if err != nil {
+					return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
+				}
+				if needsIsolation {
+					encodeErr = encodeIsolatedPropertyValue(encoder, converted, 0, -1)
+				} else {
+					encodeErr = encoder.Encode(converted)
+				}
+			default:
+				encodeErr = encoder.Encode(converted)
+				if encodeErr == nil {
+					if err := validateMessagePackValue(valueBuf.Bytes()); err != nil {
+						encodeErr = fmt.Errorf("invalid MessagePack value: %w: %w", ErrInvalidData, err)
+					}
+				}
+			}
 		}
-		buf.Write(valBytes)
+		if encodeErr != nil {
+			return nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
+		}
+		buf.Write(valueBuf.Bytes())
 	}
 	return buf.Bytes(), nil
 }

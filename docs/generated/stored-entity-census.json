@@ -4228,25 +4228,25 @@
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.EncodeEntityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:165"
+      "pos": "pkg/storage/semantic_transaction_wire.go:151"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.EncodeEntityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:167"
+      "pos": "pkg/storage/semantic_transaction_wire.go:153"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.EncodeEntityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:188"
+      "pos": "pkg/storage/semantic_transaction_wire.go:174"
     },
     {
       "field": "pkg/storage.semanticTransactionChange.Type",
       "class": "semantic transaction serialization kind",
       "func": "pkg/storage.EncodeEntityTransaction",
-      "pos": "pkg/storage/semantic_transaction_wire.go:190"
+      "pos": "pkg/storage/semantic_transaction_wire.go:176"
     },
     {
       "field": "pkg/storage.snapshotFrameWriter.scratch",

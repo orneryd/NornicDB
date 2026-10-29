@@ -287,3 +287,104 @@ integrated suite. The checker passed the subsequent 31-function staged delta
 on tree `8c1ab3d5865e39b105fe16e9d6b0a4c9c8d01118`; it did not reanalyze the
 unchanged findings in the earlier inventories, and the graph/header extraction
 limitations remain.
+
+After the `366387bd2e233c1554acec1cd7b5d9f95b672b2e` checkpoint, a local
+property-encoder experiment reuses a separate MessagePack value buffer. It
+resets the encoder between properties so custom encoders cannot change the
+following value's wire format. Focused byte-comparison and race tests cover
+supported scalar, collection and temporal shapes; a deliberately missing reset
+makes the state-isolation test fail. A public storage regression also showed
+that direct writes into the containing body let a custom typed-property encoder
+reset and corrupt it; that direct-write experiment was rejected. The separate
+buffer preserves the prior value-writer contract and Badger body format.
+
+For the rejected direct-write experiment, on an Apple M2 Max with
+`GOMAXPROCS=4`, local Qwen stopped, no Docker containers, and five one-second
+samples per case, median Northwind-shaped
+order-line encoding changed from 243.6 ns, 288 B and 5 allocations per op to
+180.0 ns, 112 B and 2 allocations; product encoding changed from 1,095 ns,
+1,478 B and 20 allocations to 700.2 ns, 502 B and 4 allocations. CPU profiles
+were captured. These results do not apply to the corrected separate-buffer
+implementation and are not end-to-end results.
+
+The rejected experiment's two isolated 48,000-product/48,000-order seeds per side used 2,000-row batches
+and four sessions with exact 97,440-node/312,050-relationship counts. Graph-only
+samples were 6.804 and 8.209 seconds before versus 6.573 and 7.696 after;
+search-enabled samples were 10.628 and 9.376 seconds before versus 10.495 and
+9.352 after. The sample count and spread do not establish an end-to-end gain.
+The corrected separate-buffer version was then measured in the same isolated
+five-sample microbenchmark: order-line properties took a median 196.4 ns,
+176 B and 3 allocations, versus the same 243.6 ns, 288 B and 5-allocation
+baseline; product properties took 768.7 ns, 694 B and 6 allocations, versus
+1,095 ns, 1,478 B and 20 allocations. Its two alternating default Northwind
+samples per side were 7.883/6.997 seconds before and 7.619/6.697 after in
+graph-only mode, and 9.445/9.282 before and 9.074/10.208 after with search.
+All eight counts matched; the spread does not establish an end-to-end gain.
+The corrected experiment is included in this checkpoint; the approximately
+five-second ingest target remains open.
+
+A scratch-only Badger v4.9.6 experiment computed log-entry CRC over the bytes
+already appended to the buffer. A focused byte-oracle/replay probe passed for
+plain and encrypted entries, prefixed buffers, varied offsets and invalid
+keys; a checksum mutant failed that probe. On the same isolated M2 Max, five
+one-second samples gave median plaintext encoding of 114.3 ns, 96 B and four
+allocations before versus 42.4 ns, 0 B and no allocations in the experiment;
+AES-256 medians were 482.0 ns, 1,632 B and 12 allocations versus 420.9 ns,
+1,536 B and eight allocations. Two alternating default Northwind seed samples
+per side were 6.797/6.756 seconds before and 6.646/6.612 with the experiment
+graph-only, and 9.388/10.318 before versus 9.088/10.075 with search. Counts
+matched in every run. The whole-ingest samples do not establish a clear gain;
+the patched dependency has not been adopted or fully qualified.
+
+In a further single-sample, profiled 96,000-product/96,000-order comparison
+with 4,000-row batches, graph-only seed time was 15.087 seconds and peak RSS
+10.79 GiB before versus 14.643 seconds and 10.42 GiB with the scratch patch;
+with search it was 20.436 seconds and 12.82 GiB versus 19.924 seconds and
+12.25 GiB. Each run preserved 193,440 nodes and 624,475 relationships. The
+allocation profile attributed about 13.9 million sampled graph-only objects
+to the old Badger encoder and no samples to the patched encoder. These single
+profiled samples establish the observed attribution, not a reliable overall
+ingest speedup; the dependency experiment remains outside the PR.
+
+An uncached `GOFLAGS=-count=1 make test` passed 128 packages on staged tree
+`e033f6deb8c2478280a0b183f1eb1b2b7ddf8ddf`. After that tree was frozen, a
+direct semantic-transaction codec regression was reproduced: a custom typed
+property encoder could reset the enclosing MessagePack buffer and corrupt the
+transaction. The public write-and-WAL-recovery control passed before this fix
+because commit preparation normalized that particular value; recovery loss was
+not reproduced. The correction isolates custom property encoders, including
+registered extensions and nested values, validates their output and preserves
+the existing property-depth boundary. Focused tests and race checks passed.
+The full-suite pass above predates this codec correction.
+
+For the codec correction, three alternating one-second samples on the M2 Max
+with `GOMAXPROCS=4`, local Qwen stopped and no Docker containers gave median
+2,000-relationship transaction encoding of 1,199,980 ns and 19 allocations
+before versus 1,193,998 ns and 19 allocations after; both used about 2.43 MB
+per operation. CPU profiles were captured. This is a focused codec measurement,
+not a claim about whole-ingest performance.
+
+A subsequent public Badger node probe found the same writer-ownership problem
+inside a property list: on the pre-fix staged implementation a list containing
+17 and a custom value of 42 read back as the scalar 42. The shared property
+writer now isolates custom leaves in supported nested lists and maps for both
+stored properties and semantic transactions, without changing Badger keys or
+the property layout. Focused node, relationship, malformed-value, depth and WAL
+recovery tests passed under the race detector. The full run on staged tree
+`fb2ea7068b86d378320b0f6e976d26bd712af0dc` was canceled as superseded by this
+additional correction; its partial log is not a suite pass.
+
+Three alternating one-second samples of the shared-writer correction on the
+isolated M2 Max gave median order-line property encoding of 200.6 ns before
+and 201.3 ns after (176 B and 3 allocations each), product properties of
+803.3 ns before and 811.2 ns after (about 694 B and 6 allocations each), and
+2,000-relationship transaction encoding of 1,219,119 ns before and
+1,232,633 ns after (about 2.43 MB and 19 allocations each). CPU profiles were
+captured. These focused results do not establish whole-ingest performance.
+
+The uncached full suite on staged tree `44ee1521773219a4bf9775af8b0ec274f77921c2`
+failed `TestStoredEntityCensusIsCurrent`; the other 127 packages passed.
+Regenerating the census changed only four source-line positions in each of its
+JSON and Markdown artifacts; the number of recorded field writes stayed 331,
+and `TestStoredEntityWritesAreOrdered` passed with zero census violations.
+The guards themselves were not changed.
