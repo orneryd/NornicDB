@@ -270,7 +270,7 @@ func (w *WAL) applyPropertyEpochSealLocked(plans []walPropertyEpochSealPlan) err
 	return err
 }
 
-// Close's lifetime owner has stopped admissions and waited for txnWG before
+// Close's lifetime owner has sealed admission and every admitted helper returned before
 // calling this with its captured handle. No ensureOpen-then-use or nested
 // write-barrier acquisition is involved. Foreign provenance is never erased:
 // a separate proof permits old-writer appends only after a complete clean stop.

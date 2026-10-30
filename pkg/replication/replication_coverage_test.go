@@ -129,6 +129,7 @@ func (m *coverageReplicator) LeaderAddr() string                         { retur
 func (m *coverageReplicator) LeaderID() string                           { return "leader" }
 func (m *coverageReplicator) Health() *HealthStatus                      { return &HealthStatus{} }
 func (m *coverageReplicator) WaitForLeader(context.Context) error        { return nil }
+func (m *coverageReplicator) LifetimeContext() context.Context           { return context.Background() }
 func (m *coverageReplicator) Shutdown() error                            { return nil }
 func (m *coverageReplicator) Mode() ReplicationMode                      { return ModeStandalone }
 func (m *coverageReplicator) NodeID() string                             { return m.nodeID }
@@ -452,7 +453,6 @@ func TestHAStandbyReplicator_UncoveredHelpers(t *testing.T) {
 	require.NoError(t, err)
 	r.transport = NewMockTransport()
 	r.started.Store(true)
-	r.stopCh = make(chan struct{})
 
 	cmds := []*Command{
 		{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()},
@@ -607,7 +607,6 @@ func TestMultiRegionReplicator_UncoveredWrapperMethods(t *testing.T) {
 		config:      cfg,
 		storage:     NewMockStorage(),
 		localRaft:   local,
-		stopCh:      make(chan struct{}),
 		remoteConns: make(map[string]PeerConnection),
 	}
 	r.started.Store(true)
@@ -872,10 +871,12 @@ func TestRaftReplicator_ApplyBranchCoverage(t *testing.T) {
 	r, _ := newCoverageRaftReplicator(t)
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}
 
-	r.closed.Store(true)
+	r.work.CloseAdmission()
 	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrClosed)
 
-	r.closed.Store(false)
+	// Owner admission never reopens: a fresh replicator is the not-started
+	// case and carries the open-admission branches below.
+	r, _ = newCoverageRaftReplicator(t)
 	require.ErrorIs(t, r.Apply(cmd, 10*time.Millisecond), ErrNotReady)
 
 	r.started.Store(true)
@@ -991,7 +992,7 @@ func TestHAStandbyReplicator_Start_DefaultTransportInitFailure(t *testing.T) {
 
 	err = r.Start(context.Background())
 	require.ErrorContains(t, err, "init transport")
-	assert.True(t, r.started.Load())
+	assert.False(t, r.started.Load(), "failed native construction must not publish readiness")
 }
 
 func TestHAStandbyReplicator_Start_DefaultTransportSuccessPaths(t *testing.T) {
@@ -1069,7 +1070,7 @@ func TestRaftReplicator_WaitForCommitCancelAndStop(t *testing.T) {
 	require.ErrorIs(t, <-f1.errCh, context.Canceled)
 
 	f2 := &applyFuture{index: 1, errCh: make(chan error, 1)}
-	close(r.stopCh)
+	r.work.Cancel()
 	r.waitForCommit(context.Background(), f2)
 	require.ErrorIs(t, <-f2.errCh, ErrClosed)
 }
@@ -1195,7 +1196,6 @@ func TestHAStandby_HelperBranches(t *testing.T) {
 	r, err := NewHAStandbyReplicator(cfg, store)
 	require.NoError(t, err)
 	r.transport = NewMockTransport()
-	r.stopCh = make(chan struct{})
 
 	// LeaderAddr branch for standby and primary.
 	r.isPrimary.Store(false)
@@ -1542,8 +1542,8 @@ func TestRaftReplicator_ListenForPeers(t *testing.T) {
 	r.config.AdvertiseAddr = "127.0.0.1:17310"
 
 	ctx, cancel := context.WithCancel(context.Background())
-	r.wg.Add(1)
-	go r.listenForPeers(ctx)
+	listenDone := make(chan struct{})
+	go func() { defer close(listenDone); r.listenForPeers(ctx) }()
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -1559,7 +1559,7 @@ func TestRaftReplicator_ListenForPeers(t *testing.T) {
 	mt.SimulateIncomingConnection()
 	cancel()
 	_ = mt.Close()
-	r.wg.Wait()
+	<-listenDone
 }
 
 func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
@@ -1604,11 +1604,11 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		r.wg.Add(1)
-		go r.runApplyLoop(ctx)
+		applyDone := make(chan struct{})
+		go func() { defer close(applyDone); r.runApplyLoop(ctx) }()
 		defer func() {
 			cancel()
-			r.wg.Wait()
+			<-applyDone
 		}()
 
 		err := r.ApplyBatch([]*Command{
@@ -1626,11 +1626,11 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		local.wg.Add(1)
-		go local.runApplyLoop(ctx)
+		applyDone := make(chan struct{})
+		go func() { defer close(applyDone); local.runApplyLoop(ctx) }()
 		defer func() {
 			cancel()
-			local.wg.Wait()
+			<-applyDone
 		}()
 
 		cfg := DefaultConfig()
@@ -1641,7 +1641,6 @@ func TestApplyBatchWrappers_SuccessAndErrorPaths(t *testing.T) {
 			config:      cfg,
 			storage:     NewMockStorage(),
 			localRaft:   local,
-			stopCh:      make(chan struct{}),
 			remoteConns: make(map[string]PeerConnection),
 		}
 		r.started.Store(true)

@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // prefixMVCCMetaManualSuppression keys an entity suppressed on demand
@@ -229,7 +231,19 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	if start {
-		go b.endSuppressions(nil)
+		_, err := b.beginHelperTxn()
+		if err != nil {
+			b.manualSuppressionMu.Lock()
+			b.suppressionEnding = false
+			b.manualSuppressionMu.Unlock()
+			return // Close owns the pending ends after helper admission closes.
+		}
+		go func() {
+			defer b.work.Leave()
+			if err := b.endSuppressions(nil); err != nil && !util.ErrorIsOnly(err, ErrStorageClosed) {
+				b.work.RecordError("", fmt.Errorf("manual-suppression retirement: %w", err))
+			}
+		}()
 	}
 }
 
@@ -239,13 +253,13 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 // again with the same ID drops the pending end of its key, so it is never
 // deleted, and a lifecycle write discards the ends it supersedes. Close runs
 // it after its final drain.
-func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
+func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) error {
 	for {
 		b.manualSuppressionMu.Lock()
 		if len(b.suppressionEnds) == 0 {
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return nil
 		}
 		ends := make(map[string]struct{}, len(b.suppressionEnds))
 		var first string
@@ -261,7 +275,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return err
 		}
 		// Never wait for entity authority while holding this mutex: an admitted
 		// manual suppression owns its entity first and can cancel a pending end.
@@ -302,7 +316,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return err
 		}
 	}
 }

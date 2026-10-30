@@ -13,7 +13,7 @@ import (
 // ensureOpen rejects a closed engine; write admission also rejects Close in progress.
 func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.closed || (writing && b.closing)
+	closed := b.work.Closing() || (writing && b.closing)
 	b.mu.RUnlock()
 	if closed {
 		return ErrStorageClosed
@@ -97,19 +97,21 @@ func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	return recoverBadgerClosedPanic(func() error {
 		return db.View(fn)
 	})
 }
 
+// beginHelperTxn admits one helper as the engine owner's accepted work, without
+// allocating. The helper calls b.work.Leave on its actual return; Close's
+// retirement waits for it.
 func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed {
+	if !b.work.Enter() {
 		return nil, ErrStorageClosed
 	}
-	b.txnWG.Add(1)
 	return b.db, nil
 }
 
@@ -177,7 +179,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
 		var txn *badger.Txn
