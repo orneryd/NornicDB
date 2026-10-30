@@ -963,6 +963,28 @@ func (c *NOR160ControlCache) GetFreshOrSame(n *Node) *Node {
 	return copyNode(c.nodes[n.ID])
 }
 
+// K4: a dispatcher deciding on the bool flag of a wrapper that embeds the node.
+type NOR160ControlKept struct {
+	*Node
+	kept bool
+}
+
+func nor160ControlDeliverKept(k NOR160ControlKept) *Node {
+	if k.Node == nil || !k.kept {
+		return k.Node
+	}
+	return copyNode(k.Node)
+}
+
+func (c *NOR160ControlCache) GetKept(id NodeID) *Node {
+	return nor160ControlDeliverKept(NOR160ControlKept{Node: c.nodes[id], kept: true})
+}
+
+// K0: a retained value reaches an accepted owner through a gate nothing proves.
+func (s *NOR160ControlTags) GetTagComputed(k string, owned func() bool) *NOR160ControlTag {
+	return nor160ControlDeliverTag(s.tags[k], owned())
+}
+
 // An ownership decision read through a retention lookup: the dispatcher asks
 // whether the node is the one the cache holds, and copies only then. K4, must
 // report.
@@ -1102,6 +1124,8 @@ var controls = []control{
 	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
 	{"K4", storagePkg + ".nor160ControlTransform", true},
 	{"K4", "(*" + storagePkg + ".NOR160ControlCache).nor160DeliverByLookup", false},
+	{"K4", storagePkg + ".nor160ControlDeliverKept", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlTags).GetTagComputed", false},
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
@@ -1238,6 +1262,7 @@ func (s *fnState) val(v ssa.Value) org {
 
 type analysis struct {
 	retentionTests map[*ssa.Function]bool // bool results computed from retention state
+	gateSites      []string               // every call to an accepted owner, with how its gate was judged
 	narrowed       []string               // K1/K1e reports the entity-typed-result rule removed, with their facts
 	filterSeen     map[ssa.Value]bool
 	filterKept     map[string]int                       // instruction kinds whose origin the old type filter discarded, now kept
@@ -3642,16 +3667,37 @@ func (a *analysis) ownerChecks() []ownerReport {
 					if !ok || o.gate.field >= 0 || o.gate.param >= len(args) || o.value >= len(args) {
 						continue
 					}
+					retained := s.val(args[o.value]).Retained
+					site := func(kind string) {
+						file, line := pos(fn, call.Pos())
+						a.gateSites = append(a.gateSites, fmt.Sprintf("%s:%d %s -> %s: gate %s, value retained %v", file, line, strings.TrimPrefix(fullName(fn), module+"/"), strings.TrimPrefix(fullName(g), module+"/"), kind, retained))
+					}
 					if v, ok := constBool(args[o.gate.param]); ok {
-						if v == o.gate.unchanged && s.val(args[o.value]).Retained {
-							out = append(out, ownerReport{fn, call.Pos(), "a retained value reaches the unchanged branch of " + strings.TrimPrefix(fullName(g), module+"/")})
+						if v == o.gate.unchanged {
+							site("constant unchanged")
+							if retained {
+								out = append(out, ownerReport{fn, call.Pos(), "a retained value reaches the unchanged branch of " + strings.TrimPrefix(fullName(g), module+"/")})
+							}
+						} else {
+							site("constant copy")
 						}
 						continue
 					}
 					// A gate read from a struct field, with the value from the same struct.
 					if gs, ok := structGate(args[o.gate.param], args[o.value], o.gate.unchanged); ok {
+						site("from the value's struct")
 						gs.owner = g
 						specs = append(specs, gs)
+						continue
+					}
+					if k := paramIndex(fn, args[o.gate.param]); k >= 0 && !retained {
+						site(fmt.Sprintf("parameter %d (judged at callers)", k))
+						continue
+					}
+					// Nothing proves which branch a retained value takes.
+					site("unproven")
+					if retained {
+						out = append(out, ownerReport{fn, call.Pos(), "a retained value reaches " + strings.TrimPrefix(fullName(g), module+"/") + " through a gate the census cannot prove"})
 					}
 				}
 			}
@@ -3706,6 +3752,11 @@ func (a *analysis) ownerChecks() []ownerReport {
 							}
 						}
 						if !gateKnown {
+							// A struct whose gate field is neither constant nor a
+							// parameter: nothing proves the branch.
+							if valueOrg.Retained {
+								out = append(out, ownerReport{fn, x.Pos(), "a retained value is wrapped for " + strings.TrimPrefix(fullName(sp.owner), module+"/") + " with a gate the census cannot prove"})
+							}
 							continue
 						}
 						if gateParam >= 0 {
@@ -4609,7 +4660,10 @@ func (a *analysis) computeRetentionTests() {
 }
 
 // ownershipInput: the gate is a bool parameter, or a bool field of a
-// parameter whose type is not an entity (the entity's own fields are content).
+// parameter whose type is not itself an entity (the entity's own fields are
+// content). A wrapper that embeds an entity is not an entity itself, even
+// though the entity's methods are promoted into it: its own bool flag (an
+// image's retained mark) is an ownership input.
 func ownershipInput(fn *ssa.Function, g gate) bool {
 	if !g.known || g.param < 0 || g.param >= len(fn.Params) {
 		return false
@@ -4622,11 +4676,29 @@ func ownershipInput(fn *ssa.Function, g gate) bool {
 	if st == nil || g.field >= st.NumFields() {
 		return false
 	}
-	if n != nil && entityType(n) {
+	if n != nil && declaredEntityType(n) {
 		return false
 	}
 	b, ok := st.Field(g.field).Type().Underlying().(*types.Basic)
 	return ok && b.Kind() == types.Bool
+}
+
+// declaredEntityType: a storage Node or Edge, or a module type that declares
+// CallerCopy itself (not one promoted from an embedded entity).
+func declaredEntityType(n *types.Named) bool {
+	obj := n.Obj()
+	if obj.Pkg() == nil || !inModulePath(obj.Pkg().Path()) {
+		return false
+	}
+	if obj.Pkg().Path() == storagePkg && (obj.Name() == "Node" || obj.Name() == "Edge") {
+		return true
+	}
+	for i := 0; i < n.NumMethods(); i++ {
+		if n.Method(i).Name() == "CallerCopy" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------- report
@@ -4656,6 +4728,7 @@ type report struct {
 	OriginFilter     map[string]string `json:"origin_type_filter"`
 	CallbackReceipts []string          `json:"received_by_callback"`
 	OwnerCandidates  []string          `json:"owner_candidates"`
+	OwnerGateSites   []string          `json:"owner_gate_sites"`
 	Counts           map[string]int    `json:"counts"`
 	Hits             []hit             `json:"hits"`
 	Mappers          []string          `json:"population_mappers"`
@@ -4934,6 +5007,8 @@ func main() {
 	overwriteOwn := a.overwrites()
 	a.crossOff = false
 	ownerReports := a.ownerChecks()
+	sort.Strings(a.gateSites)
+	r.OwnerGateSites = a.gateSites
 	overwrite := a.overwrites()
 	callbackCopy := a.copiesToCallback()
 	callbackOwned := a.copiesOwnedToCallback()
