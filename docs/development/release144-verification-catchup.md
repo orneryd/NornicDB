@@ -1,37 +1,53 @@
 # v1.4.4 verification catch-up
 
-Scope: all remaining failures from full `make verify` on `release/v1.4.4`, plus the entire nine-finding duplicate investigation from PR #1638. This includes baseline and newly exposed integrated regressions; allocation and Northwind work do not limit the scope.
-Tracking: [NOR-313](https://linear.app/nornicdb/issue/NOR-313).
-Target: `release/v1.4.4`. The draft PR tracks ongoing work; it is not merge-ready.
+This work owns all remaining failures from full `make verify` on
+`release/v1.4.4`, the entire nine-finding PR #1638 duplicate inventory, and the
+Northwind performance investigation. Tracking: [NOR-313](https://linear.app/nornicdb/issue/NOR-313)
+and [PR #1696](https://github.com/orneryd/NornicDB/pull/1696).
+Planned availability is v1.4.4; readiness does not mean merged or released.
 
-## Acceptance criteria
+This document records implementation checkpoints. The live checklists and final
+checked head/base receipts are maintained on the PR and Linear ticket.
 
-- [ ] Correct every applicable full `make verify` failure and publish exact head/base results and skips.
-- [ ] Restore scalar allocation ceilings without changing thresholds or weakening contracts.
-- [ ] Publish and qualify the runtime Go metadata migration, including immutable copies, native storage, replication, backup/restore and frozen payload compatibility without storage-format changes.
-- [ ] Reproduce and fix Northwind query performance with search enabled and the existing memory-decay enable setting respected.
-- [ ] Profile an effective 100,000-entry cache and report ingest, query, allocation, memory and graph-count evidence; retain only supported improvements.
-- [ ] Reconcile the duplicate inventory as advisory and explain retained separation with concrete correctness/performance/memory evidence.
-- [ ] Finish integrated verification on the committed correction head and mark the PR ready only when the criteria are met.
+## Implemented and qualified checkpoint
 
-## Current evidence
+Head `89e2ecb8e1af9bbdc43c5d61e6748bfb01b71048` was rebased onto release
+`f0c932b902b4112114eaeb1fd8a160a6b2bb05cc` without a merge commit. Full
+`make test` and `make verify ALL=1 BASE=origin/release/v1.4.4 FETCH=0` passed.
+The latter took 54m17s. All selected stages passed; Linux-amd64 llama library
+qualification is N/A on this Darwin arm64 machine. The unchanged allocation
+ratchet also passed against original main `f2ddd27cfae3788076778a0a0d48c827df046a3b`,
+without exceptions or threshold changes. A separate Node20 UI install/build passed.
 
-The frozen release baseline passed applicable build/test/conformance/differential/docs checks but failed allocation checks. Local fixes restore cache-hit allocation from 640 to 496 B/op with four allocations, and focused frozen payload and immutable-copy tests pass. Those product changes remain local until their publication gate passes.
-
-Earlier cache-size comparisons are invalid because the external harness discarded the cache setting. A corrected single-iteration diagnostic used 100,000 entries, search enabled and memory decay explicitly disabled: 6.084s ingest, with 97,440 nodes and 312,050 relationships verified. This is diagnostic evidence, not a completed performance acceptance result.
-
-## Corrections now under integrated verification
-
-| Area | Correction | Focused outcome and limit |
+| What we fixed | How | Outcome |
 |---|---|---|
-| Scalar execution | Reuse RETURN plans and immutable parameter rows, avoid unchanged source windows and temporary command-word slices, retain the statement clock directly | Internal approximately 995 B/op and 14 allocations; public approximately 2,113 B/op and 32 allocations, below the original released-main ceilings. Timing samples were not isolated performance qualification. |
-| Node runtime metadata | Share immutable copy-on-write metadata, preserve embedding identity, and bound reuse of metadata-only namespace records | Native cache-hit 496 B/op and four allocations; original UNWIND candidate-allocation assertion passes unchanged; focused race and frozen native/transport/gob payload tests pass. |
-| Historical replication snapshot | Decode the historical exported Go schema before constructing the current runtime representation | Original V4 snapshot metadata assertions pass; no new migration arm or stored-format change. |
-| Resource lifetime | Use existing fixture owners for the composite label test and newly merged checkpoint test; add the interactive suite boundary | Fixture ownership and checkpoint reopen controls pass after rebase. |
-| Northwind harness | Supply an explicit per-run config instead of inheriting the operator's home config | Controlled 100,000-entry runs have matching result hashes. With decay disabled and 30 measured iterations, most queries recover approximately 0.13–0.21 ms. This does not qualify current-source ingest performance or erase decay-on costs. |
+| Scalar allocation regressions | Share RETURN plans/immutable parameter rows and avoid redundant source/clock allocation | Fixed-count medians: internal 995 B/op /14 allocations, public 2,112 B/op /32; original-main ceilings pass |
+| Native node allocation | Approved typed runtime metadata API with immutable records and bounded metadata-only reuse | Cache hit 496 B/op /4 allocations versus 640 B/op /4 |
+| Storage and replication contracts | Preserve native/transport schemas and the historical gob reader's exported field schema | Frozen payload, historical snapshot, backup/restore and integrated storage/replication tests pass; Badger keys, stored payload contracts, WAL and storage version are unchanged |
+| Integrated test regressions | Correct fixture ownership, provenance guard, generated census and reviewed lexical population | Full tests and all coverage groups pass without retries at the qualified checkpoint |
+| Duplicate ownership | Converge database info, index creation, continuation type membership and test mechanics | Complete original-nine and subsequent 25-candidate dispositions; follow-up sweep has three retained test-contract candidates |
+| Northwind comparison | Explicit config and effective 100k native cache prevent accidental home-config decay changes | Matching counts/hashes; controlled ingest medians improve in graph-only and search-enabled modes |
 
-The branch was rebased onto release commit
-`f0c932b902b4112114eaeb1fd8a160a6b2bb05cc`; no merge commit was introduced.
-Full rebased verification and the current-source workload comparison remain the
-publication/readiness gates. The earlier failed integrated run is retained as
-failure evidence, not reported as a pass.
+See [Northwind measurements and limits](../performance/release144-verification-convergence.md),
+[original duplicate dispositions](https://github.com/orneryd/NornicDB/blob/89e2ecb8e1af9bbdc43c5d61e6748bfb01b71048/openspec/changes/release144-verification-convergence/duplicate-dispositions.md)
+and [follow-up dispositions](https://github.com/orneryd/NornicDB/blob/89e2ecb8e1af9bbdc43c5d61e6748bfb01b71048/openspec/changes/release144-verification-convergence/followup-advisory-dispositions.md).
+The report preserves every measured outlier and the higher peak RSS at GOGC=400;
+it does not claim a five-second search-enabled ingest or universal memory improvement.
+Earlier cache-capacity comparisons remain invalid and are excluded.
+
+## Cache-hit timing follow-up
+
+A longer isolated check exposed a ~6.5% cache-hit timing regression at the
+qualified checkpoint, despite the byte reduction. CPU profiling localized
+redundant complete runtime-state copying/comparison when the owner and ID were
+already correct. A direct pair check avoids only that no-op; unbound/different
+pairs retain the original state-binding path, including metadata and identity.
+Six two-second samples per binary measured approximately 325.2 versus release
+325.55 ns/op, within observed variation, while retaining 496 B/op /4 allocations.
+Focused metadata tests pass. Fresh integrated qualification of that follow-up
+is recorded on the PR after its commit; the earlier full pass is not represented
+as a pass on subsequently changed source.
+
+The duplicate checker stays advisory. Its graph baseline is older than the
+rebased release, so current-source review accompanies every disposition. Earlier
+failed/incomplete runs remain recorded rather than being relabeled as passing.

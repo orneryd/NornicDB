@@ -291,7 +291,9 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		// capture so copying does not extend either read lock or its hot frame.
 		node = hitCopy(node)
 	}
-	if loaded || hitCopy != nil {
+	// Cache fills and durable reads already bind this immutable record. Inspect
+	// just the owner pair before copying/comparing the complete runtime state.
+	if (loaded || hitCopy != nil) && (node.runtime == nil || node.runtime.embeddingOwner != b || node.runtime.embeddingOwnerID != id) {
 		state := node.runtimeState()
 		state.embeddingOwner, state.embeddingOwnerID = b, id
 		node.setRuntimeState(state)

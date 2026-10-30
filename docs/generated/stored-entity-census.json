@@ -1533,51 +1533,51 @@
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:555",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:555",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:555"
+      "origin": "pkg/storage/badger_nodes.go:557",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:557",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:557"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:574",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:574",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:574"
+      "origin": "pkg/storage/badger_nodes.go:576",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:576",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:576"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:630",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:630",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:630"
+      "origin": "pkg/storage/badger_nodes.go:632",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:632",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:632"
     },
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:648",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:648",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:648"
+      "origin": "pkg/storage/badger_nodes.go:650",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:650",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:650"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:670",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:670",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:670"
+      "origin": "pkg/storage/badger_nodes.go:672",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:672",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:672"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:694",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:694",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:694"
+      "origin": "pkg/storage/badger_nodes.go:696",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:696",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:696"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:700",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:700",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:700"
+      "origin": "pkg/storage/badger_nodes.go:702",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:702",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:702"
     },
     {
       "space": "prefixPendingEmbed",
@@ -2542,13 +2542,13 @@
       "field": "pkg/storage.BadgerEngine.cacheHits",
       "class": "metrics",
       "func": "pkg/storage.BadgerEngine.getNodeByID",
-      "pos": "pkg/storage/badger_nodes.go:305"
+      "pos": "pkg/storage/badger_nodes.go:307"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheMisses",
       "class": "metrics",
       "func": "pkg/storage.BadgerEngine.getNodeByID",
-      "pos": "pkg/storage/badger_nodes.go:303"
+      "pos": "pkg/storage/badger_nodes.go:305"
     },
     {
       "field": "pkg/storage.BadgerEngine.countDeltaPending",

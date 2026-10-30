@@ -96,3 +96,47 @@ The older decay-off products-per-category result retains an 8.6263 ms measured
 mean and a 0.1925 ms median. Its first two slow samples were measured values,
 not warmups, and are not removed. Current samples above retain their full
 query distributions as well.
+
+## Cache-hit timing qualification
+
+The fixed-count allocation gate is too short for a reliable timing conclusion.
+A separate balanced, serial comparison used six two-second samples per binary,
+CPU1, default Go GC, and no active model, containers, tests or builds. The first
+correction checkpoint (`89e2ecb8e`) measured 346.4 ns/op versus release 325.3
+ns/op (ranges 344.5–348.4 and 319.8–327.4), a confirmed ~6.5% regression.
+CPU profiling localized redundant full runtime-state copying/comparison while
+rebinding an already-correct owner/ID pair.
+
+The follow-up checks that pair directly before constructing a replacement record.
+It preserves the original binding for missing/different owners and IDs, and never
+mutates the immutable cached record. Repeating the same comparison measured
+325.2 versus 325.55 ns/op (ranges 308.7–332.4 and 323.6–336.2), within observed
+variation. Allocated bytes remain 496 versus 640 B/op; both use four allocations.
+The separate CPU profile is excluded from timing aggregates. Source hashes,
+patch and all measured samples are retained with the local receipts; portable
+samples are included in the linked JSON. Final integrated qualification of the
+follow-up is reported on PR #1696.
+
+## Post-guard workload continuation check
+
+One fresh matched release/correction pair per graph mode used the same 100k-cache workload, explicit config, GOGC=400, 30 measured query iterations and five warmups. Models, containers, tests and builds were stopped. Every graph count, query row count and result hash matched. These single pairs are diagnostic continuation checks, not replacements for the earlier three-sample matrix.
+
+| Mode | Release ingestion, s | Guard correction ingestion, s | Query-suite mean, ms (release → correction) |
+|---|---|---|---|
+| Graph only | 5.306 | 5.324 | 0.1785 → 0.1771 |
+| Search enabled | 6.663 | 6.701 | 0.1706 → 0.1827 |
+
+The fresh ingestion pairs differ by less than 1%; they support release parity rather than a stable large speedup. The earlier matrix and its RSS tradeoff remain recorded at their measured scope. All raw query latencies and sampled RSS values are retained in the portable JSON.
+
+## Three-sample confirmation after the guard
+
+The single-pair check was extended, without changing binaries or configuration, to three samples per binary/mode in balanced B A A B B A order within each mode. The first pair and extension ran in separate paused-model sessions. All twelve runs are serial and retain every measured value; all counts and hashes match. The release-control binary hash is identical to the earlier matrix.
+
+| Mode | Release ingestion median (range), s | Guard correction median (range), s | Query-suite mean median, ms | Sampled RSS median, GiB |
+|---|---|---|---|---|
+| Graph only | 5.425 (5.306–5.495) | 5.371 (5.324–5.428) | 0.1764 → 0.1805 | 8.452 → 8.484 |
+| Search enabled | 6.452 (6.226–6.663) | 6.701 (6.689–7.072) | 0.1706 → 0.1758 | 7.631 → 6.992 |
+
+Graph-only ingestion changes −1.0%; search-enabled ingestion +3.9%. Query-suite mean medians change +2.3% and +3.0%. These are workload-scoped measurements within the 5% limit, not a claim of a stable large speedup. The initial matrix's larger ingest gains are not reproduced as a stable effect in this confirmation.
+
+Sampled RSS changes +0.4% graph-only and −8.4% search-enabled in this confirmation. The initial GOGC=400 increase therefore is not a reproducible universal memory penalty. Both sets, the default-GC diagnostic and cumulative/post-GC profiles remain reported; no universal memory reduction is claimed. This still does not establish five-second search-enabled ingestion.
