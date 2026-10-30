@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
@@ -365,13 +366,13 @@ func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWrite
 	case recovered := <-panicCh:
 		panic(recovered)
 	case <-done:
-		if r.Context().Err() == context.DeadlineExceeded && !txphase.CommitAdmitted(r.Context()) {
+		if bulk.ObserveContext(r.Context()) == context.DeadlineExceeded && !txphase.CommitAdmitted(r.Context()) {
 			response.markTimedOut()
 			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
 			return
 		}
 		writeResponse()
-	case <-r.Context().Done():
+	case <-bulk.Done(r.Context()):
 		if txphase.CommitAdmitted(r.Context()) {
 			select {
 			case recovered := <-panicCh:
@@ -382,7 +383,7 @@ func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWrite
 			return
 		}
 		response.markTimedOut()
-		if r.Context().Err() == context.DeadlineExceeded {
+		if bulk.ObserveContext(r.Context()) == context.DeadlineExceeded {
 			s.writeNeo4jError(w, http.StatusServiceUnavailable, "Neo.TransientError.General.DatabaseUnavailable", "request timeout: transaction busy")
 		}
 	}
