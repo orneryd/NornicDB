@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"path/filepath"
 	"sync"
@@ -65,7 +66,7 @@ func TestCandidateNodeBoundIncludesUnsurfacedMembers(t *testing.T) {
 func TestServiceSearchDoesNotPruneUnsurfacedBestMember(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	var candidates []Candidate
@@ -103,7 +104,7 @@ func TestIVFPQOverflowCopiesDoNotInflateCappedPopulation(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	const count, dims = 64, 4
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	svc := NewService(engine, dims, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), dims)

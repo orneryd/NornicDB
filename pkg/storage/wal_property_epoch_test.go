@@ -75,7 +75,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("epoch"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Properties: properties}, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id, Properties: properties}, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
@@ -254,7 +254,7 @@ func TestWALPropertyEpochChangesOnlyAtDictionaryBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	require.Equal(t, 2, headers())
-	require.NoError(t, source.UpdateNode(&Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(2)}}))
+	require.NoError(t, source.UpdateNode(NodeUpdateRequest{After: &Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(2)}}}))
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	require.Equal(t, 2, headers(), "persisting/changing values does not allocate names")
 	require.NoError(t, wal.Checkpoint())

@@ -93,13 +93,13 @@ func stageOp(tx *BadgerTransaction, op writeordertest.Op, v int64) error {
 		_, err := tx.CreateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
 		return err
 	case writeordertest.UpdateNode:
-		return tx.UpdateGraphNode(&Node{ID: modelNodeID(op.Node), Properties: props}, ClientNodeEdits)
+		return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}, Policy: ClientNodeEdits})
 	case writeordertest.DeleteNode:
 		return tx.DeleteGraphNode(modelNodeID(op.Node), CascadeEdges)
 	case writeordertest.CreateEdge:
 		return tx.CreateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
 	case writeordertest.UpdateEdge:
-		return tx.UpdateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
+		return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
 	case writeordertest.DeleteEdge:
 		return tx.DeleteEdge(modelEdgeID(op.Edge))
 	}
@@ -142,13 +142,13 @@ func (d *engineDriver) writeOnce(op writeordertest.Op, v int64, implicit bool) (
 	case writeordertest.CreateNode:
 		_, err = d.e.CreateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
 	case writeordertest.UpdateNode:
-		err = d.e.UpdateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
+		err = d.e.UpdateNode(NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}})
 	case writeordertest.DeleteNode:
 		err = d.e.DeleteNode(modelNodeID(op.Node))
 	case writeordertest.CreateEdge:
 		err = d.e.CreateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
 	case writeordertest.UpdateEdge:
-		err = d.e.UpdateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
+		err = d.e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
 	case writeordertest.DeleteEdge:
 		err = d.e.DeleteEdge(modelEdgeID(op.Edge))
 	}

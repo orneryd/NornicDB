@@ -65,7 +65,7 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("missing synchronous created event")
 			}
-			require.NoError(t, engine.UpdateNode(node))
+			require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			select {
 			case event := <-updated:
 				require.NotContains(t, event.Properties, hidden)
@@ -86,7 +86,7 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("missing synchronous relationship created event")
 		}
-		require.NoError(t, engine.UpdateEdge(edge))
+		require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 		select {
 		case event := <-edgeUpdated:
 			require.NotContains(t, event.Properties, hidden)

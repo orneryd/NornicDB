@@ -291,12 +291,14 @@ func (n *NamespacedEngine) StreamNodesByLabelProjected(label string, properties 
 	return n.streamNamespaceNodesProjected(label, properties, visit, false)
 }
 
-func (n *NamespacedEngine) UpdateNode(node *Node) error {
+func (n *NamespacedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
 	input, err := n.NodeWriteInput(node)
 	if err != nil {
 		return err
 	}
-	return n.inner.UpdateNode(input)
+	updateRequest.After = input
+	return n.inner.UpdateNode(updateRequest)
 }
 
 func (n *NamespacedEngine) DeleteNode(id NodeID) error {
@@ -330,12 +332,14 @@ func (n *NamespacedEngine) GetEdge(id EdgeID) (*Edge, error) {
 	return namespacedPointRead[Engine, EdgeID, *Edge](n, id, Engine.GetEdge, n.PrefixEdgeID, n.toUserEdge, nil, false, MVCCVersion{})
 }
 
-func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
+func (n *NamespacedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	input, err := n.EdgeWriteInput(edge)
 	if err != nil {
 		return err
 	}
-	return n.inner.UpdateEdge(input)
+	updateRequest.After = input
+	return n.inner.UpdateEdge(updateRequest)
 }
 
 func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {

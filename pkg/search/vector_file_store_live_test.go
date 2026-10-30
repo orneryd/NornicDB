@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetPersistenceEnabled(true)
@@ -39,7 +40,7 @@ func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 
 func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	require.NoError(t, svc.IndexNode(&storage.Node{

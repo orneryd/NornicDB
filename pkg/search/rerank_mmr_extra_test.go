@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"strings"
 	"testing"
@@ -166,13 +167,13 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.run(t, newTestMemoryEngine(t))
+			tc.run(t, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 		})
 	}
 }
 
 func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 2, nil)
 	ctx := context.Background()
@@ -220,7 +221,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 }
 
 func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 	svc := NewService(engine, 2, nil)
 

@@ -43,12 +43,12 @@ func TestCompositeIdentityMutationRouting(t *testing.T) {
 				node, err := composite.GetNode("4:two:same")
 				require.NoError(t, err)
 				node.Properties["value"] = int64(2)
-				require.NoError(t, composite.UpdateNode(node))
+				require.NoError(t, composite.UpdateNode(NodeUpdateRequest{After: node}))
 			case "update edge":
 				edge, err := composite.GetEdge("5:two:same")
 				require.NoError(t, err)
 				edge.Properties["value"] = int64(2)
-				require.NoError(t, composite.UpdateEdge(edge))
+				require.NoError(t, composite.UpdateEdge(EdgeUpdateRequest{After: edge}))
 			case "delete node":
 				require.NoError(t, composite.DeleteNode("4:two:same"))
 			case "delete edge":

@@ -37,9 +37,9 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			before, _, _ := manager.GetStorageSize(db)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
 			if entity == "node" {
-				err = view.UpdateNode(&storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}})
+				err = view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
 			} else {
-				err = view.UpdateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}})
+				err = view.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
 			}
 			require.ErrorIs(t, err, ErrStorageLimitExceeded)
 			// Remove the quota before real recovery: absence of the rejected payload

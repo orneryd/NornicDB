@@ -6,16 +6,12 @@ import (
 	"time"
 )
 
-func TestNamespacedNodesPreserveSuppressionFlag(t *testing.T) {
-	for _, update := range []bool{false, true} {
-		name := "create"
-		if update {
-			name = "update"
-		}
-		t.Run(name, func(t *testing.T) {
-			eng := newTestEngine(t)
-			eng.SetRevealAll(true)
-			ns := NewNamespacedEngine(eng, "test")
+func TestNamespacedEntitiesPreserveSuppressionFlag(t *testing.T) {
+	for _, check := range []struct {
+		name string
+		run  func(*testing.T, *BadgerEngine, *NamespacedEngine, bool)
+	}{
+		{"TestNamespacedNodesPreserveSuppressionFlag", func(t *testing.T, eng *BadgerEngine, ns *NamespacedEngine, update bool) {
 			node := &Node{ID: "n"}
 			metadata := node.RuntimeMetadata()
 			metadata.VisibilitySuppressed = !update
@@ -27,12 +23,43 @@ func TestNamespacedNodesPreserveSuppressionFlag(t *testing.T) {
 				metadata.VisibilitySuppressed = true
 				node.SetRuntimeMetadata(metadata)
 				node.Properties = map[string]any{"edited": true}
-				require.NoError(t, ns.UpdateNode(node))
+				require.NoError(t, ns.UpdateNode(NodeUpdateRequest{After: node}))
 			}
 			got, err := eng.GetNode("test:n")
 			require.NoError(t, err)
 			require.True(t, got.RuntimeMetadata().VisibilitySuppressed, "namespace node copies retain visibility metadata")
 			require.Equal(t, NodeID("n"), node.ID)
+		}},
+		{"TestNamespacedEdgesPreserveSuppressionFlag", func(t *testing.T, eng *BadgerEngine, ns *NamespacedEngine, update bool) {
+			for _, id := range []NodeID{"a", "b"} {
+				_, err := ns.CreateNode(&Node{ID: id})
+				require.NoError(t, err)
+			}
+			edge := &Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINKS", VisibilitySuppressed: !update}
+			require.NoError(t, ns.CreateEdge(edge))
+			if update {
+				edge.VisibilitySuppressed = true
+				edge.Properties = map[string]any{"edited": true}
+				require.NoError(t, ns.UpdateEdge(EdgeUpdateRequest{After: edge}))
+			}
+			got, err := eng.GetEdge("test:e")
+			require.NoError(t, err)
+			require.True(t, got.VisibilitySuppressed, "namespace translation must retain stored visibility metadata")
+			require.Equal(t, EdgeID("e"), edge.ID, "caller IDs are unchanged")
+		}},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			for _, update := range []bool{false, true} {
+				name := "create"
+				if update {
+					name = "update"
+				}
+				t.Run(name, func(t *testing.T) {
+					eng := newTestEngine(t)
+					eng.SetRevealAll(true)
+					check.run(t, eng, NewNamespacedEngine(eng, "test"), update)
+				})
+			}
 		})
 	}
 }

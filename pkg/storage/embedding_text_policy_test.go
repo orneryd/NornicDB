@@ -104,7 +104,7 @@ func TestTransactionUpdateEmbeddingStoragePolicy(t *testing.T) {
 				current, err := tx.GetNode(node.ID)
 				require.NoError(t, err)
 				change(current)
-				require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
 			if sidecar {
@@ -208,9 +208,9 @@ func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, row.ChunkEmbeddings, 1, "the row copy carries the embeddings it was read with")
 		delete(row.Properties, "text")
-		require.NoError(t, tx.UpdateGraphNode(CopyNode(row), ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: CopyNode(row), Policy: ClientNodeEdits}))
 		second(row)
-		require.NoError(t, tx.UpdateGraphNode(row, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: row, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 

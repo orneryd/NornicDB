@@ -114,9 +114,9 @@ func TestBadgerTransaction_QueryAndMutationPaths(t *testing.T) {
 	// mutation paths
 	_, err = tx.CreateNode(&Node{ID: "test:c", Labels: []string{"User"}, Properties: map[string]any{"name": "C"}})
 	require.NoError(t, err)
-	err = tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"User", "Member"}, Properties: map[string]any{"name": "A2"}}, ClientNodeEdits)
+	err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"User", "Member"}, Properties: map[string]any{"name": "A2"}}, Policy: ClientNodeEdits})
 	require.NoError(t, err)
-	err = tx.UpdateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL2", Properties: map[string]any{"k": "v2"}})
+	err = tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL2", Properties: map[string]any{"k": "v2"}}})
 	require.NoError(t, err)
 	err = tx.DeleteEdge("test:e1")
 	require.NoError(t, err)

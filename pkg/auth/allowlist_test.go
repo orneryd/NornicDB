@@ -44,7 +44,7 @@ func TestNewAllowlistDatabaseAccessMode(t *testing.T) {
 
 func TestAllowlistStore_Load_Save_SeedIfEmpty(t *testing.T) {
 	ctx := context.Background()
-	eng := newSystemTestEngine(t)
+	eng := newSystemEngine(t)
 
 	store := NewAllowlistStore(eng)
 

@@ -88,7 +88,7 @@ func TestUnwindMatchRelationshipSetBatch_FallsBackForUnindexedAlternativeLabel(t
 	}
 
 	schema := store.GetSchema()
-	_, _, hasFunctionConstraint := schema.LookupUniqueConstraintValue("SqlFunction", "uid", "function:active_users")
+	_, _, hasFunctionConstraint, _ := schema.LookupUniqueConstraintValue("SqlFunction", "uid", "function:active_users")
 	_, hasFunctionIndex := schema.GetPropertyIndex("SqlFunction", "uid")
 	require.False(t, hasFunctionConstraint)
 	require.False(t, hasFunctionIndex)

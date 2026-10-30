@@ -124,7 +124,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 		require.NoError(t, e)
 		require.NoError(t, tx.SetNamespace("identity"))
 		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateGraphNode(&Node{ID: NodeID(fmt.Sprintf("identity:%c", 'a'+i)), Properties: map[string]any{name: int64(i + 1)}}, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("identity:%c", 'a'+i)), Properties: map[string]any{name: int64(i + 1)}}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		require.NoError(t, source.FlushWriteBehind())
 	}

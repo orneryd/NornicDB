@@ -119,18 +119,7 @@ func TestMatchIndexSeek_ParserAdditionalBranches(t *testing.T) {
 }
 
 func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seek_id_comp_more_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, n := range []*storage.Node{
-		{ID: storage.NodeID("n1"), Labels: []string{"L"}, Properties: map[string]interface{}{"k": "v1"}},
-		{ID: storage.NodeID("n2"), Labels: []string{"L"}, Properties: map[string]interface{}{"k": "v2"}},
-	} {
-		_, err := store.CreateNode(n)
-		require.NoError(t, err)
-	}
+	exec, _, ctx := newIDSeekTestGraph(t, "seek_id_comp_more_cov", idSeekEqualSeeds())
 
 	// The value side `'n1' OR` is no constant: the seek leaves the predicate
 	// to the row filter instead of looking up its text (#844).

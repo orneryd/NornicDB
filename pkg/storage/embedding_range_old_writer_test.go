@@ -91,7 +91,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 				retained.Properties["views"] = int64(1)
 				tx, err := engine.BeginTransaction()
 				require.NoError(t, err)
-				require.NoError(t, tx.UpdateGraphNode(retained, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: retained, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				saved, err := engine.GetNode(body.ID)
 				require.NoError(t, err)

@@ -16,7 +16,7 @@ import (
 // Returns error if constraint is violated.
 func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := label + ":" + property
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -41,23 +41,14 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 	return nil
 }
 
-// LookupUniqueConstraintValue returns the node currently registered for a
-// single-property uniqueness constraint value. The second return value reports
-// whether the value is present, and the third reports whether the unique
-// constraint exists.
-func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (NodeID, bool, bool) {
-	nodeID, found, exists, _ := sm.LookupUniqueConstraintValueForPlanning(label, property, value)
-	return nodeID, found, exists
-}
-
-// LookupUniqueConstraintValueForPlanning returns the node currently registered
+// LookupUniqueConstraintValue returns the node currently registered
 // for a single-property uniqueness constraint value, plus whether the values
 // cache has been rebuilt from storage and can be trusted for misses. Planners
 // may trust absence only when cacheComplete is true; otherwise they must retain
 // a scan fallback because the cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
+func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := label + ":" + property
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
@@ -71,23 +62,6 @@ func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property 
 	return nodeID, valueFound, true, cacheComplete
 }
 
-func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (nodeID NodeID, valueFound bool, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, false, exists
-	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, false, true
-	}
-
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, cacheComplete, true
-}
-
 // uniqueValueHolders returns the nodes holding value under label's unique
 // constraint on property, merged with the pending writes: the registered
 // holder unless a pending write supersedes it, and every pending node with
@@ -95,7 +69,7 @@ func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, propert
 // stored nodes, so an empty result can be trusted.
 func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
 	sm.mu.RLock()
-	constraint, exists := sm.uniqueConstraints[fmt.Sprintf("%s:%s", label, property)]
+	constraint, exists := sm.uniqueConstraints[label+":"+property]
 	sm.mu.RUnlock()
 	if !exists {
 		return nil, false, false
@@ -333,7 +307,7 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // of whether locks were acquired.
 //
 // Exclusive value locks guard the entire commit window for their value —
-// validateAllConstraints, badgerTx.Commit, and the RegisterUniqueValue call
+// validateAllConstraints, badgerTx.Commit, and the ApplyUniqueValue call
 // that publishes the committed value to the constraint cache — so a
 // subsequent transaction touching the same value always observes a coherent
 // cache. Transactions touching disjoint values always acquire disjoint locks.
@@ -717,17 +691,58 @@ func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]inter
 
 // HasUniqueValueTracking reports whether any unique constraint exists whose
 // values are tracked in the unique-value cache. When false, callers can skip
-// per-value RegisterUniqueValue/UnregisterUniqueValue work entirely.
+// per-value ApplyUniqueValue work entirely.
 func (sm *SchemaManager) HasUniqueValueTracking() bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return len(sm.uniqueConstraints) > 0
 }
 
-// RegisterUniqueValue registers a value for a unique constraint.
-func (sm *SchemaManager) RegisterUniqueValue(label, property string, value interface{}, nodeID NodeID) {
+// UniqueValueAction identifies the authority of a claim publication and the
+// transition applied to the canonical (label, property, value) claim.
+type UniqueValueAction uint8
+
+const (
+	// ValidatedUniqueClaim assigns the value to nodeID unconditionally: a
+	// current, validated logical mutation is the authoritative owner.
+	ValidatedUniqueClaim UniqueValueAction = iota
+	// RecoveredUniqueClaim assigns the value to nodeID only while no other
+	// node holds it: historical WAL images can precede a later directly
+	// persisted owner.
+	RecoveredUniqueClaim
+	// RetiredUniqueClaim deletes the value only while nodeID is its current
+	// holder. Supply the stored node being retired, not a newly looked-up
+	// holder: replay of an older deletion must preserve a later writer's claim
+	// to the same value.
+	RetiredUniqueClaim
+)
+
+// ApplyUniqueValue is the single owner of canonical unique-value claim
+// publication: it resolves the (label, property) constraint and its value-key
+// projection, then applies action to the claim under the owning constraint's
+// mutex. It is a programming error to pass an action outside the declared
+// UniqueValueAction constants, so that case panics instead of being treated
+// as a publication mode.
+//
+// Atomic publication retires all predecessor claims with RetiredUniqueClaim
+// before acquiring final claims, so key transfers do not depend on mutation
+// order. A nil or non-indexable value, or an unconstrained (label, property)
+// pair, is a no-op.
+//
+// Example usage:
+//
+//	// Publish one current, validated claim.
+//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.ValidatedUniqueClaim)
+//
+//	// Retire the claim held by the stored node being deleted.
+//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.RetiredUniqueClaim)
+func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nodeID NodeID, action UniqueValueAction) {
+	if action != ValidatedUniqueClaim && action != RecoveredUniqueClaim && action != RetiredUniqueClaim {
+		panic(fmt.Sprintf("storage: ApplyUniqueValue: unknown UniqueValueAction %d", action))
+	}
+
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := label + ":" + property
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -740,28 +755,38 @@ func (sm *SchemaManager) RegisterUniqueValue(label, property string, value inter
 	}
 
 	constraint.mu.Lock()
-	constraint.values[valueKey] = nodeID
+	switch action {
+	case ValidatedUniqueClaim:
+		constraint.values[valueKey] = nodeID
+	case RecoveredUniqueClaim:
+		if holder, found := constraint.values[valueKey]; !found || holder == nodeID {
+			constraint.values[valueKey] = nodeID
+		}
+	case RetiredUniqueClaim:
+		if holder, found := constraint.values[valueKey]; found && holder == nodeID {
+			delete(constraint.values, valueKey)
+		}
+	}
 	constraint.mu.Unlock()
 }
 
-// UnregisterUniqueValue removes a value from a unique constraint.
-func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value interface{}) {
+// retireUniqueValuesByNodePrefix publishes a bulk node deletion to the same
+// derived claims ordinary node commits maintain. The caller holds exclusive
+// lifecycle write authority, so no writer can reclaim a value during removal.
+// Definitions and completeness are unchanged: only owners actually deleted by
+// the successful primary-key prefix drop lose their entries.
+func (sm *SchemaManager) retireUniqueValuesByNodePrefix(prefix string) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-
-	if !exists {
-		return
+	defer sm.mu.RUnlock()
+	for _, constraint := range sm.uniqueConstraints {
+		constraint.mu.Lock()
+		for value, holder := range constraint.values {
+			if strings.HasPrefix(string(holder), prefix) {
+				delete(constraint.values, value)
+			}
+		}
+		constraint.mu.Unlock()
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return
-	}
-
-	constraint.mu.Lock()
-	delete(constraint.values, valueKey)
-	constraint.mu.Unlock()
 }
 
 // markCommitOwnerRecoveryPending wakes the existing registry's waiters. They

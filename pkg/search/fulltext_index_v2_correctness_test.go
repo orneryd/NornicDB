@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"path/filepath"
 	"sort"
@@ -209,7 +210,7 @@ func TestFulltextIndexV2ConcurrentColdQueries(t *testing.T) {
 }
 
 func TestServiceFulltextPropertyProjection(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	service.SetFulltextProperties([]string{"title", "text", "title", ""})
 	node := &storage.Node{
 		ID:     "physical-id",
@@ -225,7 +226,7 @@ func TestServiceFulltextPropertyProjection(t *testing.T) {
 	require.Equal(t, []string{"title", "text"}, service.FulltextProperties())
 	require.Contains(t, service.composeBM25BuildSettings(), "props=title,text")
 
-	defaultService := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	defaultService := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	require.Contains(t, defaultService.composeBM25BuildSettings(), "props=*")
 	require.NotEqual(t, defaultService.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }

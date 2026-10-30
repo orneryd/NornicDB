@@ -46,7 +46,7 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 				if mode == "body-unconsumed" {
 					n.UpdatedAt = time.Now()
 					n.Properties["updatedAt"] = i
-					err = engine.UpdateNode(n)
+					err = engine.UpdateNode(NodeUpdateRequest{After: n})
 				} else {
 					err = engine.UpdateNodeEmbeddingSidecar(n)
 				}

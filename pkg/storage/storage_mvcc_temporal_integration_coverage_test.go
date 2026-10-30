@@ -45,11 +45,11 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	nodeA, err := tx2.GetNode("test:a")
 	require.NoError(t, err)
 	nodeA.Properties["name"] = "Alice-updated"
-	require.NoError(t, tx2.UpdateGraphNode(nodeA, ClientNodeEdits))
+	require.NoError(t, tx2.UpdateGraphNode(NodeUpdateRequest{After: nodeA, Policy: ClientNodeEdits}))
 	edge1, err := tx2.GetEdge("test:e1")
 	require.NoError(t, err)
 	edge1.Properties["w"] = int64(3)
-	require.NoError(t, tx2.UpdateEdge(edge1))
+	require.NoError(t, tx2.UpdateEdge(EdgeUpdateRequest{After: edge1}))
 	require.NoError(t, tx2.Commit())
 
 	// Tx delete phase.
@@ -98,7 +98,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	tx4.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 	_ = tx4.checkNodeCreateConflict("test:a")
 	_ = tx4.checkNodeWriteConflict("test:a")
-	_ = tx4.checkEdgeCreateConflict("test:e1")
+	_ = tx4.checkEdgeWriteConflict("test:e1")
 	_ = tx4.checkEdgeWriteConflict("test:e1")
 	_ = tx4.checkEdgeEndpointConflicts(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"})
 	_ = tx4.Rollback()

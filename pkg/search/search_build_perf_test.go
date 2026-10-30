@@ -96,7 +96,7 @@ func TestLooksLikeDenseNumericSlice_Branches(t *testing.T) {
 func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 3, nil)
 
 	node := &storage.Node{
@@ -140,7 +140,7 @@ func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 3, nil)
 
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a"})
@@ -176,7 +176,7 @@ func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 func TestIndexEdge_ReplacesExistingRelationshipVectors(t *testing.T) {
 	t.Parallel()
 
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	edge := &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",

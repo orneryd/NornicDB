@@ -420,16 +420,33 @@ func (c *CompositeEngine) GetNode(id NodeID) (*Node, error) {
 }
 
 // UpdateNode updates a node. Routes to the constituent that contains it.
-func (c *CompositeEngine) UpdateNode(node *Node) error {
+func (c *CompositeEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
+	if node == nil {
+		return ErrInvalidData
+	}
 	identity := string(node.ID)
 	if node.RuntimeMetadata().Database != "" {
 		identity = node.ElementID("")
 	}
-	readConstituents, local, _ := c.constituentsForEntity("4", identity)
+	if before := updateRequest.Before; before != nil && before.RuntimeMetadata().Database != "" {
+		identity = SourceNodeElementID(before.RuntimeMetadata().Database, node.ID)
+	}
+	readConstituents, local, qualified := c.constituentsForEntity("4", identity)
 	copy := *node
 	copy.ID = NodeID(local)
 	node = &copy
+	updateRequest.After = node
 
+	// A source-qualified observation already identifies its constituent. Let
+	// its native writer classify disappearance rather than doing another read.
+	if qualified && len(readConstituents) == 1 && updateRequest.Before != nil {
+		writer, err := c.getConstituentForWrite(readConstituents[0])
+		if err != nil {
+			return err
+		}
+		return writer.UpdateNode(updateRequest)
+	}
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
@@ -443,13 +460,16 @@ func (c *CompositeEngine) UpdateNode(node *Node) error {
 			if err != nil {
 				return err
 			}
-			return writer.UpdateNode(node)
+			return writer.UpdateNode(updateRequest)
 		}
 		if err != ErrNotFound {
 			return err
 		}
 	}
 
+	if updateRequest.Before != nil {
+		return ErrConflict
+	}
 	return ErrNotFound
 }
 
@@ -677,16 +697,31 @@ func (c *CompositeEngine) GetEdge(id EdgeID) (*Edge, error) {
 }
 
 // UpdateEdge updates an edge. Routes to the constituent containing it.
-func (c *CompositeEngine) UpdateEdge(edge *Edge) error {
+func (c *CompositeEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+	edge := updateRequest.After
+	if edge == nil {
+		return ErrInvalidData
+	}
 	identity := string(edge.ID)
 	if edge.Database != "" {
 		identity = edge.ElementID("")
 	}
-	readConstituents, local, _ := c.constituentsForEntity("5", identity)
+	if before := updateRequest.Before; before != nil && before.Database != "" {
+		identity = SourceRelationshipElementID(before.Database, edge.ID)
+	}
+	readConstituents, local, qualified := c.constituentsForEntity("5", identity)
 	copy := *edge
 	copy.ID = EdgeID(local)
 	edge = &copy
+	updateRequest.After = edge
 
+	if qualified && len(readConstituents) == 1 && updateRequest.Before != nil {
+		writer, err := c.getConstituentForWrite(readConstituents[0])
+		if err != nil {
+			return err
+		}
+		return writer.UpdateEdge(updateRequest)
+	}
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
@@ -699,13 +734,16 @@ func (c *CompositeEngine) UpdateEdge(edge *Edge) error {
 			if err != nil {
 				return err
 			}
-			return writer.UpdateEdge(edge)
+			return writer.UpdateEdge(updateRequest)
 		}
 		if err != ErrNotFound {
 			return err
 		}
 	}
 
+	if updateRequest.Before != nil {
+		return ErrConflict
+	}
 	return ErrNotFound
 }
 

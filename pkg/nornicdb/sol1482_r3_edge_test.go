@@ -34,7 +34,7 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 				seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
 				_, stale := entry.drainPending()
 				rel.Properties["vec"] = []float32{0, 1}
-				require.NoError(t, store.UpdateEdge(rel))
+				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: rel}))
 				require.NoError(t, svc.RefreshEdge("r"))
 				if remove {
 					require.NoError(t, store.DeleteEdge("r"))
@@ -73,7 +73,7 @@ func TestSol1482R3EdgeEventsWithoutRelationshipText(t *testing.T) {
 	edge := edges[0]
 	require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"))
 	edge.Properties["vec"] = w
-	require.NoError(t, db.storage.UpdateEdge(edge))
+	require.NoError(t, db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	settleQueuedRefreshes()
 	hits, err := svc.VectorQueryRelationships(ctx, w, search.RelationshipVectorQuerySpec{Type: "CITES", Property: "vec", Limit: 1})
 	require.NoError(t, err)

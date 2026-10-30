@@ -67,7 +67,7 @@ func TestReviewR73RejectedSaveUpdateRequestsCurrentBody(t *testing.T) {
 			if mode == "consumed_enqueued" {
 				node.Properties["text"] = "new provider input"
 			}
-			require.NoError(t, s.UpdateNode(node))
+			require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			if mode != "unconsumed_no_enqueue" {
 				worker.Enqueue("doc")
 			}

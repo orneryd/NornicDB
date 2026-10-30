@@ -44,22 +44,22 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	growth := storage.CopyNode(prior)
 	growth.Properties = map[string]any{"payload": strings.Repeat("x", 4096)}
 	before, _, _ := manager.GetStorageSize(db)
-	require.NoError(t, view.UpdateNode(growth))
+	require.NoError(t, view.UpdateNode(storage.NodeUpdateRequest{After: growth}))
 	ceiling, _, _ := manager.GetStorageSize(db)
 	require.Greater(t, ceiling, before)
-	require.NoError(t, view.UpdateNode(prior))
+	require.NoError(t, view.UpdateNode(storage.NodeUpdateRequest{After: prior}))
 	restored, _, _ := manager.GetStorageSize(db)
 	require.Equal(t, before, restored)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
 	route.delay = true
-	err = view.UpdateNode(growth)
+	err = view.UpdateNode(storage.NodeUpdateRequest{After: growth})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	pending := route.pending
 	require.NotNil(t, pending)
 	route.delay = false
 	other := storage.CopyNode(growth)
 	other.ID = "m"
-	otherErr := view.UpdateNode(other)
+	otherErr := view.UpdateNode(storage.NodeUpdateRequest{After: other})
 	assert.ErrorIs(t, otherErr, multidb.ErrStorageLimitExceeded, "the pending command already reserved this only growth allowance")
 	require.NoError(t, route.applyPending(adapter, pending))
 	recount, err := multidb.NewDatabaseManager(t.Context(), base, nil)

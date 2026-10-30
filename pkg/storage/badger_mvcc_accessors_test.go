@@ -11,8 +11,6 @@
 package storage
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"sync"
 	"testing"
 	"time"
@@ -20,22 +18,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupTestBadgerEngine builds an in-memory engine for the tests below.
-// Mirrors the existing setupTest* helper convention in this package.
-func newTestBadgerEngineForAccessors(t *testing.T) *BadgerEngine {
-	t.Helper()
-	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = be.Close() })
-	return be
-}
-
 // TestActiveReaders_Accessor verifies that ActiveReaders() returns the live
 // count of registered MVCC snapshot readers. Without the lifecycle
 // controller injected, the engine falls back to the atomic
 // activeMVCCSnapshotReaders counter.
 func TestActiveReaders_Accessor(t *testing.T) {
-	be := newTestBadgerEngineForAccessors(t)
+	be := createTestBadgerEngine(t)
 	require.Equal(t, int64(0), be.ActiveReaders(), "fresh engine: ActiveReaders should be 0")
 
 	v0 := MVCCVersion{}
@@ -61,13 +49,10 @@ func TestActiveReaders_Accessor(t *testing.T) {
 // callback. The non-zero behavior is exercised when a controller is wired
 // (covered by the lifecycle reader-registry tests).
 func TestOldestReaderAgeSeconds_Accessor(t *testing.T) {
-	be := newTestBadgerEngineForAccessors(t)
+	be := createTestBadgerEngine(t)
 	require.Equal(t, float64(0), be.OldestReaderAgeSeconds(), "fresh engine: 0 seconds")
 
-	v0 := MVCCVersion{}
-	deregister, err := be.acquireSnapshotReader(SnapshotReaderInfo{SnapshotVersion: v0, StartTime: time.Now()})
-	require.NoError(t, err)
-	defer deregister()
+	registerAccessorSnapshot(t, be)
 	// In fallback path the value is still 0 (no per-reader StartTime tracked).
 	// Accessor must not panic, must return a sensible float64.
 	got := be.OldestReaderAgeSeconds()
@@ -79,20 +64,17 @@ func TestOldestReaderAgeSeconds_Accessor(t *testing.T) {
 // lifecycle controller is wired; with a controller the controller's
 // pinned-bytes accounting flows through.
 func TestPinnedBytes_Accessor(t *testing.T) {
-	be := newTestBadgerEngineForAccessors(t)
+	be := createTestBadgerEngine(t)
 	require.Equal(t, int64(0), be.PinnedBytes(), "fresh engine: 0 bytes")
 
-	v0 := MVCCVersion{}
-	deregister, err := be.acquireSnapshotReader(SnapshotReaderInfo{SnapshotVersion: v0, StartTime: time.Now()})
-	require.NoError(t, err)
-	defer deregister()
+	registerAccessorSnapshot(t, be)
 	require.GreaterOrEqual(t, be.PinnedBytes(), int64(0))
 }
 
 // TestAccessors_RaceSafe drives concurrent reader open/close + accessor reads
 // to exercise the race detector. -race mode required (Makefile/CI default).
 func TestAccessors_RaceSafe(t *testing.T) {
-	be := newTestBadgerEngineForAccessors(t)
+	be := createTestBadgerEngine(t)
 	v0 := MVCCVersion{}
 	const goroutines = 8
 	const iterations = 50
@@ -123,4 +105,13 @@ func TestAccessors_RaceSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// registerAccessorSnapshot shares the registration lifetime while metric cases
+// retain their distinct zero and nonnegative-value assertions.
+func registerAccessorSnapshot(t *testing.T, engine *BadgerEngine) {
+	t.Helper()
+	deregister, err := engine.acquireSnapshotReader(SnapshotReaderInfo{SnapshotVersion: MVCCVersion{}, StartTime: time.Now()})
+	require.NoError(t, err)
+	t.Cleanup(deregister)
 }

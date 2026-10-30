@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func sparseWordEmbedding(text string, dimensions int) []float32 {
 // widening running on without end.
 func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testing.T) {
 	const dimensions = 2048
-	service := NewService(newTestMemoryEngine(t), dimensions, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dimensions, nil)
 	config := DefaultHNSWConfig()
 	config.EfConstruction, config.EfSearch, config.UseGPUBuild = 100, 50, false
 	index := NewHNSWIndex(dimensions, config)
@@ -91,7 +92,7 @@ func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testin
 }
 
 func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) {
-	service := NewService(newTestMemoryEngine(t), 2, nil)
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	for index, embedding := range [][]float32{{1, 0}, {0.9, 0.1}, {0.8, 0.2}} {
 		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", index+1)), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embedding}}))
 	}

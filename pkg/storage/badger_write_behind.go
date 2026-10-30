@@ -240,6 +240,11 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
 	tx.engine.writeBehind.AppendCommit(c)
+	// Claims follow logical visibility, not the later materialization of
+	// historical images. Entity/value authority remains held until return.
+	// A concurrent flusher never republishes these normal ACK-time claims.
+	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
+	tx.engine.publishUniqueValues(schema, physicalOps, ValidatedUniqueClaim)
 	if accounting != nil {
 		accounting()
 	}
@@ -510,10 +515,26 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	}
 	capturePublicationOperations(notification, notificationOps)
 	cw.publish = func() {
+		// A recovered batch can contain intermediate images of one node. Fold
+		// once at its atomic physical boundary; normal frames published at ACK.
+		if recovered {
+			// Each namespace has a distinct schema owner. Select only its operations
+			// without retaining state beyond this bounded recovery batch.
+			for namespace, schema := range schemas {
+				var ops []Operation
+				for _, c := range commits {
+					if c.recovered && c.namespace == namespace {
+						ops = append(ops, c.ops...)
+					}
+				}
+				b.publishUniqueValues(schema, ops, RecoveredUniqueClaim)
+			}
+		}
 		for _, c := range commits {
-			b.publishCommitOperations(c.namespace, schemas[c.namespace], c.ops, false, c.recovered)
+			b.publishCommitOperations(c.namespace, nil, c.ops, false, c.recovered)
 		}
 	}
+
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
 	replayNodeMax, replayEdgeMax := b.idDict.flushTxnCounters(cw.txn)
@@ -613,25 +634,25 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 // publishCommitOperations publishes only derived memory state. The commit
 // writer orders it by entity and UNIQUE value; listeners run after retirement.
+// A nil schema explicitly excludes UNIQUE claims already published at logical
+// buffered ACK. Cache/count/revision publication retains its existing timing.
 func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishCounts bool, publishRevision bool) {
 	if namespace == "" {
 		schema = nil
 	}
+	b.publishUniqueValues(schema, ops, ValidatedUniqueClaim)
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
 			b.cacheOnNodeCreatedWithCounts(op.Node, publishCounts)
-			b.publishUniqueValues(schema, op.Node.ID, nil, op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			b.publishUniqueValues(schema, op.Node.ID, op.OldNode, op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				b.cacheOnNodeDeletedWithNodeAndCounts(op.NodeID, op.OldNode, op.EdgesDeleted, publishCounts)
 			} else {
 				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, publishCounts)
 			}
-			b.publishUniqueValues(schema, op.NodeID, op.OldNode, nil)
 		case OpCreateEdge:
 			b.cacheOnEdgeCreatedWithCounts(op.Edge, publishCounts)
 		case OpUpdateEdge:

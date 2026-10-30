@@ -68,11 +68,11 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 					node, err := tx.GetNode(NodeID(ns + ":a"))
 					require.NoError(t, err)
 					node.Properties = props
-					require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					edge, err := tx.GetEdge(EdgeID(ns + ":r"))
 					require.NoError(t, err)
 					edge.Properties = props
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
 					require.NoError(t, source.FlushWriteBehind())

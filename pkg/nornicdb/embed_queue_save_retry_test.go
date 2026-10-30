@@ -136,7 +136,7 @@ func TestEmbedWorkerSaveRetryRequestsProvider(t *testing.T) {
 					node.Properties["_embedding_content"] = "changed"
 				}
 				if change != "unchanged" {
-					require.NoError(t, queue.UpdateNode(node))
+					require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
 				}
 				for i := 0; i < 4 && published == 0; i++ {
 					makeNodeSaveRetriesReady(worker)

@@ -103,8 +103,14 @@ func (e *ReplicatedEngine) CreateNode(node *storage.Node) (storage.NodeID, error
 	return node.ID, nil
 }
 
-func (e *ReplicatedEngine) UpdateNode(node *storage.Node) error {
-	return e.applyEntityCommand(CmdUpdateNode, node)
+// UpdateNode sends the blind update image when the caller supplied no observed
+// preimage and kept the client-edit policy, and otherwise forwards the typed
+// request so its leader can plan against Before.
+func (e *ReplicatedEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	if updateRequest.Before == nil && updateRequest.Policy == storage.ClientNodeEdits {
+		return e.applyEntityCommand(CmdUpdateNode, updateRequest.After)
+	}
+	return e.applyEntityCommand(CmdUpdateNodeRequest, updateRequest)
 }
 
 func (e *ReplicatedEngine) DeleteNode(id storage.NodeID) error {
@@ -115,8 +121,13 @@ func (e *ReplicatedEngine) CreateEdge(edge *storage.Edge) error {
 	return e.applyEntityCommand(CmdCreateEdge, edge)
 }
 
-func (e *ReplicatedEngine) UpdateEdge(edge *storage.Edge) error {
-	return e.applyEntityCommand(CmdUpdateEdge, edge)
+// UpdateEdge keeps the blind update image for a request with no observed
+// preimage and otherwise forwards the typed relationship request.
+func (e *ReplicatedEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	if updateRequest.Before == nil {
+		return e.applyEntityCommand(CmdUpdateEdge, updateRequest.After)
+	}
+	return e.applyEntityCommand(CmdUpdateEdgeRequest, updateRequest)
 }
 
 func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID) error {

@@ -33,7 +33,7 @@ func TestSol1482R4RestoreRebindsCypherConsumer(t *testing.T) {
 	require.InDelta(t, 1, first.Rows[0][0], 1e-6)
 	p := filepath.Join(t.TempDir(), "backup")
 	require.NoError(t, db.Backup(ctx, p))
-	require.NoError(t, db.storage.UpdateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"vec": []float32{0, 1}}}))
+	require.NoError(t, db.storage.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"vec": []float32{0, 1}}}}))
 	settleQueuedRefreshes()
 	later, err := db.ExecuteCypher(ctx, query, nil)
 	require.NoError(t, err)

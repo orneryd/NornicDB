@@ -2,20 +2,12 @@ package storage
 
 import (
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 )
 
 func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
-	if err != nil {
-		t.Fatalf("NewBadgerEngineInMemory failed: %v", err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newRebuildHeadsFixture(t, 0)
 
 	v1 := MVCCVersion{CommitTimestamp: time.Unix(100, 0).UTC(), CommitSequence: 1}
 	v2 := MVCCVersion{CommitTimestamp: time.Unix(200, 0).UTC(), CommitSequence: 2}
@@ -91,14 +83,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 }
 
 func TestBadgerMVCC_RebuildHeads_NilContext(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
-	if err != nil {
-		t.Fatalf("NewBadgerEngineInMemory failed: %v", err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newRebuildHeadsFixture(t, 0)
 
 	v1 := MVCCVersion{CommitTimestamp: time.Unix(300, 0).UTC(), CommitSequence: 3}
 	if err := engine.AppendNodeVersion(&Node{

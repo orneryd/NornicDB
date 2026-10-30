@@ -81,10 +81,10 @@ func TestBadgerEngine_MVCCNodeLatestSnapshotAndRecreate(t *testing.T) {
 	v1, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "v2"}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "v2"}}}))
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
-	require.Equal(t, "v2", mustGetNodeLatestVisible(t, engine, nodeID).Properties["name"])
+	require.Equal(t, "v2", mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["name"])
 
 	require.NoError(t, engine.DeleteNode(nodeID))
 	v3, err := engine.GetNodeCurrentHead(nodeID)
@@ -98,7 +98,7 @@ func TestBadgerEngine_MVCCNodeLatestSnapshotAndRecreate(t *testing.T) {
 	v4, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 	require.False(t, v4.Tombstoned)
-	require.Equal(t, "v4", mustGetNodeLatestVisible(t, engine, nodeID).Properties["name"])
+	require.Equal(t, "v4", mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["name"])
 
 	nodeAtV1, err := engine.GetNodeVisibleAt(nodeID, v1.Version)
 	require.NoError(t, err)
@@ -162,14 +162,14 @@ func TestBadgerEngine_GetNodeVisibleAtCurrentHeadCachesByBadgerBodyVersion(t *te
 	require.Equal(t, "v1", second.Properties["name"], "body cache hits must return a copy")
 	require.Len(t, second.ChunkEmbeddings, 1, "cache hits must rehydrate separately stored vectors")
 
-	require.NoError(t, engine.UpdateNode(&Node{
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{
 		ID:     nodeID,
 		Labels: []string{"Entity"},
 		Properties: map[string]any{
 			"name":      "v2",
 			"embedding": embedding,
 		},
-	}))
+	}}))
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
@@ -203,7 +203,7 @@ func TestBadgerEngine_MVCCEdgeLatestSnapshotAndRecreate(t *testing.T) {
 	v1, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "KNOWS", Properties: map[string]any{"weight": 2}}))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "KNOWS", Properties: map[string]any{"weight": 2}}}))
 	v2, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 
@@ -274,14 +274,13 @@ func TestBadgerEngine_MVCCLatestVisibleFallsBackToVersionRecords(t *testing.T) {
 		Properties: map[string]any{"source": "version-record"},
 	}, nodeVersion))
 
-	latestNode, err := engine.GetNodeLatestVisible(nodeID)
-	require.NoError(t, err)
+	latestNode := mustReadNode(t, engine.GetNodeLatestVisible, nodeID)
 	require.Equal(t, nodeID, latestNode.ID)
 	require.Equal(t, "version-record", latestNode.Properties["source"])
 
 	tombstonedNodeID := NodeID(prefixTestID("mvcc-version-only-tombstone"))
 	require.NoError(t, engine.AppendNodeTombstone(tombstonedNodeID, MVCCVersion{CommitTimestamp: nodeVersion.CommitTimestamp.Add(time.Second), CommitSequence: 12}))
-	_, err = engine.GetNodeLatestVisible(tombstonedNodeID)
+	_, err := engine.GetNodeLatestVisible(tombstonedNodeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	edgeID := EdgeID(prefixTestID("mvcc-version-only-edge"))
@@ -311,8 +310,8 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 
 	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}, CreatedAt: time.Now().UTC().Add(-4 * time.Hour)})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}, UpdatedAt: time.Now().UTC().Add(-3 * time.Hour)}))
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}, UpdatedAt: time.Now().UTC().Add(-2 * time.Hour)}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}, UpdatedAt: time.Now().UTC().Add(-3 * time.Hour)}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}, UpdatedAt: time.Now().UTC().Add(-2 * time.Hour)}}))
 
 	beforeHead, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
@@ -336,7 +335,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// the version keyspace). The critical invariant is that reads
 	// still resolve to the current live body via the primary key.
 	require.LessOrEqual(t, afterHead.Version.Compare(beforeHead.Version), 0)
-	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["version"])
 
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
 	require.NoError(t, err)
@@ -345,7 +344,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// many prior versions were archived — not on the number of
 	// commits. The invariant we care about here is that pruning
 	// preserves the live body (primary key).
-	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["version"])
 
 	oldVersion, err := engine.GetNodeVisibleAt(nodeID, MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-24 * time.Hour), CommitSequence: ^uint64(0)})
 	if err == nil {
@@ -365,11 +364,11 @@ func TestBadgerEngine_RebuildMVCCHeads_BatchesLargeDataset(t *testing.T) {
 			Properties: map[string]any{"version": 1},
 		})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateNode(&Node{
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{
 			ID:         id,
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"version": 2},
-		}))
+		}}))
 	}
 
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
@@ -403,13 +402,13 @@ func TestBadgerEngine_RebuildMVCCEdgeHeadsFromVersions(t *testing.T) {
 		Type:       "REL",
 		Properties: map[string]any{"version": 1},
 	}))
-	require.NoError(t, engine.UpdateEdge(&Edge{
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID:         edgeID,
 		StartNode:  startID,
 		EndNode:    endID,
 		Type:       "REL",
 		Properties: map[string]any{"version": 2},
-	}))
+	}}))
 
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
 	_, err = engine.GetEdgeCurrentHead(edgeID)
@@ -488,10 +487,10 @@ func TestBadgerEngine_PruneMVCCVersions_UsesRetentionPolicyDefaults(t *testing.T
 	require.NoError(t, err)
 	v1, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}}))
 	v3, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
@@ -534,9 +533,9 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 	edgeV1, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 	for version := 2; version <= 3; version++ {
-		err = engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": version}})
+		err = engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": version}}})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "LINKS", Properties: map[string]any{"version": version}}))
+		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "LINKS", Properties: map[string]any{"version": version}}}))
 	}
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
 	require.NoError(t, err)
@@ -579,7 +578,7 @@ func TestBadgerEngine_PruneMVCCVersions_TombstoneCompactionHonorsActiveReaders(t
 
 	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
 	require.NoError(t, engine.DeleteNode(nodeID))
 	head, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
@@ -613,11 +612,11 @@ func TestBadgerEngine_PruneMVCCVersions_NoDeletionPreservesFloor(t *testing.T) {
 	require.NoError(t, err)
 	oldHead, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]any{"version": 2}}}))
 	require.NoError(t, engine.DeleteNode(nodeID))
 	_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 5}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"version": 6}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]any{"version": 6}}}))
 
 	before, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
@@ -647,7 +646,7 @@ func TestBadgerEngine_PruneMVCCVersions_PreservesActiveSnapshot(t *testing.T) {
 	head, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 	for version := 1; version <= 12; version++ {
-		require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]any{"v": version}}))
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]any{"v": version}}}))
 	}
 	release, err := engine.beginMVCCSnapshotRead(head.Version)
 	require.NoError(t, err)
@@ -692,7 +691,7 @@ func TestBadgerEngine_MVCCStress_ChurnPruneBoundsRetainedChain(t *testing.T) {
 
 	const churnCycles = 48
 	for i := 1; i <= churnCycles; i++ {
-		require.NoError(t, engine.UpdateNode(createVersion(i)))
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: createVersion(i)}))
 		if i%6 == 0 {
 			require.NoError(t, engine.DeleteNode(nodeID))
 			_, err := engine.GetNodeLatestVisible(nodeID)
@@ -831,7 +830,7 @@ func TestBadgerEngine_MVCCIndexedVisibilityAtSnapshot(t *testing.T) {
 	v1, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Published"}, Properties: map[string]any{"title": "v2"}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Published"}, Properties: map[string]any{"title": "v2"}}}))
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
@@ -861,7 +860,7 @@ func TestBadgerEngine_MVCCIndexedVisibilityAtSnapshot(t *testing.T) {
 	e1, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "PUBLISHED_LINK"}))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "PUBLISHED_LINK"}}))
 	e2, err := engine.GetEdgeCurrentHead(edgeID)
 	require.NoError(t, err)
 
@@ -919,91 +918,69 @@ func TestBadgerEngine_MVCCBetweenVisibleAtIgnoresLatestEdgeBetweenIndex(t *testi
 }
 
 func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksEndpointMoves(t *testing.T) {
-	engine := createMVCCBadgerEngine(t)
+	moved := mvccAdjacencyHistory{
+		start:       NodeID(prefixTestID("mvcc-adj-start")),
+		end:         NodeID(prefixTestID("mvcc-adj-end")),
+		edgeID:      EdgeID(prefixTestID("mvcc-adj-edge")),
+		firstTarget: NodeID(prefixTestID("mvcc-adj-middle")),
+		secondWrite: func(engine *BadgerEngine, edgeID EdgeID, start, target NodeID) error {
+			return engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: start, EndNode: target, Type: "LINKS"}})
+		},
+	}.seed(t)
 
-	start := NodeID(prefixTestID("mvcc-adj-start"))
-	middle := NodeID(prefixTestID("mvcc-adj-middle"))
-	end := NodeID(prefixTestID("mvcc-adj-end"))
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: middle, Labels: []string{"Node"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
-	require.NoError(t, err)
-
-	edgeID := EdgeID(prefixTestID("mvcc-adj-edge"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: middle, Type: "LINKS"}))
-	v1, err := engine.GetEdgeCurrentHead(edgeID)
-	require.NoError(t, err)
-
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
-	v2, err := engine.GetEdgeCurrentHead(edgeID)
-	require.NoError(t, err)
-
-	outAtV1, err := engine.GetOutgoingEdgesVisibleAt(start, v1.Version)
-	require.NoError(t, err)
+	// At v1 the edge points start → firstTarget.
+	outAtV1 := moved.outgoingAt(t, moved.version1, moved.start)
 	require.Len(t, outAtV1, 1)
-	require.Equal(t, middle, outAtV1[0].EndNode)
+	require.Equal(t, moved.firstTarget, outAtV1[0].EndNode)
 
-	inMiddleAtV1, err := engine.GetIncomingEdgesVisibleAt(middle, v1.Version)
-	require.NoError(t, err)
-	require.Len(t, inMiddleAtV1, 1)
-	require.Equal(t, edgeID, inMiddleAtV1[0].ID)
+	inFirstTargetAtV1 := moved.incomingAt(t, moved.version1, moved.firstTarget)
+	require.Len(t, inFirstTargetAtV1, 1)
+	require.Equal(t, moved.edgeID, inFirstTargetAtV1[0].ID)
 
-	inEndAtV1, err := engine.GetIncomingEdgesVisibleAt(end, v1.Version)
-	require.NoError(t, err)
+	inEndAtV1 := moved.incomingAt(t, moved.version1, moved.end)
 	require.Empty(t, inEndAtV1)
 
-	outAtV2, err := engine.GetOutgoingEdgesVisibleAt(start, v2.Version)
-	require.NoError(t, err)
+	// At v2 the moved edge points start → end.
+	outAtV2 := moved.outgoingAt(t, moved.version2, moved.start)
 	require.Len(t, outAtV2, 1)
-	require.Equal(t, end, outAtV2[0].EndNode)
+	require.Equal(t, moved.end, outAtV2[0].EndNode)
 
-	inMiddleAtV2, err := engine.GetIncomingEdgesVisibleAt(middle, v2.Version)
-	require.NoError(t, err)
-	require.Empty(t, inMiddleAtV2)
+	inFirstTargetAtV2 := moved.incomingAt(t, moved.version2, moved.firstTarget)
+	require.Empty(t, inFirstTargetAtV2)
 
-	inEndAtV2, err := engine.GetIncomingEdgesVisibleAt(end, v2.Version)
-	require.NoError(t, err)
+	inEndAtV2 := moved.incomingAt(t, moved.version2, moved.end)
 	require.Len(t, inEndAtV2, 1)
-	require.Equal(t, edgeID, inEndAtV2[0].ID)
+	require.Equal(t, moved.edgeID, inEndAtV2[0].ID)
 }
 
 func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksDeletes(t *testing.T) {
-	engine := createMVCCBadgerEngine(t)
+	deleted := mvccAdjacencyHistory{
+		start:       NodeID(prefixTestID("mvcc-adj-del-start")),
+		end:         NodeID(prefixTestID("mvcc-adj-del-end")),
+		edgeID:      EdgeID(prefixTestID("mvcc-adj-del-edge")),
+		firstTarget: NodeID(prefixTestID("mvcc-adj-del-mid")),
+		// The original graph is start --edge--> end, so the first edge already
+		// targets the end node; the delete then removes it.
+		firstWriteTarget: NodeID(prefixTestID("mvcc-adj-del-end")),
+		secondWrite: func(engine *BadgerEngine, edgeID EdgeID, _, _ NodeID) error {
+			return engine.DeleteEdge(edgeID)
+		},
+	}.seed(t)
 
-	start := NodeID(prefixTestID("mvcc-adj-del-start"))
-	end := NodeID(prefixTestID("mvcc-adj-del-end"))
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
-	require.NoError(t, err)
-
-	edgeID := EdgeID(prefixTestID("mvcc-adj-del-edge"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
-	v1, err := engine.GetEdgeCurrentHead(edgeID)
-	require.NoError(t, err)
-
-	require.NoError(t, engine.DeleteEdge(edgeID))
-	v2, err := engine.GetEdgeCurrentHead(edgeID)
-	require.NoError(t, err)
-
-	outAtV1, err := engine.GetOutgoingEdgesVisibleAt(start, v1.Version)
-	require.NoError(t, err)
+	// At v1 the edge is visible from both directions.
+	outAtV1 := deleted.outgoingAt(t, deleted.version1, deleted.start)
 	require.Len(t, outAtV1, 1)
-	require.Equal(t, edgeID, outAtV1[0].ID)
+	require.Equal(t, deleted.edgeID, outAtV1[0].ID)
 
-	inAtV1, err := engine.GetIncomingEdgesVisibleAt(end, v1.Version)
-	require.NoError(t, err)
+	inAtV1 := deleted.incomingAt(t, deleted.version1, deleted.end)
 	require.Len(t, inAtV1, 1)
-	require.Equal(t, edgeID, inAtV1[0].ID)
+	require.Equal(t, deleted.edgeID, inAtV1[0].ID)
 
-	outAtV2, err := engine.GetOutgoingEdgesVisibleAt(start, v2.Version)
-	require.NoError(t, err)
+	// At the tombstone version (v2) both directions are empty.
+	outAtV2 := deleted.outgoingAt(t, deleted.version2, deleted.start)
 	require.Empty(t, outAtV2)
 
-	inAtV2, err := engine.GetIncomingEdgesVisibleAt(end, v2.Version)
-	require.NoError(t, err)
+	inAtV2 := deleted.incomingAt(t, deleted.version2, deleted.end)
 	require.Empty(t, inAtV2)
 }
 
@@ -1295,9 +1272,75 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.ErrorIs(t, err, ErrNotImplemented)
 }
 
-func mustGetNodeLatestVisible(t *testing.T, engine *BadgerEngine, id NodeID) *Node {
+// mvccAdjacencyHistory declares one write history for a single edge and owns
+// the seeding and version-qualified adjacency reads every directional case
+// needs. The secondWrite action stays explicit per case (endpoint move versus
+// delete) because the histories are distinct supported contracts.
+type mvccAdjacencyHistory struct {
+	start  NodeID
+	end    NodeID
+	edgeID EdgeID
+	// firstTarget is the edge's end node at the first version; empty means
+	// firstWriteTarget.
+	firstTarget NodeID
+	// firstWriteTarget overrides the first edge's end node. It exists for
+	// histories whose first target is also a node the later assertions probe.
+	firstWriteTarget NodeID
+	// secondWrite produces the second version: an endpoint change or a delete.
+	secondWrite func(engine *BadgerEngine, edgeID EdgeID, start, target NodeID) error
+
+	engine   *BadgerEngine
+	version1 MVCCVersion
+	version2 MVCCVersion
+}
+
+// seed creates the endpoint nodes and the first edge version, then applies
+// secondWrite and records the head version on either side. firstTarget may be
+// an existing endpoint (a self edge, or a delete that reuses the end node), so
+// each distinct ID is created exactly once.
+func (h mvccAdjacencyHistory) seed(t *testing.T) mvccAdjacencyHistory {
 	t.Helper()
-	node, err := engine.GetNodeLatestVisible(id)
+	h.engine = createMVCCBadgerEngine(t)
+	created := map[NodeID]struct{}{}
+	for _, id := range []NodeID{h.start, h.end, h.firstTarget, h.firstWriteTarget} {
+		if id == "" {
+			continue
+		}
+		if _, done := created[id]; done {
+			continue
+		}
+		created[id] = struct{}{}
+		_, err := h.engine.CreateNode(&Node{ID: id, Labels: []string{"Node"}})
+		require.NoError(t, err)
+	}
+	firstEdgeTarget := h.firstTarget
+	if h.firstWriteTarget != "" {
+		firstEdgeTarget = h.firstWriteTarget
+	}
+	require.NoError(t, h.engine.CreateEdge(&Edge{ID: h.edgeID, StartNode: h.start, EndNode: firstEdgeTarget, Type: "LINKS"}))
+	head, err := h.engine.GetEdgeCurrentHead(h.edgeID)
 	require.NoError(t, err)
-	return node
+	h.version1 = head.Version
+
+	require.NoError(t, h.secondWrite(h.engine, h.edgeID, h.start, h.end))
+	head, err = h.engine.GetEdgeCurrentHead(h.edgeID)
+	require.NoError(t, err)
+	h.version2 = head.Version
+	return h
+}
+
+// outgoingAt reads the outgoing edges of node visible at version.
+func (h mvccAdjacencyHistory) outgoingAt(t *testing.T, version MVCCVersion, node NodeID) []*Edge {
+	t.Helper()
+	edges, err := h.engine.GetOutgoingEdgesVisibleAt(node, version)
+	require.NoError(t, err)
+	return edges
+}
+
+// incomingAt reads the incoming edges of node visible at version.
+func (h mvccAdjacencyHistory) incomingAt(t *testing.T, version MVCCVersion, node NodeID) []*Edge {
+	t.Helper()
+	edges, err := h.engine.GetIncomingEdgesVisibleAt(node, version)
+	require.NoError(t, err)
+	return edges
 }

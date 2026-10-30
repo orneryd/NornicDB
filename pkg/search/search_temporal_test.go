@@ -92,7 +92,7 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 
 	closed := storage.CopyNode(node)
 	closed.Properties["valid_to"] = time.Now().UTC().Add(-time.Hour)
-	require.NoError(t, ns.UpdateNode(closed))
+	require.NoError(t, ns.UpdateNode(storage.NodeUpdateRequest{After: closed}))
 	require.NoError(t, svc.IndexNode(closed))
 	require.Equal(t, 0, svc.EmbeddingCount())
 

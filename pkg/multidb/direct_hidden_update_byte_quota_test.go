@@ -63,21 +63,21 @@ func TestDirectHiddenUpdateByteQuota(t *testing.T) {
 					require.NoError(t, err)
 					growth := storage.CopyNode(prior)
 					growth.Properties = map[string]any{"payload": strings.Repeat("y", 8192)}
-					require.ErrorIs(t, engine.UpdateNode(growth), ErrStorageLimitExceeded)
+					require.ErrorIs(t, engine.UpdateNode(storage.NodeUpdateRequest{After: growth}), ErrStorageLimitExceeded)
 					after, err := storage.GetStoredNode(engine, "n")
 					require.NoError(t, err)
 					require.Equal(t, prior, after)
-					require.NoError(t, engine.UpdateNode(prior))
+					require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: prior}))
 				} else {
 					prior, err := storage.GetStoredEdge(engine, "e")
 					require.NoError(t, err)
 					growth := storage.CopyEdge(prior)
 					growth.Properties = map[string]any{"payload": strings.Repeat("y", 8192)}
-					require.ErrorIs(t, engine.UpdateEdge(growth), ErrStorageLimitExceeded)
+					require.ErrorIs(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: growth}), ErrStorageLimitExceeded)
 					after, err := storage.GetStoredEdge(engine, "e")
 					require.NoError(t, err)
 					require.Equal(t, prior, after)
-					require.NoError(t, engine.UpdateEdge(prior))
+					require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: prior}))
 				}
 				got, gotNodes, gotEdges := manager.GetStorageSize(db)
 				require.Equal(t, total, got)

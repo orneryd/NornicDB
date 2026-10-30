@@ -311,7 +311,7 @@ func TestClusterGenerationBackfillUsesStoreAtAdmission(t *testing.T) {
 			node, err := f.engine.GetNode("n-0001")
 			require.NoError(t, err)
 			node.ChunkEmbeddings = [][]float32{{0, 0, 0, 1}}
-			require.NoError(t, f.engine.UpdateNode(node))
+			require.NoError(t, f.engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			done := parkReconcile(t, svc, svc.EmbeddingCount()+1)
 			err = svc.indexNodeLocked(node, false)
 			svc.removeNodeLocked("n-0002")

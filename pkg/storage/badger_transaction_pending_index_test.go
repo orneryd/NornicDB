@@ -66,9 +66,9 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 	}
 	_, err = tx.CreateNode(&Node{ID: "db:new", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.DeleteGraphNode("db:gone", CascadeEdges))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db:unlabeled", Labels: []string{"Q"}, Properties: map[string]interface{}{"k": "a"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:unlabeled", Labels: []string{"Q"}, Properties: map[string]interface{}{"k": "a"}}, Policy: ClientNodeEdits}))
 	require.Nil(t, tx.pendingIndex)
 	require.Equal(t, []string{"db:kept", "db:new"}, lookup(tx, committedA(), "P", "k", "a"))
 	require.NotNil(t, tx.pendingIndex)
@@ -78,7 +78,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 
 	// Writes made after it keep the index current: a second update of a
 	// pending node, a delete of a pending node, a create.
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "c"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "c"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.DeleteGraphNode("db:new", CascadeEdges))
 	_, err = tx.CreateNode(&Node{ID: "db:later", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}})
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 
 	// A second property is indexed by its first lookup, for the nodes
 	// already pending.
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db:kept", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a", "other": int64(7)}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:kept", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a", "other": int64(7)}}, Policy: ClientNodeEdits}))
 	require.Equal(t, []string{"db:kept"}, lookup(tx, nil, "P", "other", int64(7)))
 	require.Equal(t, []string{"db:kept"}, lookup(tx, nil, "P", "other", float64(7)), "numeric values match as the property indexes match them")
 

@@ -702,7 +702,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		data, _ := json.Marshal(WALBulkNodesData{Nodes: nodes})
 		entry := WALEntry{Operation: OpBulkNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 		require.NoError(t, ReplayWALEntry(engine, entry))
-		require.NotNil(t, mustGetNodeForWALTest(t, engine, "n1"))
+		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
 		require.NoError(t, UndoWALEntry(engine, entry))
 		n, _ := engine.GetNode("n1")
 		require.Nil(t, n)
@@ -738,7 +738,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 		n, _ := engine.GetNode("n1")
 		require.Nil(t, n)
 		require.NoError(t, UndoWALEntry(engine, entry))
-		require.NotNil(t, mustGetNodeForWALTest(t, engine, "n1"))
+		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
 	})
 
 	t.Run("bulk delete edges then undo", func(t *testing.T) {
@@ -918,14 +918,6 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
-}
-
-func mustGetNodeForWALTest(t *testing.T, engine *NamespacedEngine, id NodeID) *Node {
-	t.Helper()
-	n, err := engine.GetNode(id)
-	require.NoError(t, err)
-	require.NotNil(t, n)
-	return n
 }
 
 // =============================================================================

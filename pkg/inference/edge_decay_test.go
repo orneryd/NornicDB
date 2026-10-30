@@ -17,9 +17,10 @@ type trackingDecayEngine struct {
 	deleted []storage.EdgeID
 }
 
-func (e *trackingDecayEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *trackingDecayEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	e.updated = append(e.updated, edge.ID)
-	return e.MemoryEngine.UpdateEdge(edge)
+	return e.MemoryEngine.UpdateEdge(updateRequest)
 }
 
 func (e *trackingDecayEngine) DeleteEdge(id storage.EdgeID) error {

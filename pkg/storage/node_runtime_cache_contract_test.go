@@ -232,7 +232,7 @@ func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 	const staleID NodeID = "runtime:stale"
 	stale := &Node{runtime: &nodeRuntime{metadata: runtimeMetadataFull()}, ID: staleID, Labels: []string{"Doc"}}
 	staleGen := engine.nodeCacheGen.current()
-	require.NoError(t, engine.UpdateNode(&Node{ID: staleID, Labels: []string{"Doc"}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: staleID, Labels: []string{"Doc"}}}))
 	engine.cacheFillNode(staleGen, stale, nodeReadCacheFull)
 	engine.nodeCacheMu.RLock()
 	cachedStale, ok := engine.nodeCache[staleID]
@@ -267,7 +267,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 	requireRuntimeMetadata(t, "body entry", entry.node, state.metadata)
 	requireRuntimeIdentity(t, "body entry", entry.node, runtimeIdentityFixture{state: state, attempt: state.embeddingAttempt})
 
-	hit, ok := engine.cacheLoadNodeBody(separate.ID, 123)
+	hit, ok := engine.cacheLoadNodeBody(separate.ID, 123, nil, nodeBodyDetached)
 	require.True(t, ok)
 	requireRuntimeMetadata(t, "body hit", hit, state.metadata)
 	requireRuntimeIdentity(t, "body hit", hit, runtimeIdentityFixture{state: state, attempt: state.embeddingAttempt})
@@ -278,7 +278,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 	engine.nodeBodyCacheMu.RUnlock()
 
 	// A different physical version is a miss and evicts the stale entry.
-	_, ok = engine.cacheLoadNodeBody(separate.ID, 124)
+	_, ok = engine.cacheLoadNodeBody(separate.ID, 124, nil, nodeBodyDetached)
 	require.False(t, ok, "the body cache is version checked")
 	engine.nodeBodyCacheMu.RLock()
 	_, stillCached := engine.nodeBodyCache[separate.ID]

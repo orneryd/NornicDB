@@ -73,12 +73,12 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 					edge, err := peer.GetEdge(edgeID)
 					require.NoError(t, err)
 					edge.Properties["writer"] = "peer"
-					require.NoError(t, peer.UpdateEdge(edge))
+					require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				} else {
 					node, err := peer.GetNode(nodeID)
 					require.NoError(t, err)
 					node.Properties["writer"] = "peer"
-					require.NoError(t, peer.UpdateGraphNode(node, ClientNodeEdits))
+					require.NoError(t, peer.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				}
 				require.NoError(t, peer.Commit())
 				unblock()
@@ -129,13 +129,13 @@ func TestTransactionWriteFailsWhenConflictTrackingReadFails(t *testing.T) {
 			tx.badgerTx.Discard()
 			switch op {
 			case "update node":
-				err = tx.UpdateGraphNode(node, ClientNodeEdits)
+				err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 			case "delete node":
 				err = tx.DeleteGraphNode(nodeID, CascadeEdges)
 			case "delete connected node":
 				err = tx.DeleteGraphNode(nodeID, RejectConnected)
 			case "update relationship":
-				err = tx.UpdateEdge(edge)
+				err = tx.UpdateEdge(EdgeUpdateRequest{After: edge})
 			case "delete relationship":
 				err = tx.DeleteEdge(edgeID)
 			}

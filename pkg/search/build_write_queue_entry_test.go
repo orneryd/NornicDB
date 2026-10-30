@@ -156,7 +156,7 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write within the reservation", func() error { return svc.IndexNode(first) })
 	second := large("secondterm")
-	require.NoError(t, engine.UpdateNode(&storage.Node{ID: second.ID, Labels: second.Labels, Properties: map[string]any{"text": "secondterm"}}))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: second.ID, Labels: second.Labels, Properties: map[string]any{"text": "secondterm"}}}))
 	relationship := &storage.Edge{ID: "nornic:big-rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "updatedrelterm", "blob": blob}}
 	nodeDone, relDone := make(chan error, 1), make(chan struct{})
 	go func() { nodeDone <- svc.IndexNode(second) }()
@@ -231,7 +231,7 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 		}
 		svc.SetIndexFlags(true, false)
 		updated := &storage.Edge{ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-		require.NoError(t, engine.UpdateEdge(storage.CopyEdge(updated)))
+		require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(updated)}))
 		require.NoError(t, svc.IndexEdge(updated))
 		if gated {
 			engine.open()
@@ -257,7 +257,7 @@ type nodeReadParkEngine struct {
 
 func newNodeReadParkEngine(t *testing.T) *nodeReadParkEngine {
 	t.Helper()
-	e := &nodeReadParkEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
+	e := &nodeReadParkEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
 	return e
 }
@@ -307,8 +307,8 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
-	require.NoError(t, tx.UpdateGraphNode(storage.CopyNode(node), storage.ClientNodeEdits))
-	require.NoError(t, tx.UpdateEdge(storage.CopyEdge(edge)))
+	require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: storage.CopyNode(node), Policy: storage.ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, svc.IndexNode(node))
 	require.NoError(t, svc.IndexEdge(edge))

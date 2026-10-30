@@ -964,8 +964,16 @@ func (r *RemoteEngine) GetNode(id NodeID) (*Node, error) {
 	return queryRemoteEntities(r, nil, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode, firstRemoteEntity[Node])
 }
 
-func (r *RemoteEngine) UpdateNode(node *Node) error {
-	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
+func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
+	if node == nil {
+		return ErrInvalidData
+	}
+	err := r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
+	if err == ErrNotFound && updateRequest.Before != nil {
+		return ErrConflict
+	}
+	return err
 }
 
 func (r *RemoteEngine) DeleteNode(id NodeID) error {
@@ -1013,8 +1021,16 @@ func (r *RemoteEngine) GetEdge(id EdgeID) (*Edge, error) {
 	return queryRemoteEntities(r, nil, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)}, valueToEdge, firstRemoteEntity[Edge])
 }
 
-func (r *RemoteEngine) UpdateEdge(edge *Edge) error {
-	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
+func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+	edge := updateRequest.After
+	if edge == nil {
+		return ErrInvalidData
+	}
+	err := r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
+	if err == ErrNotFound && updateRequest.Before != nil {
+		return ErrConflict
+	}
+	return err
 }
 
 func (r *RemoteEngine) DeleteEdge(id EdgeID) error {

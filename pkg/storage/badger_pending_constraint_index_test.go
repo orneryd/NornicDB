@@ -36,7 +36,7 @@ func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
 				require.Error(t, err, "duplicate of a pending value must be rejected")
 
 				// Rewriting a pending node frees its old value and takes the new one.
-				require.NoError(t, tx.UpdateGraphNode(pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)}), ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)}), Policy: ClientNodeEdits}))
 				_, err = tx.CreateNode(pendingNode("u-reuse", "Item", map[string]interface{}{"k": int64(3)}))
 				require.NoError(t, err, "the value a rewritten pending node gave up is free again")
 				_, err = tx.CreateNode(pendingNode("u-dup2", "Item", map[string]interface{}{"k": int64(1000)}))

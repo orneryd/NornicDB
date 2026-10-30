@@ -1577,8 +1577,9 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 // GetConstraintsForLabels returns all constraints for given labels, ordered
 // by constraint name so validation reports the same violation every time an
 // entity breaks several constraints. Returns constraints from the constraints
-// map, preserving their original types.
-func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
+// map, preserving their original types. Optional types restrict the result
+// before copying, so specialized consumers do not allocate unrelated rules.
+func (sm *SchemaManager) GetConstraintsForLabels(labels []string, types ...ConstraintType) []Constraint {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -1586,6 +1587,9 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 
 	// Get constraints from the constraints map (preserves original type)
 	for _, c := range sm.constraints {
+		if len(types) > 0 && !slices.Contains(types, c.Type) {
+			continue
+		}
 		for _, label := range labels {
 			if c.Label == label {
 				result = append(result, c)

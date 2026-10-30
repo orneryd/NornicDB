@@ -3,12 +3,12 @@ package nornicdb
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -38,14 +38,10 @@ func (b *refreshReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
 
 func (b *refreshReadBarrier) open() { b.opened.Do(func() { close(b.release) }) }
 
+// wait blocks until the paused refresh reached its post-read barrier.
 func (b *refreshReadBarrier) wait(t *testing.T) {
 	t.Helper()
-	select {
-	case <-b.entered:
-	case <-time.After(5 * time.Second):
-		b.open()
-		t.Fatal("the refresh did not read storage")
-	}
+	fixtureowner.WaitForBarrier(t, b.entered, 5*time.Second, b.open, "the refresh did not read storage")
 }
 
 func storedContent(word string) func(*storage.Node, error) bool {
@@ -107,7 +103,7 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 			newer := storage.CopyNode(old)
 			newer.Properties["content"] = "current"
 			newer.ChunkEmbeddings = [][]float32{{0, 1}}
-			require.NoError(t, store.UpdateNode(newer))
+			require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: newer}))
 			switch newerPath {
 			case "event":
 				db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
@@ -139,27 +135,12 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 	})
 }
 
-// A refresh that read the node before a newer delete and its refresh applied
-// must not resurrect it. The barrier pauses the older refresh after its read.
-func TestRefreshReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
-	db, entry, store, barrier := newMutationOrderDB(t)
-	_, err := store.CreateNode(&storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
-	require.NoError(t, err)
-	barrier.observed = storedContent("alpha")
-	barrier.armed.Store(true)
-	done := make(chan bool, 1)
-	go func() { done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}) }()
-	barrier.wait(t)
-	require.NoError(t, store.DeleteNode("source"))
-	db.queueSearchRefreshEvent(searchNodeDelete, "test:source")
-	applyQueued(t, entry)
-	barrier.open()
-	require.True(t, <-done)
-	require.Zero(t, entry.svc.EmbeddingCount(), "a refresh that read before the delete resurrected the vector")
-}
-
-// A refresh that read older content must not replace a newer write's entry.
-func TestRefreshReadBeforeNewerWriteCannotOverwrite(t *testing.T) {
+// runStaleRefreshRace runs the one stale-read ordering both refresh tests need:
+// a refresh reads the node as "alpha" and pauses, newerWrite commits while it
+// is held, the queued refresh newerWrite raises is applied, then the paused
+// refresh is released. Only the newer write and each terminal outcome differ.
+func runStaleRefreshRace(t *testing.T, newerWrite func(node *storage.Node, store storage.Engine) error, assertOutcome func(entry *dbSearchService)) {
+	t.Helper()
 	db, entry, store, barrier := newMutationOrderDB(t)
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(node)
@@ -169,15 +150,36 @@ func TestRefreshReadBeforeNewerWriteCannotOverwrite(t *testing.T) {
 	done := make(chan bool, 1)
 	go func() { done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}) }()
 	barrier.wait(t)
-	newer := storage.CopyNode(node)
-	newer.Properties["content"] = "bravo"
-	require.NoError(t, store.UpdateNode(newer))
+	require.NoError(t, newerWrite(node, store))
 	db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
 	applyQueued(t, entry)
 	barrier.open()
 	require.True(t, <-done)
-	require.Equal(t, 1, fulltextHits(t, entry.svc, "bravo"))
-	require.Zero(t, fulltextHits(t, entry.svc, "alpha"), "a refresh that read older content replaced the newer entry")
+	assertOutcome(entry)
+}
+
+// A refresh that read the node before a newer delete and its refresh applied
+// must not resurrect it. The barrier pauses the older refresh after its read.
+func TestRefreshReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
+	runStaleRefreshRace(t,
+		func(_ *storage.Node, store storage.Engine) error { return store.DeleteNode("source") },
+		func(entry *dbSearchService) {
+			require.Zero(t, entry.svc.EmbeddingCount(), "a refresh that read before the delete resurrected the vector")
+		})
+}
+
+// A refresh that read older content must not replace a newer write's entry.
+func TestRefreshReadBeforeNewerWriteCannotOverwrite(t *testing.T) {
+	runStaleRefreshRace(t,
+		func(node *storage.Node, store storage.Engine) error {
+			newer := storage.CopyNode(node)
+			newer.Properties["content"] = "bravo"
+			return store.UpdateNode(storage.NodeUpdateRequest{After: newer})
+		},
+		func(entry *dbSearchService) {
+			require.Equal(t, 1, fulltextHits(t, entry.svc, "bravo"))
+			require.Zero(t, fulltextHits(t, entry.svc, "alpha"), "a refresh that read older content replaced the newer entry")
+		})
 }
 
 // Concurrent storage writes, events, embedded publication, direct refreshes
@@ -196,7 +198,7 @@ func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 			for i := range 32 {
 				id := storage.NodeID(fmt.Sprintf("n%d", i%8))
 				node := &storage.Node{ID: id, Properties: map[string]any{"content": fmt.Sprintf("payload %d %d", worker, i)}, ChunkEmbeddings: [][]float32{{1, 0}}}
-				_ = store.UpdateNode(node)
+				_ = store.UpdateNode(storage.NodeUpdateRequest{After: node})
 				qualified := &storage.Node{ID: "test:" + id}
 				db.indexNodeFromEvent(qualified)
 				stale, _ := entry.drainPending()

@@ -943,16 +943,32 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	store := e.getStorage(ctx)
 	if relationship {
-		edge, err := store.GetEdge(storage.EdgeID(identifier))
-		if err != nil {
-			return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), nil)
+		edge, supplied := arguments[0].(*storage.Edge)
+		if supplied {
+			image := *edge
+			edge = &image
+		} else {
+			var err error
+			edge, err = store.GetEdge(storage.EdgeID(identifier))
+			if err != nil {
+				return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), err)
+			}
 		}
 		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+			// Detach only the map being changed; the immutable observation and
+			// unchanged vector arrays retain the image read by this statement.
+			before := observeEdge(edge)
+			edge.Properties = cloneStringAnyMap(edge.Properties)
 			edge.Properties[propertyKey] = vector
-			if err := updateMutatedEdge(store, edge); err != nil {
+			if err := mutateEdgeWithObservation(store, before, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
+		} else {
+			// Preserve the typed vector in the returned row without a storage
+			// write or mutation of an earlier observation's property map.
+			edge.Properties = cloneStringAnyMap(edge.Properties)
+			edge.Properties[propertyKey] = vector
 		}
 		if entity, ok := arguments[0].(*storage.Edge); ok {
 			entity.Properties = edge.Properties
@@ -960,16 +976,31 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
-	node, err := store.GetNode(storage.NodeID(identifier))
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), nil)
+	node, supplied := arguments[0].(*storage.Node)
+	if supplied {
+		image := *node
+		node = &image
+	} else {
+		var err error
+		node, err = store.GetNode(storage.NodeID(identifier))
+		if err != nil {
+			return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), err)
+		}
 	}
 	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+		// Detach only the map being changed; the immutable observation and
+		// unchanged vector arrays retain the image read by this statement.
+		before := observeNode(node)
+		node.Properties = cloneStringAnyMap(node.Properties)
 		node.Properties[propertyKey] = vector
-		if err := updateMutatedNode(store, node); err != nil {
+		if err := mutateNodeWithObservation(store, before, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))
+	} else {
+		// Keep result values typed while leaving the stored image untouched.
+		node.Properties = cloneStringAnyMap(node.Properties)
+		node.Properties[propertyKey] = vector
 	}
 	if entity, ok := arguments[0].(*storage.Node); ok {
 		entity.Properties = node.Properties

@@ -56,7 +56,7 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	latest, err := namespaced.GetNode("n1")
 	require.NoError(t, err)
 	latest.Properties["d"] = int64(4)
-	require.NoError(t, namespaced.UpdateNode(latest))
+	require.NoError(t, namespaced.UpdateNode(NodeUpdateRequest{After: latest}))
 
 	overlayRead, err := namespaced.GetNodeProjected("n1", []string{"d"})
 	require.NoError(t, err)

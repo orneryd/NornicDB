@@ -1189,6 +1189,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})
+		engine.transitionNamespaceSchema("", schemaNamespaceAttachPending, nil)
 	}
 	return engine, nil
 }

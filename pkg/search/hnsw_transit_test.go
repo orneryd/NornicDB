@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math/rand"
 	"slices"
@@ -116,7 +117,7 @@ func TestHNSWSearchRoutesThroughTombstoneRuns(t *testing.T) {
 // between live ones; continuation must still return every live document.
 func TestContinuationAfterTombstoneRunsReturnsEveryLiveDocument(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 30; i++ {

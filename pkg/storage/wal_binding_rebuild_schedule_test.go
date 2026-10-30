@@ -63,7 +63,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("rebuild"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "rebuild:a", Properties: map[string]any{"alpha": int64(2)}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "rebuild:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	require.NoError(t, rebuilt.FlushWriteBehind())

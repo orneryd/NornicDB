@@ -140,7 +140,7 @@ func TestSnapshotTranscoderOverlayDifferential(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(3)}}))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(3)}}}))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new-r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true}))
 	require.NoError(t, tx.DeleteEdge("test:gone-r"))
 	require.NoError(t, tx.Commit())

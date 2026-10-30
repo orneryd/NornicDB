@@ -41,7 +41,7 @@ func TestKnowledgePolicyResolveRelationshipVersionUsesUpdatedTime(t *testing.T) 
 			for _, recent := range []bool{true, false} {
 				if !recent {
 					edge.UpdatedAt = old
-					require.NoError(t, store.UpdateEdge(edge))
+					require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 				}
 				exec := NewStorageExecutor(store)
 				result, err := exec.Execute(context.Background(), "CALL kp.resolve('e', '', '')", nil)

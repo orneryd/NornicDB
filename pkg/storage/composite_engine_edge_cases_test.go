@@ -424,7 +424,7 @@ func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 
 	// Update the edge through composite
 	updated := &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "LIKES", Properties: map[string]interface{}{"weight": 1}}
-	err = composite.UpdateEdge(updated)
+	err = composite.UpdateEdge(EdgeUpdateRequest{After: updated})
 	require.NoError(t, err)
 
 	// Verify through composite

@@ -61,10 +61,10 @@ func TestTransactionWriteAdmissionDecidesEveryWrite(t *testing.T) {
 			return err
 		}},
 		{"UpdateGraphNode", func() error {
-			return tx.UpdateGraphNode(&Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, ClientNodeEdits)
+			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, Policy: ClientNodeEdits})
 		}},
 		{"UpdateGraphNodeStoredImages", func() error {
-			return tx.UpdateGraphNode(&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "adm:a", Labels: []string{"A"}}, StoredNodeImages)
+			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "adm:a", Labels: []string{"A"}}, Policy: StoredNodeImages})
 		}},
 		{"DeleteGraphNode", func() error { return tx.DeleteGraphNode("adm:a", CascadeEdges) }},
 		{"DeleteGraphNodeRejectConnected", func() error {
@@ -80,7 +80,7 @@ func TestTransactionWriteAdmissionDecidesEveryWrite(t *testing.T) {
 			return tx.BulkCreateEdges([]*Edge{{ID: "adm:ba", StartNode: "adm:b", EndNode: "adm:a", Type: "R"}})
 		}},
 		{"UpdateEdge", func() error {
-			return tx.UpdateEdge(&Edge{ID: "adm:ab", StartNode: "adm:a", EndNode: "adm:b", Type: "S"})
+			return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "adm:ab", StartNode: "adm:a", EndNode: "adm:b", Type: "S"}})
 		}},
 		{"DeleteEdge", func() error { return tx.DeleteEdge("adm:ab") }},
 		{"Schema", func() error { _, err := tx.Schema(OrdinarySchemaChanges); return err }},
@@ -122,10 +122,10 @@ func TestTransactionWriteAdmissionDecidesEveryWrite(t *testing.T) {
 	tx = begin(func() error { asks++; return nil })
 	_, err = tx.CreateNode(&Node{ID: "adm:c", Labels: []string{"A"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, ClientNodeEdits))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, StoredNodeImages))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, Policy: StoredNodeImages}))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "adm:ca", StartNode: "adm:c", EndNode: "adm:a", Type: "R"}))
-	require.NoError(t, tx.UpdateEdge(&Edge{ID: "adm:ca", StartNode: "adm:c", EndNode: "adm:a", Type: "S"}))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "adm:ca", StartNode: "adm:c", EndNode: "adm:a", Type: "S"}}))
 	require.NoError(t, tx.DeleteEdge("adm:ca"))
 	require.NoError(t, tx.DeleteGraphNode("adm:b", CascadeEdges))
 	require.NoError(t, tx.AdmitWrite())

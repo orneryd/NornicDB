@@ -36,7 +36,7 @@ func TestConcurrentTransactionsSharingLabelCountCommitIndependently(t *testing.T
 					require.NoError(t, err)
 					defer transactions[writer].Rollback()
 					if tc.relabel {
-						require.NoError(t, transactions[writer].UpdateGraphNode(&Node{ID: NodeID(fmt.Sprintf("db1:update-%d", writer)), Labels: []string{tc.label}}, ClientNodeEdits))
+						require.NoError(t, transactions[writer].UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", writer)), Labels: []string{tc.label}}, Policy: ClientNodeEdits}))
 					} else {
 						_, err = transactions[writer].CreateNode(&Node{ID: NodeID(fmt.Sprintf("db1:concurrent-%d-%d", round, writer)), Labels: []string{tc.label}})
 						require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	for writer := range transactions {
 		transactions[writer], err = engine.BeginTransaction()
 		require.NoError(t, err)
-		require.NoError(t, transactions[writer].UpdateGraphNode(&Node{ID: "db1:same-node", Labels: []string{"Complete"}}, ClientNodeEdits))
+		require.NoError(t, transactions[writer].UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db1:same-node", Labels: []string{"Complete"}}, Policy: ClientNodeEdits}))
 	}
 
 	commitErrors := commitTransactionsConcurrently(transactions)

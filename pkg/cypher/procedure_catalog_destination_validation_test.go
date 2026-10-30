@@ -76,11 +76,11 @@ func TestProcedureCatalogMigrationValidatesDestination(t *testing.T) {
 			require.NoError(t, err)
 			if kind == "corrupt payload" {
 				node.Properties["record"] = int64(17)
-				require.NoError(t, store.UpdateNode(node))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			}
 			if kind == "ordinary node" {
 				node.Labels = []string{"Ordinary"}
-				require.NoError(t, store.UpdateNode(node))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			}
 			before, err := store.GetNode(legacyID)
 			require.NoError(t, err)

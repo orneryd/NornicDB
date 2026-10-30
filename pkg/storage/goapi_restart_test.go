@@ -54,8 +54,8 @@ func TestGoAPIReadAfterWriteMatchesReadAfterRestart(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}))
 				if update {
-					require.NoError(t, engine.UpdateNode(&Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()}))
-					require.NoError(t, engine.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}))
+					require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()}}))
+					require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}}))
 				}
 				afterWrite, err := engine.GetNode("test:n")
 				require.NoError(t, err)

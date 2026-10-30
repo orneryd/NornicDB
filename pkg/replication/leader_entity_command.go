@@ -29,31 +29,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	case CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
 		mode = storage.CommitModeImplicit
 	}
-	prepared, settle, managed, err := storage.PrepareManagedEntityChanges(ctx, a.engine, namespace, ops, mode)
-	if !managed && err == nil {
-		tx, beginErr := storage.BeginEntityTransaction(a.engine, mode)
-		if beginErr != nil {
-			return nil, nil, true, beginErr
-		}
-		defer tx.Rollback()
-		if err = tx.SetNamespace(namespace); err == nil {
-			err = tx.SetValidationSetting(storage.DeferredConstraintValidation, true)
-		}
-		if err == nil {
-			for _, op := range ops {
-				if err = storage.ApplyEntityChange(tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdate(tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) }); err != nil {
-					break
-				}
-			}
-		}
-		if err != nil {
-			return nil, nil, true, err
-		}
-		if tx.OperationCount() == 0 {
-			return nil, nil, true, tx.CommitContext(ctx)
-		}
-		prepared, err = tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: tx.ID})
-	}
+	prepared, settle, err := storage.PrepareEntityChanges(ctx, a.engine, namespace, ops, mode)
 	if err != nil {
 		return nil, nil, true, err
 	}

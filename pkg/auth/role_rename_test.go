@@ -2,6 +2,7 @@ package auth
 
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 
 	"context"
 	"testing"
@@ -22,7 +23,7 @@ func seedRoleRename(t *testing.T, engine storage.Engine) *RoleStore {
 	require.NoError(t, NewAllowlistStore(engine).SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 	require.NoError(t, NewRoleEntitlementsStore(engine).Set(ctx, "ops", []string{"read", "write"}))
 	users := &Authenticator{storage: engine}
-	require.NoError(t, users.saveUser(&User{Username: "worker", Roles: []Role{"ops", RoleViewer}}))
+	require.NoError(t, users.saveUser(&User{Username: "worker", Roles: []Role{"ops", RoleViewer}}, nil))
 	return roles
 }
 
@@ -63,25 +64,25 @@ func TestRenamedRoleKeepsItsGrants(t *testing.T) {
 
 func TestRoleRenameRecordFailureChangesNothing(t *testing.T) {
 	for _, test := range []struct {
-		op string
+		op storagefault.MutationOperation
 		id storage.NodeID
 	}{
-		{"create", "proc_priv:boosted:renamed:db.cdc.*"},
-		{"delete", "proc_priv:execute:ops:db.a"},
-		{"create", "db_priv:renamed:nornic"},
-		{"delete", "role_db_access:ops"},
-		{"create", "role_entitlement:renamed"},
-		{"update", "user:worker"},
+		{storagefault.MutationCreate, "proc_priv:boosted:renamed:db.cdc.*"},
+		{storagefault.MutationDelete, "proc_priv:execute:ops:db.a"},
+		{storagefault.MutationCreate, "db_priv:renamed:nornic"},
+		{storagefault.MutationDelete, "role_db_access:ops"},
+		{storagefault.MutationCreate, "role_entitlement:renamed"},
+		{storagefault.MutationUpdate, "user:worker"},
 	} {
-		t.Run(test.op+string(test.id), func(t *testing.T) {
+		t.Run(string(test.op)+string(test.id), func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := seedRoleRename(t, fault)
 			before, err := system.AllNodes()
 			require.NoError(t, err)
-			fault.failOp, fault.failID = test.op, test.id
+			fault.Operation, fault.ID = test.op, test.id
 			require.ErrorIs(t, roles.RenameRole(context.Background(), "ops", "renamed"), errRoleMutation)
 			after, err := system.AllNodes()
 			require.NoError(t, err)
@@ -99,7 +100,7 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := seedRoleRename(t, fault)
 			stores := RoleMutationStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault), Users: &Authenticator{storage: fault, users: map[string]*User{}}}
 			require.NoError(t, stores.Allowlist.Load(ctx))
@@ -109,7 +110,7 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 			before, err := system.AllNodes()
 			require.NoError(t, err)
 			if fail {
-				fault.failOp, fault.failID = "update", "user:worker"
+				fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
 				require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores), errRoleMutation)
 				after, err := system.AllNodes()
 				require.NoError(t, err)
@@ -131,20 +132,20 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 
 func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 	for _, test := range []struct {
-		op  string
+		op  storagefault.MutationOperation
 		id  storage.NodeID
 		nth int
 	}{
-		{"scan", "", 1}, {"scan", "", 2}, {"scan", "", 3}, {"scan", "", 4}, {"scan", "", 5}, {"scan", "", 6},
-		{"allnodes", "", 2}, {"allnodes", "", 3}, {"allnodes", "", 4},
-		{"get", "proc_priv:boosted:renamed:db.cdc.*", 1},
+		{storagefault.MutationScan, "", 1}, {storagefault.MutationScan, "", 2}, {storagefault.MutationScan, "", 3}, {storagefault.MutationScan, "", 4}, {storagefault.MutationScan, "", 5}, {storagefault.MutationScan, "", 6},
+		{storagefault.MutationList, "", 2}, {storagefault.MutationList, "", 3}, {storagefault.MutationList, "", 4},
+		{storagefault.MutationGet, "proc_priv:boosted:renamed:db.cdc.*", 1},
 	} {
-		t.Run(test.op+string(test.id)+string(rune('0'+test.nth)), func(t *testing.T) {
+		t.Run(string(test.op)+string(test.id)+string(rune('0'+test.nth)), func(t *testing.T) {
 			ctx := context.Background()
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := seedRoleRename(t, fault)
 			stores := RoleMutationStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault)}
 			require.NoError(t, stores.Allowlist.Load(ctx))
@@ -152,7 +153,7 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 			require.NoError(t, stores.Entitlements.Load(ctx))
 			before, err := system.AllNodes()
 			require.NoError(t, err)
-			fault.failOp, fault.failID, fault.nth = test.op, test.id, test.nth
+			fault.Operation, fault.ID, fault.Nth = test.op, test.id, test.nth
 			require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores), errRoleMutation)
 			after, err := system.AllNodes()
 			require.NoError(t, err)
@@ -183,14 +184,14 @@ func TestAllowlistRenameReadFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: storage.NewNamespacedEngine(base, "system")}
+	fault := storagefault.NewMutationFailureEngine(storage.NewNamespacedEngine(base, "system"), "", errRoleMutation, 0, WithStoreTransaction)
 	roles := NewRoleStore(fault)
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	allowlist := NewAllowlistStore(fault)
 	require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 	before, err := base.AllNodes()
 	require.NoError(t, err)
-	fault.failOp, fault.failID = "get", "role_db_access:renamed"
+	fault.Operation, fault.ID = storagefault.MutationGet, "role_db_access:renamed"
 	require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", RoleMutationStores{Allowlist: allowlist}), errRoleMutation)
 	after, err := base.AllNodes()
 	require.NoError(t, err)
