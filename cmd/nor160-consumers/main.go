@@ -179,6 +179,9 @@ type NOR160ControlHit struct {
 	Tags []string
 }
 
+// CallerCopy makes the planted hit a copyable entity.
+func (h *NOR160ControlHit) CallerCopy() any { return nor160ControlCloneHitComplete(h) }
+
 type NOR160ControlHits struct{ hits map[string]*NOR160ControlHit }
 
 func nor160ControlCloneHit(h *NOR160ControlHit) *NOR160ControlHit {
@@ -218,11 +221,11 @@ var controls = []control{
 	{"K5", "(*" + storagePkg + ".NOR160ControlCache).nor160CopyAll", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedCopy", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetCopyOfCopy", false},
-	{"K7", storagePkg + ".nor160ControlCloneHit", false},
+	{"K7", "(*" + storagePkg + ".NOR160ControlHits).GetHit", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
-	{"K7", storagePkg + ".nor160ControlCloneHitComplete", true},
+	{"K7", "(*" + storagePkg + ".NOR160ControlHits).GetHitComplete", true},
 }
 
 var tree string
@@ -260,6 +263,7 @@ type summary struct {
 	Ret     []org
 	Escapes []bool
 	Copies  []bool
+	Partial map[int][]string // parameter -> fields a copy of it keeps shared
 }
 
 type memKey struct {
@@ -553,6 +557,27 @@ func callArgs(c *ssa.CallCommon) []ssa.Value {
 	return c.Args
 }
 
+// receivedAcross: the call is a public read of another package; what it
+// returns has been delivered to this function, its caller.
+func (a *analysis) receivedAcross(fn *ssa.Function, call ssa.CallInstruction) bool {
+	here := top(originFn(fn)).Pkg
+	c := call.Common()
+	if c.IsInvoke() {
+		return c.Method.Exported() && (here == nil || c.Method.Pkg() == nil || c.Method.Pkg() != here.Pkg)
+	}
+	callees := a.calleesOf(call)
+	if len(callees) == 0 {
+		return false
+	}
+	for _, g := range callees {
+		g = originFn(g)
+		if !exported(g) || g.Pkg == here {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *analysis) calleesOf(call ssa.CallInstruction) []*ssa.Function {
 	c := call.Common()
 	if f := c.StaticCallee(); f != nil {
@@ -566,7 +591,9 @@ func (a *analysis) calleesOf(call ssa.CallInstruction) []*ssa.Function {
 func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
 	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}}
 	for i, p := range fn.Params {
-		s.o[p] = org{Params: bit(i)}
+		if _, isFunc := p.Type().Underlying().(*types.Signature); isFunc || family(p.Type()) {
+			s.o[p] = org{Params: bit(i)}
+		}
 	}
 	for _, fv := range fn.FreeVars {
 		if family(fv.Type()) || pointee(fv.Type()) != nil && family(pointee(fv.Type())) {
@@ -778,8 +805,9 @@ func copySource(s *fnState, alloc *ssa.Alloc) (org, bool) {
 	if elem == nil || !family(elem) {
 		return org{}, false
 	}
-	if n, _ := structOf(elem); n == nil {
-		return org{}, false
+	n, st := structOf(elem)
+	if n == nil || !entityType(n) {
+		return org{}, false // a wrapper passed by value is not a structural copy
 	}
 	refs := alloc.Referrers()
 	if refs == nil {
@@ -807,6 +835,7 @@ func copySource(s *fnState, alloc *ssa.Alloc) (org, bool) {
 		}
 		return nil, false
 	}
+	fresh := false
 	for _, r := range *refs {
 		switch x := r.(type) {
 		case *ssa.Store:
@@ -818,20 +847,36 @@ func copySource(s *fnState, alloc *ssa.Alloc) (org, bool) {
 		case *ssa.FieldAddr:
 			if fr := x.Referrers(); fr != nil {
 				for _, fref := range *fr {
-					st, ok := fref.(*ssa.Store)
-					if !ok || st.Addr != x {
+					sto, ok := fref.(*ssa.Store)
+					if !ok || sto.Addr != x {
 						continue
 					}
-					if ld, ok := st.Val.(*ssa.UnOp); ok && ld.Op == token.MUL {
+					direct := false
+					if ld, ok := sto.Val.(*ssa.UnOp); ok && ld.Op == token.MUL {
 						if fa, ok := ld.X.(*ssa.FieldAddr); ok && fa.Field == x.Field && types.Identical(pointee(fa.X.Type()), elem) {
-							src, found = src.or(s.val(fa.X)), true
+							src, found, direct = src.or(s.val(fa.X)), true, true
 						}
+					}
+					if !direct && x.Field < st.NumFields() && reference(st.Field(x.Field).Type()) && !isNilConst(sto.Val) {
+						fresh = true
 					}
 				}
 			}
 		}
 	}
-	return src, found
+	return src, found && fresh
+}
+
+// entityType: a storage Node or Edge, or a module type that declares CallerCopy.
+func entityType(n *types.Named) bool {
+	obj := n.Obj()
+	if obj.Pkg() == nil || !inModulePath(obj.Pkg().Path()) {
+		return false
+	}
+	if obj.Pkg().Path() == storagePkg && (obj.Name() == "Node" || obj.Name() == "Edge") {
+		return true
+	}
+	return declaresCallerCopy(n)
 }
 
 func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []org {
@@ -966,10 +1011,24 @@ func (a *analysis) summarize(fn *ssa.Function, s *fnState) *summary {
 			}
 		}
 	}
-	for _, src := range s.src {
+	for v, src := range s.src {
 		for j := range sum.Copies {
 			if src.Params&bit(j) != 0 {
 				sum.Copies[j] = true
+			}
+		}
+		if al, ok := v.(*ssa.Alloc); ok {
+			if _, st := structOf(pointee(al.Type())); st != nil {
+				if fields := sharedFields(al, st); len(fields) > 0 {
+					for j := range sum.Copies {
+						if src.Params&bit(j) != 0 {
+							if sum.Partial == nil {
+								sum.Partial = map[int][]string{}
+							}
+							sum.Partial[j] = fields
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1542,11 +1601,44 @@ type report struct {
 	Functions     int               `json:"functions_loaded"`
 	Analyzed      int               `json:"functions_analyzed"`
 	SummaryRounds int               `json:"summary_rounds"`
+	Converged     bool              `json:"summaries_converged"`
 	Counts        map[string]int    `json:"counts"`
 	Hits          []hit             `json:"hits"`
 	Mappers       []string          `json:"population_mappers"`
 	Controls      map[string]string `json:"controls"`
 	AllControlsOK bool              `json:"all_controls_detected"`
+}
+
+func (a *analysis) postOrder() []*ssa.Function {
+	inSet := map[*ssa.Function]bool{}
+	for _, fn := range a.fns {
+		inSet[fn] = true
+	}
+	seen := map[*ssa.Function]bool{}
+	var out []*ssa.Function
+	var visit func(fn *ssa.Function)
+	visit = func(fn *ssa.Function) {
+		if seen[fn] {
+			return
+		}
+		seen[fn] = true
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				if call, ok := ins.(ssa.CallInstruction); ok {
+					for _, g := range a.calleesOf(call) {
+						if inSet[g] {
+							visit(g)
+						}
+					}
+				}
+			}
+		}
+		out = append(out, fn)
+	}
+	for _, fn := range a.fns {
+		visit(fn)
+	}
+	return out
 }
 
 func (a *analysis) entriesReaching(fn *ssa.Function) (int, []string) {
@@ -1670,11 +1762,13 @@ func main() {
 	}
 	r := report{Author: "NOR-160 lane (Claude), 30 October 2026", Target: spec, Loader: "maintained internal/workcensus.LoadProgram", Functions: len(p.Functions), Analyzed: len(a.fns), Counts: map[string]int{}, Controls: map[string]string{}}
 
-	// Summaries to a fixpoint.
-	for round := 1; round <= 10; round++ {
+	// Summaries to a fixpoint, callees before callers.
+	collectMutatedTypes(a.fns)
+	order := a.postOrder()
+	for round := 1; round <= 40; round++ {
 		r.SummaryRounds = round
 		changed := false
-		for _, fn := range a.fns {
+		for _, fn := range order {
 			s := a.analyzeFn(fn)
 			a.states[fn] = s
 			sum := a.summarize(fn, s)
@@ -1684,6 +1778,7 @@ func main() {
 			}
 		}
 		if !changed {
+			r.Converged = true
 			break
 		}
 	}
@@ -1742,6 +1837,9 @@ func main() {
 				}
 				if !s.intro[v] {
 					continue
+				}
+				if call, ok := v.(*ssa.Call); ok && a.receivedAcross(fn, call) {
+					continue // the caller of a public read received it
 				}
 				d := a.derived(fn, s, []ssa.Value{v}, true)
 
@@ -1985,8 +2083,33 @@ func main() {
 				if st == nil {
 					continue
 				}
+				if !s.src[al].Retained && !s.src[al].Unknown {
+					continue // shared with a value the caller owns; callers passing retained values are judged below
+				}
 				for _, f := range sharedFields(al, st) {
-					add("K7", fn, al.Pos(), n.Obj().Name()+"."+f+" is shared with the source")
+					add("K7", fn, al.Pos(), n.Obj().Name()+"."+f+" is shared with a retained source")
+				}
+			}
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(*ssa.Call)
+				if !ok {
+					continue
+				}
+				args := callArgs(call.Common())
+				for _, g := range a.calleesOf(call) {
+					sg := a.sums[g]
+					if sg == nil {
+						continue
+					}
+					for j, fields := range sg.Partial {
+						if j < len(args) && s.val(args[j]).Retained {
+							for _, f := range fields {
+								add("K7", fn, call.Pos(), strings.TrimPrefix(fullName(g), module+"/")+" keeps "+f+" of a retained value shared")
+							}
+						}
+					}
 				}
 			}
 		}
@@ -2076,6 +2199,46 @@ func main() {
 	}
 	if err := os.WriteFile(output, data, 0o644); err != nil {
 		panic(err)
+	}
+}
+
+// mutatedTypes: struct types whose fields some function writes in a value it
+// did not allocate itself. A pointer to any other struct type is an immutable
+// record: sharing it shares nothing a caller can change.
+var mutatedTypes = map[*types.Named]bool{}
+
+func immutableReferent(t types.Type) bool {
+	p := pointee(t)
+	if p == nil {
+		return false
+	}
+	n, st := structOf(p)
+	if st == nil {
+		return false
+	}
+	return !mutatedTypes[n]
+}
+
+func collectMutatedTypes(fns []*ssa.Function) {
+	for _, fn := range fns {
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				st, ok := ins.(*ssa.Store)
+				if !ok {
+					continue
+				}
+				fa, ok := st.Addr.(*ssa.FieldAddr)
+				if !ok {
+					continue
+				}
+				if _, own := fa.X.(*ssa.Alloc); own {
+					continue
+				}
+				if n, _ := structOf(pointee(fa.X.Type())); n != nil {
+					mutatedTypes[n] = true
+				}
+			}
+		}
 	}
 }
 
@@ -2213,7 +2376,7 @@ func sharedFields(al *ssa.Alloc, st *types.Struct) []string {
 	var out []string
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
-		if !reference(f.Type()) {
+		if !reference(f.Type()) || immutableReferent(f.Type()) {
 			continue
 		}
 		if (whole && !overwritten[i]) || direct[i] {
