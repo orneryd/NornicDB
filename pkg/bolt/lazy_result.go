@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
@@ -64,7 +65,7 @@ func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, ex
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
 	// Bolt owns this deadline, so it marks the timeout for any executor.
-	err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
+	err = nornicerrors.MarkStatementTimeout(err, bulk.Cause(ctx))
 	err = nornicerrors.NormalizeTerminalOutcome(err)
 	lazy.result, lazy.err, lazy.finished = result, err, true
 	if lazy.helperDone == nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -83,7 +84,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 
 	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
-	if r.Context().Err() != nil {
+	if bulk.ObserveContext(r.Context()) != nil {
 		return
 	}
 
@@ -193,7 +194,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	} else {
 		canRead := s.databaseReadPredicate(getClaims(r))
 		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
-		if r.Context().Err() != nil {
+		if bulk.ObserveContext(r.Context()) != nil {
 			return
 		}
 		anyReadable, allReadable := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), canRead)
@@ -248,7 +249,7 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 			}); ok {
 				for _, ns := range lister.ListNamespaces() {
 					select {
-					case <-r.Context().Done():
+					case <-bulk.Done(r.Context()):
 						return
 					default:
 					}
@@ -278,7 +279,7 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 		databases := s.dbManager.ListDatabases()
 		for _, dbInfo := range databases {
 			select {
-			case <-r.Context().Done():
+			case <-bulk.Done(r.Context()):
 				return
 			default:
 			}
