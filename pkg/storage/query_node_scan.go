@@ -61,5 +61,5 @@ func (opts StreamNodesOptions) readVisibility() readVisibility {
 }
 
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
-	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
+	return copyShaped(node, opts.Projection, opts.StripEmbeddings)
 }

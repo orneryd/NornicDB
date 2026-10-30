@@ -53,7 +53,7 @@ type transactionNodeRead struct {
 
 func cloneTransactionNode(node *Node, policy transactionNodeRead) *Node {
 	if policy.projected {
-		return projectCachedNodeForRead(node, policy.properties, true)
+		return copyShaped(node, policy.properties, true)
 	}
 	return copyNode(node)
 }
