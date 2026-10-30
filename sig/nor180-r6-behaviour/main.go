@@ -109,6 +109,24 @@ func renderProbe(t types.Type) bool {
 	return false
 }
 
+// methodNamed reports whether t is an interface (or pointer to one) with a
+// method of the given name.
+func methodNamed(t types.Type, name string) bool {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	iface, ok := t.Underlying().(*types.Interface)
+	if !ok {
+		return false
+	}
+	for i := 0; i < iface.NumMethods(); i++ {
+		if iface.Method(i).Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func hasErrorParam(sig *types.Signature) bool {
 	for i := 0; i < sig.Params().Len(); i++ {
 		if isError(sig.Params().At(i).Type()) {
@@ -228,13 +246,16 @@ func main() {
 	// Planted control outside every owner package: it composes two errors three
 	// ways, selects a status code, provides a status by type, defaults a status
 	// when an error has none, and renders diagnostics with a dispatch of its own.
-	// The enumeration must report all eight kinds.
+	// It also discovers a terminal outcome carrier with a walk of its own.
+	// The enumeration must report all nine kinds.
 	control := "// Analysis-only planted control, never a product change.\npackage nor180behaviourcontrol\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\n" +
 		"func Join(primary, cleanup error) error { return errors.Join(primary, cleanup) }\n\n" +
 		"func Wrap(primary, cleanup error) error { return fmt.Errorf(\"%w: %w\", primary, cleanup) }\n\n" +
 		"type pair struct{ a, b error }\n\nfunc (p pair) Error() string { return p.a.Error() }\n\nfunc (p pair) Unwrap() []error { return []error{p.a, p.b} }\n\n" +
 		"type statusErr struct{}\n\nfunc (statusErr) Error() string { return \"control\" }\n\nfunc (statusErr) BoltErrorCode() string { return \"Neo.ClientError.Statement.SyntaxError\" }\n\n" +
 		"type diagnostic interface{ StatusDiagnostic() string }\n\n" +
+		"type carrier interface{ terminalOutcomeView() string }\n\n" +
+		"func Find(err error) bool {\n\tfor err != nil {\n\t\tif _, ok := err.(carrier); ok {\n\t\t\treturn true\n\t\t}\n\t\tw, ok := err.(interface{ Unwrap() error })\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\terr = w.Unwrap()\n\t}\n\treturn false\n}\n\n" +
 		"func Render(err error) string {\n\tvar d diagnostic\n\tif errors.As(err, &d) {\n\t\treturn err.Error() + \"\\n\" + d.StatusDiagnostic()\n\t}\n\treturn err.Error()\n}\n\n" +
 		"func Status(err error) string {\n\tvar coder interface{ BoltErrorCode() string }\n\tif errors.As(err, &coder) {\n\t\treturn coder.BoltErrorCode()\n\t}\n\treturn \"Neo.DatabaseError.Transaction.TransactionRollbackFailed\"\n}\n"
 	controlPath := filepath.Join(subject, "internal", "nor180behaviourcontrol", "control.go")
@@ -304,6 +325,7 @@ func main() {
 	seen := map[*ssa.Function]bool{}
 	edges := map[*ssa.Function][]*ssa.Function{}
 	dispatch := map[*ssa.Function]bool{}
+	carrierProbe, unwrapProbe := map[*ssa.Function]bool{}, map[*ssa.Function]bool{}
 	for _, fn := range all {
 		if fn == nil || seen[fn] || !strings.Contains(fn.String(), module) || fn.Synthetic != "" && fn.Synthetic != "bound" && fn.Synthetic != "package initializer" {
 			continue
@@ -335,6 +357,16 @@ func main() {
 				}
 				if ta, ok := ins.(*ssa.TypeAssert); ok && renderProbe(ta.AssertedType) {
 					dispatch[fn] = true
+				}
+				// Terminal outcome discovery: testing a value for the carrier
+				// method and walking Unwrap in the same function.
+				if ta, ok := ins.(*ssa.TypeAssert); ok {
+					if methodNamed(ta.AssertedType, "terminalOutcomeView") {
+						carrierProbe[fn] = true
+					}
+					if methodNamed(ta.AssertedType, "Unwrap") {
+						unwrapProbe[fn] = true
+					}
 				}
 				for _, op := range ins.Operands(nil) {
 					if c, ok := (*op).(*ssa.Const); ok && c.Value != nil && c.Value.Kind() == constant.String {
@@ -472,6 +504,11 @@ func main() {
 			}
 		}
 	}
+	for fn := range seen {
+		if carrierProbe[fn] && unwrapProbe[fn] {
+			add(fn, finding{"carrier-discovery", position(fn.Pos()), "tests for a terminal outcome carrier while walking Unwrap"})
+		}
+	}
 	rows := make([]*member, 0, len(members))
 	for _, m := range members {
 		sort.Slice(m.Findings, func(i, j int) bool {
@@ -488,7 +525,7 @@ func main() {
 			}
 		}
 	}
-	controlOK := controlKinds["status-default"] && controlKinds["status-provider"] && controlKinds["errors.Join"] && controlKinds["fmt.Errorf-multi-%w"] && controlKinds["multi-error-type"] && controlKinds["status-code"] && controlKinds["combiner-signature"] && controlKinds["render-dispatch"]
+	controlOK := controlKinds["status-default"] && controlKinds["status-provider"] && controlKinds["errors.Join"] && controlKinds["fmt.Errorf-multi-%w"] && controlKinds["multi-error-type"] && controlKinds["status-code"] && controlKinds["combiner-signature"] && controlKinds["render-dispatch"] && controlKinds["carrier-discovery"]
 	if !controlOK {
 		panic(fmt.Sprintf("planted control not fully detected: %v", controlKinds))
 	}
