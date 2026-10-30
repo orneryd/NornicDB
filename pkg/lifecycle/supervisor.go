@@ -25,8 +25,9 @@ const ShutdownTimeout = 30 * time.Second
 // Reverse order = drain order (the OBS-08 contract — encoded by the
 // caller's slice order).
 //
-// Run returns compose.Outcomes(runErr, shutdownErr) so callers observe both
-// the trigger and any cleanup failures. A clean signal-driven exit
+// Run retains every Start completion as well as shutdown failures, composed
+// by compose.Outcomes, so callers observe sibling outcomes as well as the
+// cancellation trigger. A clean signal-driven exit
 // returns nil.
 //
 // Critical correctness properties enforced here:
@@ -48,17 +49,25 @@ func Run(parent context.Context, components ...Component) error {
 	defer stop()
 
 	g, gctx := errgroup.WithContext(ctx)
+	var outcomes Outcomes
 	for _, c := range components {
 		c := c // capture loop variable for closure
 		g.Go(func() error {
 			if err := c.Start(gctx); err != nil {
-				return fmt.Errorf("%s: %w", c.Name(), err)
+				result := fmt.Errorf("%s: %w", c.Name(), err)
+				outcomes.Record("", result)
+				return result
 			}
 			return nil
 		})
 	}
 
 	runErr := g.Wait()
+	if runErr != nil {
+		// errgroup owns first-error cancellation. The lifetime accumulator owns
+		// every actual completion, including siblings returning after that signal.
+		runErr = outcomes.Err()
+	}
 
 	// OBS-09: fresh context derived from Background, NOT the cancelled gctx.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
