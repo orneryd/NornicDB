@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -198,6 +199,7 @@ type BadgerEngine struct {
 	notificationDraining               bool
 	closeMu                            sync.Mutex
 	txnWG                              sync.WaitGroup
+	retirementOutcomes                 lifecycle.Outcomes // joined after admitted helpers complete
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
