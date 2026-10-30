@@ -462,8 +462,12 @@ func main() {
 		if fn.Pkg != nil && fn.Pkg.Pkg.Path() == module+"pkg/errors" {
 			continue
 		}
+		// A call is an edge as a static callee and again as a function
+		// reference; report each caller/entry pair once.
+		reported := map[*ssa.Function]bool{}
 		for _, next := range edges[fn] {
-			if entries[next] {
+			if entries[next] && !reported[next] {
+				reported[next] = true
 				add(fn, finding{"render-caller", position(fn.Pos()), strings.TrimPrefix(next.String(), module) + " " + relation(next)})
 			}
 		}
