@@ -1,21 +1,43 @@
 // NOR-160 lane (Claude), 30 October 2026. Analysis-only client, not product code.
-// Consumer-closed population over the maintained workcensus typed/SSA loader:
 //
-//  1. every consumer of a node or edge delivery: each function value passed to any
-//     call as a callback that receives nodes or edges (stream visitors, transaction
-//     stream emitters, wrapper forwarders; storage_reader marks a pkg/storage
-//     function or storage interface method as the deliverer), with every
-//     copier it applies to its delivery, directly or through the helpers and
-//     closures it hands the delivery to;
-//  2. every overlay view: each caller of the write-behind overlay owner and of the
-//     exported WriteBehindBuffer readers, with every copier applied to the result;
-//  3. every caller-copy implementation: each type implementing callerowned.Copier,
-//     each CallerCopy/callerOwned function, and the exported reference fields of the
-//     copied type that the implementation (with its module helpers) never assigns.
+// Family census by value flow, over the maintained workcensus typed/SSA loader.
+// Membership comes from the code: every value of a family type (storage Node and
+// Edge, any module type that contains one, any module type that declares
+// CallerCopy) carries an origin computed through calls, interface and closure
+// callees (VTA), function-valued arguments, locals, slices and maps:
 //
-// Planted controls (virtual file of pkg/storage) must be reported: a consumer that
-// copies an owned delivery again, and a Copier omitting a graph-bearing field; a
-// complete Copier must not be. No product code executes.
+//	retained  read out of a container held by an object (a cache, buffer,
+//	          pending map, snapshot population, global);
+//	copy      a fresh value filled from another value of its own type;
+//	decoded   a fresh value not filled from another family value;
+//	param i   parameter i passed through;
+//	funcres i the result of calling function-valued parameter i.
+//
+// Classes (no allowlist: owners are reported like everything else):
+//
+//	K0 retained escape     an exported function returns or visits a retained value.
+//	K1 copy before select  a copy (or an element of a copied population) reaches a
+//	                       function exit or its own next iteration undelivered.
+//	                       Reading or measuring is not delivery; a bool callback is
+//	                       a selection, not a delivery.
+//	K1e                    the same, only on a path that returns a non-nil error.
+//	K2 admission abandon   a copy stored into a retention point on one path and
+//	                       dropped on another.
+//	K3 partial consumption a copied population iterated by a loop that a call's
+//	                       result can leave early (callback stop, error).
+//	K4 ownership dispatch  one value merges an uncopied value and a copy of it.
+//	K4b Copier dispatch    Copier assertions and CallerCopy calls; a second
+//	                       CallerCopy reachable after a first one in a function.
+//	K5 population copy     a loop stores copies of the elements it iterates.
+//	                       Mappers (loops storing a function parameter's result)
+//	                       are listed separately: the one slice owner is a mapper.
+//	K6 copy of private     an unconditional copier applied to a value made for
+//	                       this read (decoded or already copied).
+//	K7 partial copier      a copy of a family type that keeps a reference field of
+//	                       its source.
+//
+// Planted controls (virtual file in pkg/storage, compiles on every revision)
+// must each be reported in their class; the clean controls must not be.
 package main
 
 import (
@@ -36,222 +58,381 @@ import (
 const module = "github.com/orneryd/nornicdb"
 const storagePkg = module + "/pkg/storage"
 
-// ownerControlFile plants a second Copier dispatch rule inside the owner
-// package; it declares its own interface so it compiles on every revision.
-const ownerControlFile = `package callerowned
-
-func nor160ControlSecondDispatch(v any) any {
-	if c, ok := v.(interface{ CallerCopy() any }); ok {
-		return c.CallerCopy()
-	}
-	return v
-}
-`
-
 const controlFile = `package storage
 
-// NOR160ControlSecondCopy consumes an owned label-stream delivery and copies it again.
-func NOR160ControlSecondCopy(b *BadgerEngine) []*Node {
-	var out []*Node
-	_ = b.StreamNodesByLabelProjectedInScope("", "L", nil, func(n *Node) error {
-		out = append(out, copyNode(n))
+// NOR160ControlCache is a planted retention point for the census controls.
+type NOR160ControlCache struct {
+	nodes map[NodeID]*Node
+	max   int
+}
+
+// K0: a retained node handed out without a copy.
+func (c *NOR160ControlCache) GetShared(id NodeID) *Node { return c.nodes[id] }
+
+// K1: copied, then rejected by a selection decision.
+func (c *NOR160ControlCache) GetSelected(id NodeID, hidden func(*Node) bool) *Node {
+	n := copyNode(c.nodes[id])
+	if hidden(n) {
 		return nil
-	})
-	return out
-}
-
-// nor160ControlCloneMap clones a property map with no helper of the tree under
-// analysis, so the controls type-check on every revision (release included).
-func nor160ControlCloneMap(m map[string]any) map[string]any {
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
 	}
-	return out
+	return n
 }
 
-// NOR160ControlCapturedEmitter copies an owned delivery again inside a captured
-// emitter closure, the shape of a transaction stream emitter.
-func NOR160ControlCapturedEmitter(b *BadgerEngine) []*Node {
-	var out []*Node
-	emit := func(n *Node) {
+// K1: a producer that copies on a hit and decodes on a miss; its caller rejects.
+func (c *NOR160ControlCache) nor160Load(id NodeID) *Node {
+	if n, ok := c.nodes[id]; ok {
+		return copyNode(n)
+	}
+	return &Node{ID: id}
+}
+
+func (c *NOR160ControlCache) GetLoaded(id NodeID, hidden func(*Node) bool) *Node {
+	n := c.nor160Load(id)
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
+
+// K5: a second population-copy loop. K1: a selection over its copied population.
+func (c *NOR160ControlCache) nor160CopyAll() []*Node {
+	out := make([]*Node, 0, len(c.nodes))
+	for _, n := range c.nodes {
 		out = append(out, copyNode(n))
 	}
-	_ = b.StreamNodesByLabelProjectedInScope("", "L", nil, func(n *Node) error {
-		emit(n)
-		return nil
-	})
 	return out
 }
 
-// NOR160ControlQueueCopier is a second entity copier: it rebuilds a node from
-// its argument and clones its reference fields without the copy owner.
-func NOR160ControlQueueCopier(node *Node) *Node {
-	clone := *node
-	clone.Labels = append([]string(nil), node.Labels...)
-	clone.Properties = nor160ControlCloneMap(node.Properties)
-	return &clone
-}
-
-// NOR160ControlSliceCopier is a hand-written slice copier beside the slice owner.
-func NOR160ControlSliceCopier(nodes []*Node) []*Node {
-	out := make([]*Node, len(nodes))
-	for i, n := range nodes {
-		out[i] = copyNode(n)
+func (c *NOR160ControlCache) GetUnskipped(skip map[NodeID]bool) []*Node {
+	var out []*Node
+	for _, n := range c.nor160CopyAll() {
+		if skip[n.ID] {
+			continue
+		}
+		out = append(out, n)
 	}
 	return out
 }
 
-// NOR160ControlDispatch is a second Copier dispatch rule beside the owner's.
-func NOR160ControlDispatch(v any) any {
-	if c, ok := v.(interface{ CallerCopy() any }); ok {
-		return c.CallerCopy()
+func nor160ControlSize(n *Node) int { return len(n.Properties) }
+
+// K2: a copy made for cache admission, then abandoned by its budget check.
+func (c *NOR160ControlCache) nor160Admit(n *Node) {
+	cached := copyNode(n)
+	if nor160ControlSize(cached) > c.max {
+		return
 	}
-	return v
+	c.nodes[n.ID] = cached
 }
 
-// NOR160ControlDroppedCopy copies a relationship and may drop the copy on a
-// condition its copy does not decide (the write-behind second copy shape).
-func NOR160ControlDroppedCopy(edge *Edge, deliver bool) *Edge {
-	copied := copyEdge(edge)
-	if deliver {
-		return copied
+func (c *NOR160ControlCache) GetAdmitted(id NodeID) *Node {
+	n := &Node{ID: id, Properties: map[string]interface{}{}}
+	c.nor160Admit(n)
+	return n
+}
+
+// K3: a pre-read copied population that a stopping callback leaves unvisited.
+func (c *NOR160ControlCache) StreamCopied(ids []NodeID, visit func(*Node) error) error {
+	buf := make([]*Node, 0, len(ids))
+	for _, id := range ids {
+		buf = append(buf, copyNode(c.nodes[id]))
+	}
+	for _, n := range buf {
+		if err := visit(n); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// NOR160ControlAbandoned copies a population and abandons it on a path its
-// copies do not decide (the partial cache-miss shape).
-func NOR160ControlAbandoned(edges []*Edge, complete bool) ([]*Edge, bool) {
-	var out []*Edge
-	for _, e := range edges {
-		out = append(out, copyEdge(e))
+// K4: a second ownership dispatcher.
+func nor160ControlDeliver(n *Node, owned bool) *Node {
+	if owned {
+		return n
 	}
-	if !complete {
-		return nil, false
-	}
-	return out, true
+	return copyNode(n)
 }
 
-func nor160ControlExit(edge *Edge) *Edge { return copyEdge(edge) }
-
-// NOR160ControlCopyOfExit copies again what a copying exit already copied.
-func NOR160ControlCopyOfExit(edge *Edge) *Edge {
-	return copyEdge(nor160ControlExit(edge))
+func (c *NOR160ControlCache) GetDispatched(id NodeID, owned bool) *Node {
+	return nor160ControlDeliver(c.nodes[id], owned)
 }
 
-// NOR160ControlStripAfterDelivery strips the vectors of a delivered node in the
-// consumer, after its source copied them (vectors copied then dropped).
-func NOR160ControlStripAfterDelivery(b *BadgerEngine) []*Node {
-	var out []*Node
-	_ = b.StreamNodesByLabelProjectedInScope("", "L", nil, func(n *Node) error {
-		out = append(out, shapeNode(n, nil, true, true))
+// K6: a copy of a node decoded for this read, and a copy of a copy.
+func (c *NOR160ControlCache) GetDecodedCopy(id NodeID) *Node {
+	return copyNode(&Node{ID: id, Properties: map[string]interface{}{"k": []interface{}{int64(1)}}})
+}
+
+func (c *NOR160ControlCache) GetCopyOfCopy(id NodeID) *Node { return copyNode(copyNode(c.nodes[id])) }
+
+// Clean: select on the retained image, then copy once. Must not be reported.
+func (c *NOR160ControlCache) GetClean(id NodeID, hidden func(*Node) bool) *Node {
+	n := c.nodes[id]
+	if n == nil || hidden(n) {
 		return nil
-	})
-	return out
+	}
+	return copyNode(n)
 }
 
-// NOR160ControlShallowEntities copies a retained entity slice shallowly at an exit.
-func NOR160ControlShallowEntities(nodes []*Node) []*Node {
-	return append([]*Node(nil), nodes...)
+// K7: a partial copier of a family type; and a complete one (must not be reported).
+type NOR160ControlHit struct {
+	Node *Node
+	Tags []string
 }
 
-// nor160ControlCloneHit is a clone that leaves a graph-bearing field shared.
-func nor160ControlCloneHit(h *NOR160ControlCompleteHit) *NOR160ControlCompleteHit {
+type NOR160ControlHits struct{ hits map[string]*NOR160ControlHit }
+
+func nor160ControlCloneHit(h *NOR160ControlHit) *NOR160ControlHit {
 	c := *h
-	c.Props = nor160ControlCloneMap(h.Props)
+	c.Tags = append([]string(nil), h.Tags...)
 	return &c
 }
 
-// NOR160ControlPartialHit omits its relationship from its caller copy.
-type NOR160ControlPartialHit struct {
-	Props map[string]any
-	Rel   *Edge
+func nor160ControlCloneHitComplete(h *NOR160ControlHit) *NOR160ControlHit {
+	c := *h
+	c.Tags = append([]string(nil), h.Tags...)
+	c.Node = copyNode(h.Node)
+	return &c
 }
 
-func (h NOR160ControlPartialHit) CallerCopy() any {
-	h.Props = nor160ControlCloneMap(h.Props)
-	return h
-}
+func (s *NOR160ControlHits) GetHit(k string) *NOR160ControlHit { return nor160ControlCloneHit(s.hits[k]) }
 
-// NOR160ControlCompleteHit copies every reference field.
-type NOR160ControlCompleteHit struct {
-	Props map[string]any
-	Rel   *Edge
-}
-
-func (h NOR160ControlCompleteHit) CallerCopy() any {
-	h.Props = nor160ControlCloneMap(h.Props)
-	h.Rel = copyEdge(h.Rel)
-	return h
+func (s *NOR160ControlHits) GetHitComplete(k string) *NOR160ControlHit {
+	return nor160ControlCloneHitComplete(s.hits[k])
 }
 `
 
-// Structural copiers of a delivered entity or value. shapeNode copies only when its
-// owned argument is not the constant true.
-var copierNames = map[string]bool{
-	storagePkg + ".copyNode": true, storagePkg + ".copyNodeWithoutEmbeddings": true, storagePkg + ".copyEdge": true,
-	storagePkg + ".CopyNode": true, storagePkg + ".CopyEdge": true, storagePkg + ".projectCachedNodeForRead": true,
-	storagePkg + ".shapeNode": true, storagePkg + ".copyImagesForCaller": true, storagePkg + ".copyPropertyValue": true,
-	"(*" + storagePkg + ".Node).CallerCopy": true, "(*" + storagePkg + ".Edge).CallerCopy": true,
-	module + "/pkg/callerowned.Value": true, module + "/pkg/callerowned.Map": true, module + "/pkg/callerowned.List": true,
-	module + "/pkg/callerowned.Rows": true, module + "/pkg/callerowned.RowsObservingMaps": true, module + "/pkg/callerowned.Of": true,
-	storagePkg + ".deliverEdge": true, storagePkg + ".deliverEdges": true, storagePkg + ".deliverNode": true, storagePkg + ".deliverNodes": true,
+// control: a planted function and the class that must report it.
+type control struct {
+	class, fn string
+	clean     bool
+}
+
+var controls = []control{
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetShared", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetSelected", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetLoaded", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetUnskipped", false},
+	{"K2", "(*" + storagePkg + ".NOR160ControlCache).nor160Admit", false},
+	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamCopied", false},
+	{"K4", storagePkg + ".nor160ControlDeliver", false},
+	{"K5", "(*" + storagePkg + ".NOR160ControlCache).nor160CopyAll", false},
+	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedCopy", false},
+	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetCopyOfCopy", false},
+	{"K7", storagePkg + ".nor160ControlCloneHit", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
+	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
+	{"K7", storagePkg + ".nor160ControlCloneHitComplete", true},
 }
 
 var tree string
 
-type consumer struct {
-	Consumer    string   `json:"consumer"`
-	File        string   `json:"file"`
-	Line        int      `json:"line"`
-	Callee      string   `json:"delivered_by"`
-	FromStorage bool     `json:"storage_reader"`
-	Site        string   `json:"call_site"`
-	Copies      []string `json:"copies_of_delivery,omitempty"`
-	Strips      []string `json:"strips_delivery_vectors,omitempty"`
-	Retains     bool     `json:"retains_delivery"`
+// ---------------------------------------------------------------- origins
+
+type org struct {
+	Copy, Retained, Decoded, Unknown bool
+	Params, FuncRes                  uint64
 }
 
-type view struct {
-	Function string   `json:"function"`
-	File     string   `json:"file"`
-	Line     int      `json:"line"`
-	Reader   string   `json:"reads"`
-	Copies   []string `json:"copies_of_result,omitempty"`
+func (o org) or(p org) org {
+	return org{o.Copy || p.Copy, o.Retained || p.Retained, o.Decoded || p.Decoded, o.Unknown || p.Unknown, o.Params | p.Params, o.FuncRes | p.FuncRes}
 }
 
-type copierImpl struct {
-	Implementation string   `json:"implementation"`
-	File           string   `json:"file"`
-	Line           int      `json:"line"`
-	Type           string   `json:"copied_type"`
-	Fields         []string `json:"reference_fields"`
-	Unassigned     []string `json:"unassigned_reference_fields,omitempty"`
+func (o org) empty() bool { return o == (org{}) }
+
+// private: only values made for this read (decoded or copied here).
+func (o org) private() bool {
+	return !o.empty() && !o.Retained && !o.Unknown && o.Params == 0 && o.FuncRes == 0
 }
 
-type report struct {
-	Author        string          `json:"author"`
-	Target        string          `json:"target"`
-	Loader        string          `json:"loader"`
-	Functions     int             `json:"functions_loaded"`
-	Consumers     []consumer      `json:"delivery_consumers"`
-	Views         []view          `json:"overlay_views"`
-	CopierTypes   []string        `json:"copier_types"`
-	Copiers       []copierImpl    `json:"caller_copy_implementations"`
-	CopySites     []string        `json:"copier_call_sites"`
-	EntityCopiers []string        `json:"independent_entity_copiers"`
-	SliceCopiers  []string        `json:"slice_copiers"`
-	Dispatchers   []string        `json:"copier_dispatch_rules"`
-	OwnerDispatch []string        `json:"owner_dispatch_functions"`
-	DroppedCopies []string        `json:"copies_that_may_be_dropped"`
-	SecondCopies  []string        `json:"copies_of_copies"`
-	ReadEntries   int             `json:"read_entry_points"`
-	ReadReach     int             `json:"read_path_functions"`
-	ShallowCopies []string        `json:"shallow_entity_copies"`
-	Controls      map[string]bool `json:"controls_detected"`
-	AllControlsOK bool            `json:"all_controls_detected"`
+func (o org) overlaps(p org) bool {
+	return o.Params&p.Params != 0 || (o.Retained && p.Retained) || (o.Decoded && p.Decoded) || (o.Unknown && p.Unknown) || o.FuncRes&p.FuncRes != 0
 }
+
+func bit(i int) uint64 {
+	if i < 0 || i >= 64 {
+		return 0
+	}
+	return 1 << uint(i)
+}
+
+type summary struct {
+	Ret     []org
+	Escapes []bool
+	Copies  []bool
+}
+
+type memKey struct {
+	base  ssa.Value
+	field int
+}
+
+type fnState struct {
+	o     map[ssa.Value]org
+	mem   map[memKey]org
+	src   map[ssa.Value]org  // copies of a known source: the origin of what each copies
+	intro map[ssa.Value]bool // calls and allocations that introduce a copy here
+	res   map[*ssa.Call][]org
+}
+
+func (s *fnState) val(v ssa.Value) org {
+	switch x := v.(type) {
+	case *ssa.Const, *ssa.Function, *ssa.Builtin, nil:
+		return org{}
+	case *ssa.Global:
+		if family(x.Type()) {
+			return org{Retained: true}
+		}
+		return org{}
+	}
+	return s.o[v]
+}
+
+type analysis struct {
+	p       *workcensus.Program
+	fns     []*ssa.Function
+	sums    map[*ssa.Function]*summary
+	states  map[*ssa.Function]*fnState
+	callees map[ssa.CallInstruction][]*ssa.Function
+	callers map[*ssa.Function][]*ssa.Function
+}
+
+// ---------------------------------------------------------------- types
+
+var famMemo = map[types.Type]bool{}
+
+func family(t types.Type) bool {
+	t = types.Unalias(t)
+	if v, ok := famMemo[t]; ok {
+		return v
+	}
+	v := familyRec(t, map[types.Type]bool{})
+	famMemo[t] = v
+	return v
+}
+
+func familyRec(t types.Type, seen map[types.Type]bool) bool {
+	t = types.Unalias(t)
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	switch x := t.(type) {
+	case *types.Pointer:
+		return familyRec(x.Elem(), seen)
+	case *types.Slice:
+		return familyRec(x.Elem(), seen)
+	case *types.Array:
+		return familyRec(x.Elem(), seen)
+	case *types.Map:
+		return familyRec(x.Elem(), seen)
+	case *types.Chan:
+		return familyRec(x.Elem(), seen)
+	case *types.Tuple:
+		for i := 0; i < x.Len(); i++ {
+			if familyRec(x.At(i).Type(), seen) {
+				return true
+			}
+		}
+		return false
+	case *types.Named:
+		obj := x.Obj()
+		if obj.Pkg() == nil || !inModulePath(obj.Pkg().Path()) {
+			return false
+		}
+		if obj.Pkg().Path() == storagePkg && (obj.Name() == "Node" || obj.Name() == "Edge") {
+			return true
+		}
+		if declaresCallerCopy(x) {
+			return true
+		}
+		return familyRec(x.Underlying(), seen)
+	case *types.Struct:
+		for i := 0; i < x.NumFields(); i++ {
+			if familyRec(x.Field(i).Type(), seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func declaresCallerCopy(n *types.Named) bool {
+	for _, t := range []types.Type{n, types.NewPointer(n)} {
+		ms := types.NewMethodSet(t)
+		for i := 0; i < ms.Len(); i++ {
+			if ms.At(i).Obj().Name() == "CallerCopy" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func inModulePath(path string) bool { return path == module || strings.HasPrefix(path, module+"/") }
+
+// container: a map, slice or array (of family values).
+func container(t types.Type) bool {
+	switch types.Unalias(t).Underlying().(type) {
+	case *types.Map, *types.Slice, *types.Array:
+		return true
+	}
+	return false
+}
+
+func reference(t types.Type) bool {
+	switch types.Unalias(t).Underlying().(type) {
+	case *types.Pointer, *types.Map, *types.Slice, *types.Interface, *types.Chan:
+		return true
+	}
+	return false
+}
+
+func structOf(t types.Type) (*types.Named, *types.Struct) {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok {
+		return nil, nil
+	}
+	s, ok := n.Underlying().(*types.Struct)
+	if !ok {
+		return nil, nil
+	}
+	return n, s
+}
+
+func pointee(t types.Type) types.Type {
+	if p, ok := types.Unalias(t).Underlying().(*types.Pointer); ok {
+		return p.Elem()
+	}
+	return nil
+}
+
+func resultTypes(sig *types.Signature) []types.Type {
+	var out []types.Type
+	for i := 0; i < sig.Results().Len(); i++ {
+		out = append(out, sig.Results().At(i).Type())
+	}
+	return out
+}
+
+func isNilConst(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	return ok && c.Value == nil
+}
+
+func isBoolResult(sig *types.Signature) bool {
+	if sig.Results().Len() != 1 {
+		return false
+	}
+	b, ok := sig.Results().At(0).Type().Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Bool
+}
+
+func isErrorType(t types.Type) bool {
+	return types.Identical(t, types.Universe.Lookup("error").Type())
+}
+
+// ---------------------------------------------------------------- helpers
 
 func inModule(fn *ssa.Function) bool {
 	for fn != nil && fn.Pkg == nil {
@@ -260,8 +441,7 @@ func inModule(fn *ssa.Function) bool {
 	if fn == nil || fn.Pkg == nil {
 		return false
 	}
-	path := fn.Pkg.Pkg.Path()
-	return path == module || strings.HasPrefix(path, module+"/")
+	return inModulePath(fn.Pkg.Pkg.Path())
 }
 
 func pos(fn *ssa.Function, p token.Pos) (string, int) {
@@ -281,7 +461,7 @@ func isTestFile(fn *ssa.Function) bool {
 	return strings.HasSuffix(file, "_test.go")
 }
 
-func origin(fn *ssa.Function) *ssa.Function {
+func originFn(fn *ssa.Function) *ssa.Function {
 	if fn != nil && fn.Origin() != nil {
 		return fn.Origin()
 	}
@@ -289,935 +469,1133 @@ func origin(fn *ssa.Function) *ssa.Function {
 }
 
 func fullName(fn *ssa.Function) string {
-	fn = origin(fn)
-	if fn.Pkg == nil || fn.Signature.Recv() != nil {
+	fn = originFn(fn)
+	if fn.Pkg == nil || fn.Signature.Recv() != nil || fn.Parent() != nil {
 		return fn.String()
 	}
 	return fn.Pkg.Pkg.Path() + "." + fn.Name()
 }
 
-func staticCallee(c *ssa.CallCommon) *ssa.Function {
-	if c.IsInvoke() {
-		return nil
+func top(fn *ssa.Function) *ssa.Function {
+	for fn.Parent() != nil {
+		fn = fn.Parent()
 	}
-	switch v := c.Value.(type) {
-	case *ssa.Function:
+	return fn
+}
+
+func exported(fn *ssa.Function) bool {
+	fn = originFn(fn)
+	if fn.Parent() != nil || fn.Pkg == nil || !token.IsExported(fn.Name()) || !inModule(fn) {
+		return false
+	}
+	if recv := fn.Signature.Recv(); recv != nil {
+		t := recv.Type()
+		if p := pointee(t); p != nil {
+			t = p
+		}
+		if n, ok := types.Unalias(t).(*types.Named); ok && !n.Obj().Exported() {
+			return false
+		}
+	}
+	return true
+}
+
+func paramIndex(fn *ssa.Function, v ssa.Value) int {
+	for i, p := range fn.Params {
+		if p == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// local: memory this function allocated itself.
+func local(v ssa.Value) bool {
+	switch x := v.(type) {
+	case *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap:
+		return true
+	case *ssa.Slice:
+		return local(x.X)
+	}
+	return false
+}
+
+func localBase(v ssa.Value) ssa.Value {
+	switch x := v.(type) {
+	case *ssa.Alloc, *ssa.MakeSlice, *ssa.MakeMap:
 		return v
-	case *ssa.MakeClosure:
-		f, _ := v.Fn.(*ssa.Function)
-		return f
+	case *ssa.Slice:
+		return localBase(x.X)
 	}
 	return nil
 }
 
-func calleeName(c *ssa.CallCommon) string {
-	if c.IsInvoke() {
-		return c.Value.Type().String() + "." + c.Method.Name()
-	}
-	if f := staticCallee(c); f != nil {
-		return fullName(f)
-	}
-	return ""
-}
-
-// storageEntity: *storage.Node, *storage.Edge, or a slice of either.
-func storageEntity(t types.Type) bool {
-	if s, ok := types.Unalias(t).(*types.Slice); ok {
-		t = s.Elem()
-	}
-	p, ok := types.Unalias(t).(*types.Pointer)
-	if !ok {
-		return false
-	}
-	n, ok := types.Unalias(p.Elem()).(*types.Named)
-	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == storagePkg && (n.Obj().Name() == "Node" || n.Obj().Name() == "Edge")
-}
-
-// deliveryParams: indexes of a callback signature's storage-entity parameters.
-func deliveryParams(t types.Type) []int {
-	sig, ok := t.Underlying().(*types.Signature)
-	if !ok {
-		return nil
-	}
-	var out []int
-	for i := 0; i < sig.Params().Len(); i++ {
-		if storageEntity(sig.Params().At(i).Type()) {
-			out = append(out, i)
+func memKeyOf(addr ssa.Value) (memKey, bool) {
+	switch a := addr.(type) {
+	case *ssa.Alloc:
+		return memKey{a, -1}, true
+	case *ssa.FieldAddr:
+		if b := localBase(a.X); b != nil {
+			return memKey{b, a.Field}, true
 		}
+	case *ssa.IndexAddr:
+		if b := localBase(a.X); b != nil {
+			return memKey{b, -1}, true
+		}
+	}
+	return memKey{}, false
+}
+
+func callArgs(c *ssa.CallCommon) []ssa.Value {
+	if c.IsInvoke() {
+		return append([]ssa.Value{c.Value}, c.Args...)
+	}
+	return c.Args
+}
+
+func (a *analysis) calleesOf(call ssa.CallInstruction) []*ssa.Function {
+	c := call.Common()
+	if f := c.StaticCallee(); f != nil {
+		return []*ssa.Function{f}
+	}
+	return a.callees[call]
+}
+
+// ---------------------------------------------------------------- per-function origins
+
+func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
+	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}}
+	for i, p := range fn.Params {
+		s.o[p] = org{Params: bit(i)}
+	}
+	for _, fv := range fn.FreeVars {
+		if family(fv.Type()) || pointee(fv.Type()) != nil && family(pointee(fv.Type())) {
+			s.o[fv] = org{Unknown: true}
+		}
+	}
+	for iter := 0; iter < 16; iter++ {
+		changed := false
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Store:
+					if k, ok := memKeyOf(x.Addr); ok {
+						n := s.mem[k].or(s.val(x.Val))
+						if n != s.mem[k] {
+							s.mem[k], changed = n, true
+						}
+					}
+				case *ssa.MapUpdate:
+					if base := localBase(x.Map); base != nil {
+						k := memKey{base, -1}
+						n := s.mem[k].or(s.val(x.Value))
+						if n != s.mem[k] {
+							s.mem[k], changed = n, true
+						}
+					}
+				case *ssa.Call:
+					// copy(dst, src) moves elements into dst.
+					if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "copy" && len(x.Call.Args) == 2 {
+						if base := localBase(x.Call.Args[0]); base != nil {
+							k := memKey{base, -1}
+							n := s.mem[k].or(s.val(x.Call.Args[1]))
+							if n != s.mem[k] {
+								s.mem[k], changed = n, true
+							}
+						}
+					}
+				}
+				if v, ok := ins.(ssa.Value); ok {
+					n := a.origin(fn, s, v)
+					if n != s.o[v] {
+						s.o[v], changed = n, true
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return s
+}
+
+func (a *analysis) origin(fn *ssa.Function, s *fnState, v ssa.Value) org {
+	var o org
+	switch x := v.(type) {
+	case *ssa.Alloc:
+		elem := pointee(x.Type())
+		if src, ok := copySource(s, x); ok {
+			s.src[x] = src
+			s.intro[x] = true
+			return org{Copy: true}
+		}
+		all := s.mem[memKey{x, -1}]
+		for k, m := range s.mem {
+			if k.base == x && k.field >= 0 {
+				all = all.or(m)
+			}
+		}
+		if all.empty() && elem != nil && family(elem) {
+			if _, st := structOf(elem); st != nil {
+				return org{Decoded: true}
+			}
+		}
+		return all
+	case *ssa.UnOp:
+		switch x.Op {
+		case token.MUL:
+			o = a.loadOrigin(s, x.X)
+		case token.ARROW:
+			o = s.val(x.X)
+		}
+	case *ssa.Field:
+		o = s.val(x.X)
+	case *ssa.FieldAddr:
+		o = s.val(x.X)
+	case *ssa.IndexAddr:
+		o = s.val(x.X)
+		if b := localBase(x.X); b != nil {
+			o = o.or(s.mem[memKey{b, -1}])
+		}
+	case *ssa.Index:
+		o = s.val(x.X)
+	case *ssa.Lookup:
+		o = s.val(x.X)
+		if b := localBase(x.X); b != nil {
+			o = o.or(s.mem[memKey{b, -1}])
+		}
+	case *ssa.Range:
+		o = s.val(x.X)
+		if b := localBase(x.X); b != nil {
+			o = o.or(s.mem[memKey{b, -1}])
+		}
+	case *ssa.Next:
+		o = s.val(x.Iter)
+	case *ssa.Extract:
+		switch t := x.Tuple.(type) {
+		case *ssa.Call:
+			if rs := s.res[t]; x.Index < len(rs) {
+				o = rs[x.Index]
+			}
+		case *ssa.Next:
+			if x.Index > 0 {
+				o = s.val(t)
+			}
+		default:
+			if x.Index == 0 {
+				o = s.val(x.Tuple)
+			}
+		}
+	case *ssa.Phi:
+		for _, e := range x.Edges {
+			o = o.or(s.val(e))
+		}
+	case *ssa.Slice:
+		o = s.val(x.X)
+		if b := localBase(x.X); b != nil {
+			o = o.or(s.mem[memKey{b, -1}])
+		}
+	case *ssa.MakeSlice, *ssa.MakeMap:
+		o = s.mem[memKey{v, -1}]
+	case *ssa.MakeInterface:
+		o = s.val(x.X)
+	case *ssa.ChangeType:
+		o = s.val(x.X)
+	case *ssa.Convert:
+		o = s.val(x.X)
+	case *ssa.ChangeInterface:
+		o = s.val(x.X)
+	case *ssa.TypeAssert:
+		o = s.val(x.X)
+	case *ssa.SliceToArrayPointer:
+		o = s.val(x.X)
+	case *ssa.MultiConvert:
+		o = s.val(x.X)
+	case *ssa.Call:
+		rs := a.callResults(fn, s, x)
+		s.res[x] = rs
+		for _, r := range rs {
+			o = o.or(r)
+		}
+		return o
+	default:
+		return org{}
+	}
+	if !family(v.Type()) {
+		return org{}
+	}
+	return o
+}
+
+// loadOrigin: the origin of what addr points to.
+func (a *analysis) loadOrigin(s *fnState, addr ssa.Value) org {
+	switch ad := addr.(type) {
+	case *ssa.Alloc:
+		all := s.mem[memKey{ad, -1}]
+		for k, m := range s.mem {
+			if k.base == ad && k.field >= 0 {
+				all = all.or(m)
+			}
+		}
+		return all
+	case *ssa.FieldAddr:
+		if b := localBase(ad.X); b != nil {
+			return s.mem[memKey{b, ad.Field}].or(s.mem[memKey{b, -1}])
+		}
+		ft := pointee(ad.Type())
+		if ft == nil || !family(ft) {
+			return org{}
+		}
+		if container(ft) {
+			return org{Retained: true} // a container held by an object
+		}
+		return s.val(ad.X)
+	case *ssa.IndexAddr:
+		o := s.val(ad.X)
+		if b := localBase(ad.X); b != nil {
+			o = o.or(s.mem[memKey{b, -1}])
+		}
+		return o
+	case *ssa.Global:
+		if family(pointee(ad.Type())) {
+			return org{Retained: true}
+		}
+		return org{}
+	case *ssa.FreeVar:
+		if t := pointee(ad.Type()); t != nil && family(t) {
+			return org{Unknown: true}
+		}
+		return org{}
+	}
+	return s.val(addr)
+}
+
+// copySource: an allocation of a family struct filled from another value of
+// the same type (whole, or field by field) is a copy of it.
+func copySource(s *fnState, alloc *ssa.Alloc) (org, bool) {
+	elem := pointee(alloc.Type())
+	if elem == nil || !family(elem) {
+		return org{}, false
+	}
+	if n, _ := structOf(elem); n == nil {
+		return org{}, false
+	}
+	refs := alloc.Referrers()
+	if refs == nil {
+		return org{}, false
+	}
+	var src org
+	found := false
+	sameSource := func(v ssa.Value) (ssa.Value, bool) {
+		if !types.Identical(v.Type(), elem) {
+			return nil, false
+		}
+		switch x := v.(type) {
+		case *ssa.UnOp:
+			if x.Op == token.MUL {
+				if _, isLocal := x.X.(*ssa.Alloc); !isLocal {
+					return x.X, true
+				}
+			}
+		case *ssa.Parameter, *ssa.Field, *ssa.Index:
+			return v, true
+		case *ssa.Extract:
+			if _, isCall := x.Tuple.(*ssa.Call); !isCall {
+				return v, true
+			}
+		}
+		return nil, false
+	}
+	for _, r := range *refs {
+		switch x := r.(type) {
+		case *ssa.Store:
+			if x.Addr == alloc {
+				if from, ok := sameSource(x.Val); ok {
+					src, found = src.or(s.val(from)), true
+				}
+			}
+		case *ssa.FieldAddr:
+			if fr := x.Referrers(); fr != nil {
+				for _, fref := range *fr {
+					st, ok := fref.(*ssa.Store)
+					if !ok || st.Addr != x {
+						continue
+					}
+					if ld, ok := st.Val.(*ssa.UnOp); ok && ld.Op == token.MUL {
+						if fa, ok := ld.X.(*ssa.FieldAddr); ok && fa.Field == x.Field && types.Identical(pointee(fa.X.Type()), elem) {
+							src, found = src.or(s.val(fa.X)), true
+						}
+					}
+				}
+			}
+		}
+	}
+	return src, found
+}
+
+func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []org {
+	c := call.Common()
+	rts := resultTypes(c.Signature())
+	out := make([]org, len(rts))
+	if bi, ok := c.Value.(*ssa.Builtin); ok {
+		if bi.Name() == "append" && len(out) == 1 && len(c.Args) == 2 {
+			out[0] = s.val(c.Args[0]).or(s.val(c.Args[1]))
+			for _, arg := range c.Args {
+				if b := localBase(arg); b != nil {
+					out[0] = out[0].or(s.mem[memKey{b, -1}])
+				}
+			}
+		}
+		return out
+	}
+	args := callArgs(c)
+	callees := a.calleesOf(call)
+	if len(callees) == 0 {
+		idx := -1
+		if p, ok := c.Value.(*ssa.Parameter); ok {
+			idx = paramIndex(fn, p)
+		}
+		for i, t := range rts {
+			if family(t) {
+				if idx >= 0 {
+					out[i] = org{FuncRes: bit(idx)}
+				} else {
+					out[i] = org{Unknown: true}
+				}
+			}
+		}
+		return out
+	}
+	var src org
+	introduces := false
+	for _, g := range callees {
+		sg := a.sums[g]
+		if sg == nil {
+			for i, t := range rts {
+				if family(t) {
+					out[i].Unknown = true
+				}
+			}
+			continue
+		}
+		for i := 0; i < len(out) && i < len(sg.Ret); i++ {
+			out[i] = out[i].or(a.subst(fn, s, sg.Ret[i], args))
+			if sg.Ret[i].Copy {
+				s.intro[call] = true
+			}
+		}
+		for j, cp := range sg.Copies {
+			if cp && j < len(args) {
+				src, introduces = src.or(s.val(args[j])), true
+			}
+		}
+	}
+	if introduces && len(out) > 0 && out[0].Copy {
+		s.src[call] = src
 	}
 	return out
 }
 
-// deliversFromStorage: the call hands the callback to a storage reader.
-func deliversFromStorage(c *ssa.CallCommon) bool {
-	if c.IsInvoke() {
-		n, ok := types.Unalias(c.Value.Type()).(*types.Named)
-		return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == storagePkg
+func (a *analysis) subst(fn *ssa.Function, s *fnState, o org, args []ssa.Value) org {
+	r := org{Copy: o.Copy, Retained: o.Retained, Decoded: o.Decoded, Unknown: o.Unknown}
+	for j := 0; j < 64; j++ {
+		if o.Params&bit(j) != 0 {
+			if j < len(args) {
+				r = r.or(s.val(args[j]))
+			} else {
+				r.Unknown = true
+			}
+		}
+		if o.FuncRes&bit(j) != 0 {
+			if j < len(args) {
+				r = r.or(a.funcValueResult(fn, s, args[j], args))
+			} else {
+				r.Unknown = true
+			}
+		}
 	}
-	f := staticCallee(c)
-	for f != nil && f.Pkg == nil && f.Parent() != nil {
-		f = f.Parent()
-	}
-	return f != nil && f.Pkg != nil && f.Pkg.Pkg.Path() == storagePkg
+	return r
 }
 
-func callbackFunction(v ssa.Value) *ssa.Function {
+// funcValueResult: what calling the function value v returns, its own
+// parameters standing for the elements the callee passes it.
+func (a *analysis) funcValueResult(fn *ssa.Function, s *fnState, v ssa.Value, args []ssa.Value) org {
+	var g *ssa.Function
 	switch x := v.(type) {
 	case *ssa.Function:
-		return x
+		g = x
 	case *ssa.MakeClosure:
-		f, _ := x.Fn.(*ssa.Function)
-		return f
-	case *ssa.ChangeType:
-		return callbackFunction(x.X)
+		g, _ = x.Fn.(*ssa.Function)
+	case *ssa.Parameter:
+		if i := paramIndex(fn, x); i >= 0 {
+			return org{FuncRes: bit(i)}
+		}
 	}
-	return nil
+	if g == nil {
+		return org{Unknown: true}
+	}
+	sg := a.sums[g]
+	if sg == nil || len(sg.Ret) == 0 {
+		return org{Unknown: true}
+	}
+	o := sg.Ret[0]
+	r := org{Copy: o.Copy, Retained: o.Retained, Decoded: o.Decoded, Unknown: o.Unknown || o.FuncRes != 0}
+	if o.Params != 0 {
+		for _, arg := range args {
+			if _, isFunc := arg.Type().Underlying().(*types.Signature); !isFunc {
+				r = r.or(s.val(arg))
+			}
+		}
+	}
+	return r
 }
 
-// derives reports whether v is (a value-preserving view of) one of roots.
-func derives(v ssa.Value, roots map[ssa.Value]bool, seen map[ssa.Value]bool) bool {
-	if v == nil || seen[v] {
+// ---------------------------------------------------------------- summaries
+
+func (a *analysis) summarize(fn *ssa.Function, s *fnState) *summary {
+	sum := &summary{Ret: make([]org, fn.Signature.Results().Len()), Escapes: make([]bool, len(fn.Params)), Copies: make([]bool, len(fn.Params))}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if ret, ok := ins.(*ssa.Return); ok {
+				for i, r := range ret.Results {
+					if i < len(sum.Ret) {
+						sum.Ret[i] = sum.Ret[i].or(s.val(r))
+					}
+				}
+			}
+		}
+	}
+	for _, src := range s.src {
+		for j := range sum.Copies {
+			if src.Params&bit(j) != 0 {
+				sum.Copies[j] = true
+			}
+		}
+	}
+	for j := range sum.Escapes {
+		for i := range sum.Ret {
+			if sum.Ret[i].Params&bit(j) != 0 {
+				sum.Escapes[j] = true
+			}
+		}
+	}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			for j := range sum.Escapes {
+				if sum.Escapes[j] {
+					continue
+				}
+				has := func(v ssa.Value) bool { return s.val(v).Params&bit(j) != 0 }
+				if a.deliversWith(fn, ins, has) {
+					sum.Escapes[j] = true
+				}
+			}
+		}
+	}
+	return sum
+}
+
+func (a *analysis) equalSummary(x, y *summary) bool {
+	if x == nil || y == nil || len(x.Ret) != len(y.Ret) || len(x.Escapes) != len(y.Escapes) {
 		return false
 	}
-	seen[v] = true
-	if roots[v] {
-		return true
+	for i := range x.Ret {
+		if x.Ret[i] != y.Ret[i] {
+			return false
+		}
 	}
-	switch x := v.(type) {
-	case *ssa.Phi:
-		for _, e := range x.Edges {
-			if derives(e, roots, seen) {
+	for i := range x.Escapes {
+		if x.Escapes[i] != y.Escapes[i] || x.Copies[i] != y.Copies[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// deliversWith: ins hands a value accepted by has to someone outside the
+// function: a return, a store into memory it does not own, a send, a non-bool
+// callback, or a callee that keeps or passes on that parameter.
+func (a *analysis) deliversWith(fn *ssa.Function, ins ssa.Instruction, has func(ssa.Value) bool) bool {
+	switch x := ins.(type) {
+	case *ssa.Return:
+		for _, r := range x.Results {
+			if has(r) {
 				return true
 			}
 		}
-	case *ssa.ChangeType:
-		return derives(x.X, roots, seen)
-	case *ssa.MakeInterface:
-		return derives(x.X, roots, seen)
-	case *ssa.TypeAssert:
-		return derives(x.X, roots, seen)
-	case *ssa.Extract:
-		return derives(x.Tuple, roots, seen)
-	case *ssa.Field:
-		return derives(x.X, roots, seen)
-	case *ssa.FieldAddr:
-		return derives(x.X, roots, seen)
-	case *ssa.Index:
-		return derives(x.X, roots, seen)
-	case *ssa.IndexAddr:
-		return derives(x.X, roots, seen)
-	case *ssa.Lookup:
-		return derives(x.X, roots, seen)
-	case *ssa.Slice:
-		return derives(x.X, roots, seen)
-	case *ssa.Next:
-		return derives(x.Iter, roots, seen)
-	case *ssa.Range:
-		return derives(x.X, roots, seen)
-	case *ssa.UnOp:
-		if x.Op == token.MUL {
-			return derives(x.X, roots, seen)
+	case *ssa.Store:
+		return has(x.Val) && !local(storeBase(x.Addr))
+	case *ssa.MapUpdate:
+		return has(x.Value) && localBase(x.Map) == nil
+	case *ssa.Send:
+		return has(x.X)
+	case ssa.CallInstruction:
+		c := x.Common()
+		if _, ok := c.Value.(*ssa.Builtin); ok {
+			return false
+		}
+		args := callArgs(c)
+		callees := a.calleesOf(x)
+		if len(callees) == 0 {
+			if c.IsInvoke() {
+				for _, arg := range args {
+					if has(arg) {
+						return true
+					}
+				}
+				return false
+			}
+			if isBoolResult(c.Signature()) {
+				return false // a predicate reads its argument
+			}
+			for _, arg := range c.Args {
+				if has(arg) {
+					return true
+				}
+			}
+			return false
+		}
+		for _, g := range callees {
+			sg := a.sums[g]
+			for j, arg := range args {
+				if !has(arg) {
+					continue
+				}
+				if sg == nil || j >= len(sg.Escapes) || sg.Escapes[j] {
+					return true
+				}
+			}
 		}
 	}
 	return false
 }
 
-func constTrue(v ssa.Value) bool {
-	k, ok := v.(*ssa.Const)
-	return ok && k.Value != nil && k.Value.String() == "true"
-}
-
-func constFalse(v ssa.Value) bool {
-	k, ok := v.(*ssa.Const)
-	return ok && k.Value != nil && k.Value.String() == "false"
-}
-
-// splitStrips separates the STRIP findings from the copy findings.
-func splitStrips(all []string) (copies, strips []string) {
-	for _, x := range all {
-		if strings.HasPrefix(x, "STRIP ") {
-			strips = append(strips, strings.TrimPrefix(x, "STRIP "))
-		} else {
-			copies = append(copies, x)
+func storeBase(addr ssa.Value) ssa.Value {
+	switch a := addr.(type) {
+	case *ssa.FieldAddr:
+		if b := localBase(a.X); b != nil {
+			return b
 		}
+		return a.X
+	case *ssa.IndexAddr:
+		if b := localBase(a.X); b != nil {
+			return b
+		}
+		return a.X
 	}
-	return copies, strips
+	return addr
 }
 
-// copiesOf lists every copier fn applies to a value derived from roots, following
-// the module functions and closures it hands such a value to (depth-bounded).
-func copiesOf(fn *ssa.Function, roots map[ssa.Value]bool, depth int, visited map[string]bool) []string {
-	if fn == nil || fn.Blocks == nil || depth > 4 {
-		return nil
+// ---------------------------------------------------------------- derived sets
+
+// derived: the values that are, or hold, the root.
+// With elements false it does not follow element reads: the population as a whole.
+func (a *analysis) derived(fn *ssa.Function, s *fnState, roots []ssa.Value, elements bool) map[ssa.Value]bool {
+	d := map[ssa.Value]bool{}
+	for _, r := range roots {
+		d[r] = true
 	}
-	var out []string
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			call, ok := ins.(ssa.CallInstruction)
-			if !ok {
-				continue
+	in := func(v ssa.Value) bool { return d[v] }
+	for iter := 0; iter < 12; iter++ {
+		changed := false
+		add := func(v ssa.Value) {
+			if v != nil && !d[v] {
+				d[v], changed = true, true
 			}
-			c := call.Common()
-			name := calleeName(c)
-			for i, arg := range c.Args {
-				if !derives(arg, roots, map[ssa.Value]bool{}) {
-					continue
-				}
-				file, line := pos(fn, call.Pos())
-				at := fmt.Sprintf("%s:%d", file, line)
-				if copierNames[name] {
-					if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 && i == 0 && !constFalse(c.Args[2]) && !constFalse(c.Args[3]) {
-						out = append(out, fmt.Sprintf("STRIP %s shapeNode(strip=%s, owned=%s) at %s", fn.Name(), c.Args[2].Name(), c.Args[3].Name(), at))
-					}
-					if strings.HasSuffix(name, ".copyNodeWithoutEmbeddings") {
-						out = append(out, fmt.Sprintf("STRIP %s copyNodeWithoutEmbeddings at %s", fn.Name(), at))
-					}
-					if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 {
-						if constTrue(c.Args[3]) {
-							continue // reshape in place
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Phi:
+					for _, e := range x.Edges {
+						if in(e) {
+							add(x)
 						}
-						if _, isConst := c.Args[3].(*ssa.Const); !isConst {
-							out = append(out, fmt.Sprintf("%s shapeNode(owned=%s) at %s (copies when not owned)", fn.Name(), c.Args[3].Name(), at))
+					}
+				case *ssa.ChangeType:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.MakeInterface:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.Convert:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.ChangeInterface:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.TypeAssert:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.Slice:
+					if in(x.X) {
+						add(x)
+					}
+				case *ssa.Extract:
+					if in(x.Tuple) && family(x.Type()) {
+						if _, isNext := x.Tuple.(*ssa.Next); !isNext || elements {
+							add(x)
+						}
+					}
+				case *ssa.Field:
+					if in(x.X) && family(x.Type()) {
+						add(x)
+					}
+				case *ssa.FieldAddr:
+					if in(x.X) && family(x.Type()) {
+						add(x)
+					}
+				case *ssa.IndexAddr:
+					if in(x.X) && elements {
+						add(x)
+					}
+				case *ssa.Index:
+					if in(x.X) && family(x.Type()) && elements {
+						add(x)
+					}
+				case *ssa.Lookup:
+					if in(x.X) && family(x.Type()) && elements {
+						add(x)
+					}
+				case *ssa.Range:
+					if in(x.X) && elements {
+						add(x)
+					}
+				case *ssa.Next:
+					if in(x.Iter) && elements {
+						add(x)
+					}
+				case *ssa.UnOp:
+					if x.Op == token.MUL {
+						if in(x.X) && family(x.Type()) {
+							add(x)
+						}
+						if b := localBase(x.X); b != nil && in(b) {
+							add(x)
+						}
+						if fa, ok := x.X.(*ssa.FieldAddr); ok {
+							if b := localBase(fa.X); b != nil && in(b) {
+								add(x)
+							}
+						}
+					}
+				case *ssa.Store:
+					if in(x.Val) {
+						if b := localBase(storeBase(x.Addr)); b != nil {
+							add(b)
+						} else if al, ok := x.Addr.(*ssa.Alloc); ok {
+							add(al)
+						}
+					}
+				case *ssa.MapUpdate:
+					if in(x.Value) {
+						if b := localBase(x.Map); b != nil {
+							add(b)
+						}
+					}
+				case *ssa.Call:
+					c := x.Common()
+					if bi, ok := c.Value.(*ssa.Builtin); ok {
+						switch bi.Name() {
+						case "append":
+							for _, arg := range c.Args {
+								if in(arg) {
+									add(x)
+								}
+							}
+						case "copy":
+							if len(c.Args) == 2 && in(c.Args[1]) {
+								if b := localBase(c.Args[0]); b != nil {
+									add(b)
+								}
+							}
+						}
+						continue
+					}
+					args := callArgs(c)
+					for _, g := range a.calleesOf(x) {
+						sg := a.sums[g]
+						if sg == nil {
 							continue
 						}
-					}
-					out = append(out, fmt.Sprintf("%s %s at %s", fn.Name(), name[strings.LastIndex(name, "/")+1:], at))
-					continue
-				}
-				callee := staticCallee(c)
-				if callee == nil {
-					callee = capturedCallee(fn, c)
-				}
-				if callee == nil || !inModule(callee) || callee.Blocks == nil || i >= len(callee.Params) {
-					continue
-				}
-				key := fmt.Sprintf("%s#%d", callee.String(), i)
-				if visited[key] {
-					continue
-				}
-				visited[key] = true
-				out = append(out, copiesOf(callee, map[ssa.Value]bool{callee.Params[i]: true}, depth+1, visited)...)
-			}
-		}
-	}
-	return out
-}
-
-// capturedCallee resolves a call through a closure the function captured from
-// its parent (a transaction stream emitter): a free variable bound to the
-// closure, or to a variable the parent stores the closure in.
-func capturedCallee(fn *ssa.Function, c *ssa.CallCommon) *ssa.Function {
-	if c.IsInvoke() {
-		return nil
-	}
-	v := c.Value
-	byRef := false
-	if load, ok := v.(*ssa.UnOp); ok && load.Op == token.MUL {
-		v, byRef = load.X, true
-	}
-	fv, ok := v.(*ssa.FreeVar)
-	if !ok || fn.Parent() == nil {
-		return nil
-	}
-	index := -1
-	for i, free := range fn.FreeVars {
-		if free == fv {
-			index = i
-		}
-	}
-	if index < 0 {
-		return nil
-	}
-	for _, b := range fn.Parent().Blocks {
-		for _, ins := range b.Instrs {
-			mc, ok := ins.(*ssa.MakeClosure)
-			if !ok || mc.Fn != fn || index >= len(mc.Bindings) {
-				continue
-			}
-			binding := mc.Bindings[index]
-			if !byRef {
-				if f := callbackFunction(binding); f != nil {
-					return f
-				}
-				continue
-			}
-			// The parent stores the closure into the captured variable.
-			for _, pb := range fn.Parent().Blocks {
-				for _, pins := range pb.Instrs {
-					if st, ok := pins.(*ssa.Store); ok && st.Addr == binding {
-						if f := callbackFunction(st.Val); f != nil {
-							return f
+						for j, arg := range args {
+							if !in(arg) {
+								continue
+							}
+							for _, r := range sg.Ret {
+								if r.Params&bit(j) != 0 {
+									add(x)
+								}
+							}
 						}
 					}
 				}
 			}
 		}
-	}
-	return nil
-}
-
-// rebuiltEntityFields: exported reference fields fn assigns on a storage Node or
-// Edge it initialised by copying another entity (clone := *node).
-func rebuiltEntityFields(fn *ssa.Function) []string {
-	copies := map[ssa.Value]*types.Struct{}
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			st, ok := ins.(*ssa.Store)
-			if !ok {
-				continue
-			}
-			load, ok := st.Val.(*ssa.UnOp)
-			if !ok || load.Op != token.MUL {
-				continue
-			}
-			if _, isAlloc := st.Addr.(*ssa.Alloc); !isAlloc || !storageEntity(st.Addr.Type()) {
-				continue
-			}
-			p := types.Unalias(st.Addr.Type()).(*types.Pointer)
-			if s, ok := p.Elem().Underlying().(*types.Struct); ok {
-				copies[st.Addr] = s
-			}
+		if !changed {
+			break
 		}
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			st, ok := ins.(*ssa.Store)
-			if !ok {
-				continue
-			}
-			fa, ok := st.Addr.(*ssa.FieldAddr)
-			if !ok {
-				continue
-			}
-			s, ok := copies[fa.X]
-			if !ok {
-				continue
-			}
-			f := s.Field(fa.Field)
-			if f.Exported() && refBearing(f.Type(), map[types.Type]bool{}) && !seen[f.Name()] {
-				seen[f.Name()] = true
-				out = append(out, f.Name())
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
+	return d
 }
 
-// declaresCallerCopy: an interface type that declares CallerCopy.
-func declaresCallerCopy(t types.Type) bool {
-	iface, ok := t.Underlying().(*types.Interface)
-	if !ok {
+// ---------------------------------------------------------------- drops
+
+type dropKind int
+
+const (
+	noDrop dropKind = iota
+	dropPlain
+	dropError
+)
+
+// presentBranch: if cond is decided by the root (nil checks of the root or of a
+// sibling result of its call, or its ok), the successor index on which the root
+// exists; -1 otherwise.
+func presentBranch(cond ssa.Value, d map[ssa.Value]bool, rootCall *ssa.Call) int {
+	sibling := func(v ssa.Value) (bool, bool) { // (from root call, is the root value itself)
+		if d[v] {
+			return true, true
+		}
+		if ex, ok := v.(*ssa.Extract); ok && rootCall != nil && ex.Tuple == rootCall {
+			return true, false
+		}
+		return false, false
+	}
+	if ok, self := sibling(cond); ok && !self {
+		return 0 // the ok result: present when true
+	}
+	bin, ok := cond.(*ssa.BinOp)
+	if !ok || (bin.Op != token.EQL && bin.Op != token.NEQ) {
+		return -1
+	}
+	for _, pair := range [][2]ssa.Value{{bin.X, bin.Y}, {bin.Y, bin.X}} {
+		if !isNilConst(pair[1]) {
+			continue
+		}
+		from, self := sibling(pair[0])
+		if !from {
+			continue
+		}
+		// root != nil: present on true; err != nil: present on false.
+		presentWhenNonNil := self
+		if bin.Op == token.NEQ {
+			if presentWhenNonNil {
+				return 0
+			}
+			return 1
+		}
+		if presentWhenNonNil {
+			return 1
+		}
+		return 0
+	}
+	return -1
+}
+
+func errorReturn(ret *ssa.Return) bool {
+	if len(ret.Results) == 0 {
 		return false
 	}
-	for i := 0; i < iface.NumMethods(); i++ {
-		if iface.Method(i).Name() == "CallerCopy" {
-			return true
+	last := ret.Results[len(ret.Results)-1]
+	return isErrorType(last.Type()) && !isNilConst(last)
+}
+
+// mayDrop: a path from the root's definition reaches a function exit, or the
+// root's own block again, without delivering anything derived from it.
+func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d map[ssa.Value]bool) (dropKind, bool) {
+	rootCall, _ := root.(*ssa.Call)
+	has := func(v ssa.Value) bool { return d[v] }
+	start := root.Block()
+	idx := -1
+	for i, ins := range start.Instrs {
+		if ins == root {
+			idx = i
 		}
 	}
-	return false
-}
-
-// elementCopier: a structural copier, a type's own copier, or the owner's
-// typed walk.
-func elementCopier(c *ssa.CallCommon) bool {
-	name := calleeName(c)
-	if copierNames[name] && !strings.HasSuffix(name, ".shapeNode") {
-		return true
+	if idx < 0 {
+		return noDrop, false
 	}
-	if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 && !constTrue(c.Args[3]) {
-		return true
+	storedRetention := false
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			switch x := ins.(type) {
+			case *ssa.Store:
+				if has(x.Val) && !local(storeBase(x.Addr)) {
+					storedRetention = true
+				}
+			case *ssa.MapUpdate:
+				if has(x.Value) && localBase(x.Map) == nil {
+					storedRetention = true
+				}
+			}
+		}
 	}
-	if f := staticCallee(c); f != nil {
-		n := origin(f).Name()
-		return n == "CallerCopy" || n == "callerOwned" || strings.HasSuffix(fullName(f), "/pkg/callerowned.Of")
+	anyDelivery := false
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if a.deliversWith(fn, ins, has) {
+				anyDelivery = true
+			}
+		}
 	}
-	return false
-}
-
-// inCycle: the block lies on a loop of its function.
-func inCycle(start *ssa.BasicBlock) bool {
+	// moves: the root goes into a local container; when that container is
+	// delivered somewhere, the obligation moves with it (partial consumption of
+	// the container is K3's question).
+	moves := func(ins ssa.Instruction) bool {
+		switch x := ins.(type) {
+		case *ssa.Call:
+			if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+				for _, arg := range x.Call.Args {
+					if has(arg) {
+						return true
+					}
+				}
+			}
+		case *ssa.Store:
+			return has(x.Val) && local(storeBase(x.Addr))
+		case *ssa.MapUpdate:
+			return has(x.Value) && localBase(x.Map) != nil
+		}
+		return false
+	}
+	scan := func(instrs []ssa.Instruction) bool {
+		for _, ins := range instrs {
+			if a.deliversWith(fn, ins, has) || (anyDelivery && moves(ins)) {
+				return true
+			}
+		}
+		return false
+	}
+	if scan(start.Instrs[idx+1:]) {
+		return noDrop, storedRetention
+	}
+	if ret, ok := start.Instrs[len(start.Instrs)-1].(*ssa.Return); ok {
+		if errorReturn(ret) {
+			return dropError, storedRetention
+		}
+		return dropPlain, storedRetention
+	}
 	seen := map[*ssa.BasicBlock]bool{}
-	stack := append([]*ssa.BasicBlock(nil), start.Succs...)
+	var stack []*ssa.BasicBlock
+	push := func(b *ssa.BasicBlock) {
+		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok {
+			if br := presentBranch(iff.Cond, d, rootCall); br >= 0 {
+				stack = append(stack, b.Succs[br])
+				return
+			}
+		}
+		stack = append(stack, b.Succs...)
+	}
+	push(start)
+	result := noDrop
 	for len(stack) > 0 {
 		b := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if b == start {
-			return true
+			// The next iteration redefines the root: this one is dropped.
+			if result == noDrop {
+				result = dropPlain
+			}
+			continue
 		}
+		if seen[b] {
+			continue
+		}
+		seen[b] = true
+		if scan(b.Instrs) {
+			continue
+		}
+		last := b.Instrs[len(b.Instrs)-1]
+		if ret, ok := last.(*ssa.Return); ok {
+			if errorReturn(ret) {
+				if result == noDrop {
+					result = dropError
+				}
+			} else {
+				result = dropPlain
+			}
+			continue
+		}
+		if _, ok := last.(*ssa.Panic); ok {
+			continue
+		}
+		push(b)
+	}
+	return result, storedRetention
+}
+
+// ---------------------------------------------------------------- loops
+
+func reach(from *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+	seen := map[*ssa.BasicBlock]bool{}
+	stack := append([]*ssa.BasicBlock(nil), from.Succs...)
+	for len(stack) > 0 {
+		b := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
 		if seen[b] {
 			continue
 		}
 		seen[b] = true
 		stack = append(stack, b.Succs...)
 	}
-	return false
+	return seen
 }
 
-// storedAsElement: the call's result is stored into a slice element or
-// appended to a slice.
-func storedAsElement(call *ssa.Call) bool {
-	refs := call.Referrers()
-	if refs == nil {
-		return false
+// loopOf: the blocks on a cycle through b (empty when b is on no loop).
+func loopOf(fn *ssa.Function, b *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+	fwd := reach(b)
+	if !fwd[b] {
+		return nil
 	}
-	for _, ref := range *refs {
-		switch x := ref.(type) {
-		case *ssa.Store:
-			if _, ok := x.Addr.(*ssa.IndexAddr); ok && x.Val == call {
-				return true
-			}
-		case *ssa.MakeInterface, *ssa.ChangeType:
-			if v, ok := ref.(ssa.Value); ok && v.Referrers() != nil {
-				for _, inner := range *v.Referrers() {
-					if st, ok := inner.(*ssa.Store); ok {
-						if _, ok := st.Addr.(*ssa.IndexAddr); ok {
-							return true
-						}
-					}
-				}
-			}
-		case *ssa.Call:
-			if b, ok := x.Call.Value.(*ssa.Builtin); ok && b.Name() == "append" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// copierElement: a slice element type that is a storage entity or a Copier.
-func copierElement(t types.Type, copier *types.Interface) bool {
-	if storageEntity(t) {
-		return true
-	}
-	if copier == nil {
-		return false
-	}
-	return types.Implements(t, copier) || types.Implements(types.NewPointer(t), copier)
-}
-
-// entityResult: a result (or a tuple's first result) that is a storage entity.
-func entityResult(t types.Type) bool {
-	if tuple, ok := t.(*types.Tuple); ok {
-		return tuple.Len() > 0 && storageEntity(tuple.At(0).Type())
-	}
-	return storageEntity(t)
-}
-
-// copyingExits: module functions whose entity results are always a structural
-// copy (or nil): their callers receive a fresh copy, e.g. a cache exit.
-func copyingExits(fns []*ssa.Function) map[*ssa.Function]bool {
-	out := map[*ssa.Function]bool{}
-	for _, fn := range fns {
-		if fn.Signature.Results().Len() == 0 || !storageEntity(fn.Signature.Results().At(0).Type()) {
-			continue
-		}
-		copied, any := true, false
-		for _, b := range fn.Blocks {
-			if ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return); ok && len(ret.Results) > 0 {
-				switch v := ret.Results[0].(type) {
-				case *ssa.Const:
-				case *ssa.Call:
-					if !elementCopier(v.Common()) {
-						copied = false
-					}
-					any = true
-				default:
-					copied = false
-				}
-			}
-		}
-		if copied && any {
-			out[origin(fn)] = true
+	out := map[*ssa.BasicBlock]bool{b: true}
+	for _, x := range fn.Blocks {
+		if fwd[x] && reach(x)[b] {
+			out[x] = true
 		}
 	}
 	return out
 }
 
-// results: the call's value and the values derived from it (tuple fields).
-func callResults(call *ssa.Call) map[ssa.Value]bool {
-	out := map[ssa.Value]bool{call: true}
-	if refs := call.Referrers(); refs != nil {
-		for _, ref := range *refs {
-			if x, ok := ref.(*ssa.Extract); ok {
-				out[x] = true
-			}
-		}
+// callDecided: cond depends on the result of a non-builtin call.
+func callDecided(v ssa.Value, depth int) bool {
+	if depth > 6 || v == nil {
+		return false
 	}
-	return out
-}
-
-// addrBase: the local allocation, slice or map an address or container refers
-// to, or nil when it reaches memory the function does not own.
-func addrBase(v ssa.Value) ssa.Value {
 	switch x := v.(type) {
-	case *ssa.Alloc:
-		if x.Referrers() != nil {
-			for _, ref := range *x.Referrers() {
-				if _, captured := ref.(*ssa.MakeClosure); captured {
-					return nil // a closure reads it: treat as escaping
-				}
-			}
-		}
-		return x
-	case *ssa.MakeSlice, *ssa.MakeMap:
-		return v
-	case *ssa.IndexAddr:
-		return addrBase(x.X)
-	case *ssa.FieldAddr:
-		return addrBase(x.X)
-	case *ssa.Slice:
-		return addrBase(x.X)
-	case *ssa.UnOp:
-		if x.Op == token.MUL {
-			return addrBase(x.X)
-		}
 	case *ssa.Call:
-		if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
-			if k, ok := x.Call.Args[0].(*ssa.Const); ok && k.IsNil() {
-				return x
-			}
-			if addrBase(x.Call.Args[0]) != nil {
-				return x
+		_, builtin := x.Call.Value.(*ssa.Builtin)
+		return !builtin
+	case *ssa.Extract:
+		if _, ok := x.Tuple.(*ssa.Next); ok {
+			return false
+		}
+		return callDecided(x.Tuple, depth+1)
+	case *ssa.BinOp:
+		return callDecided(x.X, depth+1) || callDecided(x.Y, depth+1)
+	case *ssa.UnOp:
+		if x.Op == token.NOT {
+			return callDecided(x.X, depth+1)
+		}
+	case *ssa.Phi:
+		for _, e := range x.Edges {
+			if callDecided(e, depth+1) {
+				return true
 			}
 		}
 	}
-	return nil
+	return false
 }
 
-// sameField: every address of the same field of the same local value.
-func sameField(fn *ssa.Function, fa *ssa.FieldAddr) []ssa.Value {
-	base := addrBase(fa.X)
+// elementsOf: element reads of any value in d (index, lookup, range).
+func elementsOf(fn *ssa.Function, d map[ssa.Value]bool) []ssa.Value {
 	var out []ssa.Value
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
-			if other, ok := ins.(*ssa.FieldAddr); ok && other.Field == fa.Field && addrBase(other.X) == base {
-				out = append(out, other)
+			switch x := ins.(type) {
+			case *ssa.UnOp:
+				if ia, ok := x.X.(*ssa.IndexAddr); ok && x.Op == token.MUL && d[ia.X] && family(x.Type()) {
+					out = append(out, x)
+				}
+			case *ssa.Index:
+				if d[x.X] && family(x.Type()) {
+					out = append(out, x)
+				}
+			case *ssa.Lookup:
+				if d[x.X] && family(x.Type()) && !x.CommaOk {
+					out = append(out, x)
+				}
+			case *ssa.Extract:
+				if nx, ok := x.Tuple.(*ssa.Next); ok && x.Index == 2 {
+					if rg, ok := nx.Iter.(*ssa.Range); ok && d[rg.X] && family(x.Type()) {
+						out = append(out, x)
+					}
+				}
 			}
 		}
 	}
 	return out
 }
 
-// propagates: ins moves a value derived from roots into memory the function
-// owns, and returns that container (nil otherwise).
-func propagates(fn *ssa.Function, ins ssa.Instruction, roots map[ssa.Value]bool) ssa.Value {
-	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
-	switch x := ins.(type) {
-	case *ssa.Store:
-		if in(x.Val) {
-			if fa, ok := x.Addr.(*ssa.FieldAddr); ok && addrBase(fa.X) != nil {
-				return fa
-			}
-			return addrBase(x.Addr)
-		}
-	case *ssa.MapUpdate:
-		if in(x.Value) {
-			return addrBase(x.Map)
-		}
-	case *ssa.Call:
-		if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
-			for _, arg := range x.Call.Args {
-				if in(arg) {
-					return x
-				}
-			}
-		}
-	}
-	return nil
+// ---------------------------------------------------------------- report
+
+type hit struct {
+	Class    string   `json:"class"`
+	Function string   `json:"function"`
+	File     string   `json:"file"`
+	Line     int      `json:"line"`
+	Detail   string   `json:"detail"`
+	Entries  int      `json:"public_entries_reaching"`
+	Examples []string `json:"entry_examples,omitempty"`
 }
 
-// rootClosure extends roots through the function's own memory: a copy stored
-// in a local variable, slice or map, or appended to a local slice, is still
-// the same undelivered copy.
-func rootClosure(fn *ssa.Function, roots map[ssa.Value]bool) {
-	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
-	for changed := true; changed; {
-		changed = false
-		mark := func(v ssa.Value) {
-			if v != nil && !roots[v] {
-				roots[v] = true
-				changed = true
-			}
-		}
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				switch x := ins.(type) {
-				case *ssa.Store:
-					if in(x.Val) {
-						if fa, ok := x.Addr.(*ssa.FieldAddr); ok && addrBase(fa.X) != nil {
-							for _, sibling := range sameField(fn, fa) {
-								mark(sibling)
-							}
-							continue
-						}
-						mark(addrBase(x.Addr))
-					}
-				case *ssa.MapUpdate:
-					if in(x.Value) {
-						mark(addrBase(x.Map))
-					}
-				case *ssa.Call:
-					if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
-						for _, arg := range x.Call.Args {
-							if in(arg) {
-								mark(x)
-							}
-						}
-					}
-				case *ssa.Phi:
-					for _, e := range x.Edges {
-						if in(e) {
-							mark(x)
-						}
-					}
-				}
-			}
-		}
-	}
+type report struct {
+	Author        string            `json:"author"`
+	Target        string            `json:"target"`
+	Loader        string            `json:"loader"`
+	Functions     int               `json:"functions_loaded"`
+	Analyzed      int               `json:"functions_analyzed"`
+	SummaryRounds int               `json:"summary_rounds"`
+	Counts        map[string]int    `json:"counts"`
+	Hits          []hit             `json:"hits"`
+	Mappers       []string          `json:"population_mappers"`
+	Controls      map[string]string `json:"controls"`
+	AllControlsOK bool              `json:"all_controls_detected"`
 }
 
-// delivers: ins hands a value derived from roots out of the function's own
-// memory (returns it, stores it where the function does not own, sends it,
-// or passes it to a call other than a predicate, append or a copier). A
-// predicate call that only reads it is not a delivery.
-func delivers(ins ssa.Instruction, roots map[ssa.Value]bool) bool {
-	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
-	switch x := ins.(type) {
-	case *ssa.Return:
-		for _, v := range x.Results {
-			if in(v) {
-				return true
-			}
-		}
-	case *ssa.Store:
-		return in(x.Val) && addrBase(x.Addr) == nil
-	case *ssa.Send:
-		return in(x.X)
-	case *ssa.MapUpdate:
-		return in(x.Value) && addrBase(x.Map) == nil
-	case ssa.CallInstruction:
-		c := x.Common()
-		if bi, ok := c.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
-			return false
-		}
-		// A static function that only answers a bool reads its argument; a
-		// callback (visitor, predicate supplied by the caller) receives it.
-		predicate := staticCallee(c) != nil && c.Signature().Results().Len() == 1 && types.Identical(c.Signature().Results().At(0).Type(), types.Typ[types.Bool])
-		for _, a := range c.Args {
-			if in(a) && !predicate {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// derivedCond: an If condition decided by the copy itself (its ok result, or a
-// nil comparison of it); present reports which branch holds the copy.
-func derivedCond(cond ssa.Value, roots map[ssa.Value]bool) (derived bool, present int) {
-	if roots[cond] {
-		return true, 0
-	}
-	if bin, ok := cond.(*ssa.BinOp); ok && (bin.Op == token.EQL || bin.Op == token.NEQ) {
-		for _, side := range []ssa.Value{bin.X, bin.Y} {
-			if roots[side] {
-				if bin.Op == token.EQL {
-					return true, 1
-				}
-				return true, 0
-			}
-		}
-	}
-	return false, 0
-}
-
-// mayDrop: from the copy, some path reaches the function's end (or the copy
-// again) without delivering it, through a condition the copy does not decide.
-// A copy moved into a local container hands its obligation to the container,
-// which must itself be delivered on every such path; a container may loop.
-func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
-	roots := callResults(call)
-	rootClosure(start.Parent(), roots)
-	return mayDropFrom(start.Parent(), roots, start, index, true, 0, map[ssa.Value]bool{})
-}
-
-func mayDropFrom(fn *ssa.Function, roots map[ssa.Value]bool, start *ssa.BasicBlock, index int, loopDrops bool, depth int, checked map[ssa.Value]bool) bool {
-	if depth > 4 {
-		return false
-	}
-	containerDrops := func(c ssa.Value, at ssa.Instruction) bool {
-		if checked[c] {
-			return false
-		}
-		checked[c] = true
-		inner := map[ssa.Value]bool{c: true}
-		if fa, ok := c.(*ssa.FieldAddr); ok {
-			for _, sibling := range sameField(fn, fa) {
-				inner[sibling] = true
-			}
-		}
-		rootClosure(fn, inner)
-		block := at.Block()
-		for i, ins := range block.Instrs {
-			if ins == at {
-				return mayDropFrom(fn, inner, block, i, false, depth+1, checked)
-			}
-		}
-		return false
-	}
-	// scan reports whether a block's instructions (from index) settle the
-	// value: delivered, or handed to a container that is delivered.
-	scan := func(instrs []ssa.Instruction) (settled, dropped bool) {
-		for _, ins := range instrs {
-			if delivers(ins, roots) {
-				return true, false
-			}
-			if c := propagates(fn, ins, roots); c != nil {
-				if containerDrops(c, ins) {
-					return true, true
-				}
-				return true, false
-			}
-		}
-		return false, false
-	}
-	if settled, dropped := scan(start.Instrs[index+1:]); settled {
-		return dropped
-	}
-	type state struct {
-		b       *ssa.BasicBlock
-		foreign bool
-	}
-	seen := map[state]bool{}
-	next := func(b *ssa.BasicBlock, foreign bool) []state {
-		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok {
-			if d, present := derivedCond(iff.Cond, roots); d {
-				return []state{{b.Succs[present], foreign}}
-			}
-			return []state{{b.Succs[0], true}, {b.Succs[1], true}}
-		}
-		var out []state
-		for _, succ := range b.Succs {
-			out = append(out, state{succ, foreign})
-		}
-		return out
-	}
-	stack := next(start, false)
-	for len(stack) > 0 {
-		st := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if seen[st] {
-			continue
-		}
-		seen[st] = true
-		if st.b == start {
-			if st.foreign && loopDrops {
-				return true
-			}
-			continue
-		}
-		if settled, dropped := scan(st.b.Instrs); settled {
-			if dropped {
-				return true
-			}
-			continue
-		}
-		if _, ret := st.b.Instrs[len(st.b.Instrs)-1].(*ssa.Return); ret && st.foreign {
-			return true
-		}
-		stack = append(stack, next(st.b, st.foreign)...)
-	}
-	return false
-}
-
-var readVerb = []string{"Get", "Stream", "All", "Read", "Iterate", "Lookup", "Match", "Find", "Search", "Pull", "Batch", "Outgoing", "Incoming", "Snapshot", "Scan", "Visit"}
-
-// readPathFunctions: the functions reachable from public read entry points.
-func readPathFunctions(p *workcensus.Program, fns []*ssa.Function, r *report) map[*ssa.Function]bool {
-	readPkgs := []string{"/pkg/storage", "/pkg/search", "/pkg/resultstream", "/apoc/storage", "/apoc/warmup", "/apoc/trigger"}
-	isEntry := func(fn *ssa.Function) bool {
-		if fn.Parent() != nil || fn.Pkg == nil || !token.IsExported(fn.Name()) {
-			return false
-		}
-		path := strings.TrimPrefix(fn.Pkg.Pkg.Path(), module)
-		if path == "/pkg/cypher" {
-			return fn.Name() == "Get" && fn.Signature.Recv() != nil && strings.Contains(fn.Signature.Recv().Type().String(), "QueryCache")
-		}
-		if strings.HasPrefix(fn.Name(), "NOR160Control") {
-			return true // planted controls are judged as read paths
-		}
-		known := false
-		for _, rp := range readPkgs {
-			if path == rp {
-				known = true
-			}
-		}
-		if !known {
-			return false
-		}
-		for _, verb := range readVerb {
-			if strings.HasPrefix(fn.Name(), verb) {
-				return true
-			}
-		}
-		return false
-	}
-	reach := map[*ssa.Function]bool{}
-	var queue []*ssa.Function
-	for _, fn := range fns {
-		if isEntry(fn) {
-			r.ReadEntries++
-			reach[fn] = true
-			queue = append(queue, fn)
-		}
-	}
-	for len(queue) > 0 {
-		fn := queue[0]
+func (a *analysis) entriesReaching(fn *ssa.Function) (int, []string) {
+	start := top(originFn(fn))
+	seen := map[*ssa.Function]bool{start: true}
+	queue := []*ssa.Function{start}
+	var found []string
+	count := 0
+	for len(queue) > 0 && len(seen) < 4000 {
+		f := queue[0]
 		queue = queue[1:]
-		var next []*ssa.Function
-		if node := p.CallGraph.Nodes[fn]; node != nil {
-			for _, edge := range node.Out {
-				next = append(next, edge.Callee.Func)
+		if exported(f) {
+			count++
+			if len(found) < 3 {
+				found = append(found, fullName(f))
 			}
 		}
-		next = append(next, fn.AnonFuncs...)
-		for _, callee := range next {
-			if callee != nil && !reach[callee] && inModule(callee) {
-				reach[callee] = true
-				queue = append(queue, callee)
-			}
-		}
-	}
-	r.ReadReach = len(reach)
-	return reach
-}
-
-// retains: fn stores a delivery-derived value into memory that outlives the call
-// (a field, global, captured variable or append into one).
-func retains(fn *ssa.Function, roots map[ssa.Value]bool) bool {
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			switch x := ins.(type) {
-			case *ssa.Store:
-				if derives(x.Val, roots, map[ssa.Value]bool{}) {
-					return true
-				}
-			case *ssa.Call:
-				if b, ok := x.Call.Value.(*ssa.Builtin); ok && b.Name() == "append" {
-					for _, arg := range x.Call.Args[1:] {
-						if derives(arg, roots, map[ssa.Value]bool{}) {
-							return true
-						}
-					}
-				}
+		for _, c := range a.callers[f] {
+			c = top(originFn(c))
+			if !seen[c] {
+				seen[c] = true
+				queue = append(queue, c)
 			}
 		}
 	}
-	return false
+	return count, found
 }
 
-// overlay readers: the write-behind overlay owner and exported buffer readers.
-func overlayReader(name string) bool {
-	if name == "(*"+storagePkg+".BadgerEngine).readBufferedEntities" {
-		return true
-	}
-	prefix := "(*" + storagePkg + ".WriteBehindBuffer)."
-	if !strings.HasPrefix(name, prefix) {
-		return false
-	}
-	method := strings.TrimPrefix(name, prefix)
-	return token.IsExported(method) || strings.HasSuffix(method, "OverlayLocked")
-}
-
-// referenceFields: exported fields of a struct that can reach a mutable reference.
-func referenceFields(t types.Type) (string, []string, *types.Struct) {
-	if p, ok := types.Unalias(t).(*types.Pointer); ok {
-		t = p.Elem()
-	}
-	n, ok := types.Unalias(t).(*types.Named)
-	if !ok {
-		return t.String(), nil, nil
-	}
-	st, ok := n.Underlying().(*types.Struct)
-	if !ok {
-		return n.String(), nil, nil
-	}
-	var fields []string
-	for i := 0; i < st.NumFields(); i++ {
-		f := st.Field(i)
-		if f.Exported() && refBearing(f.Type(), map[types.Type]bool{}) {
-			fields = append(fields, f.Name())
+func allFunctions(p *workcensus.Program) []*ssa.Function {
+	seen := map[*ssa.Function]bool{}
+	var out []*ssa.Function
+	var add func(fn *ssa.Function)
+	add = func(fn *ssa.Function) {
+		if fn == nil || seen[fn] {
+			return
+		}
+		seen[fn] = true
+		if inModule(fn) && fn.Blocks != nil && !isTestFile(fn) {
+			out = append(out, fn)
+		}
+		for _, anon := range fn.AnonFuncs {
+			add(anon)
 		}
 	}
-	return strings.TrimPrefix(n.String(), module+"/"), fields, st
-}
-
-func refBearing(t types.Type, seen map[types.Type]bool) bool {
-	if t == nil || seen[t] {
-		return false
+	for _, fn := range p.Functions {
+		add(fn)
 	}
-	seen[t] = true
-	switch x := types.Unalias(t).(type) {
-	case *types.Named:
-		if p := x.Obj().Pkg(); p != nil && (p.Path() == "time" || p.Path() == "context" || strings.HasPrefix(p.Path(), "sync")) {
-			return false
-		}
-		return refBearing(x.Underlying(), seen)
-	case *types.Map, *types.Slice, *types.Pointer, *types.Interface, *types.Chan, *types.Signature:
-		return true
-	case *types.Struct:
-		for i := 0; i < x.NumFields(); i++ {
-			if refBearing(x.Field(i).Type(), seen) {
-				return true
-			}
-		}
-	case *types.Array:
-		return refBearing(x.Elem(), seen)
-	}
-	return false
-}
-
-// assignedFields: fields of st assigned (stored through a field address of the
-// copied type) by fn or by the module functions it calls (depth-bounded).
-func assignedFields(fn *ssa.Function, st *types.Struct, out map[string]bool, depth int, visited map[*ssa.Function]bool) {
-	if fn == nil || fn.Blocks == nil || depth > 3 || visited[fn] {
-		return
-	}
-	visited[fn] = true
-	for _, b := range fn.Blocks {
-		for _, ins := range b.Instrs {
-			switch x := ins.(type) {
-			case *ssa.Store:
-				fa, ok := x.Addr.(*ssa.FieldAddr)
-				if !ok {
-					continue
-				}
-				p, ok := types.Unalias(fa.X.Type()).(*types.Pointer)
-				if !ok || !types.Identical(p.Elem().Underlying(), st) {
-					continue
-				}
-				out[st.Field(fa.Field).Name()] = true
-			case ssa.CallInstruction:
-				// The owner's whole-value walk assigns every field of a value of st.
-				if name := calleeName(x.Common()); strings.HasSuffix(name, "/pkg/callerowned.Of") || strings.HasSuffix(name, "/pkg/callerowned.Value") {
-					for _, arg := range x.Common().Args {
-						if types.Identical(arg.Type().Underlying(), st) {
-							for i := 0; i < st.NumFields(); i++ {
-								out[st.Field(i).Name()] = true
-							}
-						}
-					}
-				}
-				if callee := staticCallee(x.Common()); callee != nil && inModule(callee) {
-					assignedFields(callee, st, out, depth+1, visited)
-				}
-			}
-		}
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
 }
 
 func targetTree(spec string) (string, func(), error) {
@@ -1254,29 +1632,6 @@ func targetTree(spec string) (string, func(), error) {
 	return dir, cleanup, nil
 }
 
-func allFunctions(p *workcensus.Program) []*ssa.Function {
-	seen := map[*ssa.Function]bool{}
-	var out []*ssa.Function
-	var add func(fn *ssa.Function)
-	add = func(fn *ssa.Function) {
-		if fn == nil || seen[fn] {
-			return
-		}
-		seen[fn] = true
-		if inModule(fn) && fn.Blocks != nil && !isTestFile(fn) {
-			out = append(out, fn)
-		}
-		for _, anon := range fn.AnonFuncs {
-			add(anon)
-		}
-	}
-	for _, fn := range p.Functions {
-		add(fn)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
-	return out
-}
-
 func main() {
 	if len(os.Args) != 3 {
 		panic("usage: nor160-consumers <tree|git:fullSHA> <output|->")
@@ -1291,451 +1646,545 @@ func main() {
 	defer cleanup()
 	config := workcensus.Config{Dir: tree, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Env: append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")}
 	config.Overlay = map[string][]byte{
-		filepath.Join(tree, "pkg/storage/nor160_consumer_control.go"):  []byte(controlFile),
-		filepath.Join(tree, "pkg/callerowned/nor160_owner_control.go"): []byte(ownerControlFile),
+		filepath.Join(tree, "pkg/storage/nor160_census_control.go"): []byte(controlFile),
 	}
 	p, err := workcensus.LoadProgram(config)
 	if err != nil {
 		panic(err)
 	}
-	fns := allFunctions(p)
-	r := report{Author: "NOR-160 lane (Claude), 30 October 2026", Target: spec, Loader: "maintained internal/workcensus.LoadProgram", Functions: len(fns), Controls: map[string]bool{}}
-
-	// 1 and 2: delivery consumers and overlay views.
-	for _, fn := range fns {
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				call, ok := ins.(ssa.CallInstruction)
-				if !ok {
-					continue
-				}
-				c := call.Common()
-				name := calleeName(c)
-				if overlayReader(name) {
-					roots := map[ssa.Value]bool{}
-					if v := call.Value(); v != nil {
-						roots[v] = true
-					}
-					file, line := pos(fn, call.Pos())
-					copies, _ := splitStrips(copiesOf(fn, roots, 0, map[string]bool{}))
-					r.Views = append(r.Views, view{Function: fn.String(), File: file, Line: line, Reader: name, Copies: copies})
-				}
-				fromStorage := deliversFromStorage(c)
-				for _, arg := range c.Args {
-					params := deliveryParams(arg.Type())
-					cb := callbackFunction(arg)
-					if len(params) == 0 || cb == nil || cb.Blocks == nil {
-						continue
-					}
-					roots := map[ssa.Value]bool{}
-					for _, i := range params {
-						if i < len(cb.Params) {
-							roots[cb.Params[i]] = true
-						}
-					}
-					file, line := pos(cb, cb.Pos())
-					sf, sl := pos(fn, call.Pos())
-					copies, strips := splitStrips(copiesOf(cb, roots, 0, map[string]bool{}))
-					if copierNames[fullName(cb)] {
-						strips = nil
-					}
-					r.Consumers = append(r.Consumers, consumer{Consumer: cb.String(), File: file, Line: line, Callee: name, FromStorage: fromStorage,
-						Site: fmt.Sprintf("%s:%d", sf, sl), Copies: copies, Strips: strips, Retains: retains(cb, roots)})
-				}
-			}
+	a := &analysis{p: p, fns: allFunctions(p), sums: map[*ssa.Function]*summary{}, states: map[*ssa.Function]*fnState{}, callees: map[ssa.CallInstruction][]*ssa.Function{}, callers: map[*ssa.Function][]*ssa.Function{}}
+	for fn, node := range p.CallGraph.Nodes {
+		if fn == nil || node == nil {
+			continue
 		}
-	}
-
-	// 3: caller-copy implementations, by interface and by name.
-	var copierIface *types.Interface
-	for _, pkg := range p.Packages {
-		if pkg.Types != nil && pkg.Types.Path() == module+"/pkg/callerowned" {
-			if obj := pkg.Types.Scope().Lookup("Copier"); obj != nil {
-				copierIface, _ = obj.Type().Underlying().(*types.Interface)
-			}
-		}
-	}
-	if copierIface == nil {
-		// A revision before pkg/callerowned (the release): the same method set.
-		sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.NewInterfaceType(nil, nil))), false)
-		copierIface = types.NewInterfaceType([]*types.Func{types.NewFunc(token.NoPos, nil, "CallerCopy", sig)}, nil).Complete()
-	}
-	implementsCopier := map[string]bool{}
-	if copierIface != nil {
-		for _, pkg := range p.SSA.AllPackages() {
-			path := pkg.Pkg.Path()
-			if path != module && !strings.HasPrefix(path, module+"/") {
+		for _, e := range node.Out {
+			if e.Callee == nil || e.Callee.Func == nil {
 				continue
 			}
-			for _, member := range pkg.Members {
-				tn, ok := member.(*ssa.Type)
-				if !ok {
-					continue
-				}
-				t := tn.Type()
-				if types.Implements(t, copierIface) || types.Implements(types.NewPointer(t), copierIface) {
-					implementsCopier[strings.TrimPrefix(t.String(), module+"/")] = true
-				}
+			g := e.Callee.Func
+			if e.Site != nil && inModule(g) && g.Blocks != nil {
+				a.callees[e.Site] = append(a.callees[e.Site], g)
 			}
+			a.callers[g] = append(a.callers[g], fn)
 		}
 	}
-	for t := range implementsCopier {
-		r.CopierTypes = append(r.CopierTypes, t)
-	}
-	sort.Strings(r.CopierTypes)
-	for _, fn := range fns {
-		if fn.Parent() != nil {
-			continue
-		}
-		lower := strings.ToLower(fn.Name())
-		if fn.Name() != "CallerCopy" && !strings.Contains(lower, "callerowned") && !strings.Contains(lower, "clone") && !copierNames[fullName(fn)] {
-			continue
-		}
-		if strings.HasPrefix(fn.Name(), "deliver") {
-			continue // the delivery owner: images copy through copyNode/copyEdge
-		}
-		var copied types.Type
-		switch {
-		case fn.Signature.Recv() != nil:
-			copied = fn.Signature.Recv().Type()
-		case fn.Signature.Params().Len() > 0:
-			copied = fn.Signature.Params().At(0).Type()
-		default:
-			continue
-		}
-		typeName, fields, st := referenceFields(copied)
-		impl := copierImpl{Implementation: fn.String(), Type: typeName, Fields: fields}
-		impl.File, impl.Line = pos(fn, fn.Pos())
-		if st != nil {
-			assigned := map[string]bool{}
-			assignedFields(fn, st, assigned, 0, map[*ssa.Function]bool{})
-			for _, f := range fields {
-				if !assigned[f] {
-					impl.Unassigned = append(impl.Unassigned, f)
-				}
+	r := report{Author: "NOR-160 lane (Claude), 30 October 2026", Target: spec, Loader: "maintained internal/workcensus.LoadProgram", Functions: len(p.Functions), Analyzed: len(a.fns), Counts: map[string]int{}, Controls: map[string]string{}}
+
+	// Summaries to a fixpoint.
+	for round := 1; round <= 10; round++ {
+		r.SummaryRounds = round
+		changed := false
+		for _, fn := range a.fns {
+			s := a.analyzeFn(fn)
+			a.states[fn] = s
+			sum := a.summarize(fn, s)
+			if !a.equalSummary(a.sums[fn], sum) {
+				a.sums[fn] = sum
+				changed = true
 			}
 		}
-		r.Copiers = append(r.Copiers, impl)
+		if !changed {
+			break
+		}
 	}
 
-	// 4: every copier call site in the module, for a written disposition each.
-	for _, fn := range fns {
-		if copierNames[fullName(fn)] {
-			continue
+	seenHit := map[string]bool{}
+	add := func(class string, fn *ssa.Function, p token.Pos, detail string) {
+		file, line := pos(fn, p)
+		key := class + "|" + fullName(fn) + "|" + file + fmt.Sprint(line) + "|" + detail
+		if seenHit[key] {
+			return
 		}
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				call, ok := ins.(ssa.CallInstruction)
-				if !ok {
-					continue
-				}
-				c := call.Common()
-				name := calleeName(c)
-				if !copierNames[name] || strings.Contains(name, "/pkg/callerowned.") {
-					continue
-				}
-				note := ""
-				if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 {
-					if constTrue(c.Args[3]) {
-						note = " (owned: reshape in place)"
-					} else if _, isConst := c.Args[3].(*ssa.Const); !isConst {
-						note = " (owned=" + c.Args[3].Name() + ")"
+		seenHit[key] = true
+		n, ex := a.entriesReaching(fn)
+		r.Hits = append(r.Hits, hit{Class: class, Function: fullName(fn), File: file, Line: line, Detail: detail, Entries: n, Examples: ex})
+	}
+	mappers := map[string]bool{}
+
+	for _, fn := range a.fns {
+		s := a.states[fn]
+
+		// K0: exported functions returning or visiting retained values.
+		if exported(fn) {
+			for _, b := range fn.Blocks {
+				for _, ins := range b.Instrs {
+					switch x := ins.(type) {
+					case *ssa.Return:
+						for _, v := range x.Results {
+							if family(v.Type()) && s.val(v).Retained {
+								add("K0", fn, x.Pos(), "returns a retained "+v.Type().String())
+							}
+						}
+					case *ssa.Call:
+						c := x.Common()
+						if pv, ok := c.Value.(*ssa.Parameter); ok && paramIndex(fn, pv) >= 0 && !isBoolResult(c.Signature()) {
+							for _, arg := range c.Args {
+								if family(arg.Type()) && s.val(arg).Retained {
+									add("K0", fn, x.Pos(), "visits a retained "+arg.Type().String())
+								}
+							}
+						}
 					}
 				}
-				file, line := pos(fn, call.Pos())
-				r.CopySites = append(r.CopySites, fmt.Sprintf("%s:%d %s -> %s%s", file, line, strings.TrimPrefix(fn.String(), module+"/"), name[strings.LastIndex(name, "/")+1:], note))
 			}
 		}
-	}
-	sort.Strings(r.CopySites)
 
-	// 5: every function outside the copy owner that rebuilds a storage node or
-	// edge from its argument and replaces a reference field: a second entity
-	// copier (or a projection, dispositioned in writing).
-	for _, fn := range fns {
-		if copierNames[fullName(fn)] || fn.Name() == "CallerCopy" || strings.Contains(strings.ToLower(fn.Name()), "callerowned") {
-			continue
-		}
-		if fields := rebuiltEntityFields(fn); len(fields) > 0 {
-			file, line := pos(fn, fn.Pos())
-			r.EntityCopiers = append(r.EntityCopiers, fmt.Sprintf("%s:%d %s replaces %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), strings.Join(fields, ",")))
-		}
-	}
-	sort.Strings(r.EntityCopiers)
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				v, isValue := ins.(ssa.Value)
+				if !isValue || !family(v.Type()) {
+					// tuples: the call value carries the tuple
+					if call, ok := ins.(*ssa.Call); ok {
+						v, isValue = call, true
+					} else {
+						continue
+					}
+				}
+				if !s.intro[v] {
+					continue
+				}
+				d := a.derived(fn, s, []ssa.Value{v}, true)
 
-	// 6 and 7: every hand-written slice copier (a copier call inside a loop
-	// whose result is stored into a slice element or appended) and every Copier
-	// dispatch rule (a CallerCopy call through an interface, or an assertion to
-	// an interface declaring it) outside the owner package.
-	for _, fn := range fns {
-		owner := fn
-		for owner.Pkg == nil && owner.Parent() != nil {
-			owner = owner.Parent()
+				// K1 / K1e / K2 on the copy itself.
+				kind, stored := a.mayDrop(fn, s, ins, d)
+				if kind != noDrop {
+					class := "K1"
+					if kind == dropError {
+						class = "K1e"
+					}
+					if stored && kind == dropPlain {
+						class = "K2"
+					}
+					add(class, fn, ins.Pos(), "copy "+copyLabel(v)+" can be left undelivered")
+				}
+
+				// Elements of a copied population.
+				if t := v.Type(); container(t) || isTupleWithContainer(t) {
+					d := a.derived(fn, s, []ssa.Value{v}, false)
+					delivered := false
+					for _, bb := range fn.Blocks {
+						for _, ii := range bb.Instrs {
+							if a.deliversWith(fn, ii, func(x ssa.Value) bool { return d[x] }) {
+								delivered = true
+							}
+						}
+					}
+					for _, e := range elementsOf(fn, d) {
+						ei, _ := e.(ssa.Instruction)
+						if ei == nil {
+							continue
+						}
+						if !delivered {
+							ed := a.derived(fn, s, []ssa.Value{e}, true)
+							if k, _ := a.mayDrop(fn, s, ei, ed); k == dropPlain {
+								add("K1", fn, ei.Pos(), "element of copied population "+copyLabel(v)+" is selected out after the copy")
+							}
+						}
+						// K3: the loop over the population can be left early by a call's result.
+						if loop := loopOf(fn, ei.Block()); loop != nil {
+							for lb := range loop {
+								iff, ok := lb.Instrs[len(lb.Instrs)-1].(*ssa.If)
+								if !ok {
+									continue
+								}
+								for _, succ := range lb.Succs {
+									if !loop[succ] && callDecided(iff.Cond, 0) {
+										add("K3", fn, iff.Pos(), "loop over copied population "+copyLabel(v)+" can stop early")
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
-		if owner.Pkg == nil || strings.HasPrefix(owner.Pkg.Pkg.Path(), module+"/pkg/callerowned") {
-			continue
+
+		// K3 for local buffers filled with copies (pre-read populations).
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				ms, ok := ins.(ssa.Value)
+				if !ok || !container(ms.Type()) || !family(ms.Type()) || !s.val(ms).Copy {
+					continue
+				}
+				switch x := ms.(type) {
+				case *ssa.Phi, *ssa.MakeSlice:
+				case *ssa.Call:
+					if bi, isB := x.Call.Value.(*ssa.Builtin); !isB || bi.Name() != "append" {
+						continue
+					}
+				default:
+					continue
+				}
+				d := a.derived(fn, s, []ssa.Value{ms}, false)
+				for _, e := range elementsOf(fn, d) {
+					ei, _ := e.(ssa.Instruction)
+					if ei == nil {
+						continue
+					}
+					if loop := loopOf(fn, ei.Block()); loop != nil {
+						for lb := range loop {
+							iff, ok := lb.Instrs[len(lb.Instrs)-1].(*ssa.If)
+							if !ok {
+								continue
+							}
+							for _, succ := range lb.Succs {
+								if !loop[succ] && callDecided(iff.Cond, 0) {
+									add("K3", fn, iff.Pos(), "loop over a buffer of copies can stop early")
+								}
+							}
+						}
+					}
+				}
+			}
 		}
+
+		// K4: one value merging an uncopied value and a copy of it.
+		checkMerge := func(p token.Pos, inputs []ssa.Value) {
+			for _, x := range inputs {
+				ox := s.val(x)
+				if ox.empty() || ox.Copy || !family(x.Type()) {
+					continue
+				}
+				for _, y := range inputs {
+					src, ok := s.src[y]
+					if !ok {
+						continue
+					}
+					if src.overlaps(ox) {
+						add("K4", fn, p, "chooses between a value and a copy of it")
+						return
+					}
+				}
+			}
+		}
+		var rets [][]ssa.Value
+		var retPos token.Pos
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Phi:
+					checkMerge(x.Pos(), x.Edges)
+				case *ssa.Return:
+					for i, res := range x.Results {
+						for len(rets) <= i {
+							rets = append(rets, nil)
+						}
+						rets[i] = append(rets[i], res)
+					}
+					if !retPos.IsValid() {
+						retPos = x.Pos()
+					}
+				}
+			}
+		}
+		for _, in := range rets {
+			checkMerge(retPos, in)
+		}
+
+		// K4b: Copier dispatch sites, and a second CallerCopy after a first.
+		var callerCopies []*ssa.Call
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
 				switch x := ins.(type) {
 				case *ssa.TypeAssert:
-					if declaresCallerCopy(x.AssertedType) {
-						file, line := pos(fn, x.Pos())
-						r.Dispatchers = append(r.Dispatchers, fmt.Sprintf("%s:%d %s asserts %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), x.AssertedType))
+					if it, ok := x.AssertedType.Underlying().(*types.Interface); ok {
+						for i := 0; i < it.NumMethods(); i++ {
+							if it.Method(i).Name() == "CallerCopy" {
+								add("K4b", fn, x.Pos(), "asserts a Copier")
+							}
+						}
 					}
-				case ssa.CallInstruction:
+				case *ssa.Call:
 					c := x.Common()
 					if c.IsInvoke() && c.Method.Name() == "CallerCopy" {
-						file, line := pos(fn, x.Pos())
-						r.Dispatchers = append(r.Dispatchers, fmt.Sprintf("%s:%d %s calls CallerCopy through %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), c.Value.Type()))
-					}
-					call, ok := ins.(*ssa.Call)
-					if !ok || !elementCopier(c) || !inCycle(b) || !storedAsElement(call) || strings.Contains(calleeName(c), "/pkg/storage.deliver") {
-						continue
-					}
-					file, line := pos(fn, x.Pos())
-					r.SliceCopiers = append(r.SliceCopiers, fmt.Sprintf("%s:%d %s -> %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(c)))
-				}
-			}
-		}
-	}
-	sort.Strings(r.SliceCopiers)
-	sort.Strings(r.Dispatchers)
-
-	// 8: owner dispatch functions: every function of the owner package that
-	// calls CallerCopy through an interface. One rule means one function.
-	for _, fn := range fns {
-		owner := fn
-		for owner.Pkg == nil && owner.Parent() != nil {
-			owner = owner.Parent()
-		}
-		if owner.Pkg == nil || owner.Pkg.Pkg.Path() != module+"/pkg/callerowned" {
-			continue
-		}
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				if call, ok := ins.(ssa.CallInstruction); ok && call.Common().IsInvoke() && call.Common().Method.Name() == "CallerCopy" {
-					file, line := pos(fn, call.Pos())
-					r.OwnerDispatch = append(r.OwnerDispatch, fmt.Sprintf("%s:%d %s", file, line, strings.TrimPrefix(fn.String(), module+"/")))
-				}
-			}
-		}
-	}
-	sort.Strings(r.OwnerDispatch)
-
-	// Read paths: every function the call graph reaches from a public read
-	// entry point of the reading packages (storage, search, result streams,
-	// APOC graph/warmup/trigger, the query-result caches). Sections 9 and 11
-	// judge copies there; write staging is a different contract.
-	readReach := readPathFunctions(p, fns, &r)
-
-	// 9: copies that may be dropped: a structural copy (or a copying exit) whose
-	// result can reach the function's end or the next loop iteration without
-	// being delivered, on a path decided by a condition the copy does not decide.
-	exits := copyingExits(fns)
-	for _, fn := range fns {
-		if copierNames[fullName(fn)] || !readReach[fn] {
-			continue
-		}
-		for _, b := range fn.Blocks {
-			for i, ins := range b.Instrs {
-				call, ok := ins.(*ssa.Call)
-				if !ok {
-					continue
-				}
-				c := call.Common()
-				callee := staticCallee(c)
-				copying := elementCopier(c) || (callee != nil && exits[origin(callee)])
-				if !copying || !entityResult(call.Type()) {
-					continue
-				}
-				if mayDrop(call, b, i) {
-					file, line := pos(fn, call.Pos())
-					r.DroppedCopies = append(r.DroppedCopies, fmt.Sprintf("%s:%d %s -> %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(c)))
-				}
-			}
-		}
-	}
-	sort.Strings(r.DroppedCopies)
-
-	// 11: copies of copies: a copier applied to a value another copier or a
-	// copying exit already produced in the same function.
-	for _, fn := range fns {
-		if copierNames[fullName(fn)] || !readReach[fn] {
-			continue
-		}
-		var copies []*ssa.Call
-		for _, b := range fn.Blocks {
-			for _, ins := range b.Instrs {
-				if call, ok := ins.(*ssa.Call); ok {
-					c := call.Common()
-					callee := staticCallee(c)
-					if (elementCopier(c) || (callee != nil && exits[origin(callee)])) && entityResult(call.Type()) {
-						copies = append(copies, call)
+						callerCopies = append(callerCopies, x)
+					} else if f := c.StaticCallee(); f != nil && originFn(f).Name() == "CallerCopy" {
+						callerCopies = append(callerCopies, x)
 					}
 				}
 			}
 		}
-		for _, second := range copies {
-			if !elementCopier(second.Common()) {
-				continue
-			}
-			for _, first := range copies {
+		for _, first := range callerCopies {
+			for _, second := range callerCopies {
 				if first == second {
 					continue
 				}
-				roots := callResults(first)
-				rootClosure(fn, roots)
-				hit := false
-				for _, arg := range second.Common().Args {
-					if derives(arg, roots, map[ssa.Value]bool{}) {
-						hit = true
-					}
-				}
-				if hit {
-					file, line := pos(fn, second.Pos())
-					r.SecondCopies = append(r.SecondCopies, fmt.Sprintf("%s:%d %s -> %s copies the result of %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(second.Common()), calleeName(first.Common())))
-					break
+				later := first.Block() == second.Block() && blockIndex(first) < blockIndex(second) || reach(first.Block())[second.Block()]
+				if later {
+					add("K4b", fn, second.Pos(), "a second CallerCopy can follow a first")
 				}
 			}
 		}
-	}
-	sort.Strings(r.SecondCopies)
 
-	// 10: shallow copies of entity collections: append(nil, s...) or
-	// slices.Clone(s) of a slice whose elements are entities or Copiers.
-	for _, fn := range fns {
+		// K5: loops storing copies of the elements they iterate; mappers.
+		for _, b := range fn.Blocks {
+			if loopOf(fn, b) == nil {
+				continue
+			}
+			for _, ins := range b.Instrs {
+				call, ok := ins.(*ssa.Call)
+				if !ok {
+					continue
+				}
+				if _, isParam := call.Common().Value.(*ssa.Parameter); isParam && storedInSlice(call) && anyElementArg(call.Common().Args) {
+					mappers[fullName(fn)] = true
+					continue
+				}
+				if _, intro := s.src[call]; intro && storedInSlice(call) && anyElementArg(callArgs(call.Common())) {
+					add("K5", fn, call.Pos(), "loop stores copies of the elements it iterates ("+copyLabel(call)+")")
+				}
+			}
+		}
+
+		// K6: an unconditional copier applied to a value made for this read.
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
 				call, ok := ins.(*ssa.Call)
 				if !ok {
 					continue
 				}
-				c := call.Common()
-				var src ssa.Value
-				if bi, ok := c.Value.(*ssa.Builtin); ok && bi.Name() == "append" && len(c.Args) == 2 {
-					if k, ok := c.Args[0].(*ssa.Const); ok && k.IsNil() {
-						if _, varargs := c.Args[1].(*ssa.Slice); !varargs {
-							src = c.Args[1]
+				args := callArgs(call.Common())
+				for _, g := range a.calleesOf(call) {
+					sg := a.sums[g]
+					if sg == nil {
+						continue
+					}
+					for j, cp := range sg.Copies {
+						if !cp || j >= len(args) {
+							continue
+						}
+						passes, returnsCopy := false, false
+						for _, rr := range sg.Ret {
+							if rr.Params&bit(j) != 0 {
+								passes = true
+							}
+							returnsCopy = returnsCopy || rr.Copy
+						}
+						if passes || !returnsCopy {
+							continue // a dispatcher decides, or the copy is kept by a retention point
+						}
+						if s.val(args[j]).private() {
+							add("K6", fn, call.Pos(), "copies a value made for this read ("+copyLabel(call)+")")
 						}
 					}
-				} else if name := calleeName(c); strings.HasPrefix(name, "slices.Clone") && len(c.Args) == 1 {
-					src = c.Args[0]
 				}
-				if src == nil {
+			}
+		}
+
+		// K7: a copy of a family struct keeping a reference field of its source.
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				al, ok := ins.(*ssa.Alloc)
+				if !ok {
 					continue
 				}
-				sl, ok := src.Type().Underlying().(*types.Slice)
-				if !ok || !copierElement(sl.Elem(), copierIface) {
+				if _, intro := s.src[al]; !intro {
 					continue
 				}
-				file, line := pos(fn, call.Pos())
-				r.ShallowCopies = append(r.ShallowCopies, fmt.Sprintf("%s:%d %s copies []%s shallowly", file, line, strings.TrimPrefix(fn.String(), module+"/"), strings.TrimPrefix(sl.Elem().String(), module+"/")))
+				n, st := structOf(pointee(al.Type()))
+				if st == nil {
+					continue
+				}
+				for _, f := range sharedFields(al, st) {
+					add("K7", fn, al.Pos(), n.Obj().Name()+"."+f+" is shared with the source")
+				}
 			}
 		}
 	}
-	sort.Strings(r.ShallowCopies)
 
-	// Controls.
-	r.Controls["second copy of an owned delivery"] = false
-	for _, c := range r.Consumers {
-		if strings.Contains(c.Consumer, "NOR160ControlSecondCopy") && len(c.Copies) > 0 {
-			r.Controls["second copy of an owned delivery"] = true
-		}
+	for m := range mappers {
+		r.Mappers = append(r.Mappers, m)
 	}
-	r.Controls["second copy inside a captured emitter"] = false
-	for _, c := range r.Consumers {
-		if strings.Contains(c.Consumer, "NOR160ControlCapturedEmitter") && len(c.Copies) > 0 {
-			r.Controls["second copy inside a captured emitter"] = true
+	sort.Strings(r.Mappers)
+	sort.Slice(r.Hits, func(i, j int) bool {
+		if r.Hits[i].Class != r.Hits[j].Class {
+			return r.Hits[i].Class < r.Hits[j].Class
 		}
+		if r.Hits[i].File != r.Hits[j].File {
+			return r.Hits[i].File < r.Hits[j].File
+		}
+		return r.Hits[i].Line < r.Hits[j].Line
+	})
+	for _, h := range r.Hits {
+		r.Counts[h.Class]++
 	}
-	r.Controls["second entity copier"] = false
-	for _, c := range r.EntityCopiers {
-		if strings.Contains(c, "NOR160ControlQueueCopier") && strings.Contains(c, "Labels,Properties") {
-			r.Controls["second entity copier"] = true
-		}
-	}
-	r.Controls["hand-written slice copier"] = false
-	for _, c := range r.SliceCopiers {
-		if strings.Contains(c, "NOR160ControlSliceCopier") {
-			r.Controls["hand-written slice copier"] = true
-		}
-	}
-	r.Controls["second Copier dispatch rule"] = false
-	for _, c := range r.Dispatchers {
-		if strings.Contains(c, "NOR160ControlDispatch") {
-			r.Controls["second Copier dispatch rule"] = true
-		}
-	}
-	r.Controls["copy dropped on an unrelated condition"] = false
-	for _, x := range r.DroppedCopies {
-		if strings.Contains(x, "NOR160ControlDroppedCopy") {
-			r.Controls["copy dropped on an unrelated condition"] = true
-		}
-	}
-	r.Controls["copied population abandoned on a miss"] = false
-	for _, x := range r.DroppedCopies {
-		if strings.Contains(x, "NOR160ControlAbandoned") {
-			r.Controls["copied population abandoned on a miss"] = true
-		}
-	}
-	r.Controls["copy of a copying exit's result"] = false
-	for _, x := range r.SecondCopies {
-		if strings.Contains(x, "NOR160ControlCopyOfExit") {
-			r.Controls["copy of a copying exit's result"] = true
-		}
-	}
-	r.Controls["vectors stripped after delivery"] = false
-	for _, c := range r.Consumers {
-		if strings.Contains(c.Consumer, "NOR160ControlStripAfterDelivery") && len(c.Strips) > 0 {
-			r.Controls["vectors stripped after delivery"] = true
-		}
-	}
-	r.Controls["second dispatch rule inside the owner"] = false
-	for _, x := range r.OwnerDispatch {
-		if strings.Contains(x, "nor160ControlSecondDispatch") {
-			r.Controls["second dispatch rule inside the owner"] = true
-		}
-	}
-	r.Controls["shallow entity slice copy"] = false
-	for _, x := range r.ShallowCopies {
-		if strings.Contains(x, "NOR160ControlShallowEntities") {
-			r.Controls["shallow entity slice copy"] = true
-		}
-	}
-	r.Controls["partial clone of a graph-bearing struct"] = false
-	for _, c := range r.Copiers {
-		if strings.Contains(c.Implementation, "nor160ControlCloneHit") && len(c.Unassigned) == 1 && c.Unassigned[0] == "Rel" {
-			r.Controls["partial clone of a graph-bearing struct"] = true
-		}
-	}
-	partial, complete := false, true
-	for _, c := range r.Copiers {
-		if strings.Contains(c.Implementation, "NOR160ControlPartialHit") {
-			partial = len(c.Unassigned) == 1 && c.Unassigned[0] == "Rel"
-		}
-		if strings.Contains(c.Implementation, "NOR160ControlCompleteHit") {
-			complete = len(c.Unassigned) == 0
-		}
-	}
-	r.Controls["partial copier omitting a graph field"] = partial
-	r.Controls["clean: complete copier not reported"] = complete
-	r.Controls["copier types include both controls"] = implementsCopier["pkg/storage.NOR160ControlPartialHit"] && implementsCopier["pkg/storage.NOR160ControlCompleteHit"]
 	r.AllControlsOK = true
-	for _, ok := range r.Controls {
-		r.AllControlsOK = r.AllControlsOK && ok
-	}
-
-	out := os.Stdout
-	if output != "-" {
-		if out, err = os.Create(output); err != nil {
-			panic(err)
+	for _, c := range controls {
+		found := false
+		for _, h := range r.Hits {
+			if h.Class == c.class && h.Function == c.fn {
+				found = true
+			}
 		}
-		defer out.Close()
+		state := "detected"
+		ok := found
+		if c.clean {
+			ok = !found
+			state = "clean"
+			if found {
+				state = "FALSELY REPORTED"
+			}
+		} else if !found {
+			state = "MISSED"
+		}
+		if !ok {
+			r.AllControlsOK = false
+		}
+		r.Controls[c.class+" "+c.fn] = state
 	}
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", " ")
-	if err := encoder.Encode(r); err != nil {
+	data, err := json.MarshalIndent(r, "", " ")
+	if err != nil {
 		panic(err)
 	}
+	if output == "-" {
+		fmt.Println(string(data))
+		return
+	}
+	if err := os.WriteFile(output, data, 0o644); err != nil {
+		panic(err)
+	}
+}
+
+func isTupleWithContainer(t types.Type) bool {
+	tu, ok := t.(*types.Tuple)
+	if !ok {
+		return false
+	}
+	for i := 0; i < tu.Len(); i++ {
+		if container(tu.At(i).Type()) && family(tu.At(i).Type()) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockIndex(ins ssa.Instruction) int {
+	for i, x := range ins.Block().Instrs {
+		if x == ins {
+			return i
+		}
+	}
+	return -1
+}
+
+func copyLabel(v ssa.Value) string {
+	switch x := v.(type) {
+	case *ssa.Call:
+		c := x.Common()
+		if c.IsInvoke() {
+			return c.Value.Type().String() + "." + c.Method.Name()
+		}
+		if f := c.StaticCallee(); f != nil {
+			return strings.TrimPrefix(fullName(f), module+"/")
+		}
+		return "dynamic call"
+	case *ssa.Alloc:
+		return "new " + strings.TrimPrefix(pointee(x.Type()).String(), module+"/")
+	}
+	return v.Name()
+}
+
+// storedInSlice: the call's result is appended to a slice or stored at an index.
+func storedInSlice(call *ssa.Call) bool {
+	refs := call.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, r := range *refs {
+		switch x := r.(type) {
+		case *ssa.Store:
+			if _, ok := x.Addr.(*ssa.IndexAddr); ok && x.Val == call {
+				return true
+			}
+		case *ssa.Call:
+			if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+				return true
+			}
+		case *ssa.Extract:
+			if x.Index == 0 && x.Referrers() != nil {
+				for _, rr := range *x.Referrers() {
+					if st, ok := rr.(*ssa.Store); ok {
+						if _, ok := st.Addr.(*ssa.IndexAddr); ok {
+							return true
+						}
+					}
+					if c, ok := rr.(*ssa.Call); ok {
+						if bi, ok := c.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// anyElementArg: an argument read out of a slice, array or map being iterated.
+func anyElementArg(args []ssa.Value) bool {
+	for _, arg := range args {
+		switch x := arg.(type) {
+		case *ssa.UnOp:
+			if _, ok := x.X.(*ssa.IndexAddr); ok && x.Op == token.MUL {
+				return true
+			}
+		case *ssa.Index, *ssa.Lookup:
+			return true
+		case *ssa.Extract:
+			if _, ok := x.Tuple.(*ssa.Next); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sharedFields: reference fields of a copied struct that keep the source's
+// value: a whole copy never overwrites them, or they are filled straight
+// from the same field of a value of the same type.
+func sharedFields(al *ssa.Alloc, st *types.Struct) []string {
+	elem := pointee(al.Type())
+	refs := al.Referrers()
+	if refs == nil {
+		return nil
+	}
+	whole := false
+	overwritten := map[int]bool{}
+	direct := map[int]bool{}
+	for _, r := range *refs {
+		switch x := r.(type) {
+		case *ssa.Store:
+			if x.Addr == al && types.Identical(x.Val.Type(), elem) {
+				if _, isCall := x.Val.(*ssa.Call); !isCall {
+					whole = true
+				}
+			}
+		case *ssa.FieldAddr:
+			if fr := x.Referrers(); fr != nil {
+				for _, fref := range *fr {
+					sto, ok := fref.(*ssa.Store)
+					if !ok || sto.Addr != x {
+						continue
+					}
+					overwritten[x.Field] = true
+					if ld, ok := sto.Val.(*ssa.UnOp); ok && ld.Op == token.MUL {
+						if fa, ok := ld.X.(*ssa.FieldAddr); ok && fa.Field == x.Field && types.Identical(pointee(fa.X.Type()), elem) {
+							direct[x.Field] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	var out []string
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		if !reference(f.Type()) {
+			continue
+		}
+		if (whole && !overwritten[i]) || direct[i] {
+			out = append(out, f.Name())
+		}
+	}
+	return out
 }
