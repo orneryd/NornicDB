@@ -1,3 +1,4 @@
+// Author: Codex, NOR-160 snapshot read ownership correction, 2026-10-26.
 package cypher
 
 import (
@@ -457,83 +458,29 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 	if fn == nil {
 		return storage.ErrInvalidData
 	}
-	if w.tx != nil {
-		physical := opts
-		if w.namespace != "" {
-			w.initNamespacePrefix()
-			physical.Prefix = w.namespacePrefix
-			if opts.Prefix != "" {
-				physical.Prefix += opts.Prefix
-			}
-		}
-		return w.tx.StreamNodesWithOptions(ctx, physical, func(node *storage.Node) error {
-			if w.namespace == "" {
-				return fn(node)
-			}
-			// Streamed nodes are read-only for the caller, as in
-			// StreamNodesByLabelProjected: strip the ID prefix on a shallow copy.
-			out := *node
-			out.ID = w.unprefixNodeID(out.ID)
-			{
-				metadata := out.RuntimeMetadata()
-				metadata.Database = w.namespace
-				out.SetRuntimeMetadata(metadata)
-			}
-			return fn(&out)
-		})
-	}
-	nodes, err := w.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if node == nil {
-			continue
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
-		}
-		out := node
-		switch {
-		case opts.Projection != nil:
-			out = copyNodeProjected(node, opts.Projection)
-		case opts.StripEmbeddings || (!opts.WithEmbeddings && !opts.ApplyDecayFilter):
-			out = copyNodeWithoutEmbeddingVectors(node)
-		}
-		if err := fn(out); err != nil {
-			if err == storage.ErrIterationStopped {
-				return nil
-			}
-			return err
+	physical := opts
+	if w.namespace != "" {
+		w.initNamespacePrefix()
+		physical.Prefix = w.namespacePrefix
+		if opts.Prefix != "" {
+			physical.Prefix += opts.Prefix
 		}
 	}
-	return nil
-}
-
-// copyNodeProjected returns a node carrying only the requested user properties.
-func copyNodeProjected(node *storage.Node, properties []string) *storage.Node {
-	out := *node
-	out.Properties = make(map[string]interface{}, len(properties))
-	for _, property := range properties {
-		if value, ok := node.Properties[property]; ok {
-			out.Properties[property] = value
+	return w.tx.StreamNodesWithOptions(ctx, physical, func(node *storage.Node) error {
+		if w.namespace == "" {
+			return fn(node)
 		}
-	}
-	return &out
-}
-
-// copyNodeWithoutEmbeddingVectors returns a node with embedding vector payloads
-// removed while retaining metadata and user properties.
-func copyNodeWithoutEmbeddingVectors(node *storage.Node) *storage.Node {
-	out := *node
-	out.ChunkEmbeddings = nil
-	out.NamedEmbeddings = nil
-	return &out
+		// Streamed nodes are read-only for the caller, as in
+		// StreamNodesByLabelProjected: strip the ID prefix on a shallow copy.
+		out := *node
+		out.ID = w.unprefixNodeID(out.ID)
+		{
+			metadata := out.RuntimeMetadata()
+			metadata.Database = w.namespace
+			out.SetRuntimeMetadata(metadata)
+		}
+		return fn(&out)
+	})
 }
 
 func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.Node, error) {
@@ -631,12 +578,11 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 	if w.namespace == "" {
 		return w.tx.MatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
-	var candidate storage.Edge
 	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
-		candidate = *edge
-		candidate.ID = w.unprefixEdgeID(edge.ID)
-		candidate.StartNode, candidate.EndNode = startID, endID
-		return match(&candidate)
+		// Storage hands each predicate its own candidate; show it unprefixed.
+		edge.ID = w.unprefixEdgeID(edge.ID)
+		edge.StartNode, edge.EndNode = startID, endID
+		return match(edge)
 	})
 	if err != nil {
 		return nil, err
@@ -947,11 +893,15 @@ func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node
 	return &out
 }
 
+// toUserEdge converts a caller-owned storage edge to the user namespace.
+// Storage public reads detach their results (pkg/storage cacheLoadEdge), so a
+// shallow copy that rewrites the identity is enough, as for toUserNode.
 func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge {
 	if edge == nil {
 		return nil
 	}
-	out := storage.CopyEdge(edge)
+	image := *edge
+	out := &image
 	out.ID = w.unprefixEdgeID(out.ID)
 	out.Database = w.namespace
 	out.StartNode = w.unprefixNodeID(out.StartNode)

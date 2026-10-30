@@ -206,7 +206,8 @@ func getNodeProjectedThrough(engine Engine, id NodeID, properties []string) (*No
 	if err != nil {
 		return nil, err
 	}
-	return projectCachedNodeForRead(node, properties, false), nil
+	// GetNode results are caller-owned: project in place, no second copy.
+	return shapeNode(node, properties, false, true), nil
 }
 
 // Event-callback registration forwards. WAL does not translate IDs, so the

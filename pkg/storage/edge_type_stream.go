@@ -223,7 +223,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
-		if err := visit(copyEdge(e)); err != nil {
+		if err := visit(e); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

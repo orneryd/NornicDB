@@ -366,7 +366,7 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 // Query metadata keeps its own cache and caller-owned view; body-only reads
 // strip vectors from overlay/cache hits and never publish partial bodies.
 func (b *BadgerEngine) readNodeMetadata(id NodeID, v readVisibility, hydration nodeItemHydration) (*Node, error) {
-	copyImage, cache := copyNodeForCaller, nodeReadCacheQuery
+	copyImage, cache := copyNode, nodeReadCacheQuery
 	if hydration == nodeItemBodyOnly {
 		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
 	}

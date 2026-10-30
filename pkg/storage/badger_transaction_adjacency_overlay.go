@@ -1,5 +1,7 @@
 package storage
 
+import "github.com/orneryd/nornicdb/pkg/callerowned"
+
 // pendingAdjacencyLocked indexes the transaction's incident edges on first
 // adjacency use. Writes maintain it thereafter; unrelated edges never enter a
 // node's read/DELETE working set. All access is under tx.mu.
@@ -80,10 +82,12 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, 
 			result = append(result, edge)
 		}
 	}
+	var selected []*Edge
 	for _, edge := range pending {
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
-			result = append(result, copyEdge(edge))
+			selected = append(selected, edge)
 		}
 	}
-	return result
+	// Pending edges are retained by the transaction: one copy each.
+	return append(result, callerowned.Each(selected, copyEdge)...)
 }

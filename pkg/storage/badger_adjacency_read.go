@@ -116,9 +116,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 			}
 		}
 		edges = attached
-		for _, edge := range d.live {
-			edges = append(edges, copyEdge(edge))
-		}
+		edges = append(edges, d.live...)
 		return nil
 	})
 	if err != nil {
@@ -138,8 +136,9 @@ func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
 	return edge.EndNode == nodeID
 }
 
-// cachedAdjacency resolves a traversal as one captured operation. The edge cache
-// is locked once for both directions; only pending adjacency entries are copied.
+// cachedAdjacency resolves a traversal as one captured operation. Cached bodies
+// come through cacheLoadEdge and pending ones through readBufferedEntities, so
+// every returned edge is a caller-owned copy.
 func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
@@ -155,8 +154,6 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}).deleted {
 		return nil, nil, true
 	}
-	b.edgeCacheMu.RLock()
-	defer b.edgeCacheMu.RUnlock()
 	now := DecayScoringTime()
 	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
 		var live []*Edge
@@ -171,17 +168,17 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found {
 				continue
 			}
-			edge := b.edgeCache[edgeID]
-			if edge == nil {
+			edge, hit := b.cacheLoadEdge(edgeID, edgeCacheRead{bufferExcluded: true, match: func(edge *Edge) bool {
+				return attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now)
+			}})
+			if !hit {
 				return nil, false
 			}
-			if attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now) {
+			if edge != nil {
 				result = append(result, edge)
 			}
 		}
-		for _, edge := range live {
-			result = append(result, copyEdge(edge))
-		}
+		result = append(result, live...)
 		return result, true
 	}
 	var out, in []*Edge

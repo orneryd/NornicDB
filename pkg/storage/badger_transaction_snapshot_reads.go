@@ -1,10 +1,46 @@
+// Author: Codex, NOR-160 snapshot read ownership correction, 2026-10-26.
 package storage
 
 import (
+	"slices"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+// snapshotNodeImage records exactly what the pinned reader hydrated. One
+// bounded cache serves complete, query-metadata and projected point reads;
+// incomplete properties or vectors can never satisfy a richer read.
+type snapshotNodeImage struct {
+	node       *Node
+	hydration  nodeItemHydration
+	properties []string // nil: all properties; non-nil: only these are known
+}
+
+func (image snapshotNodeImage) supports(hydration nodeItemHydration, properties []string) bool {
+	if image.node == nil || image.hydration < hydration {
+		return false
+	}
+	if hydration == nodeItemBodyOnly && image.hydration != nodeItemBodyOnly {
+		// Projected reads retain body metadata rather than hydrating a worker
+		// sidecar. A settled metadata image must not change that contract.
+		if len(image.node.EmbedMeta) > 0 || image.node.RuntimeMetadata().EmbeddingsStoredSeparately || len(image.node.ChunkEmbeddings) > 0 || len(image.node.NamedEmbeddings) > 0 {
+			return false
+		}
+	}
+	if image.properties == nil {
+		return true
+	}
+	if properties == nil {
+		return false
+	}
+	for _, property := range properties {
+		if !slices.Contains(image.properties, property) {
+			return false
+		}
+	}
+	return true
+}
 
 const (
 	maxSnapshotLabelPrefixStreams   = 8
@@ -67,11 +103,11 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	tx.snapshotLabelPrefixBytes += bytes - previousBytes
 	if indexNodesByID {
 		if tx.snapshotPrefixNodeByID == nil {
-			tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, len(nodes))
+			tx.snapshotPrefixNodeByID = make(map[NodeID]snapshotNodeImage, len(nodes))
 			tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, len(nodes))
 		}
 		for index, node := range nodes {
-			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, sizes[index])
+			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(snapshotNodeImage{node: node, hydration: nodeItemFullEmbeddings}, sizes[index])
 		}
 	}
 }
@@ -127,24 +163,96 @@ func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID Nod
 	return err == nil
 }
 
-func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) {
+func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) bool {
 	nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 	if !ok || nodeBytes > maxSnapshotPrefixNodeCacheBytes {
-		return
+		return false
 	}
-	// Sidecar-bearing nodes must be re-read so embedding hydration runs.
+	// A label prefix has not proved sidecar hydration. Only the canonical
+	// point reader can admit that settled image with its actual read quality.
 	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
-		return
+		return false
 	}
-	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, nodeBytes)
+	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(snapshotNodeImage{node: node, hydration: nodeItemFullEmbeddings}, nodeBytes)
+	return true
 }
 
-func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *Node, nodeBytes int) {
-	if _, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {
+// cacheSnapshotReadNodeLocked admits only a successful canonical snapshot read.
+// Its hydration/projection travels with the image in the existing cache; this
+// does not fill or publish an engine cache. The caller retains the immutable
+// decoded image here and returns its own copy after admission.
+func (tx *BadgerTransaction) cacheSnapshotReadNodeLocked(node *Node, hydration nodeItemHydration, properties []string) bool {
+	if tx.snapshotDeregister == nil || node == nil {
+		return false
+	}
+	image := snapshotNodeImage{node: node, hydration: hydration, properties: properties}
+	// A metadata read without embedding state is already complete. No second
+	// sidecar probe is needed: the canonical reader settled it in this view.
+	if hydration == nodeItemQueryMetadata && len(node.EmbedMeta) == 0 && !node.RuntimeMetadata().EmbeddingsStoredSeparately && len(node.ChunkEmbeddings) == 0 && len(node.NamedEmbeddings) == 0 {
+		image.hydration = nodeItemFullEmbeddings
+	}
+	body := *node
+	metadata := body.RuntimeMetadata()
+	metadata.EmbeddingsStoredSeparately = false
+	body.SetRuntimeMetadata(metadata)
+	body.EmbedMeta, body.ChunkEmbeddings, body.NamedEmbeddings = nil, nil, nil
+	nodeBytes, ok := snapshotLabelPrefixNodeBytes(&body)
+	if !ok {
+		return false
+	}
+	add := func(value any) bool {
+		bytes, ok := snapshotLabelPrefixValueBytes(value, 0)
+		if !ok || bytes > maxSnapshotLabelPrefixNodeBytes-nodeBytes {
+			return false
+		}
+		nodeBytes += bytes
+		return true
+	}
+	if len(node.EmbedMeta) > 0 && !add(node.EmbedMeta) {
+		return false
+	}
+	for _, vector := range node.ChunkEmbeddings {
+		if !add(vector) {
+			return false
+		}
+	}
+	for name, vector := range node.NamedEmbeddings {
+		if !add(name) || !add(vector) {
+			return false
+		}
+	}
+	for _, property := range properties {
+		if !add(property) {
+			return false
+		}
+	}
+	if properties != nil {
+		image.properties = slices.Clone(properties)
+	}
+	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(image, nodeBytes)
+	return true
+}
+
+func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(image snapshotNodeImage, nodeBytes int) {
+	node := image.node
+	if previous, exists := tx.snapshotPrefixNodeByID[node.ID]; exists {
+		if previous.supports(image.hydration, image.properties) {
+			return
+		}
+		// Upgrade/replace the same entry; its previous budget and FIFO position
+		// must disappear before admitting the new read quality.
+		tx.snapshotPrefixNodeBytes -= tx.snapshotPrefixNodeBytesByID[node.ID]
+		delete(tx.snapshotPrefixNodeByID, node.ID)
+		delete(tx.snapshotPrefixNodeBytesByID, node.ID)
+		if index := slices.Index(tx.snapshotPrefixNodeOrder, node.ID); index >= 0 {
+			tx.snapshotPrefixNodeOrder = slices.Delete(tx.snapshotPrefixNodeOrder, index, index+1)
+		}
+	}
+	if nodeBytes > maxSnapshotPrefixNodeCacheBytes {
 		return
 	}
 	if tx.snapshotPrefixNodeByID == nil {
-		tx.snapshotPrefixNodeByID = make(map[NodeID]*Node, maxSnapshotPrefixNodeCacheNodes)
+		tx.snapshotPrefixNodeByID = make(map[NodeID]snapshotNodeImage, maxSnapshotPrefixNodeCacheNodes)
 		tx.snapshotPrefixNodeBytesByID = make(map[NodeID]int, maxSnapshotPrefixNodeCacheNodes)
 	}
 	for len(tx.snapshotPrefixNodeOrder) >= maxSnapshotPrefixNodeCacheNodes ||
@@ -159,7 +267,7 @@ func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *No
 	tx.snapshotPrefixNodeOrder = append(tx.snapshotPrefixNodeOrder, node.ID)
 	tx.snapshotPrefixNodeBytesByID[node.ID] = nodeBytes
 	tx.snapshotPrefixNodeBytes += nodeBytes
-	tx.snapshotPrefixNodeByID[node.ID] = node
+	tx.snapshotPrefixNodeByID[node.ID] = image
 }
 
 func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key snapshotLabelCacheKey) {
@@ -374,14 +482,21 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	// invisible to the pinned view. Read the latest overlaid engine view
 	// instead (PR #1043 read-overlay parity).
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		var edges []*Edge
+		var err error
 		switch direction {
 		case Outgoing:
-			return tx.engine.GetOutgoingEdges(nodeID)
+			edges, err = tx.engine.GetOutgoingEdges(nodeID)
 		case Incoming:
-			return tx.engine.GetIncomingEdges(nodeID)
+			edges, err = tx.engine.GetIncomingEdges(nodeID)
 		default:
 			return nil, ErrInvalidData
 		}
+		if err != nil {
+			return nil, err
+		}
+		// Engine adjacency returns caller-owned edges (cacheLoadEdge).
+		return edges, nil
 	}
 	if tx.snapshotDeregister != nil {
 		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
@@ -432,8 +547,13 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 		}
 		for _, edgeID := range edgeIDs {
 			var edge *Edge
-			decayStable := !tx.engine.visibilityFiltered()
-			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok && decayStable {
+			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok {
+				// The body is immutable in this view; visibility is not. Reuse
+				// the body and run the same live policy owner on every read.
+				// Check its no-policy shortcut before evaluating the clock.
+				if tx.engine.visibilityFiltered() && tx.engine.filterEntityByDecay(visibleRead, cachedEdge, DecayScoringTime()) {
+					continue
+				}
 				edge = copyEdge(cachedEdge)
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
 				edge = header
@@ -446,9 +566,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 				if edgeErr != nil {
 					return edgeErr
 				}
-				if decayStable {
-					tx.cacheSnapshotEdgeByIDLocked(edge)
-				}
+				tx.cacheSnapshotEdgeByIDLocked(edge)
 			}
 			if edge == nil {
 				continue

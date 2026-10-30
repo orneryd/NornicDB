@@ -1676,7 +1676,7 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 				if end > len(nodes) {
 					end = len(nodes)
 				}
-				if err := fn(nodesFromDatabase(nodes[i:end], c.constituentDatabase(alias, engine))); err != nil {
+				if err := fn(nodesFromDatabase(nodes[i:end:end], c.constituentDatabase(alias, engine))); err != nil {
 					return err
 				}
 			}

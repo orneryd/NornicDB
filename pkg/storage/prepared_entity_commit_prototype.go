@@ -1,9 +1,9 @@
+// Caller-ownership correction author: Codex, NOR-160, 29 October 2026.
 package storage
 
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 )
 
@@ -49,7 +49,6 @@ func (p *PreparedEntityCommit) Operations() []Operation {
 		op.Edge = copyEdge(op.Edge)
 		op.OldNode = copyNode(op.OldNode)
 		op.OldEdge = copyEdge(op.OldEdge)
-		detachPreparedPropertyMaps([]*Node{op.Node, op.OldNode}, []*Edge{op.Edge, op.OldEdge})
 		if op.DeletedEdgeIDs != nil {
 			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
 			copy(ids, op.DeletedEdgeIDs)
@@ -318,71 +317,3 @@ func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *
 }
 
 func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
-
-// detachPreparedPropertyMaps completes the caller-owned diagnostic copy. Native
-// storage copies intentionally retain property values; diagnostic consumers may
-// mutate supported list/map values without changing accepted commit images.
-// This is never used by the canonical prepared encoder or commit path.
-func detachPreparedPropertyMaps(nodes []*Node, edges []*Edge) {
-	detach := func(properties map[string]any) {
-		for key, value := range properties {
-			if value != nil {
-				properties[key] = clonePreparedPropertyValue(value)
-			}
-		}
-	}
-	for _, node := range nodes {
-		if node != nil {
-			detach(node.Properties)
-			detach(node.EmbedMeta)
-		}
-	}
-	for _, edge := range edges {
-		if edge != nil {
-			detach(edge.Properties)
-		}
-	}
-}
-
-// clonePreparedPropertyValue preserves the concrete list/map types supported
-// by prepared wire images and nil containers. Scalars and strings are immutable.
-func clonePreparedPropertyValue(value any) any {
-	switch value := value.(type) {
-	case []byte:
-		return slices.Clone(value)
-	case []string:
-		return slices.Clone(value)
-	case []int:
-		return slices.Clone(value)
-	case []int32:
-		return slices.Clone(value)
-	case []int64:
-		return slices.Clone(value)
-	case []float32:
-		return slices.Clone(value)
-	case []float64:
-		return slices.Clone(value)
-	case []bool:
-		return slices.Clone(value)
-	case []any:
-		if value == nil {
-			return value
-		}
-		copied := make([]any, len(value))
-		for index, item := range value {
-			copied[index] = clonePreparedPropertyValue(item)
-		}
-		return copied
-	case map[string]any:
-		if value == nil {
-			return value
-		}
-		copied := make(map[string]any, len(value))
-		for key, item := range value {
-			copied[key] = clonePreparedPropertyValue(item)
-		}
-		return copied
-	default:
-		return value
-	}
-}

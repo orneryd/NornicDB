@@ -95,7 +95,6 @@ func TestNodeRuntimeCopyShapesPreserveMetadataAndIdentity(t *testing.T) {
 	want := runtimeIdentityFixture{state: state, attempt: state.embeddingAttempt}
 	for name, copyFn := range map[string]func(*Node) *Node{
 		"copyNode":                  copyNode,
-		"copyNodeForCaller":         copyNodeForCaller,
 		"copyNodeWithoutEmbeddings": copyNodeWithoutEmbeddings,
 		"CopyNode":                  CopyNode,
 		"value copy":                func(n *Node) *Node { copied := *n; return &copied },
@@ -166,7 +165,7 @@ func TestNodeRuntimeCacheStorePreservesMetadataAndPolicy(t *testing.T) {
 
 	// A caller copy of the cache entry keeps the metadata and the nil attempt,
 	// and changing its metadata cannot reach the cache.
-	caller := copyNodeForCaller(cached)
+	caller := copyNode(cached)
 	requireRuntimeMetadata(t, "caller copy", caller, state.metadata)
 	require.Nil(t, caller.EmbeddingAttempt())
 	modified := caller.RuntimeMetadata()
@@ -180,8 +179,8 @@ func TestNodeRuntimeCacheStorePreservesMetadataAndPolicy(t *testing.T) {
 }
 
 // TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity covers both fill
-// modes. A full fill deep-copies the body (vectors too) and keeps its identity;
-// a query fill shares vectors but still owns labels, properties and the record.
+// modes. Each fill deep-copies the body, vectors included, and keeps its
+// identity: the cache owns everything it keeps (NOR-160).
 func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 	engine := runtimeNewEngine(t)
 	for _, mode := range []nodeReadCacheMode{nodeReadCacheFull, nodeReadCacheQuery} {
@@ -218,11 +217,7 @@ func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 			read.ChunkEmbeddings[0][0] = 99
 			require.Equal(t, int64(1), cached.Properties["v"], "%s: cached properties ignore the read image", name)
 			require.Equal(t, []string{"Doc"}, cached.Labels, "%s: cached labels ignore the read image", name)
-			if mode == nodeReadCacheFull {
-				require.Equal(t, float32(3), cached.ChunkEmbeddings[0][0], "full fill deep-copies vectors")
-			} else {
-				require.Equal(t, float32(99), cached.ChunkEmbeddings[0][0], "query fill shares in-memory vectors")
-			}
+			require.Equal(t, float32(3), cached.ChunkEmbeddings[0][0], "%s: the fill deep-copies vectors", name)
 			requireRuntimeMetadata(t, name, cached, state.metadata)
 		})
 	}
@@ -267,7 +262,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 	requireRuntimeMetadata(t, "body entry", entry.node, state.metadata)
 	requireRuntimeIdentity(t, "body entry", entry.node, runtimeIdentityFixture{state: state, attempt: state.embeddingAttempt})
 
-	hit, ok := engine.cacheLoadNodeBody(separate.ID, 123)
+	hit, ok := engine.cacheLoadNodeBody(separate.ID, 123, nil)
 	require.True(t, ok)
 	requireRuntimeMetadata(t, "body hit", hit, state.metadata)
 	requireRuntimeIdentity(t, "body hit", hit, runtimeIdentityFixture{state: state, attempt: state.embeddingAttempt})
@@ -278,7 +273,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 	engine.nodeBodyCacheMu.RUnlock()
 
 	// A different physical version is a miss and evicts the stale entry.
-	_, ok = engine.cacheLoadNodeBody(separate.ID, 124)
+	_, ok = engine.cacheLoadNodeBody(separate.ID, 124, nil)
 	require.False(t, ok, "the body cache is version checked")
 	engine.nodeBodyCacheMu.RLock()
 	_, stillCached := engine.nodeBodyCache[separate.ID]

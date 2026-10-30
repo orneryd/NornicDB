@@ -1,3 +1,4 @@
+// Caller-ownership correction author: Codex, NOR-160, 29 October 2026.
 // Package storage - Transaction types shared between storage implementations.
 //
 // This file defines shared transaction types used by BadgerTransaction.
@@ -31,7 +32,10 @@ package storage
 
 import (
 	"errors"
+	"slices"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 
 	"github.com/google/uuid"
 )
@@ -120,40 +124,24 @@ func copyNode(node *Node) *Node {
 	if nodeCopy == nil {
 		return nil
 	}
+	if node.ChunkEmbeddings != nil || node.NamedEmbeddings != nil {
+		countVectorCopy(node)
+	}
 
-	if len(node.ChunkEmbeddings) > 0 {
+	if node.ChunkEmbeddings != nil {
 		nodeCopy.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
 		for i, emb := range node.ChunkEmbeddings {
-			nodeCopy.ChunkEmbeddings[i] = make([]float32, len(emb))
-			copy(nodeCopy.ChunkEmbeddings[i], emb)
+			nodeCopy.ChunkEmbeddings[i] = slices.Clone(emb)
 		}
 	}
 
 	if node.NamedEmbeddings != nil {
 		nodeCopy.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
 		for name, emb := range node.NamedEmbeddings {
-			embCopy := make([]float32, len(emb))
-			copy(embCopy, emb)
-			nodeCopy.NamedEmbeddings[name] = embCopy
+			nodeCopy.NamedEmbeddings[name] = slices.Clone(emb)
 		}
 	}
 
-	return nodeCopy
-}
-
-// copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
-// caches, for a caller that may change it: its labels, properties and
-// embedding metadata are its own, so a caller writing the node (a Cypher SET)
-// leaves the cached snapshot copy, and the old version an update compares
-// against, unchanged (#963). The embedding vectors, which callers replace
-// rather than modify, are shared.
-func copyNodeForCaller(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
-	if nodeCopy == nil {
-		return nil
-	}
-	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
-	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
 	return nodeCopy
 }
 
@@ -161,6 +149,7 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node == nil {
 		return nil
 	}
+	countNodeCopy(node)
 
 	// The runtime record is immutable, so every copy of an image shares it:
 	// a mutator replaces the record on the image it is called for. Reading the
@@ -174,20 +163,8 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	nodeCopy.UpdatedAt = node.UpdatedAt
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
-	if node.Properties != nil {
-		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			nodeCopy.Properties[k] = v
-		}
-	}
-
-	if node.EmbedMeta != nil {
-		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
-		for k, v := range node.EmbedMeta {
-			nodeCopy.EmbedMeta[k] = v
-		}
-	}
-
+	nodeCopy.Properties = callerowned.Map(node.Properties)
+	nodeCopy.EmbedMeta = callerowned.Map(node.EmbedMeta)
 	return nodeCopy
 }
 
@@ -197,6 +174,7 @@ func copyEdge(edge *Edge) *Edge {
 	if edge == nil {
 		return nil
 	}
+	countEdgeCopy(edge)
 
 	edgeCopy := &Edge{
 		Database:             edge.Database,
@@ -211,13 +189,7 @@ func copyEdge(edge *Edge) *Edge {
 		VisibilitySuppressed: edge.VisibilitySuppressed,
 	}
 
-	if edge.Properties != nil {
-		edgeCopy.Properties = make(map[string]interface{})
-		for k, v := range edge.Properties {
-			edgeCopy.Properties[k] = v
-		}
-	}
-
+	edgeCopy.Properties = callerowned.Map(edge.Properties)
 	return edgeCopy
 }
 

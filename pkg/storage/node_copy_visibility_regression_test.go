@@ -48,5 +48,5 @@ func TestNodeCopyPreservesEntityFields(t *testing.T) {
 	expected.NamedEmbeddings = nil
 	expected.ChunkEmbeddings = nil
 	require.Equal(t, &expected, got, "embedding-free copy drops only vectors")
-	require.Equal(t, node, copyNodeForCaller(node), "caller copy preserves metadata and shared vectors")
+	require.Equal(t, node, copyNode(node), "caller copy preserves metadata and shared vectors")
 }
