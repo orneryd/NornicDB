@@ -1,8 +1,8 @@
 package storage
 
 import (
+	"context"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,9 +42,7 @@ type deleteCleanup struct {
 	deletes   atomic.Int64 // since the last clean-up
 	last      atomic.Int64 // UnixNano of the latest delete
 	wake      chan struct{}
-	stop      chan struct{}
-	done      chan struct{}
-	stopOnce  sync.Once
+	run       *engineWorker
 }
 
 // recordDelete counts one deleted node or relationship and wakes the
@@ -64,11 +62,11 @@ func (c *deleteCleanup) recordDelete() {
 
 // waitQuiet waits until no delete has happened for c.quiet. It returns false
 // when the engine is closing.
-func (c *deleteCleanup) waitQuiet() bool {
+func (c *deleteCleanup) waitQuiet(ctx context.Context) bool {
 	for {
 		timer := time.NewTimer(c.quiet)
 		select {
-		case <-c.stop:
+		case <-ctx.Done():
 			timer.Stop()
 			return false
 		case <-timer.C:
@@ -85,26 +83,23 @@ func (b *BadgerEngine) startDeleteCleanup() {
 		threshold: deleteCleanupThreshold,
 		quiet:     deleteCleanupQuietPeriod,
 		wake:      make(chan struct{}, 1),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
 	}
 	b.deleteCleanup = c
-	go func() {
-		defer close(c.done)
+	c.run = b.startEngineWorker(b.work.Context(), func(ctx context.Context) {
 		for {
 			select {
-			case <-c.stop:
+			case <-ctx.Done():
 				return
 			case <-c.wake:
 			}
-			if !c.waitQuiet() {
+			if !c.waitQuiet(ctx) {
 				return
 			}
 			if counted := c.deletes.Load(); counted >= c.threshold {
 				b.runDeleteCleanup(counted)
 			}
 		}
-	}()
+	})
 }
 
 // stopDeleteCleanup stops the clean-up goroutine and waits for it, including
@@ -114,8 +109,7 @@ func (b *BadgerEngine) stopDeleteCleanup() {
 	if c == nil {
 		return
 	}
-	c.stopOnce.Do(func() { close(c.stop) })
-	<-c.done
+	c.run.stopAndJoin()
 }
 
 // runDeleteCleanup runs one clean-up for counted deletes and logs it. A
