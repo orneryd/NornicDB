@@ -1,6 +1,8 @@
 // Package cypher implements APOC data import/export procedures.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"encoding/csv"
@@ -925,7 +927,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"source", "nodes", "relationships"},
+		Columns: legacyProcedureColumns("apoc.import.json"),
 		Rows: [][]interface{}{{
 			urlOrFile,
 			nodesImported,

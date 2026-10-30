@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30.
+
 // legacyProcedureColumns declares the existing standalone result headers of
 // compatibility procedures whose Neo4j signature is void or has broader yields.
 // Callers receive owned slices; observations never extend these declarations.
@@ -22,7 +24,7 @@ func legacyProcedureColumns(name string) []string {
 	case "apoc.export.json.all":
 		return []string{"file", "nodes", "relationships", "properties", "data"}
 	case "apoc.import.json":
-		return []string{"file", "nodes", "relationships", "rows"}
+		return []string{"source", "nodes", "relationships"}
 	default:
 		return nil
 	}
