@@ -786,6 +786,48 @@ func addrBase(v ssa.Value) ssa.Value {
 	return nil
 }
 
+// sameField: every address of the same field of the same local value.
+func sameField(fn *ssa.Function, fa *ssa.FieldAddr) []ssa.Value {
+	base := addrBase(fa.X)
+	var out []ssa.Value
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if other, ok := ins.(*ssa.FieldAddr); ok && other.Field == fa.Field && addrBase(other.X) == base {
+				out = append(out, other)
+			}
+		}
+	}
+	return out
+}
+
+// propagates: ins moves a value derived from roots into memory the function
+// owns, and returns that container (nil otherwise).
+func propagates(fn *ssa.Function, ins ssa.Instruction, roots map[ssa.Value]bool) ssa.Value {
+	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
+	switch x := ins.(type) {
+	case *ssa.Store:
+		if in(x.Val) {
+			if fa, ok := x.Addr.(*ssa.FieldAddr); ok && addrBase(fa.X) != nil {
+				return fa
+			}
+			return addrBase(x.Addr)
+		}
+	case *ssa.MapUpdate:
+		if in(x.Value) {
+			return addrBase(x.Map)
+		}
+	case *ssa.Call:
+		if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+			for _, arg := range x.Call.Args {
+				if in(arg) {
+					return x
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // rootClosure extends roots through the function's own memory: a copy stored
 // in a local variable, slice or map, or appended to a local slice, is still
 // the same undelivered copy.
@@ -804,6 +846,12 @@ func rootClosure(fn *ssa.Function, roots map[ssa.Value]bool) {
 				switch x := ins.(type) {
 				case *ssa.Store:
 					if in(x.Val) {
+						if fa, ok := x.Addr.(*ssa.FieldAddr); ok && addrBase(fa.X) != nil {
+							for _, sibling := range sameField(fn, fa) {
+								mark(sibling)
+							}
+							continue
+						}
 						mark(addrBase(x.Addr))
 					}
 				case *ssa.MapUpdate:
@@ -854,7 +902,9 @@ func delivers(ins ssa.Instruction, roots map[ssa.Value]bool) bool {
 		if bi, ok := c.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
 			return false
 		}
-		predicate := c.Signature().Results().Len() == 1 && types.Identical(c.Signature().Results().At(0).Type(), types.Typ[types.Bool])
+		// A static function that only answers a bool reads its argument; a
+		// callback (visitor, predicate supplied by the caller) receives it.
+		predicate := staticCallee(c) != nil && c.Signature().Results().Len() == 1 && types.Identical(c.Signature().Results().At(0).Type(), types.Typ[types.Bool])
 		for _, a := range c.Args {
 			if in(a) && !predicate {
 				return true
@@ -883,24 +933,65 @@ func derivedCond(cond ssa.Value, roots map[ssa.Value]bool) (derived bool, presen
 	return false, 0
 }
 
-// mayDrop: from the copy, some path reaches the function's end or the copy's
-// own block again without delivering it, through a condition the copy does
-// not decide.
+// mayDrop: from the copy, some path reaches the function's end (or the copy
+// again) without delivering it, through a condition the copy does not decide.
+// A copy moved into a local container hands its obligation to the container,
+// which must itself be delivered on every such path; a container may loop.
 func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
 	roots := callResults(call)
 	rootClosure(start.Parent(), roots)
-	for _, ins := range start.Instrs[index+1:] {
-		if delivers(ins, roots) {
+	return mayDropFrom(start.Parent(), roots, start, index, true, 0, map[ssa.Value]bool{})
+}
+
+func mayDropFrom(fn *ssa.Function, roots map[ssa.Value]bool, start *ssa.BasicBlock, index int, loopDrops bool, depth int, checked map[ssa.Value]bool) bool {
+	if depth > 4 {
+		return false
+	}
+	containerDrops := func(c ssa.Value, at ssa.Instruction) bool {
+		if checked[c] {
 			return false
 		}
+		checked[c] = true
+		inner := map[ssa.Value]bool{c: true}
+		if fa, ok := c.(*ssa.FieldAddr); ok {
+			for _, sibling := range sameField(fn, fa) {
+				inner[sibling] = true
+			}
+		}
+		rootClosure(fn, inner)
+		block := at.Block()
+		for i, ins := range block.Instrs {
+			if ins == at {
+				return mayDropFrom(fn, inner, block, i, false, depth+1, checked)
+			}
+		}
+		return false
+	}
+	// scan reports whether a block's instructions (from index) settle the
+	// value: delivered, or handed to a container that is delivered.
+	scan := func(instrs []ssa.Instruction) (settled, dropped bool) {
+		for _, ins := range instrs {
+			if delivers(ins, roots) {
+				return true, false
+			}
+			if c := propagates(fn, ins, roots); c != nil {
+				if containerDrops(c, ins) {
+					return true, true
+				}
+				return true, false
+			}
+		}
+		return false, false
+	}
+	if settled, dropped := scan(start.Instrs[index+1:]); settled {
+		return dropped
 	}
 	type state struct {
 		b       *ssa.BasicBlock
 		foreign bool
 	}
 	seen := map[state]bool{}
-	var next func(b *ssa.BasicBlock, foreign bool) []state
-	next = func(b *ssa.BasicBlock, foreign bool) []state {
+	next := func(b *ssa.BasicBlock, foreign bool) []state {
 		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok {
 			if d, present := derivedCond(iff.Cond, roots); d {
 				return []state{{b.Succs[present], foreign}}
@@ -908,8 +999,8 @@ func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
 			return []state{{b.Succs[0], true}, {b.Succs[1], true}}
 		}
 		var out []state
-		for _, s := range b.Succs {
-			out = append(out, state{s, foreign})
+		for _, succ := range b.Succs {
+			out = append(out, state{succ, foreign})
 		}
 		return out
 	}
@@ -922,19 +1013,15 @@ func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
 		}
 		seen[st] = true
 		if st.b == start {
-			if st.foreign {
+			if st.foreign && loopDrops {
 				return true
 			}
 			continue
 		}
-		delivered := false
-		for _, ins := range st.b.Instrs {
-			if delivers(ins, roots) {
-				delivered = true
-				break
+		if settled, dropped := scan(st.b.Instrs); settled {
+			if dropped {
+				return true
 			}
-		}
-		if delivered {
 			continue
 		}
 		if _, ret := st.b.Instrs[len(st.b.Instrs)-1].(*ssa.Return); ret && st.foreign {
@@ -1185,6 +1272,9 @@ func main() {
 					file, line := pos(cb, cb.Pos())
 					sf, sl := pos(fn, call.Pos())
 					copies, strips := splitStrips(copiesOf(cb, roots, 0, map[string]bool{}))
+					if copierNames[fullName(cb)] {
+						strips = nil
+					}
 					r.Consumers = append(r.Consumers, consumer{Consumer: cb.String(), File: file, Line: line, Callee: name, FromStorage: fromStorage,
 						Site: fmt.Sprintf("%s:%d", sf, sl), Copies: copies, Strips: strips, Retains: retains(cb, roots)})
 				}
@@ -1234,8 +1324,11 @@ func main() {
 			continue
 		}
 		lower := strings.ToLower(fn.Name())
-		if fn.Name() != "CallerCopy" && !strings.Contains(lower, "callerowned") && !strings.HasPrefix(lower, "clone") && !copierNames[fullName(fn)] {
+		if fn.Name() != "CallerCopy" && !strings.Contains(lower, "callerowned") && !strings.Contains(lower, "clone") && !copierNames[fullName(fn)] {
 			continue
+		}
+		if strings.HasPrefix(fn.Name(), "deliver") {
+			continue // the delivery owner: images copy through copyNode/copyEdge
 		}
 		var copied types.Type
 		switch {
@@ -1333,7 +1426,7 @@ func main() {
 						r.Dispatchers = append(r.Dispatchers, fmt.Sprintf("%s:%d %s calls CallerCopy through %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), c.Value.Type()))
 					}
 					call, ok := ins.(*ssa.Call)
-					if !ok || !elementCopier(c) || !inCycle(b) || !storedAsElement(call) {
+					if !ok || !elementCopier(c) || !inCycle(b) || !storedAsElement(call) || strings.Contains(calleeName(c), "/pkg/storage.deliver") {
 						continue
 					}
 					file, line := pos(fn, x.Pos())
@@ -1371,7 +1464,7 @@ func main() {
 	// being delivered, on a path decided by a condition the copy does not decide.
 	exits := copyingExits(fns)
 	for _, fn := range fns {
-		if copierNames[fullName(fn)] || exits[origin(fn)] {
+		if copierNames[fullName(fn)] {
 			continue
 		}
 		for _, b := range fn.Blocks {
@@ -1398,7 +1491,7 @@ func main() {
 	// 11: copies of copies: a copier applied to a value another copier or a
 	// copying exit already produced in the same function.
 	for _, fn := range fns {
-		if copierNames[fullName(fn)] || exits[origin(fn)] {
+		if copierNames[fullName(fn)] {
 			continue
 		}
 		var copies []*ssa.Call
