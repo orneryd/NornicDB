@@ -3,6 +3,8 @@ package fabric
 import (
 	"context"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // ResultStream holds the tabular output of a fragment execution.
@@ -236,7 +238,7 @@ func (it *prefetchRowIterator) produce() {
 	for it.base.Next() {
 		row := it.base.Row()
 		select {
-		case <-it.ctx.Done():
+		case <-bulk.Done(it.ctx):
 			return
 		case it.rows <- row:
 		}
@@ -262,7 +264,7 @@ func (it *prefetchRowIterator) Next() bool {
 		return false
 	}
 	select {
-	case <-it.ctx.Done():
+	case <-bulk.Done(it.ctx):
 		return false
 	case row, ok := <-it.rows:
 		if !ok {

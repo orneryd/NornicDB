@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -984,8 +985,8 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 
 	for len(queue) > 0 {
 		select {
-		case <-ctx.Done():
-			return collection, ctx.Err()
+		case <-bulk.Done(ctx):
+			return collection, bulk.ObserveContext(ctx)
 		default:
 		}
 		current := queue[0]
@@ -1001,8 +1002,8 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 		for _, edge := range edges {
 			edge = projection.Edge(edge)
 			select {
-			case <-ctx.Done():
-				return collection, ctx.Err()
+			case <-bulk.Done(ctx):
+				return collection, bulk.ObserveContext(ctx)
 			default:
 			}
 			if !filters.allowEdge(edge) {
@@ -1074,8 +1075,8 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	limitExceeded := false
 	for len(queue) > 0 {
 		select {
-		case <-ctx.Done():
-			return graphCollection{}, ctx.Err()
+		case <-bulk.Done(ctx):
+			return graphCollection{}, bulk.ObserveContext(ctx)
 		default:
 		}
 		current := queue[0]
@@ -1088,8 +1089,8 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 		for _, edge := range edges {
 			edge = projection.Edge(edge)
 			select {
-			case <-ctx.Done():
-				return graphCollection{}, ctx.Err()
+			case <-bulk.Done(ctx):
+				return graphCollection{}, bulk.ObserveContext(ctx)
 			default:
 			}
 			if !filters.allowEdge(edge) {
@@ -1370,8 +1371,8 @@ func cloneInterfaceMap(input map[string]interface{}) map[string]interface{} {
 
 func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-bulk.Done(ctx):
+		return nil, bulk.ObserveContext(ctx)
 	default:
 	}
 	var outgoing []*storage.Edge
@@ -1385,8 +1386,8 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 	}
 	if direction != "out" {
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-bulk.Done(ctx):
+			return nil, bulk.ObserveContext(ctx)
 		default:
 		}
 		var err error
@@ -1396,16 +1397,16 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 		}
 	}
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-bulk.Done(ctx):
+		return nil, bulk.ObserveContext(ctx)
 	default:
 	}
 	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
 	seen := make(map[string]struct{}, len(outgoing)+len(incoming))
 	for _, edge := range outgoing {
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-bulk.Done(ctx):
+			return nil, bulk.ObserveContext(ctx)
 		default:
 		}
 		if edge == nil {
@@ -1420,8 +1421,8 @@ func graphEdgesForNode(ctx context.Context, engine storage.Engine, nodeID storag
 	}
 	for _, edge := range incoming {
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-bulk.Done(ctx):
+			return nil, bulk.ObserveContext(ctx)
 		default:
 		}
 		if edge == nil {

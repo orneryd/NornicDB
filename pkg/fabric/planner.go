@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // FabricPlanner decomposes a Cypher query into a Fragment tree by splitting
@@ -179,7 +180,7 @@ func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
 // Returns a Fragment tree of accepted source ready for FabricExecutor.
 // RawSource input is projected once before clause and UNION decomposition.
 func (p *FabricPlanner) Plan(ctx context.Context, query string, sessionDB string, stage SourceStage) (Fragment, error) {
-	if err := ctx.Err(); err != nil {
+	if err := bulk.ObserveContext(ctx); err != nil {
 		return nil, err
 	}
 	source := cyphertext.NewSource(ctx, query, stage)
@@ -200,7 +201,7 @@ func (p *FabricPlanner) Plan(ctx context.Context, query string, sessionDB string
 // selecting a branch's USE target so one branch cannot absorb another's text or
 // graph scope. CALL import binding remains a per-branch responsibility.
 func (p *FabricPlanner) planQuery(ctx context.Context, trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
-	if err := ctx.Err(); err != nil {
+	if err := bulk.ObserveContext(ctx); err != nil {
 		return nil, err
 	}
 	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed, p.keywordIsName)
@@ -325,7 +326,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 // too. It is the statement as one graph runs it, which is how Neo4j checks a
 // composite statement's variable scopes, whichever graphs its parts run on.
 func (p *FabricPlanner) SingleGraphStatement(ctx context.Context, query string, stage SourceStage) (string, error) {
-	if err := ctx.Err(); err != nil {
+	if err := bulk.ObserveContext(ctx); err != nil {
 		return "", err
 	}
 	source := cyphertext.NewSource(ctx, query, stage)
