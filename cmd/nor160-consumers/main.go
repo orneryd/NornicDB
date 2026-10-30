@@ -1699,7 +1699,7 @@ func main() {
 		n, ex := a.entriesReaching(fn)
 		r.Hits = append(r.Hits, hit{Class: class, Function: fullName(fn), File: file, Line: line, Detail: detail, Entries: n, Examples: ex})
 	}
-	mappers := map[string]bool{}
+	mappers := map[string]*ssa.Function{}
 
 	for _, fn := range a.fns {
 		s := a.states[fn]
@@ -1927,7 +1927,7 @@ func main() {
 					continue
 				}
 				if _, isParam := call.Common().Value.(*ssa.Parameter); isParam && storedInSlice(call) && anyElementArg(call.Common().Args) {
-					mappers[fullName(fn)] = true
+					mappers[fullName(fn)] = originFn(fn)
 					continue
 				}
 				if _, intro := s.src[call]; intro && storedInSlice(call) && anyElementArg(callArgs(call.Common())) {
@@ -1992,10 +1992,44 @@ func main() {
 		}
 	}
 
-	for m := range mappers {
+	// K5m: every population mapper (a loop storing a function parameter's
+	// results) and every call to one, with the function it applies. Counted
+	// with the other classes; the one slice owner must be among them.
+	for m, mfn := range mappers {
 		r.Mappers = append(r.Mappers, m)
+		add("K5m", mfn, mfn.Pos(), "population mapper: a loop stores a function parameter's results")
 	}
 	sort.Strings(r.Mappers)
+	for _, fn := range a.fns {
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(*ssa.Call)
+				if !ok {
+					continue
+				}
+				f := call.Common().StaticCallee()
+				if f == nil {
+					continue
+				}
+				name := fullName(f)
+				if _, isMapper := mappers[name]; !isMapper {
+					continue
+				}
+				applied := "a function value"
+				for _, arg := range call.Common().Args {
+					switch x := arg.(type) {
+					case *ssa.Function:
+						applied = strings.TrimPrefix(fullName(x), module+"/")
+					case *ssa.MakeClosure:
+						if g, ok := x.Fn.(*ssa.Function); ok {
+							applied = "closure " + strings.TrimPrefix(fullName(g), module+"/")
+						}
+					}
+				}
+				add("K5m", fn, call.Pos(), "calls population mapper "+strings.TrimPrefix(name, module+"/")+" with "+applied)
+			}
+		}
+	}
 	sort.Slice(r.Hits, func(i, j int) bool {
 		if r.Hits[i].Class != r.Hits[j].Class {
 			return r.Hits[i].Class < r.Hits[j].Class
