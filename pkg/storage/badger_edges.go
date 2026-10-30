@@ -589,6 +589,11 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 }
 
 // DeleteEdge removes an edge.
+// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
+func (b *BadgerEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	return b.deleteEdgeWithOrigin(id, origin)
+}
+
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	return b.deleteEdgeWithOrigin(id)
 }

@@ -649,7 +649,7 @@ func (tx *BadgerTransaction) ensureOperationAllowedLocked(operation transactionO
 			return err
 		}
 		if !tx.vectorOriginBound {
-			tx.bindVectorWorkOriginLocked(CaptureVectorWorkOrigin())
+			tx.bindVectorWorkOriginLocked(fallbackVectorWorkOrigin("storage.transaction-write"))
 		}
 	case transactionSchemaWrite:
 		if len(tx.operations) > 0 {

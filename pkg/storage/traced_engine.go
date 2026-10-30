@@ -105,6 +105,32 @@ func (t *TracedEngine) UpdateEdge(edge *Edge) error {
 	return t.Engine.UpdateEdge(edge)
 }
 
+// DeleteNodeWithVectorWorkOrigin traces an admitted deletion.
+func (t *TracedEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteNode",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attribute.String("kind", "node")),
+	)
+	defer span.End()
+	if handled, err := deleteNodeAdmitted(t.Engine, id, origin); handled {
+		return err
+	}
+	return t.Engine.DeleteNode(id)
+}
+
+// DeleteEdgeWithVectorWorkOrigin traces an admitted deletion.
+func (t *TracedEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteEdge",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attribute.String("kind", "edge")),
+	)
+	defer span.End()
+	if handled, err := deleteEdgeAdmitted(t.Engine, id, origin); handled {
+		return err
+	}
+	return t.Engine.DeleteEdge(id)
+}
+
 func (t *TracedEngine) DeleteEdge(id EdgeID) error {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.DeleteEdge",
 		trace.WithSpanKind(trace.SpanKindInternal),

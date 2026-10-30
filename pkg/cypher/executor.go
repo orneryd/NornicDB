@@ -1579,7 +1579,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			}
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, err := beginTransactionSnapshot(ctx, txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
 	}

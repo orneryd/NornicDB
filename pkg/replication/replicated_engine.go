@@ -176,8 +176,22 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
 	origin, admitted := storage.VectorWorkOriginFromArguments(context.Background(), value)
 	if !admitted {
-		origin = storage.CaptureVectorWorkOrigin()
+		origin = storage.AdmitUnrequestedVectorWork("replication.replicated-write")
 	}
+	return e.applyAdmittedEntityCommand(kind, value, origin)
+}
+
+// DeleteNodeWithVectorWorkOrigin replicates a deletion under the caller's admission.
+func (e *ReplicatedEngine) DeleteNodeWithVectorWorkOrigin(id storage.NodeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdDeleteNode, id, origin)
+}
+
+// DeleteEdgeWithVectorWorkOrigin replicates a deletion under the caller's admission.
+func (e *ReplicatedEngine) DeleteEdgeWithVectorWorkOrigin(id storage.EdgeID, origin uint64) error {
+	return e.applyAdmittedEntityCommand(CmdDeleteEdge, id, origin)
+}
+
+func (e *ReplicatedEngine) applyAdmittedEntityCommand(kind CommandType, value any, origin uint64) error {
 	data, err := encodeEntityCommandPayload(kind, value)
 	if err != nil {
 		return err

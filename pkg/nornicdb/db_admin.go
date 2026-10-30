@@ -564,6 +564,16 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, 
 	return db.createNode(ctx, id, labels, properties, true)
 }
 
+// admittedStorage is the one write handle for a request on this database: it
+// carries the request's admitted vector-work origin into every native write.
+func (db *DB) admittedStorage(ctx context.Context) (storage.Engine, error) {
+	origin, admitted := storage.VectorWorkOrigin(ctx)
+	if !admitted {
+		return nil, storage.ErrVectorWorkNotAdmitted
+	}
+	return storage.EngineWithVectorWorkOrigin(db.storage, origin)
+}
+
 func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
 	origin, admitted := storage.VectorWorkOrigin(ctx)
 	if !admitted {
@@ -575,6 +585,11 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 	if rejectExisting {
@@ -597,7 +612,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		CreatedAt:  now,
 	}
 
-	actualID, err := storageEngine.CreateNode(node)
+	actualID, err := writer.CreateNode(node)
 	if err != nil {
 		return nil, err
 	}
@@ -633,6 +648,11 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
@@ -664,7 +684,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
 
-	if err := storageEngine.UpdateNode(n); err != nil {
+	if err := writer.UpdateNode(n); err != nil {
 		return nil, err
 	}
 
@@ -702,11 +722,16 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	embedQueue := db.embedQueue
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
-	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
+	if err := writer.DeleteNode(storage.NodeID(id)); err != nil {
 		return err
 	}
 	if embedQueue != nil {
@@ -853,12 +878,18 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 
 // CreateEdge creates a new edge.
 func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return nil, writerErr
+	}
 	db.mu.RUnlock()
 
 	// Verify nodes exist
@@ -881,7 +912,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 		CreatedAt:  now,
 	}
 
-	if err := storageEngine.CreateEdge(edge); err != nil {
+	if err := writer.CreateEdge(edge); err != nil {
 		return nil, err
 	}
 
@@ -897,15 +928,20 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 
 // DeleteEdge deletes an edge.
 func (db *DB) DeleteEdge(ctx context.Context, id string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
-	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	db.mu.RUnlock()
 
-	return storageEngine.DeleteEdge(storage.EdgeID(id))
+	return writer.DeleteEdge(storage.EdgeID(id))
 }
 
 // SearchResult holds a search result with score.
@@ -1815,12 +1851,18 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 // AnonymizeUserData anonymizes all data for a user (GDPR compliance).
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	writer, writerErr := db.admittedStorage(ctx)
+	if writerErr != nil {
+		db.mu.RUnlock()
+		return writerErr
+	}
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
@@ -1841,7 +1883,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 
 	// Now update the collected nodes
 	for _, n := range toUpdate {
-		if err := storageEngine.UpdateNode(n); err != nil {
+		if err := writer.UpdateNode(n); err != nil {
 			return err
 		}
 		if embedQueue != nil {

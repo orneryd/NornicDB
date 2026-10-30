@@ -18,7 +18,7 @@ func TestRunManyFailedStatementFailsTheTransaction(t *testing.T) {
 			ctx := context.Background()
 			exec, stores := nestedUseRouterExecutor(t, "nornic")
 			if explicit {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(admittedTestContext())
 				require.NoError(t, err)
 				_, err = exec.Execute(ctx, "CREATE (:BeforeRunMany)", nil)
 				require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestAdministrationCommandInProcedureStatementIsRefused(t *testing.T) {
 			ctx := context.Background()
 			exec, stores := nestedUseRouterExecutor(t, "nornic")
 			if explicit {
-				_, err := exec.handleBegin()
+				_, err := exec.handleBegin(admittedTestContext())
 				require.NoError(t, err)
 			}
 			_, err := exec.Execute(ctx, "CALL apoc.cypher.run('GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer', {}) YIELD value RETURN value", nil)

@@ -153,7 +153,7 @@ func (b *BadgerEngine) beginEntityWrite(id string, isEdge bool, inherited *entit
 		if len(plans) > 0 && plans[0].vectorOriginBound {
 			origin = plans[0].vectorWorkOrigin
 		} else {
-			origin = CaptureVectorWorkOrigin()
+			origin = fallbackVectorWorkOrigin("storage.entity-write")
 		}
 	}
 	if inherited != nil {

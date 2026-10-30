@@ -74,7 +74,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
 				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
-					_, err := executor.handleBegin()
+					_, err := executor.handleBegin(admittedTestContext())
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback() })
 				}
@@ -98,7 +98,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 
 func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
-	_, err := executor.handleBegin()
+	_, err := executor.handleBegin(admittedTestContext())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = executor.handleRollback() })
 	query := "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
@@ -132,7 +132,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 				var result *ExecuteResult
 				var err error
 				if explicit {
-					_, err = executor.handleBegin()
+					_, err = executor.handleBegin(admittedTestContext())
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback() })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
@@ -348,7 +348,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 					var result *ExecuteResult
 					var err error
 					if explicit {
-						_, err = executor.handleBegin()
+						_, err = executor.handleBegin(admittedTestContext())
 						require.NoError(t, err)
 						t.Cleanup(func() { _, _ = executor.handleRollback() })
 						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)

@@ -37,8 +37,13 @@ type Consent struct {
 //	    Source:  "web_form",
 //	})
 func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	writer, err := db.admittedStorage(ctx)
+	if err != nil {
+		return err
+	}
 
 	if db.closed {
 		return ErrClosed
@@ -76,7 +81,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	if existingNode != nil {
 		// Update existing consent
 		existingNode.Properties = props
-		return db.storage.UpdateNode(existingNode)
+		return writer.UpdateNode(existingNode)
 	}
 
 	// Create new consent node
@@ -86,7 +91,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 		Properties: props,
 	}
 
-	_, err = db.storage.CreateNode(node)
+	_, err = writer.CreateNode(node)
 	return err
 }
 
@@ -134,8 +139,13 @@ func (db *DB) HasConsent(ctx context.Context, userID, purpose string) (bool, err
 //
 //	err := db.RevokeConsent(ctx, "user-123", "marketing")
 func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	writer, err := db.admittedStorage(ctx)
+	if err != nil {
+		return err
+	}
 
 	if db.closed {
 		return ErrClosed
@@ -157,7 +167,7 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 					"source":    "revocation",
 				},
 			}
-			_, err := db.storage.CreateNode(node)
+			_, err := writer.CreateNode(node)
 			return err
 		}
 		return localizedError(localization.NornicDBCoreConsentGetFailed(err), err)
@@ -168,7 +178,7 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 	node.Properties["timestamp"] = time.Now().Format(time.RFC3339)
 	node.Properties["source"] = "revocation"
 
-	return db.storage.UpdateNode(node)
+	return writer.UpdateNode(node)
 }
 
 // GetUserConsents returns all consent records for a user.

@@ -768,6 +768,11 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 }
 
 // DeleteNode removes a node and all its edges.
+// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
+func (b *BadgerEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	return b.deleteNodeWithOrigin(id, origin)
+}
+
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	return b.deleteNodeWithOrigin(id)
 }

@@ -300,10 +300,26 @@ func (n *NamespacedEngine) UpdateNode(node *Node) error {
 }
 
 func (n *NamespacedEngine) DeleteNode(id NodeID) error {
+	return n.deleteNode(id, 0, false)
+}
+
+// DeleteNodeWithVectorWorkOrigin deletes under the caller's admission.
+func (n *NamespacedEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	return n.deleteNode(id, origin, true)
+}
+
+func (n *NamespacedEngine) deleteNode(id NodeID, origin uint64, admitted bool) error {
 	prefixedID := n.PrefixNodeID(id)
 
 	// Delete the node (this will remove it from pending embeddings index)
-	err := n.inner.DeleteNode(prefixedID)
+	var err error
+	handled := false
+	if admitted {
+		handled, err = deleteNodeAdmitted(n.inner, prefixedID, origin)
+	}
+	if !handled {
+		err = n.inner.DeleteNode(prefixedID)
+	}
 
 	// Remove from pending embeddings index (with namespace prefix)
 	// ALL node IDs in the index must be prefixed
@@ -339,6 +355,14 @@ func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
 }
 
 func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {
+	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
+}
+
+// DeleteEdgeWithVectorWorkOrigin deletes under the caller's admission.
+func (n *NamespacedEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	if handled, err := deleteEdgeAdmitted(n.inner, n.PrefixEdgeID(id), origin); handled {
+		return err
+	}
 	return n.inner.DeleteEdge(n.PrefixEdgeID(id))
 }
 

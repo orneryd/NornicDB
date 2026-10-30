@@ -591,13 +591,36 @@ func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
 // admittedEntityWriter fixes public mutation admission before the WAL ordering
 // mutex and journal append. Already-admitted views call the retained On helpers
 // directly, so they keep their earlier origin instead of entering this owner.
-func (w *WALEngine) admittedEntityWriter() (Engine, error) {
-	return EngineWithVectorWorkOrigin(w.engine, CaptureVectorWorkOrigin())
+// The admission a write's arguments already carry is kept; only a write that
+// carries none is admitted here (a process-internal write).
+func (w *WALEngine) admittedEntityWriter(arguments ...any) (Engine, error) {
+	if origin, admitted := VectorWorkOriginFromArguments(nil, arguments...); admitted {
+		return EngineWithVectorWorkOrigin(w.engine, origin)
+	}
+	return EngineWithVectorWorkOrigin(w.engine, fallbackVectorWorkOrigin("storage.wal-entity-write"))
+}
+
+// DeleteNodeWithVectorWorkOrigin logs then deletes under the caller's admission.
+func (w *WALEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
+	if err != nil {
+		return err
+	}
+	return w.deleteNodeOn(inner, id)
+}
+
+// DeleteEdgeWithVectorWorkOrigin logs then deletes under the caller's admission.
+func (w *WALEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	inner, err := EngineWithVectorWorkOrigin(w.engine, origin)
+	if err != nil {
+		return err
+	}
+	return w.deleteEdgeOn(inner, id)
 }
 
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(node)
 	if err != nil {
 		return "", err
 	}
@@ -623,7 +646,7 @@ func (w *WALEngine) createNodeOn(inner Engine, node *Node) (NodeID, error) {
 
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(node)
 	if err != nil {
 		return err
 	}
@@ -706,7 +729,7 @@ func (w *WALEngine) deleteNodeOn(inner Engine, id NodeID) error {
 
 // CreateEdge logs then executes edge creation.
 func (w *WALEngine) CreateEdge(edge *Edge) error {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(edge)
 	if err != nil {
 		return err
 	}
@@ -735,7 +758,7 @@ func (w *WALEngine) createEdgeOn(inner Engine, edge *Edge) error {
 
 // UpdateEdge logs then executes edge update.
 func (w *WALEngine) UpdateEdge(edge *Edge) error {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(edge)
 	if err != nil {
 		return err
 	}
@@ -785,7 +808,7 @@ func (w *WALEngine) deleteEdgeOn(inner Engine, id EdgeID) error {
 
 // BulkCreateNodes logs then executes bulk node creation.
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(nodes)
 	if err != nil {
 		return err
 	}
@@ -828,7 +851,7 @@ func (w *WALEngine) bulkCreateNodesOn(inner Engine, nodes []*Node) error {
 
 // BulkCreateEdges logs then executes bulk edge creation.
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
-	inner, err := w.admittedEntityWriter()
+	inner, err := w.admittedEntityWriter(edges)
 	if err != nil {
 		return err
 	}

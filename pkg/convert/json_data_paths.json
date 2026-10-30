@@ -20,13 +20,6 @@
       "property.Marshal": 1
     }
   },
-  "apoc/convert/convert.go:ToMap": {
-    "read_domain": "input",
-    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
-    "calls": {
-      "input.Unmarshal": 1
-    }
-  },
   "apoc/export/export.go:Json": {
     "write_domain": "property",
     "contract": "Native graph export document.",
@@ -777,6 +770,13 @@
     },
     "contract": "Author: #1665 implementation lane (Codex). Legacy Neo4j metadata number normalization delegates to the existing Cypher-input compatibility policy.",
     "read_domain": "input"
+  },
+  "pkg/storage/legacy_recovery_json.go:decodeLegacyRecoveryJSON": {
+    "read_domain": "property",
+    "contract": "Legacy WAL/snapshot recovery records hold persisted property numbers; they take the one property-number decision (L6 / #1665 lane, Claude Opus 5.5).",
+    "calls": {
+      "property.Numbers": 1
+    }
   },
   "pkg/storage/remote_http_json.go:remoteHTTPNumbers": {
     "calls": {

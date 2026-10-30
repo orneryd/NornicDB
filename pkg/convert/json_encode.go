@@ -141,15 +141,10 @@ func (state *jsonWriterState) opaqueValue(value interface{}) error {
 	return nil
 }
 
-func (state *jsonWriterState) float(value float64, bits int) error {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		if bits == 32 {
-			return state.opaqueValue(float32(value))
-		}
-		return state.opaqueValue(value)
-	}
-	state.data = appendFloatText(state.data, value, bits)
-	return nil
+func (state *jsonWriterState) float(value float64, bits int, original interface{}) error {
+	var err error
+	state.data, err = appendJSONFloat(state.data, value, bits, original)
+	return err
 }
 
 func (state *jsonWriterState) any(value interface{}) error {
@@ -167,13 +162,13 @@ func (state *jsonWriterState) any(value interface{}) error {
 	case uint64:
 		state.data = strconv.AppendUint(state.data, value, 10)
 	case float64:
-		return state.float(value, 64)
+		return state.float(value, 64, nil)
 	case float32:
-		return state.float(float64(value), 32)
+		return state.float(float64(value), 32, nil)
 	case json.Number:
 		if number, ok := ReadNumber(value); ok {
 			if floating, ok := number.Float(); ok {
-				return state.float(floating, 64)
+				return state.float(floating, 64, nil)
 			}
 		}
 		return state.opaqueValue(value)
@@ -241,15 +236,9 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 		state.data = strconv.AppendUint(state.data, value.Uint(), 10)
 		return nil
 	case reflect.Float32:
-		if math.IsNaN(value.Float()) || math.IsInf(value.Float(), 0) {
-			return state.opaqueValue(value.Interface())
-		}
-		return state.float(value.Float(), 32)
+		return state.float(value.Float(), 32, value.Interface())
 	case reflect.Float64:
-		if math.IsNaN(value.Float()) || math.IsInf(value.Float(), 0) {
-			return state.opaqueValue(value.Interface())
-		}
-		return state.float(value.Float(), 64)
+		return state.float(value.Float(), 64, value.Interface())
 	}
 	state.depth++
 	defer func() { state.depth-- }()
@@ -493,18 +482,10 @@ func jsonWriteUint(state *jsonWriterState, value reflect.Value) error {
 	return nil
 }
 func jsonWriteFloat32(state *jsonWriterState, value reflect.Value) error {
-	if math.IsNaN(value.Float()) || math.IsInf(value.Float(), 0) {
-		return state.opaqueValue(value.Interface())
-	}
-	state.data = appendFloatText(state.data, value.Float(), 32)
-	return nil
+	return state.float(value.Float(), 32, value.Interface())
 }
 func jsonWriteFloat64(state *jsonWriterState, value reflect.Value) error {
-	if math.IsNaN(value.Float()) || math.IsInf(value.Float(), 0) {
-		return state.opaqueValue(value.Interface())
-	}
-	state.data = appendFloatText(state.data, value.Float(), 64)
-	return nil
+	return state.float(value.Float(), 64, value.Interface())
 }
 
 type jsonEncodingField struct {

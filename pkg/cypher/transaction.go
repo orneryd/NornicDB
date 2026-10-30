@@ -165,7 +165,7 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
-		return e.handleBegin()
+		return e.handleBegin(ctx)
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
 		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
@@ -176,7 +176,7 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 }
 
 // handleBegin starts a new explicit transaction.
-func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleBegin(ctx context.Context) (*ExecuteResult, error) {
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
 	}
@@ -248,7 +248,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, err := beginTransactionSnapshot(ctx, txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}

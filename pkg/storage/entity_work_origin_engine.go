@@ -54,6 +54,16 @@ func (e *vectorWorkOriginEngine) UpdateNode(node *Node) error {
 }
 
 func (e *vectorWorkOriginEngine) DeleteNode(id NodeID) error {
+	if handled, err := deleteNodeAdmitted(e.Engine, id, e.origin); handled {
+		return err
+	}
+	return e.Engine.DeleteNode(id)
+}
+
+func (e *vectorWorkOriginEngine) DeleteNodeWithVectorWorkOrigin(id NodeID, origin uint64) error {
+	if handled, err := deleteNodeAdmitted(e.Engine, id, origin); handled {
+		return err
+	}
 	return e.Engine.DeleteNode(id)
 }
 
@@ -66,6 +76,16 @@ func (e *vectorWorkOriginEngine) UpdateEdge(edge *Edge) error {
 }
 
 func (e *vectorWorkOriginEngine) DeleteEdge(id EdgeID) error {
+	if handled, err := deleteEdgeAdmitted(e.Engine, id, e.origin); handled {
+		return err
+	}
+	return e.Engine.DeleteEdge(id)
+}
+
+func (e *vectorWorkOriginEngine) DeleteEdgeWithVectorWorkOrigin(id EdgeID, origin uint64) error {
+	if handled, err := deleteEdgeAdmitted(e.Engine, id, origin); handled {
+		return err
+	}
 	return e.Engine.DeleteEdge(id)
 }
 
@@ -86,10 +106,26 @@ func (e *vectorWorkOriginEngine) BulkCreateEdges(edges []*Edge) error {
 }
 
 func (e *vectorWorkOriginEngine) BulkDeleteNodes(ids []NodeID) error {
+	if _, ok := e.Engine.(VectorWorkOriginDeleter); ok {
+		for _, id := range ids {
+			if _, err := deleteNodeAdmitted(e.Engine, id, e.origin); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return e.Engine.BulkDeleteNodes(ids)
 }
 
 func (e *vectorWorkOriginEngine) BulkDeleteEdges(ids []EdgeID) error {
+	if _, ok := e.Engine.(VectorWorkOriginDeleter); ok {
+		for _, id := range ids {
+			if _, err := deleteEdgeAdmitted(e.Engine, id, e.origin); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return e.Engine.BulkDeleteEdges(ids)
 }
 
@@ -196,7 +232,7 @@ func VectorWorkOriginFromArguments(ctx context.Context, values ...any) (uint64, 
 func WithEntityOperationOrigins(ctx context.Context, ops []Operation) (context.Context, []Operation, uint64) {
 	origin, admitted := VectorWorkOriginFromArguments(ctx, ops)
 	if !admitted {
-		origin = CaptureVectorWorkOrigin()
+		origin = fallbackVectorWorkOrigin("storage.operation-batch")
 	}
 	bound := append([]Operation(nil), ops...)
 	for i := range bound {

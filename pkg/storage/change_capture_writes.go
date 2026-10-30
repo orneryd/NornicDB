@@ -8,13 +8,15 @@ import "errors"
 // (#937); handled is false for a database that doesn't capture, which keeps
 // the direct write. id is any of the write's prefixed entity IDs.
 func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTransaction) error, origins ...uint64) (handled bool, err error) {
-	origin := CaptureVectorWorkOrigin()
-	if len(origins) > 0 {
-		origin = origins[0]
-	}
 	namespace, _, ok := ParseDatabasePrefix(id)
 	if !ok || b.ChangeCapture(namespace) == ChangeCaptureOff {
 		return false, nil
+	}
+	var origin uint64
+	if len(origins) > 0 {
+		origin = origins[0]
+	} else {
+		origin = fallbackVectorWorkOrigin("storage.change-capture-write")
 	}
 	tx, err := b.BeginTransaction()
 	if err != nil {

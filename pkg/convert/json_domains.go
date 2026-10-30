@@ -76,19 +76,27 @@ func (cypherInputJSONDomain) AppendUnsigned(dst []byte, value uint64) []byte {
 	return appendJSONUnsigned(dst, value)
 }
 func (cypherInputJSONDomain) AppendFloat(dst []byte, value float64, bits int) ([]byte, error) {
-	return appendJSONFloat(dst, value, bits)
+	return appendJSONFloat(dst, value, bits, nil)
 }
 
 func appendJSONInteger(dst []byte, value int64) []byte   { return strconv.AppendInt(dst, value, 10) }
 func appendJSONUnsigned(dst []byte, value uint64) []byte { return strconv.AppendUint(dst, value, 10) }
-func appendJSONFloat(dst []byte, value float64, bits int) ([]byte, error) {
+
+// appendJSONFloat is the one JSON FLOAT accept decision for every writer
+// (dynamic values, typed and reflective fields, append leaves): a finite value
+// is written as FLOAT text at its precision; NaN and +/-Infinity are rejected
+// with the standard encoder's error for original (the caller's typed value,
+// or the float itself when nil).
+func appendJSONFloat(dst []byte, value float64, bits int, original interface{}) ([]byte, error) {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
-		var err error
-		if bits == 32 {
-			_, err = json.Marshal(float32(value))
-		} else {
-			_, err = json.Marshal(value)
+		if original == nil {
+			if bits == 32 {
+				original = float32(value)
+			} else {
+				original = value
+			}
 		}
+		_, err := json.Marshal(original)
 		return dst, err
 	}
 	return appendFloatText(dst, value, bits), nil
