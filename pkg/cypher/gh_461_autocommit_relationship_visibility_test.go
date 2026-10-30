@@ -19,7 +19,6 @@ func TestGH461_AutocommitCreatedRelationshipVisibleAcrossTransactionsAndReopen(t
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 

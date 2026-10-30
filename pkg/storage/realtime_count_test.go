@@ -1,9 +1,9 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +13,6 @@ import (
 func TestRealtimeCountTracking(t *testing.T) {
 	// Create a fresh BadgerEngine (simulates server startup)
 	badger := createRealtimeTestBadgerEngine(t)
-	defer badger.Close()
 
 	// Writes apply synchronously through the namespaced engine.
 	namespaced := NewNamespacedEngine(badger, "test")
@@ -75,7 +74,6 @@ func TestRealtimeCountTracking(t *testing.T) {
 func TestRealtimeCountWithCypher(t *testing.T) {
 	// Create fresh engines
 	badger := createRealtimeTestBadgerEngine(t)
-	defer badger.Close()
 
 	namespaced := NewNamespacedEngine(badger, "test")
 
@@ -104,7 +102,6 @@ func TestRealtimeCountWithCypher(t *testing.T) {
 // TestCountAfterDeleteAndRecreate tests the scenario where IDs might collide
 func TestCountAfterDeleteAndRecreate(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
-	defer badger.Close()
 
 	namespaced := NewNamespacedEngine(badger, "test")
 
@@ -144,7 +141,6 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 	t.Run("delete_then_create_different_id", func(t *testing.T) {
 		// Start fresh
 		badger2 := createRealtimeTestBadgerEngine(t)
-		defer badger2.Close()
 		namespaced2 := NewNamespacedEngine(badger2, "test")
 
 		// Create node-A
@@ -170,7 +166,6 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 // TestCountAfterFlushAndRecreate tests creating a node with same ID after it was committed
 func TestCountAfterFlushAndRecreate(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
-	defer badger.Close()
 
 	namespaced := NewNamespacedEngine(badger, "test")
 

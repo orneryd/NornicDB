@@ -63,7 +63,7 @@ RETURN translationId, textKey
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
-			defer mgr.Close()
+			fixtureowner.Own(t, mgr)
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 			refs := []multidb.ConstituentRef{{Alias: "tr", DatabaseName: "nornic_tr", Type: "local", AccessMode: "read_write"}}
 			if tc.scope == fabricChainTestSequential {
@@ -118,7 +118,7 @@ func TestExecute_FabricCallUseSubquery_OutOfScopeUseFails(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "nornic_cmp_c", []multidb.ConstituentRef{
@@ -152,7 +152,7 @@ func TestExecute_FabricCorrelatedCallUseChain_EmptyOuterRowsStillHasColumns(t *t
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -202,7 +202,7 @@ func TestExecute_FabricCorrelatedCallUseChain_AppliesWherePerOuterRow(t *testing
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -323,7 +323,7 @@ func TestExecute_FabricCorrelatedCallUseChain_ListComprehensionJoin(t *testing.T
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -429,7 +429,7 @@ func TestExecute_FabricCorrelatedCallUseChain_CoalesceReturn_NoInternalColumns(t
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -538,7 +538,7 @@ func TestExecute_FabricSetBasedSourceTranslationJoin_NoFabricRowLeak(t *testing.
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -626,7 +626,7 @@ func TestExecute_FabricCorrelatedSourceTranslationCount_HotPathResult(t *testing
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -707,7 +707,7 @@ func BenchmarkFabricCorrelatedSourceTranslationJoin_Profile(b *testing.B) {
 	base := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(b.Context(), base, nil)
 	require.NoError(b, err)
-	defer mgr.Close()
+	fixtureowner.Own(b, mgr)
 
 	require.NoError(b, mgr.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(b, mgr.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -818,7 +818,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathTrace(t *testing.T
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -902,7 +902,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathShapeMatrix(t *tes
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_txt"}))
@@ -1033,7 +1033,7 @@ func TestExecute_FabricCache_HitOnRepeatReadQuery(t *testing.T) {
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
-			defer mgr.Close()
+			fixtureowner.Own(t, mgr)
 
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
 			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "translations", []multidb.ConstituentRef{
@@ -1146,7 +1146,7 @@ func TestExecute_FabricResultCache_SkipsRemoteConstituentTargets(t *testing.T) {
 	}
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, config)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "translations", []multidb.ConstituentRef{
 		{

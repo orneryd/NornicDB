@@ -1,10 +1,10 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +33,6 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dataDir}))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	store = NewNamespacedEngine(engine, "gh448_disk")
 	nodes, err := store.GetNodesByLabel("Doc")
 	require.NoError(t, err)

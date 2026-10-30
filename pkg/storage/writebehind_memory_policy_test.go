@@ -20,7 +20,12 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
+	t.Cleanup(func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+		_ = wal.Close()
+	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -46,7 +51,12 @@ func TestRejectedBufferedCommitClearsDetachedDictionaryEntries(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
+	t.Cleanup(func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+		_ = wal.Close()
+	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -91,7 +101,12 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
+	t.Cleanup(func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+		_ = wal.Close()
+	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))

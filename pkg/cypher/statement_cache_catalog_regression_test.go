@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
@@ -17,7 +18,7 @@ func TestRule73SelectionForms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_leaf"}); err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +143,7 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_cycle_leaf"}); err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +229,7 @@ func TestRule73FabricResultCacheRetarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	for _, name := range []string{"gate_left", "gate_right"} {
 		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
@@ -283,7 +284,7 @@ func TestRule73CatalogAddPreservesWarmOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	root := NewStorageExecutor(store)
 	if err := root.UseDatabaseStatementCaches(manager, "nornic"); err != nil {
 		t.Fatal(err)

@@ -236,7 +236,6 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 	node := &Node{ID: "test:legacy", Labels: []string{"Person"}}
@@ -304,7 +303,6 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 	start := NodeID("nornic:007a09cd-ab24-4fbf-a307-07cb74ed2469")
@@ -354,7 +352,6 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 

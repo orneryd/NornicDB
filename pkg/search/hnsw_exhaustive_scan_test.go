@@ -742,8 +742,7 @@ func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
 				node.Labels = []string{"Doc"}
 				node.Properties = map[string]any{"text": "background text"}
 			}, nil)
-			service := NewService(engine, 2, nil)
-			t.Cleanup(func() { _ = service.Close() })
+			service := fixtureowner.Own(t, NewService(engine, 2, nil))
 			service.EnableClustering(nil, 1)
 			service.SetMinEmbeddingsForClustering(1)
 			require.NoError(t, service.BuildIndexes(context.Background()))

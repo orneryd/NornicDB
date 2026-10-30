@@ -45,14 +45,14 @@ func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
 func newPageDeliverySession(t *testing.T, capacity int) (*Session, *errorConn, *search.Service) {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	runtimeFixtureOwner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
 		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "transport boundary"}})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	runtimeFixtureOwner.Own(t, svc)
 	registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: int64(capacity)})
 	require.NoError(t, err)
 	t.Cleanup(registry.Close)

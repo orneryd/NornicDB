@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -40,11 +41,12 @@ func pr1655PresenceLifetimeReader(t *testing.T, engine *BadgerEngine) *BadgerTra
 	t.Helper()
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		if tx.IsActive() {
-			require.NoError(t, tx.Rollback())
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
+		if !tx.IsActive() {
+			return nil
 		}
-	})
+		return tx.Rollback()
+	}))
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NotNil(t, tx.beginPresence)
 	return tx

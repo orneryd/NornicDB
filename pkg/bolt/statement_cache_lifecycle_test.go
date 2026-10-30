@@ -20,7 +20,7 @@ func TestStatementCacheFamilyDroppedDatabaseCaches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	adapter := &boltDatabaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(manager)}
 	session := &Session{server: server, forwardedAuthHeader: "Bearer lifecycle-test"}

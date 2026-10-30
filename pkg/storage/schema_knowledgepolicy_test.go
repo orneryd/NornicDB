@@ -729,7 +729,7 @@ func TestPolicySchemaTransactionFailures(t *testing.T) {
 			if boundary == "namespace" {
 				namespace = ""
 			}
-			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace)
+			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace, ErrTransactionClosed)
 
 			if boundary == "read" {
 				transaction.badgerTx.Discard()

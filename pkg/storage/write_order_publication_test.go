@@ -164,7 +164,6 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 			if !finished {
 				return // deadlocked: the engine stays behind
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			require.NoError(t, writeErr)
 			require.True(t, called.Load(), "the listener ran")
 			if !ranAfterWrite.Load() {
@@ -233,7 +232,6 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	if !finished {
 		return
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 	require.False(t, waitedForListener.Load(), "the ordered write waited for a listener of the replay")
 	require.NoError(t, writeErr)
 	require.NoError(t, flushErr)
@@ -249,7 +247,6 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 	for _, route := range []string{"delete", "direct-update", "explicit-update"} {
 		t.Run(route, func(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
 			// apply is wrapped before any commit signals the flusher.
 			var slow atomic.Bool
 			apply := engine.writeBehind.apply

@@ -13,7 +13,7 @@ import (
 
 func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
+	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup", storage.ErrTransactionClosed)
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
 	_, view, err := executor.knowledgePolicyContext("")

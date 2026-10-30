@@ -12,7 +12,12 @@ func TestPendingCandidatesBufferedFixtureOwnsWALState(t *testing.T) {
 	t.Cleanup(config.WithWALDisabled())
 	e := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := e.bufferedCommitWAL
-	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("close e: %v", err)
+		}
+		_ = wal.Close()
+	})
 	require.True(t, config.IsWALEnabled(), "the shared WAL fixture must enable its required feature independently of prior tests")
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)

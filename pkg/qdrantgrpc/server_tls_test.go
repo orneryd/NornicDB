@@ -84,7 +84,7 @@ func dialGRPCTestClient(t *testing.T, address string, transport credentials.Tran
 	t.Helper()
 	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(transport))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	fixtureowner.Own(t, connection)
 	return connection
 }
 

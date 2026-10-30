@@ -1,8 +1,9 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 // --- constraintContractEqual ---
@@ -860,7 +861,6 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 
 	if _, err := engine.CreateNode(&Node{ID: "tenant::n1"}); err != nil {
 		t.Fatalf("create n1: %v", err)

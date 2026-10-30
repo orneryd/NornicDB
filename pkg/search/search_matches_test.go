@@ -92,7 +92,7 @@ func TestLocateReadsAnalyzeTerms(t *testing.T) {
 func newMatchTestService(t *testing.T) (*Service, storage.Engine) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewService(engine, 2, nil)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	fixtureowner.Own(t, service)
 	return service, engine
 }
 

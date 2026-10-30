@@ -21,7 +21,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	config := fixture.config
 	config.Port = 0
 	config.RequireAuth = true

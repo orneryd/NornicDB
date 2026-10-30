@@ -21,7 +21,7 @@ import (
 func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mgr.Close() })
+	fixtureowner.Own(t, mgr)
 	for _, name := range []string{"da", "db"} {
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}

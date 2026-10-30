@@ -36,7 +36,6 @@ func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
 	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
 		_ = wal.Close()
-		_ = badger.Close()
 	})
 	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }

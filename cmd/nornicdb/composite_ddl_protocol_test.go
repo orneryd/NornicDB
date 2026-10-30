@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testutil/compositeddl"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -242,7 +243,7 @@ func compositeDDLServer(t *testing.T, binary, dir, parser, protocol string, data
 		log.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait(); _ = log.Close() })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { _ = cmd.Process.Kill(); _ = cmd.Wait(); return log.Close() }))
 	client := &http.Client{Timeout: 10 * time.Second}
 	httpQuery := func(q string, parameters map[string]any) compositeDDLReply {
 		body, _ := json.Marshal(map[string]any{"statements": []map[string]any{{"statement": q, "parameters": parameters}}})
@@ -297,7 +298,7 @@ func compositeDDLServer(t *testing.T, binary, dir, parser, protocol string, data
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return driver.Close(context.Background()) }))
 	return func(q string, parameters map[string]any) compositeDDLReply {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

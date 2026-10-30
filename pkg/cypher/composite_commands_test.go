@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -219,7 +220,7 @@ func TestExecuteAlterCompositeDatabase_AliasOperations(t *testing.T) {
 			inner := newTestMemoryEngine(t)
 			manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			adapter := &testDatabaseManagerAdapter{manager: manager}
 			exec := NewStorageExecutor(store)
 			exec.SetDatabaseManager(adapter)

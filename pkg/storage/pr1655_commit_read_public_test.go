@@ -35,10 +35,12 @@ type pr1655ExecuteFault struct {
 	engine    *storage.BadgerEngine
 	nodeID    storage.NodeID
 	restoreFn func() error
-	decodeErr error
-	fired     atomic.Bool
-	installed atomic.Bool
-	setupErr  atomic.Value // error
+	// restoreNow is the owner's once-only close, for a test that restores early.
+	restoreNow func()
+	decodeErr  error
+	fired      atomic.Bool
+	installed  atomic.Bool
+	setupErr   atomic.Value // error
 }
 
 func (f *pr1655ExecuteFault) setSetupError(err error) {
@@ -116,14 +118,17 @@ func (f *pr1655ExecuteFault) inject() {
 	f.installed.Store(true)
 }
 
-func (f *pr1655ExecuteFault) restore(t *testing.T) {
-	if f.restoreFn == nil {
-		return
-	}
-	if err := f.restoreFn(); err != nil {
-		t.Errorf("restoring the MVCC head of %q: %v", f.nodeID, err)
-	}
+// Close restores the injected corruption once.
+func (f *pr1655ExecuteFault) Close() error {
+	restore := f.restoreFn
 	f.restoreFn = nil
+	if restore == nil {
+		return nil
+	}
+	if err := restore(); err != nil {
+		return fmt.Errorf("restoring the MVCC head of %q: %w", f.nodeID, err)
+	}
+	return nil
 }
 
 // pr1655ExecuteScenario is one Execute path the regression covers.
@@ -165,9 +170,9 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, base)
-	t.Cleanup(func() { _ = base.Close() })
+	testfixture.Own(t, base)
 	fault.engine = base
-	t.Cleanup(func() { fault.restore(t) })
+	_, restore := testfixture.OwnWithClose(t, fault)
 
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
 	ctx := context.Background()
@@ -210,7 +215,7 @@ func pr1655RunExecuteScenario(t *testing.T, scenario pr1655ExecuteScenario) {
 	require.Error(t, commitErr, "the commit-time head read failed, so Execute must fail")
 	require.Equal(t, fault.decodeErr.Error(), deepestPR1655Cause(commitErr).Error(), "the deepest cause is the decoder's own error")
 	pr1655AssertTypedCommitFailure(t, commitErr)
-	fault.restore(t)
+	restore()
 
 	require.NoError(t, base.FlushWriteBehind(nil), "any acknowledged write must be stored before the body is read")
 	after, err := exec.Execute(ctx, "MATCH (n:Doc {id: 'original'}) RETURN n.summary_input AS body", nil)

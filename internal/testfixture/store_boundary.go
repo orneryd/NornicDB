@@ -38,7 +38,9 @@ func BeginStoreBoundary() StoreBoundary {
 func (boundary StoreBoundary) Check(code int, output io.Writer, name string) int {
 	count, stacks := OpenStores()
 	if count != boundary.start {
-		fmt.Fprintf(output, "%s: %d Badger store(s) left open after tests (before=%d after=%d)\n%s", name, count-boundary.start, boundary.start, count, stacks)
+		if _, err := fmt.Fprintf(output, "%s: %d Badger store(s) left open after tests (before=%d after=%d)\n%s", name, count-boundary.start, boundary.start, count, stacks); err != nil {
+			panic(fmt.Sprintf("%s: reporting %d leaked Badger store(s): %v", name, count-boundary.start, err))
+		}
 		return 1
 	}
 	return code

@@ -12,7 +12,7 @@ func TestCatalogViewsRetainManagerSnapshotAndErrors(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, manager)
+	fixtureowner.Own(t, manager)
 	catalog := Catalog{Manager: manager}
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "view_tenant"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "view_composite", []multidb.ConstituentRef{{Alias: "local", DatabaseName: "view_tenant", Type: "local", AccessMode: "read"}}))

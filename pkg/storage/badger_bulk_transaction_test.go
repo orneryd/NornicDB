@@ -57,7 +57,6 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 
 	require.NoError(t, engine.Close())
 	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
 	requireBulkCounts(t, engine, n, n)
 	byLabel, err := engine.GetNodesByLabel("Bulk")
 	require.NoError(t, err)
@@ -88,7 +87,6 @@ func TestBulkOperations_BeyondOneBatchSurviveReopen(t *testing.T) {
 
 func TestBulkCreate_RejectedItemWritesNothing(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 
 	existing := bulkTestNodes(2, "existing")
 	require.NoError(t, engine.BulkCreateNodes(existing))
@@ -112,7 +110,6 @@ func TestBulkCreate_RejectedItemWritesNothing(t *testing.T) {
 
 func TestBulkDelete_SkipsMissingAndRepeatedIDs(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 
 	nodes := bulkTestNodes(4, "del")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
@@ -153,7 +150,6 @@ func TestBulkOperations_ClosedEngine(t *testing.T) {
 
 func TestEncodeFailuresAreLocalized(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 	nodes := bulkTestNodes(2, "enc")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
 	bad := map[string]any{"bad": make(chan int)}
@@ -175,7 +171,6 @@ func TestEncodeFailuresAreLocalized(t *testing.T) {
 
 func TestTransactionEdgeIDChecks(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 	nodes := bulkTestNodes(2, "chk")
 	require.NoError(t, engine.BulkCreateNodes(nodes))
 	existing := &Edge{ID: "test:chk-e", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R"}
@@ -199,7 +194,6 @@ func TestTransactionEdgeIDChecks(t *testing.T) {
 
 func TestEngineWriteUnits(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
-	defer engine.Close()
 	failure := errors.New("unit failed")
 	err := engine.commitEngineWrite(context.Background(), nil, engineWriteOptions{units: []func(txn *badger.Txn) error{
 		func(txn *badger.Txn) error { return txn.Set([]byte("unit-a"), []byte("a")) },

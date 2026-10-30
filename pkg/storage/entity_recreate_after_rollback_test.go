@@ -1,9 +1,9 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +41,6 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	edge, err := engine.GetEdge("test:merge-x")
 	require.NoError(t, err)
 	require.Equal(t, "new", edge.Properties["id"])

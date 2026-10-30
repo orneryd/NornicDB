@@ -38,7 +38,6 @@ func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	engine := NewWALEngine(badger, wal)
 	t.Cleanup(func() {
 		_ = wal.Close()
-		_ = badger.Close()
 	})
 	return badger, engine
 }

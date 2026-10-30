@@ -22,7 +22,6 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 	for _, kind := range []string{"missing", "excluded"} {
 		t.Run(kind, func(t *testing.T) {
 			e := openLargeCommitTestEngine(t, t.TempDir())
-			t.Cleanup(func() { e.Close() })
 			e.SetEmbeddingsEnabled(true)
 			switch kind {
 			case "missing":

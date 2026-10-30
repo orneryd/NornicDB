@@ -46,7 +46,7 @@ func TestCredentialAliasMutationsRetireSelectedScope(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
-			defer manager.Close()
+			fixtureowner.Own(t, manager)
 			for _, name := range []string{"firstdb", "lastdb"} {
 				require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: name}))
 			}

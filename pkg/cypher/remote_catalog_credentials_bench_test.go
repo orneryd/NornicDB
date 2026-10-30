@@ -15,7 +15,7 @@ func BenchmarkManagedRemoteConstituentLookup(b *testing.B) {
 	config.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
 	manager, err := multidb.NewDatabaseManager(b.Context(), fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 	require.NoError(b, err)
-	defer manager.Close()
+	fixtureowner.Own(b, manager)
 	require.NoError(b, manager.CreateCompositeDatabase(b.Context(), "probe", []multidb.ConstituentRef{
 		{Alias: "R", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test"},
 		{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test"},
@@ -35,7 +35,7 @@ func TestManagedRemoteConstituentLookupWarmAllocations(t *testing.T) {
 	config.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
 	require.NoError(t, err)
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{
 		{Alias: "R", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test"},
 		{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test"},

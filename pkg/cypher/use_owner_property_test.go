@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"sort"
@@ -110,7 +111,7 @@ func newUsePropertyFixture(t *testing.T) *usePropertyFixture {
 	t.Helper()
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	for _, name := range []string{"g", "graph", "match", "limit", "use_property_shard"} {
 		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 		store, err := manager.GetStorage(name)

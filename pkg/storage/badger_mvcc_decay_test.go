@@ -1,12 +1,12 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
@@ -19,7 +19,6 @@ func setupDecayTestEngine(t *testing.T) *BadgerEngine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { engine.Close() })
 	return engine
 }
 

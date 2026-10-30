@@ -11,6 +11,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -113,5 +114,5 @@ func registerAccessorSnapshot(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
 	deregister, err := engine.acquireSnapshotReader(SnapshotReaderInfo{SnapshotVersion: MVCCVersion{}, StartTime: time.Now()})
 	require.NoError(t, err)
-	t.Cleanup(deregister)
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { deregister(); return nil }))
 }

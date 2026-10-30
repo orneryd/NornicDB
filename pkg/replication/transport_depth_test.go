@@ -22,7 +22,7 @@ func TestReplicationRejectsPathologicalPropertyNesting(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)
-	fixtureowner.OwnChecked(t, adapter)
+	fixtureowner.Own(t, adapter)
 	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: nestedNodePayload(1025)})
 	require.ErrorContains(t, err, "nesting depth")
 	_, err = engine.GetNode("test:n")

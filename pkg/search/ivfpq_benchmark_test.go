@@ -49,7 +49,6 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 			fixtureowner.Own(tb, baseEngine)
 		}
 		if err == nil {
-			tb.Cleanup(func() { _ = baseEngine.Close() })
 			engine := storage.NewNamespacedEngine(baseEngine, dbName)
 			nodes, err := engine.AllNodes()
 			if err == nil && len(nodes) > 0 {

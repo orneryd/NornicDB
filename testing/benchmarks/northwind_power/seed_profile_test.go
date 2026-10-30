@@ -35,7 +35,11 @@ func TestSeedProfileInProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open engine: %v", err)
 	}
-	defer func() { _ = engine.Close() }()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	}()
 
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
 	ctx := context.Background()

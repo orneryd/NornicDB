@@ -27,19 +27,16 @@ import (
 // before applying them: a snapshot live writes overtake.
 type nodeSnapshotGateEngine struct {
 	*storage.MemoryEngine
-	entered, release chan struct{}
-	once             sync.Once
-	releaseOnce      sync.Once
+	*fixtureowner.PauseGate
+	once sync.Once
 }
 
 func newNodeSnapshotGateEngine(t *testing.T) *nodeSnapshotGateEngine {
 	t.Helper()
-	e := &nodeSnapshotGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
-	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
+	e := &nodeSnapshotGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), PauseGate: fixtureowner.NewPauseGate()}
+	t.Cleanup(e.ReleaseWrites)
 	return e
 }
-
-func (e *nodeSnapshotGateEngine) open() { e.releaseOnce.Do(func() { close(e.release) }) }
 
 // OpenReadSnapshot gates the build's node read through its snapshot, as
 // IterateNodes gates a read of the engine itself.
@@ -50,8 +47,8 @@ func (e *nodeSnapshotGateEngine) OpenReadSnapshot(ctx context.Context) (storage.
 	}
 	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error {
 		if buildWriteCallerOnStack("BuildIndexes") {
-			e.once.Do(func() { close(e.entered) })
-			<-e.release
+			e.once.Do(func() { close(e.Entered) })
+			<-e.Release
 		}
 		return nil
 	}}, nil
@@ -93,8 +90,8 @@ func (e *nodeSnapshotGateEngine) IterateNodes(fn func(*storage.Node) bool) error
 		return err
 	}
 	if buildWriteCallerOnStack("BuildIndexes") {
-		e.once.Do(func() { close(e.entered) })
-		<-e.release
+		e.once.Do(func() { close(e.Entered) })
+		<-e.Release
 	}
 	for _, node := range snapshot {
 		if !fn(node) {
@@ -197,7 +194,7 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				svc := buildWriteService(t, engine, dir, backend, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				// Open the gate before the service closes, so Close can join the build.
-				t.Cleanup(engine.open)
+				t.Cleanup(engine.ReleaseWrites)
 				for _, n := range []*storage.Node{
 					buildWriteNode("nornic:upd", "oldterm", []float32{1, 0, 0}),
 					buildWriteNode("nornic:del", "goneterm", []float32{0, 1, 0}),
@@ -212,7 +209,7 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				built := make(chan error, 1)
 				go func() { built <- svc.BuildIndexes(context.Background()) }()
 				select {
-				case <-engine.entered:
+				case <-engine.Entered:
 				case <-time.After(10 * time.Second):
 					t.Fatal("the build did not read its node snapshot")
 				}
@@ -230,7 +227,7 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edgeUpdate}))
 				requireReturnsDuringBuild(t, "an edge write", func() error { return svc.IndexEdge(edgeUpdate) })
 
-				engine.open()
+				engine.ReleaseWrites()
 				require.NoError(t, <-built)
 				require.Equal(t, []string{"nornic:upd"}, buildWriteSearchIDs(t, svc, "newterm"))
 				require.Empty(t, buildWriteSearchIDs(t, svc, "oldterm"), "the snapshot's older text replaced the live update")
@@ -317,11 +314,11 @@ func TestBuildBudgetedWritesWaitForTheRealAnswer(t *testing.T) {
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, "", "v2", &ServiceOptions{VectorMemoryMaxBytes: 1 << 30})
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -335,7 +332,7 @@ func TestBuildBudgetedWritesWaitForTheRealAnswer(t *testing.T) {
 		t.Fatalf("a budgeted write returned during the build: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.NoError(t, <-written)
 	require.Equal(t, []string{"nornic:b"}, buildWriteSearchIDs(t, svc, "bterm"))
@@ -352,13 +349,13 @@ func TestBuildQueuedWriteIsRejectedLikeALiveWrite(t *testing.T) {
 			engine := newNodeSnapshotGateEngine(t)
 			svc := buildWriteService(t, engine, "", backend, nil)
 			t.Cleanup(func() { _ = svc.Close() })
-			t.Cleanup(engine.open)
+			t.Cleanup(engine.ReleaseWrites)
 			_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
 			require.NoError(t, err)
 			built := make(chan error, 1)
 			go func() { built <- svc.BuildIndexes(context.Background()) }()
 			select {
-			case <-engine.entered:
+			case <-engine.Entered:
 			case <-time.After(10 * time.Second):
 				t.Fatal("the build did not read its node snapshot")
 			}
@@ -371,7 +368,7 @@ func TestBuildQueuedWriteIsRejectedLikeALiveWrite(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("the write waited for the build")
 			}
-			engine.open()
+			engine.ReleaseWrites()
 			require.NoError(t, <-built)
 			require.Equal(t, []string{"nornic:keep"}, buildWriteSearchIDs(t, svc, "keepterm"), "the build dropped the stored node")
 			require.Empty(t, buildWriteSearchIDs(t, svc, "badterm"))
@@ -388,7 +385,7 @@ func TestBuildQueuedWriteOwnsItsValues(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	for _, n := range []*storage.Node{buildWriteNode("nornic:s", "sterm", []float32{1, 0, 0}), buildWriteNode("nornic:e", "eterm", []float32{0, 1, 0})} {
 		_, err := engine.CreateNode(n)
 		require.NoError(t, err)
@@ -396,7 +393,7 @@ func TestBuildQueuedWriteOwnsItsValues(t *testing.T) {
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -414,7 +411,7 @@ func TestBuildQueuedWriteOwnsItsValues(t *testing.T) {
 		buf[0], buf[1], buf[2] = 0.5, 0.5, 0.5
 	}
 	node.Properties["text"] = "reusedterm"
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:buf", "v"), []float32{0, 0, 1})
 	requireBuildWriteVector(t, svc, "nornic:buf", []float32{0, 1, 0})
@@ -459,11 +456,11 @@ func TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -472,7 +469,7 @@ func TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites(t *testing.T) {
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write with a property vector", func() error { return svc.IndexNode(node) })
 	svc.RemovePropertyVectorIndex("p")
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Zero(t, svc.CountPropertyVectorEntries("p"), "an acknowledged write overtook the property-vector index removal")
 	_, ok := svc.getVectorLookup()(nodePropertyVectorKey("nornic:p", "p"))
@@ -488,11 +485,11 @@ func TestBuildIndexingSettingIsOrderedWithQueuedWrites(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -501,7 +498,7 @@ func TestBuildIndexingSettingIsOrderedWithQueuedWrites(t *testing.T) {
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(node) })
 	svc.SetFulltextProperties([]string{"other"})
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:t"}, buildWriteSearchIDs(t, svc, "titleterm"), "the write was indexed under a setting made after it")
 }
@@ -516,7 +513,7 @@ func TestBuildRelationshipRemovalIsOrderedWithQueuedEdgeWrites(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	for _, n := range []*storage.Node{buildWriteNode("nornic:s", "sterm", []float32{1, 0, 0}), buildWriteNode("nornic:e", "eterm", []float32{0, 1, 0})} {
 		_, err := engine.CreateNode(n)
 		require.NoError(t, err)
@@ -524,7 +521,7 @@ func TestBuildRelationshipRemovalIsOrderedWithQueuedEdgeWrites(t *testing.T) {
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -533,7 +530,7 @@ func TestBuildRelationshipRemovalIsOrderedWithQueuedEdgeWrites(t *testing.T) {
 	requireReturnsDuringBuild(t, "an edge write", func() error { return svc.IndexEdge(edge) })
 	require.NoError(t, engine.DeleteEdge(edge.ID))
 	svc.RemoveRelationship(edge.ID)
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	rs := svc.relationshipSearch()
 	require.NotNil(t, rs)
@@ -586,11 +583,11 @@ func TestBuildQueuedWriteOwnsTypedContainers(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
-	t.Cleanup(engine.open)
+	t.Cleanup(engine.ReleaseWrites)
 	built := make(chan error, 1)
 	go func() { built <- svc.BuildIndexes(context.Background()) }()
 	select {
-	case <-engine.entered:
+	case <-engine.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the build did not read its node snapshot")
 	}
@@ -613,7 +610,7 @@ func TestBuildQueuedWriteOwnsTypedContainers(t *testing.T) {
 			}
 		}
 	}()
-	engine.open()
+	engine.ReleaseWrites()
 	require.NoError(t, <-built)
 	close(stop)
 	<-rewriting

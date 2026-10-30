@@ -43,7 +43,6 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}
-	t.Cleanup(func() { _ = engine.Close() })
 	controller := &lifecycleControllerStub{}
 	engine.SetLifecycleController(controller)
 	exec := cypher.NewStorageExecutor(engine)
@@ -96,7 +95,6 @@ func TestManagerTerminalLifecycleScenarios(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create badger engine: %v", err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			controller := &lifecycleControllerStub{}
 			engine.SetLifecycleController(controller)
 			exec := cypher.NewStorageExecutor(engine)

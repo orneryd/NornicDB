@@ -43,7 +43,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		MemoryPolicy:        opts.memoryPolicy,
 	}))
 	if engine != nil {
-		fixtureowner.OwnChecked(t, engine)
+		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
 	if opts.manualDrain && engine.writeBehind != nil {
@@ -56,7 +56,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		walCfg.BatchSyncInterval = time.Hour
 		wal, err := NewWAL(walCfg.Dir, walCfg)
 		if wal != nil {
-			fixtureowner.OwnChecked(t, wal, engine)
+			fixtureowner.Own(t, wal, engine)
 		}
 		require.NoError(t, err)
 		engine.SetBufferedCommitWAL(wal)

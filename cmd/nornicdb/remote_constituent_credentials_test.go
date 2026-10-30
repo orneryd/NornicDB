@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 const investigationPass = "synthetic-userpass-investigation-48263917"
@@ -60,26 +62,28 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, p
 		logFile.Close()
 		t.Fatal(err)
 	}
-	var stopped sync.Once
-	stop := func() {
-		stopped.Do(func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-			_ = logFile.Close()
-			data, _ := os.ReadFile(logFile.Name())
-			for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
-				if bytes.Contains(data, []byte(secret)) {
-					t.Error("process logs disclosed synthetic remote credentials")
-					for _, line := range strings.Split(string(data), "\n") {
-						if strings.Contains(line, secret) {
-							t.Log(investigationDiagnostic(line))
-						}
+	// Own stops the process and reports a log that disclosed the synthetic
+	// remote credentials, with the redacted diagnostics. stop is that close.
+	_, stop := fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		closeErr := logFile.Close()
+		data, _ := os.ReadFile(logFile.Name())
+		var diagnostics []string
+		for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
+			if bytes.Contains(data, []byte(secret)) {
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.Contains(line, secret) {
+						diagnostics = append(diagnostics, investigationDiagnostic(line))
 					}
 				}
 			}
-		})
-	}
-	t.Cleanup(stop)
+		}
+		if len(diagnostics) > 0 {
+			return errors.Join(closeErr, fmt.Errorf("process logs disclosed synthetic remote credentials: %s", strings.Join(diagnostics, "; ")))
+		}
+		return closeErr
+	}))
 	return stop
 }
 

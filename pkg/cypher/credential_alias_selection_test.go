@@ -13,7 +13,7 @@ import (
 func TestCredentialCompositeAliasPublicSelection(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	for _, name := range []string{"firstdb", "lastdb", "longsdb", "asciisdb"} {
 		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}

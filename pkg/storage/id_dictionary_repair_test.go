@@ -72,7 +72,6 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	report, err = engine.CheckIDDictionary()
 	require.NoError(t, err)
@@ -155,7 +154,6 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	report, err := engine.CheckIDDictionary()
 	require.NoError(t, err)

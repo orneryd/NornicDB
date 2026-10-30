@@ -1,10 +1,10 @@
 package bolt
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -16,7 +16,6 @@ func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Badger store: %v", err)
 	}
-	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 

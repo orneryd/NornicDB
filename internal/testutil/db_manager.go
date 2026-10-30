@@ -4,9 +4,9 @@ package testutil
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,9 +16,5 @@ func DatabaseManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
 	t.Helper()
 	manager, err := multidb.NewDatabaseManager(db.LifetimeContext(), db.GetBaseStorageForManager(), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		assert.NoError(t, db.Close())
-		assert.NoError(t, manager.Close())
-	})
-	return manager
+	return testfixture.Own(t, manager, db)
 }

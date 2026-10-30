@@ -21,9 +21,7 @@ func startTransactionLifecycleServer(t *testing.T) (*storage.MemoryEngine, int) 
 	t.Helper()
 
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() {
-		require.NoError(t, base.Close())
-	})
+	fixtureowner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	return base, startTransactionLifecycleServerWithStore(t, store)
 }

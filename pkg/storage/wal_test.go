@@ -1829,7 +1829,7 @@ func TestWALEngine(t *testing.T) {
 		engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "TEST"})
 
 		walEngine := NewWALEngine(engine, wal)
-		defer walEngine.Close()
+		fixtureowner.Own(t, walEngine)
 
 		// All read operations - should not increase sequence
 		walEngine.GetNode("n1")
@@ -1856,7 +1856,7 @@ func TestWALEngine(t *testing.T) {
 		wal, _ := NewWAL(dir, nil)
 		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
-		defer walEngine.Close()
+		fixtureowner.Own(t, walEngine)
 
 		assert.Same(t, wal, walEngine.GetWAL())
 		assert.Same(t, engine, walEngine.GetInnerEngine())
@@ -1873,7 +1873,7 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 
 	engine := newTestMemoryEngine(t)
 	walEngine := NewWALEngine(engine, wal)
-	defer walEngine.Close()
+	fixtureowner.Own(t, walEngine)
 
 	// Operations should succeed but not log
 	walEngine.CreateNode(&Node{ID: "n1"})
@@ -2026,7 +2026,7 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 	wal, _ := NewWAL("", cfg)
 	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 	walEngine := NewWALEngine(engine, wal)
-	defer walEngine.Close()
+	fixtureowner.Own(b, walEngine)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

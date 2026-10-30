@@ -51,7 +51,6 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	require.NoError(t, engine.Close())
 
 	engine = open()
-	defer engine.Close()
 	kept, err := engine.GetNode(keepID)
 	require.NoError(t, err)
 	require.Equal(t, "original", kept.Properties["value"])

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -15,6 +17,80 @@ type lifetimeEntry struct {
 	resource    Closer
 	closedError error
 	site        string
+}
+
+// releaseOutcomes holds each owner's release outcome until its last cleanup.
+var releaseOutcomes sync.Map
+
+// releaseOutcome is the state of the releases one owner runs. A tracked
+// lifetime may be released by a wrapper, a release function or the resource
+// itself, and only the test knows which. The audit therefore reads the owner's
+// outcome: after any failed or unfinished release, the owner has reported it,
+// and probing or closing again could block on the state that release holds.
+type releaseOutcome struct {
+	mu                sync.Mutex
+	started, finished int
+	failed            bool
+}
+
+// outcomeOf returns owner's outcome, registering its removal on first use, so
+// the removal runs after every cleanup registered later.
+func outcomeOf(owner Owner) *releaseOutcome {
+	if !reflect.TypeOf(owner).Comparable() {
+		return &releaseOutcome{}
+	}
+	if outcome, ok := releaseOutcomes.Load(owner); ok {
+		return outcome.(*releaseOutcome)
+	}
+	outcome, loaded := releaseOutcomes.LoadOrStore(owner, &releaseOutcome{})
+	if !loaded {
+		owner.Cleanup(func() {
+			releaseOutcomes.Delete(owner)
+			outcome.(*releaseOutcome).passToAncestors(owner)
+		})
+	}
+	return outcome.(*releaseOutcome)
+}
+
+// passToAncestors hands a failed or unfinished release to the enclosing tests.
+// A lifetime tracked on a parent test may be released on a subtest, whose
+// cleanups all finish before the parent's audit runs. A subtest's failure also
+// fails its parents, so this suppresses audits only on tests that have failed.
+func (outcome *releaseOutcome) passToAncestors(owner Owner) {
+	named, ok := owner.(interface{ Name() string })
+	if !ok || !outcome.reported() {
+		return
+	}
+	releaseOutcomes.Range(func(key, value any) bool {
+		if ancestor, ok := key.(interface{ Name() string }); ok && strings.HasPrefix(named.Name(), ancestor.Name()+"/") {
+			inherited := value.(*releaseOutcome)
+			inherited.mu.Lock()
+			inherited.failed = true
+			inherited.mu.Unlock()
+		}
+		return true
+	})
+}
+
+// closeOwned closes resource for Own and records the outcome for the audits.
+func closeOwned(owner Owner, resource Closer) error {
+	outcome := outcomeOf(owner)
+	outcome.mu.Lock()
+	outcome.started++
+	outcome.mu.Unlock()
+	err := resource.Close()
+	outcome.mu.Lock()
+	outcome.finished++
+	outcome.failed = outcome.failed || err != nil
+	outcome.mu.Unlock()
+	return err
+}
+
+// reported is true when a release failed or has not finished.
+func (outcome *releaseOutcome) reported() bool {
+	outcome.mu.Lock()
+	defer outcome.mu.Unlock()
+	return outcome.failed || outcome.started != outcome.finished
 }
 
 // Track registers a fixture with its actual testing.T, B or F. Owner remains
@@ -72,8 +148,7 @@ func ownResult[T Closer](owner testing.TB, resource T, closedError error, site s
 // Ordinary fixtures must use Track and their real testing owner.
 func TrackProcess[T Closer](owner *Boundary, resource T, closedError error) T {
 	if owner == nil {
-		disposeInvalidOwnerResource(resource)
-		panic("test fixture requires a non-nil process boundary")
+		panic("test fixture requires a non-nil process boundary" + disposeInvalidOwnerResource(resource))
 	}
 	return track(owner, resource, closedError, lifetimeSite())
 }
@@ -98,8 +173,7 @@ func requireTestingOwner(owner Owner, resource Closer) testing.TB {
 			return concrete
 		}
 	}
-	disposeInvalidOwnerResource(resource)
-	panic("test fixture requires its actual testing.T, testing.B or testing.F owner")
+	panic("test fixture requires its actual testing.T, testing.B or testing.F owner" + disposeInvalidOwnerResource(resource))
 }
 
 func hasLifetimeResource(resource Closer) bool {
@@ -107,10 +181,15 @@ func hasLifetimeResource(resource Closer) bool {
 	return value.IsValid() && !(value.Kind() == reflect.Pointer && value.IsNil())
 }
 
-func disposeInvalidOwnerResource(resource Closer) {
+// disposeInvalidOwnerResource closes a resource refused for its owner and
+// returns any close failure for the refusal message.
+func disposeInvalidOwnerResource(resource Closer) string {
 	if hasLifetimeResource(resource) {
-		_ = resource.Close()
+		if err := resource.Close(); err != nil {
+			return fmt.Sprintf("; disposal failed: %v", err)
+		}
 	}
+	return ""
 }
 
 func track[T Closer](owner Owner, resource T, closedError error, site string) T {
@@ -118,7 +197,8 @@ func track[T Closer](owner Owner, resource T, closedError error, site string) T 
 		return resource
 	}
 	entry := lifetimeEntry{resource: resource, closedError: closedError, site: site}
-	owner.Cleanup(func() { entry.audit(owner) })
+	outcomeOf(owner)
+	owner.Cleanup(func() { owner.Helper(); entry.audit(owner) })
 	return resource
 }
 
@@ -135,6 +215,9 @@ func (entry lifetimeEntry) isClosed() (bool, bool) {
 
 func (entry lifetimeEntry) audit(owner Owner) {
 	owner.Helper()
+	if outcomeOf(owner).reported() {
+		return
+	}
 	closed, supported := entry.isClosed()
 	if closed {
 		return
@@ -147,9 +230,5 @@ func (entry lifetimeEntry) audit(owner Owner) {
 	if closeErr != nil {
 		message += fmt.Sprintf("; disposal failed: %v", closeErr)
 	}
-	if checked, ok := owner.(interface{ Errorf(string, ...any) }); ok {
-		checked.Errorf("%s", message)
-		return
-	}
-	panic(message)
+	owner.Errorf("%s", message)
 }

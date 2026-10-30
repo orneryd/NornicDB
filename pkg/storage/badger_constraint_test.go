@@ -825,15 +825,16 @@ func setupTestBadgerEngine(t *testing.T) (*BadgerEngine, func()) {
 	dir := fmt.Sprintf("/tmp/badger-test-%d", os.Getpid())
 
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	closeEngine := func() {}
 	if engine != nil {
-		fixtureowner.Own(t, engine)
+		_, closeEngine = fixtureowner.OwnWithClose(t, engine)
 	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
 
 	cleanup := func() {
-		engine.Close()
+		closeEngine()
 		os.RemoveAll(dir)
 	}
 

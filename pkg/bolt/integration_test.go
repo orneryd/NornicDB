@@ -150,18 +150,11 @@ func startBoltIntegrationServer(t *testing.T, store storage.Engine) (*Server, in
 	server.listener = listener
 
 	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
 	go func() {
 		errCh <- server.serve()
 	}()
+	// Own closes the server, then reports serve's result.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return <-errCh }), server)
 	return server, addr.Port
 }
 
@@ -172,10 +165,8 @@ func serveBoltIntegrationServer(t *testing.T, server *Server) int {
 	port := listener.Addr().(*net.TCPAddr).Port
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	t.Cleanup(func() {
-		_ = server.Close()
-		requireNoError(t, <-done)
-	})
+	// Own closes the server, then reports Serve's result.
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return <-done }), server)
 	return port
 }
 
@@ -1287,7 +1278,6 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
 	asyncBase := badgerEngine
 	store := storage.NewNamespacedEngine(asyncBase, "test")

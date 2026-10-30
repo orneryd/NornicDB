@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
@@ -16,7 +17,7 @@ func TestCredentialRejectionPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	const secret = "synthetic-bare-password-936715"
@@ -55,7 +56,7 @@ func TestShowCompositeTrailingTokensPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	fixtureowner.Own(t, manager)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	for _, query := range []string{"SHOW COMPOSITE DATABASES garbage", "SHOW COMPOSITE DATABASES garbage YIELD name"} {

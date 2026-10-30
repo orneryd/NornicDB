@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -130,7 +131,7 @@ func testRowFunctionSelectedDatabase(t *testing.T) {
 func testRowFunctionDatabaseRouting(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "row_context_target"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "row_context_composite", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "row_context_target", Type: "local", AccessMode: "read_write"},
@@ -174,10 +175,10 @@ func testRowFunctionStorage(t *testing.T) {
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "CALL gds.graph.project('row_context_projection','N','R',{nodeProperties:['v']})", nil)
 			require.NoError(t, err)
-			t.Cleanup(func() {
+			fixtureowner.Own(t, fixtureowner.CloseFunc(func() error {
 				_, err := exec.Execute(ctx, "CALL gds.graph.drop('row_context_projection')", nil)
-				require.NoError(t, err)
-			})
+				return err
+			}))
 			expressions := []string{
 				"gds.graph.exists('row_context_projection')",
 				"gds.util.nodeProperty('row_context_projection',id(a),'v')",
@@ -206,7 +207,7 @@ func testRowFunctionStorage(t *testing.T) {
 func testRowFunctionGraphCatalog(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	fixtureowner.Own(t, manager)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "row_context_graph"}))
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "row_context_catalog", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "row_context_graph", Type: "local", AccessMode: "read_write"},

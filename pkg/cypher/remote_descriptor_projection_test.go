@@ -42,7 +42,9 @@ func TestDescriptorPublicShowAndBothCatalogBuildersUseSafeViews(t *testing.T) {
 		for _, remote := range remotes {
 			_ = remote.Close()
 		}
-		_ = manager.Close()
+		if err := manager.Close(); err != nil {
+			t.Fatalf("close manager: %v", err)
+		}
 	})
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)

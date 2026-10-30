@@ -37,7 +37,6 @@ func newColdLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { _ = engine.Close() })
 	return newLargeEmbeddingGraphOn(tb, docs, engine)
 }
 

@@ -10,7 +10,12 @@ import (
 func TestPendingCandidatesBufferedFlush(t *testing.T) {
 	e := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
 	wal := e.bufferedCommitWAL
-	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("close e: %v", err)
+		}
+		_ = wal.Close()
+	})
 	e.SetEmbeddingsEnabled(true)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	tx, err := e.BeginTransaction()

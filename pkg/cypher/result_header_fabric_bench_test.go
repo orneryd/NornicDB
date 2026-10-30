@@ -54,7 +54,7 @@ func BenchmarkResultHeaderFabricEmptyChain(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(b, manager)
 	for _, database := range []string{"header_first", "header_second"} {
 		if err := manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: database}); err != nil {
 			b.Fatal(err)

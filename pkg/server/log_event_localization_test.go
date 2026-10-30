@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -377,7 +378,7 @@ func testServerLogAcrossLocales(t *testing.T, eventID, english, spanish string, 
 		}
 		db, err := nornicdb.Open("", dbConfig)
 		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, db.Close()) })
+		fixtureowner.Own(t, db)
 
 		var output synchronizedLogBuffer
 		logger := slog.New(slog.NewJSONHandler(&output, nil))

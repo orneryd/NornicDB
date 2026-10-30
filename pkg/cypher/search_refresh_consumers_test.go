@@ -90,16 +90,14 @@ func consumerHits(t *testing.T, svc *search.Service, word string) int {
 // pauses whichever read decides the older statement's index change.
 func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bool) (storage.Engine, *consumerObservationBarrier, *search.Service) {
 	t.Helper()
-	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "test")
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(node)
 	require.NoError(t, err)
 	barrier := newConsumerObservationBarrier(store, observed)
 	t.Cleanup(barrier.ReleaseWrites)
-	svc := search.NewService(barrier, 2, nil)
-	t.Cleanup(func() { _ = svc.Close() })
+	svc := runtimeFixtureOwner.Own(t, search.NewService(barrier, 2, nil))
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	return store, barrier, svc
 }

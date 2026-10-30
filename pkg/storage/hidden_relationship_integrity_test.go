@@ -1,11 +1,11 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
 )
@@ -188,7 +188,6 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 
 			require.NoError(t, engine.Close())
 			engine = open()
-			t.Cleanup(func() { _ = engine.Close() })
 			requireHubDeleted(t, engine)
 		})
 	}
@@ -214,7 +213,12 @@ func TestWriteBehindReplayRemovesHiddenRelationships(t *testing.T) {
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
+	t.Cleanup(func() {
+		_ = wal2.Close()
+		if err := recovered.Close(); err != nil {
+			t.Errorf("close recovered: %v", err)
+		}
+	})
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	requireHubDeleted(t, recovered)

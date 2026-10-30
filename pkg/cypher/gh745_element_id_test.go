@@ -19,7 +19,7 @@ func TestGh745_CompositeSubqueryElementIDNamesConstituent(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 
 	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pcomp_other"}))
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{

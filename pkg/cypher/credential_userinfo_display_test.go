@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ func TestCredentialUserinfoCatalogDisplayPublic(t *testing.T) {
 	cfg.RemoteCredentialEncryptionKey = "synthetic-userinfo-display-key-317"
 	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), cfg)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = manager.Close() })
+	fixtureowner.Own(t, manager)
 	endpoint := &url.URL{Scheme: "http", Host: "example.invalid", User: url.UserPassword(secret, "")}
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{{Alias: "r", Type: "remote", AccessMode: "read", DatabaseName: "remote", URI: endpoint.String()}}))
 	engine, err := manager.GetStorage("nornic")

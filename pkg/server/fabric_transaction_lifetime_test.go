@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/txsession"
@@ -25,7 +27,7 @@ func fabricLifetimeBolt(t *testing.T, server *Server) string {
 	peer := bolt.NewWithDatabaseManager(&bolt.Config{ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, server.dbManager)
 	done := make(chan error, 1)
 	go func() { done <- peer.Serve(listener) }()
-	t.Cleanup(func() { require.NoError(t, peer.Close()); require.NoError(t, <-done) })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return errors.Join(peer.Close(), <-done) }))
 	return "bolt://" + listener.Addr().String()
 }
 

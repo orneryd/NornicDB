@@ -1,14 +1,13 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"bytes"
 	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,7 +127,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
 	live := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { _ = live.Close() })
+	fixtureowner.Own(t, live)
 	n, e := recoveryFieldFixture()
 	_, err = live.CreateNode(n)
 	require.NoError(t, err)
@@ -197,7 +196,7 @@ func newTimestampRecoveryWAL(t *testing.T) (*WALEngine, *WAL, string) {
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "immediate"})
 	require.NoError(t, err)
 	live := NewWALEngine(newTestMemoryEngine(t), wal)
-	t.Cleanup(func() { _ = live.Close() })
+	fixtureowner.Own(t, live)
 	return live, wal, dir
 }
 

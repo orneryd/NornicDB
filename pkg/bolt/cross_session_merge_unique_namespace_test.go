@@ -128,9 +128,7 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_BackendPopulations(t *testin
 			}
 			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = mgr.Close()
-			})
+			fixtureowner.Own(t, mgr)
 
 			server := NewWithDatabaseManager(&Config{
 				Port:            0,

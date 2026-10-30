@@ -116,7 +116,7 @@ func newNamespacedEngine(tb testing.TB) storage.Engine {
 func newHybridRerankBudgetService(tb testing.TB, count int) *Service {
 	engine := newNamespacedEngine(tb)
 	service := NewService(engine, 2, nil)
-	tb.Cleanup(func() { require.NoError(tb, service.Close()) })
+	fixtureowner.Own(tb, service)
 	for index := 0; index < count; index++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%03d", index))
 		node := &storage.Node{

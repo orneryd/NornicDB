@@ -20,7 +20,6 @@ func setupDecayEngine(t *testing.T, enabled ...bool) (*storage.BadgerEngine, *St
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { eng.Close() })
 
 	eng.SetDecayEnabled(len(enabled) == 0 || enabled[0])
 

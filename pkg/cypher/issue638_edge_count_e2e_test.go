@@ -44,7 +44,7 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	t.Helper()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	probe := &getEdgesByTypeProbe{Engine: store}
 	exec := NewStorageExecutor(probe)

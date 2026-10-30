@@ -47,9 +47,7 @@ func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		manager.Close()
-	})
+	fixtureowner.Own(t, manager)
 
 	dbName := "testdb"
 	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: dbName})

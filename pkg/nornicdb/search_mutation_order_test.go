@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,28 +19,22 @@ import (
 // stacks are inspected.
 type refreshReadBarrier struct {
 	storage.Engine
+	*fixtureowner.PauseGate
 	observed func(*storage.Node, error) bool
-	armed    atomic.Bool
-	entered  chan struct{}
-	release  chan struct{}
-	opened   sync.Once
 }
 
 func (b *refreshReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
 	node, err := b.Engine.GetNode(id)
-	if b.armed.Load() && b.observed(node, err) && b.armed.CompareAndSwap(true, false) {
-		close(b.entered)
-		<-b.release
+	if b.Armed.Load() && b.observed(node, err) {
+		b.Pause(b.Armed, b.Entered)
 	}
 	return node, err
 }
 
-func (b *refreshReadBarrier) open() { b.opened.Do(func() { close(b.release) }) }
-
 // wait blocks until the paused refresh reached its post-read barrier.
 func (b *refreshReadBarrier) wait(t *testing.T) {
 	t.Helper()
-	fixtureowner.WaitForBarrier(t, b.entered, 5*time.Second, b.open, "the refresh did not read storage")
+	fixtureowner.WaitForBarrier(t, b.Entered, 5*time.Second, b.ReleaseWrites, "the refresh did not read storage")
 }
 
 func storedContent(word string) func(*storage.Node, error) bool {
@@ -54,21 +47,22 @@ func newMutationOrderDB(t *testing.T) (*DB, *dbSearchService, storage.Engine, *r
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "test")
-	barrier := &refreshReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
+	barrier := &refreshReadBarrier{Engine: store, PauseGate: fixtureowner.NewPauseGate()}
 	svc := search.NewService(barrier, 2, nil)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	entry := &dbSearchService{dbName: "test", engine: store, svc: svc, pendingFlushDelay: time.Hour}
 	db := &DB{config: DefaultConfig(), storage: store, baseStorage: base, searchServices: map[string]*dbSearchService{"test": entry}}
-	t.Cleanup(func() {
-		barrier.open()
+	// The gate opens first, then the owner stops the pending flush timer and
+	// closes the service; base was registered first, so it closes last.
+	fixtureowner.Own(t, svc, fixtureowner.CloseFunc(func() error {
 		entry.pendingFlushMu.Lock()
+		defer entry.pendingFlushMu.Unlock()
 		if entry.pendingFlushTimer != nil {
 			entry.pendingFlushTimer.Stop()
 		}
-		entry.pendingFlushMu.Unlock()
-		_ = svc.Close()
-		_ = base.Close()
-	})
+		return nil
+	}))
+	t.Cleanup(barrier.ReleaseWrites)
 	return db, entry, store, barrier
 }
 
@@ -146,14 +140,14 @@ func runStaleRefreshRace(t *testing.T, newerWrite func(node *storage.Node, store
 	_, err := store.CreateNode(node)
 	require.NoError(t, err)
 	barrier.observed = storedContent("alpha")
-	barrier.armed.Store(true)
+	barrier.Armed.Store(true)
 	done := make(chan bool, 1)
 	go func() { done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}) }()
 	barrier.wait(t)
 	require.NoError(t, newerWrite(node, store))
 	db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
 	applyQueued(t, entry)
-	barrier.open()
+	barrier.ReleaseWrites()
 	require.True(t, <-done)
 	assertOutcome(entry)
 }

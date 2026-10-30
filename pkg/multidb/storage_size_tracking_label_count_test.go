@@ -1,9 +1,9 @@
 package multidb
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,7 @@ func TestSizeTrackingEnginePassesLabelCounterAndNamespace(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	defer mgr.Close()
+	fixtureowner.Own(t, mgr)
 	require.NoError(t, mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tracked"}))
 	store, err := mgr.GetStorage("tracked")
 	require.NoError(t, err)

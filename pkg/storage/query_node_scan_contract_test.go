@@ -22,7 +22,6 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 				var err error
 				b, err = runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = b.Close() })
 			}
 			b.SetDecayEnabled(true)
 			for _, node := range []*Node{

@@ -94,7 +94,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 					},
 				})
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = mgr.Close() })
+				fixtureowner.Own(t, mgr)
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_rk", []multidb.ConstituentRef{
 					{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), AuthMode: "oidc_forwarding"},
 				}))
@@ -186,6 +186,9 @@ type stallingProxy struct {
 	stalled  atomic.Bool
 	mu       sync.Mutex
 	conns    []net.Conn
+	// close closes the listener and connections through the owner; a test
+	// calls it early to make the remote unresponsive.
+	close func()
 }
 
 func startStallingProxy(t *testing.T, targetPort int) (*stallingProxy, int) {
@@ -193,7 +196,7 @@ func startStallingProxy(t *testing.T, targetPort int) (*stallingProxy, int) {
 	require.NoError(t, err)
 	p := &stallingProxy{listener: listener, target: fmt.Sprintf("127.0.0.1:%d", targetPort)}
 	go p.serve()
-	t.Cleanup(p.close)
+	_, p.close = fixtureowner.OwnWithClose(t, fixtureowner.CloseFunc(func() error { p.closeConnections(); return nil }))
 	return p, listener.Addr().(*net.TCPAddr).Port
 }
 
@@ -234,7 +237,7 @@ func (p *stallingProxy) serve() {
 }
 
 // close drops every connection, which unblocks a client still waiting.
-func (p *stallingProxy) close() {
+func (p *stallingProxy) closeConnections() {
 	_ = p.listener.Close()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -267,7 +270,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 				},
 			})
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Close() })
+			fixtureowner.Own(t, mgr)
 			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "st_local"}))
 			local, err := mgr.GetStorage("st_local")
 			require.NoError(t, err)

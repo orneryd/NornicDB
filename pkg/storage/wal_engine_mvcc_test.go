@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,9 +14,7 @@ func newLoggedMVCCDelegationWAL(t *testing.T, engine Engine) *WALEngine {
 	t.Helper()
 	log, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
 	require.NoError(t, err)
-	wal := NewWALEngine(engine, log)
-	t.Cleanup(func() { require.NoError(t, wal.Close()) })
-	return wal
+	return fixtureowner.Own(t, NewWALEngine(engine, log))
 }
 
 func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {

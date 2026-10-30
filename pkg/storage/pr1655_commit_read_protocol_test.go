@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,7 +40,7 @@ func openPR1655ProtocolFixture(t *testing.T, writeBehind ...bool) (*server.Serve
 	config.Logger = slog.New(&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler})
 	db, err := nornicdb.Open(t.TempDir(), config)
 	if err != nil && db != nil {
-		_ = db.Close()
+		err = errors.Join(err, db.Close())
 	}
 	require.NoError(t, err)
 	base := db.GetBaseStorageForManager()
@@ -52,11 +53,12 @@ func openPR1655ProtocolFixture(t *testing.T, writeBehind ...bool) (*server.Serve
 	}
 	native, ok := base.(*storage.BadgerEngine)
 	if !ok {
-		_ = db.Close()
+		require.NoError(t, db.Close())
 		t.Fatalf("real Badger fixture required, got %T", base)
 	}
+	// The DB closes before the tracked engine's lifetime audit runs.
 	fixtureowner.Track(t, native, storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	fixtureowner.Own(t, db)
 	serverConfig := server.DefaultConfig()
 	serverConfig.Port = 0
 	serverConfig.Headless = true
@@ -65,9 +67,9 @@ func openPR1655ProtocolFixture(t *testing.T, writeBehind ...bool) (*server.Serve
 	srv, err := server.New(db, nil, serverConfig)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
-	t.Cleanup(func() { require.NoError(t, srv.Stop(context.Background())) })
+	fixtureowner.Own(t, fixtureowner.CloseFunc(func() error { return srv.Stop(context.Background()) }))
 	fault.engine = native
-	t.Cleanup(func() { fault.restore(t) })
+	_, fault.restoreNow = fixtureowner.OwnWithClose(t, fault)
 	store, err := srv.GetDatabaseManager().GetStorage("nornic")
 	require.NoError(t, err)
 	_, err = cypher.NewStorageExecutor(store).Execute(context.Background(), "CREATE (:Doc {id:'original', summary_input:'before'})", nil)
@@ -84,7 +86,7 @@ func assertPR1655ProtocolBodyUnchanged(t *testing.T, fault *pr1655ExecuteFault) 
 	require.True(t, fault.installed.Load(), "the fixture failed to corrupt the actual head")
 	require.NoError(t, fault.setupError())
 	fault.armed.Store(false)
-	fault.restore(t)
+	fault.restoreNow()
 	require.NoError(t, fault.engine.FlushWriteBehind(nil))
 	node, err := fault.engine.GetStoredNode(fault.nodeID)
 	require.NoError(t, err)

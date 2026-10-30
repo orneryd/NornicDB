@@ -60,8 +60,9 @@ func openRealDataIntegrationExecutor(t *testing.T, databaseName string) (*Storag
 	}
 
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	closeBase := func() {}
 	if base != nil {
-		fixtureowner.Own(t, base)
+		_, closeBase = fixtureowner.OwnWithClose(t, base)
 	}
 	if err != nil {
 		t.Fatalf("open badger real data: %v", err)
@@ -69,5 +70,5 @@ func openRealDataIntegrationExecutor(t *testing.T, databaseName string) (*Storag
 	store := storage.NewNamespacedEngine(base, databaseName)
 	exec := NewStorageExecutor(store)
 
-	return exec, func() { _ = base.Close() }
+	return exec, closeBase
 }

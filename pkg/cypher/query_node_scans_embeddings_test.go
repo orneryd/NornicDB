@@ -19,7 +19,6 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	fixtureowner.Own(t, engine)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := multidb.NewDatabaseManager(t.Context(), engine, nil)
 	require.NoError(t, err)
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "test"}))

@@ -66,9 +66,7 @@ func createMVCCBadgerEngine(t *testing.T) *BadgerEngine {
 		},
 	}))
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, engine.Close())
-	})
+	fixtureowner.Own(t, engine)
 	return engine
 }
 

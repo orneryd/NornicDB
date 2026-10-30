@@ -10,6 +10,9 @@ import (
 func CurrentGoroutineID() uint64 {
 	var header [64]byte
 	fields := bytes.Fields(header[:runtime.Stack(header[:], false)])
-	id, _ := strconv.ParseUint(string(fields[1]), 10, 64)
+	id, err := strconv.ParseUint(string(fields[1]), 10, 64)
+	if err != nil {
+		panic("testfixture: unexpected goroutine stack header: " + err.Error())
+	}
 	return id
 }

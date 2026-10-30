@@ -63,7 +63,6 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 
 	require.NoError(t, engine.Close())
 	engine = open()
-	t.Cleanup(func() { _ = engine.Close() })
 	nodes, err := engine.GetNodesByLabel("L")
 	require.NoError(t, err)
 	require.Len(t, nodes, 20)

@@ -24,7 +24,6 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 						if b != nil {
 							fixtureowner.Own(t, b)
-							t.Cleanup(func() { _ = b.Close() })
 						}
 						require.NoError(t, err)
 						return b
@@ -179,7 +178,6 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 
 func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 	b := newTestEngine(t)
-	defer b.Close()
 	lease, err := b.beginLifecycleWrite(context.Background(), "")
 	require.NoError(t, err)
 	defer lease.finish()

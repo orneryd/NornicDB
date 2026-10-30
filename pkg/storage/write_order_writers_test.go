@@ -57,7 +57,6 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
 			for _, id := range []NodeID{"test:a", "test:b"} {
 				_, err := engine.CreateNode(&Node{ID: id})
 				require.NoError(t, err)
@@ -193,7 +192,6 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 	for _, route := range []string{"direct", "explicit"} {
 		t.Run(route, func(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"Old"}})
 			require.NoError(t, err)
 			_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"End"}})
@@ -223,7 +221,6 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 // relationship created there already exists.
 func TestDirectRelationshipCreateSeesAcknowledgedCommits(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	t.Cleanup(func() { _ = engine.Close() })
 	require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: "test:a"}, {ID: "test:b"}}))
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}), "the acknowledged endpoints exist")
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {

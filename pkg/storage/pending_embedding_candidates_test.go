@@ -163,7 +163,11 @@ func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rollback=%t", fail), func(t *testing.T) {
 			e := openLargeCommitTestEngine(t, t.TempDir())
-			defer e.Close()
+			defer func() {
+				if err := e.Close(); err != nil {
+					t.Errorf("close e: %v", err)
+				}
+			}()
 			e.SetEmbeddingsEnabled(true)
 			for i := 0; i < 3; i++ {
 				_, err := e.CreateNode(pendingCandidateNode(i))

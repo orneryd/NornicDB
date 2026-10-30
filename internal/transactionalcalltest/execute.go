@@ -15,7 +15,7 @@ func CheckExecute(t *testing.T) {
 	ctx := context.Background()
 	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	fixtureowner.Own(t, base)
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 	Check(t, func(t *testing.T, sample Case) Outcome {
 		_, err := exec.Execute(ctx, Reset, nil)

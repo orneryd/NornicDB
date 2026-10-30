@@ -94,14 +94,10 @@ func remoteAuthByteEndpoint(t *testing.T, transport string, f *remoteAuthByteFix
 	peer.SetDatabaseAccessMode(auth.FullDatabaseAccessMode)
 	done := make(chan error, 1)
 	go func() { done <- peer.Serve(listener) }()
-	t.Cleanup(func() {
-		if peer.Close() != nil {
-			t.Error("Bolt fixture close failed")
-		}
-		if <-done != nil {
-			t.Error("Bolt fixture serve failed")
-		}
-	})
+	// Own closes the peer, then reports Serve's result. Failures are reported
+	// without details.
+	fixtureowner.Own(t, fixtureowner.Redacted("Bolt fixture serve", fixtureowner.CloseFunc(func() error { return <-done })),
+		fixtureowner.Redacted("Bolt fixture", peer))
 	return "bolt://" + listener.Addr().String()
 }
 
@@ -121,19 +117,19 @@ func createEscapedRemoteAuthByteRef(t *testing.T, ctx context.Context, manager *
 	go func() { done <- peer.Serve(listener) }()
 	driver, err := neo4j.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4j.NoAuth())
 	if err != nil {
-		_ = peer.Close()
+		// Reported by label only: these errors may carry credential details.
+		if closeErr := peer.Close(); closeErr != nil {
+			t.Error("coordinator peer close failed")
+		}
 		<-done
 		t.Fatal("coordinator driver setup failed")
 	}
-	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
-		if peer.Close() != nil {
-			t.Error("coordinator close failed")
-		}
-		if <-done != nil {
-			t.Error("coordinator serve failed")
-		}
-	})
+	// Own closes the driver and then the peer, then reports Serve's result.
+	// Failures are reported without details, like every other failure in
+	// this credential test.
+	fixtureowner.Own(t, fixtureowner.Redacted("coordinator serve", fixtureowner.CloseFunc(func() error { return <-done })),
+		fixtureowner.Redacted("coordinator driver", fixtureowner.CloseFunc(func() error { return driver.Close(context.Background()) })),
+		fixtureowner.Redacted("coordinator", peer))
 	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "system"})
 	defer session.Close(ctx)
 	query := "CREATE COMPOSITE DATABASE wire_composite ALIAS r FOR DATABASE nornic AT '" + endpoint + "' USER ` us``er ` PASSWORD ` pa``ss ` ACCESS read"

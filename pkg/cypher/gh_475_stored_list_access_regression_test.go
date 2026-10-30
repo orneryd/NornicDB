@@ -65,7 +65,6 @@ func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
-			_ = engine.Close()
 		}
 	})
 	store := storage.NewNamespacedEngine(engine, "gh475_disk")

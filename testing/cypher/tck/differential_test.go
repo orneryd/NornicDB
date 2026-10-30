@@ -31,7 +31,6 @@ func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
 				t.Cleanup(func() { config.SetParserType(previous) })
 				engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
-				t.Cleanup(func() { _ = engine.Close() })
 				driver, shutdown := startConformanceServerWithEngine(t, engine)
 				defer shutdown()
 				require.Equal(t, parser, config.GetParserType())

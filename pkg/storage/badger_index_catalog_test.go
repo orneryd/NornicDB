@@ -1,10 +1,10 @@
 package storage
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 func TestIndexCatalog_PutAndGet(t *testing.T) {
@@ -105,7 +105,6 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = engine.Close() })
 			if kind == "node" {
 				// Seed a numID so the compact collector returns the expected keys.
 				if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {

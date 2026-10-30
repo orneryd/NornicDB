@@ -28,7 +28,7 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Close() })
+			fixtureowner.Own(t, mgr)
 			server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 32, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)
 			port := startBoltTestServer(t, server)
 			conn := openBoltTestConn(t, port)
