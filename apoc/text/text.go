@@ -2,6 +2,7 @@
 //
 // This package implements all apoc.text.* functions for string
 // manipulation and text processing in Cypher queries.
+// Author: Codex implementation lane for NOR-207 (initial-letter values), 2026-10-26.
 package text
 
 import (
@@ -10,6 +11,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Join joins a list of strings with a delimiter.
@@ -57,22 +61,46 @@ func RegexGroups(text, pattern string) [][]string {
 	return re.FindAllStringSubmatch(text, -1)
 }
 
-// Capitalize capitalizes the first letter of each word.
+// Capitalize uppercases the initial character, leaving the rest unchanged.
 //
 // Example:
 //
-//	apoc.text.capitalize('hello world') => 'Hello World'
+//	apoc.text.capitalize('hello world') => 'Hello world'
 func Capitalize(text string) string {
-	return strings.Title(text)
+	if text == "" {
+		return text
+	}
+	r, size := utf8.DecodeRuneInString(text)
+	// APOC uppercases substring(0, 1), one UTF-16 code unit. A leading
+	// surrogate belongs to no cased character on its own.
+	if r > 0xffff {
+		return text
+	}
+	if r < utf8.RuneSelf {
+		upper := unicode.ToUpper(r)
+		if upper == r {
+			return text
+		}
+		return string(upper) + text[size:]
+	}
+	initial := text[:size]
+	// String uppercase can expand a character (for example, ß -> SS).
+	upper := cases.Upper(language.Und).String(initial)
+	if upper == initial {
+		return text
+	}
+	return upper + text[size:]
 }
 
-// CapitalizeAll capitalizes all letters.
+// CapitalizeAll titlecases the initial code point of each ASCII-space-delimited
+// word, preserves the other characters and internal spaces, and trims outer
+// characters at or below U+0020, matching APOC.
 //
 // Example:
 //
-//	apoc.text.capitalizeAll('hello world') => 'HELLO WORLD'
+//	apoc.text.capitalizeAll('hello world') => 'Hello World'
 func CapitalizeAll(text string) string {
-	return strings.ToUpper(text)
+	return mapWordInitials(text, unicode.ToTitle)
 }
 
 // Decapitalize makes the first letter lowercase.
@@ -81,20 +109,55 @@ func CapitalizeAll(text string) string {
 //
 //	apoc.text.decapitalize('Hello World') => 'hello World'
 func Decapitalize(text string) string {
-	if len(text) == 0 {
-		return text
-	}
-	r, size := utf8.DecodeRuneInString(text)
-	return string(unicode.ToLower(r)) + text[size:]
+	var result strings.Builder
+	result.Grow(len(text))
+	appendInitialCase(&result, text, unicode.ToLower)
+	return result.String()
 }
 
-// DecapitalizeAll makes all letters lowercase.
+// DecapitalizeAll lowercases the initial code point of each ASCII-space-delimited
+// word, with the same spacing and trimming as CapitalizeAll.
 //
 // Example:
 //
-//	apoc.text.decapitalizeAll('HELLO WORLD') => 'hello world'
+//	apoc.text.decapitalizeAll('HELLO WORLD') => 'hELLO wORLD'
 func DecapitalizeAll(text string) string {
-	return strings.ToLower(text)
+	return mapWordInitials(text, unicode.ToLower)
+}
+
+// mapWordInitials follows Strings.java's split(" ") / StringUtils initial
+// mapping / trim contract without allocating a separate string for each word.
+func mapWordInitials(text string, mapping func(rune) rune) string {
+	var result strings.Builder
+	result.Grow(len(text))
+	start := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] == ' ' {
+			appendInitialCase(&result, text[start:i], mapping)
+			result.WriteByte(' ')
+			start = i + 1
+		}
+	}
+	appendInitialCase(&result, text[start:], mapping)
+	// Java trim removes only ASCII controls/spaces. Trim after mapping so a
+	// leading control still shields the following letter from initial casing.
+	mapped := result.String()
+	for len(mapped) > 0 && mapped[0] <= 0x20 {
+		mapped = mapped[1:]
+	}
+	for len(mapped) > 0 && mapped[len(mapped)-1] <= 0x20 {
+		mapped = mapped[:len(mapped)-1]
+	}
+	return mapped
+}
+
+func appendInitialCase(result *strings.Builder, text string, mapping func(rune) rune) {
+	if text == "" {
+		return
+	}
+	r, size := utf8.DecodeRuneInString(text)
+	result.WriteRune(mapping(r))
+	result.WriteString(text[size:])
 }
 
 // SwapCase swaps the case of all letters.
@@ -131,7 +194,8 @@ func CamelCase(text string) string {
 	var result strings.Builder
 	result.WriteString(strings.ToLower(words[0]))
 	for i := 1; i < len(words); i++ {
-		result.WriteString(Capitalize(strings.ToLower(words[i])))
+		// Name conversion retains its existing token titlecasing policy.
+		result.WriteString(strings.Title(strings.ToLower(words[i])))
 	}
 	return result.String()
 }
@@ -159,7 +223,7 @@ func UpperCamelCase(text string) string {
 	words := splitWords(text)
 	var result strings.Builder
 	for _, word := range words {
-		result.WriteString(Capitalize(strings.ToLower(word)))
+		result.WriteString(strings.Title(strings.ToLower(word)))
 	}
 	return result.String()
 }
