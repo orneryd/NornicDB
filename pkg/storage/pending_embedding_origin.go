@@ -17,11 +17,16 @@ var pendingEmbeddingOriginSession = func() [16]byte {
 	return session
 }()
 
-func encodePendingEmbeddingOrigin(origin uint64) []byte {
+// encodePendingEmbeddingOrigin is the one pending-marker encoder: every queued
+// embedding enters through it, so it refuses the system-store admission.
+func encodePendingEmbeddingOrigin(origin uint64) ([]byte, error) {
+	if err := RefuseSystemStoreVectorWork(origin); err != nil {
+		return nil, err
+	}
 	value := make([]byte, 24)
 	copy(value, pendingEmbeddingOriginSession[:])
 	binary.LittleEndian.PutUint64(value[16:], origin)
-	return value
+	return value, nil
 }
 
 // decodePendingEmbeddingOrigin distinguishes an explicit admission from a

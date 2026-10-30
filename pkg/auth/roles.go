@@ -29,7 +29,7 @@ type RoleStore struct {
 
 // NewRoleStore creates a store that reads/writes _Role nodes in the given system storage.
 func NewRoleStore(systemStorage storage.Engine) *RoleStore {
-	return &RoleStore{storage: systemStorage, roles: make(map[string]struct{})}
+	return &RoleStore{storage: storage.SystemStoreEngine(systemStorage), roles: make(map[string]struct{})}
 }
 
 // Load reads all _Role nodes from storage into memory.

@@ -927,7 +927,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 		for _, tc := range toolCalls {
 			var paramsMap map[string]interface{}
 			if tc.Arguments != "" {
-				_ = valueconvert.CypherInputJSON.Unmarshal([]byte(tc.Arguments), &paramsMap)
+				_ = json.Unmarshal([]byte(tc.Arguments), &paramsMap)
 			}
 			if paramsMap == nil {
 				paramsMap = make(map[string]interface{})

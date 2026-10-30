@@ -37,7 +37,7 @@ type PrivilegesStore struct {
 
 // NewPrivilegesStore creates a store that reads/writes _DbPrivilege nodes.
 func NewPrivilegesStore(systemStorage storage.Engine) *PrivilegesStore {
-	return &PrivilegesStore{storage: systemStorage, matrix: make(map[string]map[string]DbPrivilege)}
+	return &PrivilegesStore{storage: storage.SystemStoreEngine(systemStorage), matrix: make(map[string]map[string]DbPrivilege)}
 }
 
 // Load reads all _DbPrivilege nodes from storage into memory.

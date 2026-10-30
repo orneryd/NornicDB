@@ -49,6 +49,55 @@ func VectorWorkFallbacks() []VectorWorkFallback {
 	return out
 }
 
+// SystemStoreAdmission admits system-store writes: users, roles, privileges,
+// database settings and catalog records. System records enqueue no vector
+// work, so this admission reads no retirement clock. Every vector-work enqueue
+// owner (the pending-marker encoder and the search reservation) refuses it, so
+// a system-store write that would enqueue vector work fails instead.
+const SystemStoreAdmission uint64 = 1 << 63
+
+// ErrSystemStoreVectorWork reports vector work requested under the
+// system-store admission.
+var ErrSystemStoreVectorWork = errors.New("system-store write cannot enqueue vector work")
+
+// RefuseSystemStoreVectorWork is the enqueue owners' check of the
+// system-store admission.
+func RefuseSystemStoreVectorWork(origin uint64) error {
+	if origin == SystemStoreAdmission {
+		return ErrSystemStoreVectorWork
+	}
+	return nil
+}
+
+// SystemStoreEngine returns engine's write handle under the system-store
+// admission (nil for a nil engine). A handle that already carries an
+// admission keeps it.
+func SystemStoreEngine(engine Engine) Engine {
+	if engine == nil {
+		return nil
+	}
+	if bound, ok := engine.(*vectorWorkOriginEngine); ok {
+		return bound
+	}
+	return &vectorWorkOriginEngine{Engine: engine, origin: SystemStoreAdmission}
+}
+
+// BeginSystemStoreTransaction opens a transaction for system-store records
+// under the system-store admission.
+func BeginSystemStoreTransaction(engine TransactionBeginner) (*BadgerTransaction, error) {
+	if engine == nil {
+		return nil, errors.New("system-store transaction needs a transactional engine")
+	}
+	tx, err := engine.BeginTransaction()
+	if err != nil {
+		return nil, err
+	}
+	tx.mu.Lock()
+	tx.bindVectorWorkOriginLocked(SystemStoreAdmission)
+	tx.mu.Unlock()
+	return tx, nil
+}
+
 // TransactionBeginner opens a native transaction.
 type TransactionBeginner interface {
 	BeginTransaction() (*BadgerTransaction, error)

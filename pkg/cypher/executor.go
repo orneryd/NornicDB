@@ -1811,7 +1811,10 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
-	store := e.getStorage(ctx)
+	store, err := admittedStatementWriter(ctx, e.getStorage(ctx))
+	if err != nil {
+		return err
+	}
 	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
 		node, err := store.GetNode(storage.NodeID(id))

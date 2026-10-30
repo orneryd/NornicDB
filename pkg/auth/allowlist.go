@@ -34,7 +34,7 @@ type AllowlistStore struct {
 
 // NewAllowlistStore creates a store that reads/writes allowlist to the given system storage.
 func NewAllowlistStore(systemStorage storage.Engine) *AllowlistStore {
-	return &AllowlistStore{storage: systemStorage, allowlist: make(map[string][]string)}
+	return &AllowlistStore{storage: storage.SystemStoreEngine(systemStorage), allowlist: make(map[string][]string)}
 }
 
 // Load reads the full allowlist from storage into memory. Call at startup and after PUT.

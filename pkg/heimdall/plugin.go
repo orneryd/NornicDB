@@ -619,7 +619,7 @@ func FormatInMemoryToolResult(raw interface{}, err error) string {
 	if err != nil {
 		return fmt.Sprintf(`{"success":false,"message":%q}`, err.Error())
 	}
-	b, _ := valueconvert.PropertyJSON.Marshal(raw)
+	b, _ := json.Marshal(raw)
 	return string(b)
 }
 

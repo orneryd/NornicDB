@@ -10,12 +10,11 @@ import (
 // used by Cypher GRANT/REVOKE. An explicit transaction's engine supplies its
 // existing view; otherwise this function owns begin, commit and rollback.
 // Callers publish their in-memory state only after this function succeeds.
+// Every write runs under the system-store admission (storage.SystemStoreEngine).
 func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate func(storage.Engine) error) error {
-	if runner, ok := engine.(interface {
-		WithStoreTransaction(context.Context, func(storage.Engine) error) error
-	}); ok {
-		return runner.WithStoreTransaction(ctx, mutate)
-	}
+	// The handle is unwrapped below: an enclosing transaction's view still
+	// receives the system-store handle, never the raw view.
+	engine = storage.SystemStoreEngine(engine)
 	inner := engine
 	namespace := ""
 	seen := make(map[storage.Engine]bool)
@@ -46,7 +45,7 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 			return err
 		}
 	}
-	tx, err := beginner.BeginTransaction()
+	tx, err := storage.BeginSystemStoreTransaction(beginner)
 	if err != nil {
 		return err
 	}
@@ -61,11 +60,15 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 	if namespace != "" {
 		scoped = storage.NewNamespacedEngine(view, namespace)
 	}
-	if err := mutate(scoped); err != nil {
+	if err := mutate(storage.SystemStoreEngine(scoped)); err != nil {
 		return err
 	}
 	return tx.CommitContext(ctx)
 }
+
+// systemStoreEngine is storage.SystemStoreEngine for constructors whose
+// parameter shadows the storage package.
+func systemStoreEngine(engine storage.Engine) storage.Engine { return storage.SystemStoreEngine(engine) }
 
 // storeTransaction adapts only system-node operations; it owns no separate
 // transaction implementation. All reads and writes go to BadgerTransaction.
@@ -75,7 +78,7 @@ type storeTransaction struct {
 }
 
 func (s *storeTransaction) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return mutate(s)
+	return mutate(storage.SystemStoreEngine(s))
 }
 
 func (s *storeTransaction) CreateNode(node *storage.Node) (storage.NodeID, error) {

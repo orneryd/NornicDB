@@ -2095,9 +2095,7 @@ func ptrString(v string) *string { return &v }
 // admittedPointWriter is the write handle of a points request: it carries the
 // request's admitted vector-work origin into every native write.
 func admittedPointWriter(store storage.Engine, origin uint64) storage.Engine {
-	writer, err := storage.EngineWithVectorWorkOrigin(store, origin)
-	if err != nil {
-		return store
-	}
+	// Only a nil store fails; its nil writer then fails like the store would.
+	writer, _ := storage.EngineWithVectorWorkOrigin(store, origin)
 	return writer
 }

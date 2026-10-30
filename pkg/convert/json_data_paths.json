@@ -384,13 +384,6 @@
       "property.Marshal": 3
     }
   },
-  "pkg/heimdall/handler.go:Handler.runAgenticLoopWithTools": {
-    "read_domain": "input",
-    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
-    "calls": {
-      "input.Unmarshal": 1
-    }
-  },
   "pkg/heimdall/handler.go:Handler.sendCancellationResponse": {
     "write_domain": "property",
     "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
@@ -413,13 +406,6 @@
     }
   },
   "pkg/heimdall/plugin.go:FormatActionResultForModel": {
-    "write_domain": "property",
-    "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
-    "calls": {
-      "property.Marshal": 1
-    }
-  },
-  "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
     "write_domain": "property",
     "contract": "External action/tool arguments or existing action/result response values, classified by direction.",
     "calls": {

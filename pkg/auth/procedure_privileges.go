@@ -59,7 +59,7 @@ type ProcedurePrivilegeStore struct {
 
 // NewProcedurePrivilegeStore creates a store over the system database.
 func NewProcedurePrivilegeStore(systemStorage storage.Engine) *ProcedurePrivilegeStore {
-	return &ProcedurePrivilegeStore{storage: systemStorage}
+	return &ProcedurePrivilegeStore{storage: storage.SystemStoreEngine(systemStorage)}
 }
 
 // NormalizeRoleName is the one form of a role's name, for every role store,

@@ -283,6 +283,14 @@
     "reason": "Typed chat/autocomplete model request envelope; graph/tool argument maps are decoded separately through CypherInputJSON.",
     "sha256": "20d194a5b23061347dc2922226bddef8b8c4f7ca29a306350342092e4248d30a"
   },
+  "pkg/heimdall/handler.go:Handler.runAgenticLoopWithTools": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
+    "sha256": "4d22bec96e885d3d60da1697350b947b0cc42c432df518d9b818221562a67908"
+  },
+  "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
+    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
+    "sha256": "9ce972d25f27b9a52d7269c80ebfc9aed2509cf27ab91659506c3db302ed813f"
+  },
   "pkg/inference/heimdall_qc.go:HeimdallQC.parseBatchResponse": {
     "reason": "Typed model quality-control result and scores; no graph property payload.",
     "sha256": "fe1e4ba9d47aac755716e2f4758f728e2ad571834e910ac18971d2b10eddf8a6"

@@ -1,5 +1,7 @@
 package search
 
+import "github.com/orneryd/nornicdb/pkg/storage"
+
 // The pending entry owns both identities. An isolated reservation needs no
 // link record; overlapping predecessors retain their origins in the links so
 // discarding newer work restores the exact original reservation.
@@ -22,7 +24,11 @@ func (r *mutationReservations) setLink(generation uint64, link mutationLink) {
 }
 
 // All admission/completion operations run under Service.nodeMutationMu.
+// A refused (system-store) admission reserves nothing.
 func reserveMutation[K comparable](r *mutationReservations, pending map[K]mutationReservation, id K, origin uint64) uint64 {
+	if storage.RefuseSystemStoreVectorWork(origin) != nil {
+		return 0
+	}
 	previous := pending[id]
 	if previous.origin > origin {
 		return 0

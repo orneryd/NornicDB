@@ -32,7 +32,7 @@ type Store struct {
 
 // NewStore creates a store that reads/writes per-DB overrides to the given system storage.
 func NewStore(systemStorage storage.Engine) *Store {
-	return &Store{storage: systemStorage, overrides: make(map[string]map[string]string)}
+	return &Store{storage: storage.SystemStoreEngine(systemStorage), overrides: make(map[string]map[string]string)}
 }
 
 // LoadWithYAMLDefaults reads existing _DbConfig nodes from storage and then

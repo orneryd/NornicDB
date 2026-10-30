@@ -891,8 +891,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				}
 			}
 
-			rm.SetDeleteCallback(func(record *retention.DataRecord) error {
-				if err := db.storage.DeleteNode(storage.NodeID(record.ID)); err != nil {
+			rm.SetDeleteCallbackContext(func(ctx context.Context, record *retention.DataRecord) error {
+				// The sweep or erasure request that deletes the record carries
+				// its admission; the delete runs through the admitted handle.
+				writer, err := db.admittedStorage(ctx)
+				if err != nil {
+					return err
+				}
+				if err := writer.DeleteNode(storage.NodeID(record.ID)); err != nil {
 					return err
 				}
 				if db.onRetentionAction != nil {

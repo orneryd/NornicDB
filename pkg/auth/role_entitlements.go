@@ -32,7 +32,7 @@ type RoleEntitlementsStore struct {
 
 // NewRoleEntitlementsStore creates a store that reads/writes role entitlements to the given system storage.
 func NewRoleEntitlementsStore(systemStorage storage.Engine) *RoleEntitlementsStore {
-	return &RoleEntitlementsStore{storage: systemStorage, entitlements: make(map[string][]string)}
+	return &RoleEntitlementsStore{storage: storage.SystemStoreEngine(systemStorage), entitlements: make(map[string][]string)}
 }
 
 // Load reads all _RoleEntitlement nodes from storage into memory. Call at startup and after PUT.

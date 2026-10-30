@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"context"
 	"math"
 	"testing"
@@ -24,4 +25,32 @@ func TestFromJSONNumberPolicyMatchesNeo4j(t *testing.T) {
 		_, err := exec.Execute(ctx, `RETURN apoc.convert.fromJsonMap('{"c":`+integer+`}') AS m`, nil)
 		require.ErrorContains(t, err, "Unsupported type of Number "+integer, integer)
 	}
+}
+
+// Every APOC JSON reader reached through Cypher reports the external-number
+// policy's rejection instead of a partial or empty value, and reads an
+// out-of-range FLOAT as +/-Infinity.
+func TestAPOCJSONReadersNumberPolicyThroughCypher(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	ctx := context.Background()
+	readers := map[string]string{
+		"fromJsonList":       `apoc.convert.fromJsonList('[%s]')`,
+		"fromJsonMap":        `apoc.convert.fromJsonMap('{"c":%s}')`,
+		"getJsonProperty":    `apoc.convert.getJsonProperty('{"c":%s}', 'c')`,
+		"getJsonPropertyMap": `apoc.convert.getJsonPropertyMap('{"c":{"d":%s}}', 'c')`,
+		"setJsonProperty":    `apoc.convert.setJsonProperty('{"c":%s}', 'e', 1)`,
+	}
+	for name, call := range readers {
+		t.Run(name+"/rejected-integer", func(t *testing.T) {
+			_, err := exec.Execute(ctx, "RETURN "+fmt.Sprintf(call, "9223372036854775808")+" AS v", nil)
+			require.ErrorContains(t, err, "Unsupported type of Number 9223372036854775808")
+		})
+		t.Run(name+"/overflow-float", func(t *testing.T) {
+			_, err := exec.Execute(ctx, "RETURN "+fmt.Sprintf(call, "1e400")+" AS v", nil)
+			require.NoError(t, err)
+		})
+	}
+	result, err := exec.Execute(ctx, `RETURN apoc.convert.getJsonProperty('{"c":-1e400}', 'c') AS v`, nil)
+	require.NoError(t, err)
+	require.Equal(t, math.Inf(-1), result.Rows[0][0])
 }

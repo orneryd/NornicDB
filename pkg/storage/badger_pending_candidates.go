@@ -112,7 +112,11 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 // another range scan. Keeping hints on out-of-order commit tails is safe for
 // the same reason (a later delete always wins in the durable index).
 func (b *BadgerEngine) setPendingEmbeddingInTxn(txn *badger.Txn, id NodeID, origin uint64) error {
-	return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), encodePendingEmbeddingOrigin(origin))
+	marker, err := encodePendingEmbeddingOrigin(origin)
+	if err != nil {
+		return err
+	}
+	return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), marker)
 }
 
 // recoverPendingEmbeddingInTxn records pending membership found by a scan or

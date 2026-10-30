@@ -99,11 +99,18 @@ func (f *FloatArray) UnmarshalGQL(v interface{}) error {
 			case int64:
 				result[i] = float32(n)
 			case json.Number:
-				f, err := n.Float64()
+				// The external-number policy decides the number (a FLOAT out
+				// of range reads as +/-Infinity; an INTEGER outside int64 is
+				// rejected); the vector component is its FLOAT value.
+				number, err := valueconvert.CypherInputJSON.Numbers(n)
 				if err != nil {
 					return fmt.Errorf("cannot parse float at index %d: %w", i, err)
 				}
-				result[i] = float32(f)
+				component, ok := valueconvert.NumericFloat64(number)
+				if !ok {
+					return fmt.Errorf("cannot unmarshal %T at index %d into float32", number, i)
+				}
+				result[i] = float32(component)
 			default:
 				return fmt.Errorf("cannot unmarshal %T at index %d into float32", item, i)
 			}
@@ -111,12 +118,16 @@ func (f *FloatArray) UnmarshalGQL(v interface{}) error {
 		*f = FloatArray(result)
 		return nil
 	case string:
-		var result []float32
-		if err := json.Unmarshal([]byte(val), &result); err != nil {
+		// JSON text is read with the same external-number policy.
+		var items []interface{}
+		if err := valueconvert.CypherInputJSON.Unmarshal([]byte(val), &items); err != nil {
 			return fmt.Errorf("cannot unmarshal FloatArray: %w", err)
 		}
-		*f = FloatArray(result)
-		return nil
+		if items == nil {
+			*f = nil
+			return nil
+		}
+		return f.UnmarshalGQL(items)
 	default:
 		return fmt.Errorf("cannot unmarshal %T into FloatArray", v)
 	}

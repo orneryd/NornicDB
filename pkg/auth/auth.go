@@ -644,7 +644,7 @@ func NewAuthenticator(config AuthConfig, storage storage.Engine) (*Authenticator
 	auth := &Authenticator{
 		users:   make(map[string]*User),
 		config:  config,
-		storage: storage,
+		storage: systemStoreEngine(storage),
 		tokenCache: newTokenCache(
 			DefaultAuthCacheEntries,
 			DefaultAuthCacheTTL,
@@ -727,11 +727,12 @@ func (a *Authenticator) saveUserInTransaction(user *User) error {
 
 	// Check if node exists
 	nodeID := storage.NodeID("user:" + user.Username)
-	existing, err := a.storage.GetNode(nodeID)
+	writer := systemStoreEngine(a.storage)
+	existing, err := writer.GetNode(nodeID)
 	if err == storage.ErrNotFound {
 		// Create new user node
 		node.ID = nodeID
-		_, err = a.storage.CreateNode(node)
+		_, err = writer.CreateNode(node)
 		return err
 	}
 	if err != nil {
@@ -741,7 +742,7 @@ func (a *Authenticator) saveUserInTransaction(user *User) error {
 	// Update existing user node
 	node.ID = nodeID
 	node.CreatedAt = existing.CreatedAt // Preserve original creation time
-	return a.storage.UpdateNode(node)
+	return writer.UpdateNode(node)
 }
 
 // deleteUserNode deletes a user node from the system database.

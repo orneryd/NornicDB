@@ -41,15 +41,17 @@ func appendFloatText(dst []byte, value float64, bits int) []byte {
 	}
 	// Go writes 1.23456789e+08 or 1e-07: keep the mantissa (with a
 	// fractional digit), then E, the exponent's sign when negative and its
-	// digits without leading zeros.
+	// digits without leading zeros. Java's decimal selection includes both
+	// one- and two-digit candidates when the shortest has one digit and picks
+	// the nearest, so a one-digit mantissa is re-spelled with two digits:
+	// Double.MIN_VALUE is 4.9E-324, not 5.0E-324.
 	var buffer [32]byte
 	scientific := strconv.AppendFloat(buffer[:0], value, 'e', -1, bits)
-	marker := bytes.IndexByte(scientific, 'e')
-	start := len(dst)
-	dst = append(dst, scientific[:marker]...)
-	if bytes.IndexByte(dst[start:], '.') < 0 {
-		dst = append(dst, '.', '0')
+	if marker := bytes.IndexByte(scientific, 'e'); bytes.IndexByte(scientific[:marker], '.') < 0 {
+		scientific = strconv.AppendFloat(buffer[:0], value, 'e', 1, bits)
 	}
+	marker := bytes.IndexByte(scientific, 'e')
+	dst = append(dst, scientific[:marker]...)
 	dst = append(dst, 'E')
 	exponent := scientific[marker+1:]
 	if exponent[0] == '-' {

@@ -99,9 +99,13 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		}
 	}
 	defer release()
-	origin := CaptureVectorWorkOrigin()
+	// The selected attempt carries the work's admission; a sidecar write
+	// without one (an offline or legacy writer) is admitted here and counted.
+	var origin uint64
 	if attempt := node.EmbeddingAttempt(); attempt != nil {
 		origin = attempt.vectorWorkOrigin
+	} else {
+		origin = fallbackVectorWorkOrigin("storage.embedding-sidecar")
 	}
 	notification := b.queueCommitOperations(nil, &Operation{embeddingOutcome: true}, notificationAtCommit, origin)
 	err := commitEmbeddingOutcome(node, func() error {

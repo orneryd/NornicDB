@@ -1532,6 +1532,7 @@ const restoreEmbeddingDrainTimeout = 30 * time.Second
 //
 //	err := db.Restore(ctx, "backup-20241201.json")
 func (db *DB) Restore(ctx context.Context, path string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -1614,13 +1615,18 @@ legacyJSONRestore:
 		db.mu.Unlock()
 		return ErrClosed
 	}
+	writer, err := db.admittedStorage(ctx)
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
 
 	// Restore nodes
 	for _, node := range backup.Nodes {
-		_, err := db.storage.CreateNode(node)
+		_, err := writer.CreateNode(node)
 		if err != nil {
 			// Try update if node exists
-			if updateErr := db.storage.UpdateNode(node); updateErr != nil {
+			if updateErr := writer.UpdateNode(node); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
@@ -1629,9 +1635,9 @@ legacyJSONRestore:
 
 	// Restore edges
 	for _, edge := range backup.Edges {
-		if err := db.storage.CreateEdge(edge); err != nil {
+		if err := writer.CreateEdge(edge); err != nil {
 			// Try update if edge exists
-			if updateErr := db.storage.UpdateEdge(edge); updateErr != nil {
+			if updateErr := writer.UpdateEdge(edge); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}

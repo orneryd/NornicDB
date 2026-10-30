@@ -56,6 +56,7 @@ func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string,
 // its creation time kept; remove deletes the stored node instead (a missing
 // one is no change).
 func putRoleRecord(view storage.Engine, node *storage.Node, remove bool) error {
+	view = storage.SystemStoreEngine(view)
 	existing, err := view.GetNode(node.ID)
 	if err == storage.ErrNotFound {
 		if remove {

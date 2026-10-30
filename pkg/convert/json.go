@@ -121,7 +121,7 @@ func jsonNumbers(value interface{}, policy jsonNumberPolicy) (interface{}, error
 			if policy.exact {
 				unsigned, unsignedErr := strconv.ParseUint(string(v), 10, 64)
 				if unsignedErr != nil {
-					return nil, fmt.Errorf("legacy recovery integer %q is outside the 64-bit integer range: %w", v, err)
+					return nil, fmt.Errorf("stored integer %q is outside the 64-bit integer range: %w", v, err)
 				}
 				return unsigned, nil
 			}

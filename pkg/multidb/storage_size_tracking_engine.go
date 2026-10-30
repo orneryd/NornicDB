@@ -452,13 +452,15 @@ func (t *sizeTrackingEngine) applyAdmittedEntityOperations(ctx context.Context, 
 			return nil
 		}
 	}
-	engine := t.Engine
-	if origin, admitted := storage.VectorWorkOrigin(ctx); admitted {
-		bound, bindErr := storage.EngineWithVectorWorkOrigin(t.Engine, origin)
-		if bindErr != nil {
-			return bindErr
-		}
-		engine = bound
+	// Direct writes go through the admitted handle: the request's admission,
+	// else the one the operations carry, else one admitted (and counted) here.
+	origin, admitted := storage.VectorWorkOriginFromArguments(ctx, ops)
+	if !admitted {
+		origin = storage.AdmitUnrequestedVectorWork("multidb.size-tracking-write")
+	}
+	engine, bindErr := storage.EngineWithVectorWorkOrigin(t.Engine, origin)
+	if bindErr != nil {
+		return bindErr
 	}
 	if !t.runtime.requiresManaged(limits) && (!owner.found || !owner.route.RequiresSubmission) && (len(owner.writeBoundaries) == 0 || mode == storage.CommitModeDirect) && (mode == storage.CommitModeDirect || (ops[0].Type != storage.OpDeleteNode && ops[0].Type != storage.OpDeleteEdge)) {
 		if mode == storage.CommitModeDirect {

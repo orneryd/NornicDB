@@ -149,6 +149,9 @@ func (s *Service) RefreshNode(nodeID storage.NodeID, origin uint64) error {
 	if s == nil || nodeID == "" {
 		return nil
 	}
+	if err := storage.RefuseSystemStoreVectorWork(origin); err != nil {
+		return err
+	}
 	return s.RefreshNodeWithMutation(s.ReserveNodeMutation(nodeID, origin))
 }
 
@@ -196,6 +199,9 @@ func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID, origin uint64) Edge
 func (s *Service) RefreshEdge(edgeID storage.EdgeID, origin uint64) error {
 	if s == nil || edgeID == "" {
 		return nil
+	}
+	if err := storage.RefuseSystemStoreVectorWork(origin); err != nil {
+		return err
 	}
 	return s.RefreshEdgeWithMutation(s.ReserveEdgeMutation(edgeID, origin))
 }

@@ -878,7 +878,11 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 
 	// Add to pending embeddings index if needed
 	if tx.engine.shouldIndexPendingEmbed(node) {
-		tx.bufferSet(pendingEmbedKey(node.ID), encodePendingEmbeddingOrigin(tx.vectorWorkOrigin))
+		marker, err := encodePendingEmbeddingOrigin(tx.vectorWorkOrigin)
+		if err != nil {
+			return "", err
+		}
+		tx.bufferSet(pendingEmbedKey(node.ID), marker)
 	}
 
 	// Track for read-your-writes and constraint validation
@@ -1053,7 +1057,11 @@ func (tx *BadgerTransaction) UpdateGraphNode(node *Node, policy EntityImagePolic
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
 	} else if tx.engine.shouldIndexPendingEmbed(node) {
-		tx.bufferSet(pendingEmbedKey(node.ID), encodePendingEmbeddingOrigin(tx.vectorWorkOrigin))
+		marker, err := encodePendingEmbeddingOrigin(tx.vectorWorkOrigin)
+		if err != nil {
+			return err
+		}
+		tx.bufferSet(pendingEmbedKey(node.ID), marker)
 	} else {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
 	}

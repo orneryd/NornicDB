@@ -115,7 +115,10 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 	}
 
 	nodeID := procedureCatalogNodeID(name)
-	store := e.getStorage(ctx)
+	store, err := admittedStatementWriter(ctx, e.getStorage(ctx))
+	if err != nil {
+		return err
+	}
 	existing, _, err := e.resolveProcedureCatalogIdentity(ctx, store, name)
 	if err != nil {
 		return err
@@ -175,7 +178,10 @@ func (e *StorageExecutor) executeDropProcedure(ctx context.Context, cypher strin
 // dropPersistedProcedure removes name from the procedure catalog and reloads
 // the user procedures from it.
 func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name string) error {
-	store := e.getStorage(ctx)
+	store, err := admittedStatementWriter(ctx, e.getStorage(ctx))
+	if err != nil {
+		return err
+	}
 	existing, _, err := e.resolveProcedureCatalogIdentity(ctx, store, name)
 	if err != nil {
 		return err
@@ -311,7 +317,10 @@ func ensureLabel(labels []string, label string) []string {
 	return append(labels, label)
 }
 
+// Loading is its own entry: executor construction carries no request, so a
+// legacy-identity migration it performs is admitted here.
 func (e *StorageExecutor) loadPersistedProcedures(ctx context.Context) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
