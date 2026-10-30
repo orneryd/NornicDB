@@ -2284,10 +2284,10 @@ func (tx *BadgerTransaction) ReadEdges(request TransactionEdgeRead) ([]*Edge, er
 			return nil, err
 		}
 	}
-	var committed []*Edge
+	var committed []edgeImage
 	var err error
 	if request.Kind == TransactionReadBetween {
-		committed, err = tx.engine.GetEdgesBetween(request.Node, request.Other)
+		committed, err = tx.engine.edgesBetweenImages(request.Node, request.Other)
 	} else {
 		committed, err = tx.getCommittedAdjacentEdgesLocked(request.Node, direction)
 	}
@@ -2327,9 +2327,9 @@ func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType stri
 // retains the global collection contract of AllEdges and GetEdgesByType.
 // The caller supplies the original pending-record filter and holds tx.mu.
 func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(edgeType string, includePending func(*Edge) bool) ([]*Edge, error) {
-	committed := make([]*Edge, 0)
+	committed := make([]edgeImage, 0)
 	err := tx.engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, tx.readTS, tx.withSnapshotViewLocked, visibleRead, func(edge *Edge) error {
-		committed = append(committed, edge)
+		committed = append(committed, decodedEdge(edge))
 		return nil
 	})
 	if err != nil {
@@ -2353,7 +2353,7 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, and buffered edges are
 		// invisible to the pinned view. Read the latest overlaid view.
-		committed, err := tx.engine.AllEdges()
+		committed, err := tx.engine.allEdgeImages(visibleRead)
 		if err != nil {
 			return nil, err
 		}
@@ -2378,7 +2378,7 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		committed, err := tx.engine.GetEdgesByType(edgeType)
+		committed, err := tx.engine.edgeTypeImages(edgeType, visibleRead)
 		if err != nil {
 			return nil, err
 		}
@@ -2461,10 +2461,38 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
 	// Only the pinned-snapshot branches retain the engine's nodes (replay
 	// caches and the stopped-scan prefix). Each source states whether the node
-	// it hands over is retained; shapeNode copies a retained node once into
-	// the delivered shape and reshapes an owned one in place (NOR-160).
+	// it hands over is retained: a retained node is copied once, straight into
+	// the delivered shape; an owned node already has that shape from its
+	// source (the engine strips there) and is handed over as is (NOR-160).
 	retainsEngineNodes := !engineOverlaid
 	strip := opts.StripEmbeddings
+	deliver := func(node *Node, owned bool) *Node {
+		if owned {
+			return node
+		}
+		return shapeNode(node, nil, strip, false)
+	}
+	// The engine's images, when nothing here retains them: a node this
+	// transaction deleted or rewrote is skipped before it is delivered.
+	visitEngineImage := func(image nodeImage) error {
+		if image.Node == nil {
+			return nil
+		}
+		if hasPending {
+			if _, deleted := tx.deletedNodes[image.ID]; deleted {
+				seen[image.ID] = struct{}{}
+				return nil
+			}
+			if pending, exists := tx.pendingNodes[image.ID]; exists {
+				seen[image.ID] = struct{}{}
+				if pending != nil && slices.Contains(pending.Labels, label) {
+					return invokeVisit(shapeNode(pending, properties, strip, false))
+				}
+				return nil
+			}
+		}
+		return invokeVisit(deliverNode(image, properties, strip))
+	}
 	emitCommitted := func(node *Node, owned bool) error {
 		if node == nil {
 			return nil
@@ -2477,7 +2505,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
 		if !hasPending {
-			return invokeVisit(shapeNode(node, nil, strip, owned))
+			return invokeVisit(deliver(node, owned))
 		}
 		if _, deleted := tx.deletedNodes[node.ID]; deleted {
 			seen[node.ID] = struct{}{}
@@ -2490,7 +2518,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 			}
 			return nil
 		}
-		return invokeVisit(shapeNode(node, nil, strip, owned))
+		return invokeVisit(deliver(node, owned))
 	}
 
 	cacheKey := snapshotLabelCacheKey{scope: cacheScope, queryNodes: queryNodes, projectionKey: label, reveal: tx.engine.revealAll.Load(), stored: v == storedRead}
@@ -2532,8 +2560,9 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
 		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		// Nothing here is retained: the engine strips in its own delivery shape.
-		err = tx.engine.streamNodesByLabelShapedInScope(scope, label, properties, strip, v, streamVisit, queryNodes)
+		// Nothing here is retained: the transaction resolves its own writes
+		// over the engine's images and delivers each chosen node once.
+		err = tx.engine.streamLabelNodeImages(scope, label, properties, v, visitEngineImage, queryNodes)
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			scope,
@@ -2643,7 +2672,20 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		// Write-behind reads are read-committed: the engine's latest
 		// (overlaid) stream includes flushes that landed after the pinned
 		// snapshot, with early termination for LIMIT pushdown.
-		err = tx.engine.StreamNodesWithOptions(ctx, opts, emitCommitted)
+		// The engine's images: a node this transaction deleted or rewrote
+		// is replaced before anything is delivered (NOR-160).
+		err = tx.engine.streamNodeImagesWithOptions(ctx, opts, func(image nodeImage) error {
+			if hasPending {
+				if _, deleted := tx.deletedNodes[image.ID]; deleted {
+					return nil
+				}
+				if pending, exists := tx.pendingNodes[image.ID]; exists {
+					seen[image.ID] = struct{}{}
+					return invokeVisit(readPending(pending))
+				}
+			}
+			return invokeVisit(deliverNode(image, opts.Projection, opts.StripEmbeddings))
+		})
 	} else if tx.snapshotTx != nil {
 		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
 			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
@@ -2703,18 +2745,20 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 	if err != nil {
 		return err
 	}
-	for _, node := range nodes {
-		if !inScope(node.ID) {
+	for _, image := range nodes {
+		if !inScope(image.ID) {
 			continue
 		}
-		if opts.Projection != nil || opts.StripEmbeddings {
-			// Committed reads return caller-owned nodes: reshape in place.
-			node = shapeNode(node, opts.Projection, opts.StripEmbeddings, true)
+		// The filter reads the delivered shape's properties; only a node it
+		// accepts is delivered (copied once if retained).
+		properties := image.Properties
+		if opts.Projection != nil {
+			properties = selectProperties(image.Properties, opts.Projection, false)
 		}
-		if opts.PropertyFilter != nil && !opts.PropertyFilter(node.Properties) {
+		if opts.PropertyFilter != nil && !opts.PropertyFilter(properties) {
 			continue
 		}
-		if err := emit(node); err != nil {
+		if err := emit(deliverNode(image, opts.Projection, opts.StripEmbeddings)); err != nil {
 			return err
 		}
 	}
@@ -2829,18 +2873,23 @@ func (tx *BadgerTransaction) HasPendingEdgeMutations() bool {
 // callers can never mutate overlay state. Nil records are skipped (idOf
 // returns the zero ID for them). When there is no overlay, the committed
 // slice is returned unchanged.
-func mergePendingLocked[ID comparable, T any](
-	committed []T,
+func mergePendingLocked[ID comparable, I any, T any](
+	committed []I,
 	pending map[ID]T,
 	deleted map[ID]struct{},
 	includePending func(T) bool,
-	idOf func(T) ID,
-	copyOf func(T) T,
+	idOf func(I) ID,
+	viewOf func(I) T,
+	deliver func(I) T,
+	copyPending func(T) T,
 ) []T {
-	if len(pending) == 0 && len(deleted) == 0 {
-		return committed
-	}
 	merged := make([]T, 0, util.SafePreallocSum(len(committed), len(pending)))
+	if len(pending) == 0 && len(deleted) == 0 {
+		for _, record := range committed {
+			merged = append(merged, deliver(record))
+		}
+		return merged
+	}
 	seen := make(map[ID]struct{}, util.SafePreallocSum(len(committed), len(pending)))
 	var zero ID
 	for _, record := range committed {
@@ -2853,13 +2902,13 @@ func mergePendingLocked[ID comparable, T any](
 		}
 		if pendingRecord, exists := pending[id]; exists {
 			if includePending(pendingRecord) {
-				merged = append(merged, copyOf(pendingRecord))
+				merged = append(merged, copyPending(pendingRecord))
 				seen[id] = struct{}{}
 			}
 			continue
 		}
-		if includePending(record) {
-			merged = append(merged, copyOf(record))
+		if includePending(viewOf(record)) {
+			merged = append(merged, deliver(record))
 			seen[id] = struct{}{}
 		}
 	}
@@ -2869,29 +2918,32 @@ func mergePendingLocked[ID comparable, T any](
 			continue
 		}
 		if includePending(record) {
-			merged = append(merged, copyOf(record))
+			merged = append(merged, copyPending(record))
 		}
 	}
 
 	return merged
 }
 
-func (tx *BadgerTransaction) mergePendingNodesLocked(committed []*Node, includePending func(*Node) bool) []*Node {
-	return mergePendingLocked(committed, tx.pendingNodes, tx.deletedNodes, includePending, func(node *Node) NodeID {
-		if node == nil {
+// mergePendingNodesLocked resolves the transaction's writes over committed
+// images first; only the chosen records are delivered or copied, once each.
+func (tx *BadgerTransaction) mergePendingNodesLocked(committed []nodeImage, includePending func(*Node) bool) []*Node {
+	return mergePendingLocked(committed, tx.pendingNodes, tx.deletedNodes, includePending, func(node nodeImage) NodeID {
+		if node.Node == nil {
 			return ""
 		}
 		return node.ID
-	}, copyNode)
+	}, func(node nodeImage) *Node { return node.Node }, func(node nodeImage) *Node { return deliverNode(node, nil, false) }, copyNode)
 }
 
-func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includePending func(*Edge) bool) []*Edge {
-	return mergePendingLocked(committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge *Edge) EdgeID {
-		if edge == nil {
+// mergePendingEdgesLocked is mergePendingNodesLocked for relationships.
+func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []edgeImage, includePending func(*Edge) bool) []*Edge {
+	return mergePendingLocked(committed, tx.pendingEdges, tx.deletedEdges, includePending, func(edge edgeImage) EdgeID {
+		if edge.Edge == nil {
 			return ""
 		}
 		return edge.ID
-	}, copyEdge)
+	}, func(edge edgeImage) *Edge { return edge.Edge }, deliverEdge, copyEdge)
 }
 
 // Commit applies all changes atomically with full constraint validation.
@@ -3386,26 +3438,27 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	}
 }
 
-func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error) {
+func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]nodeImage, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.GetNodesByLabelInScope(tx.labelScanScopeLocked(), label)
+		return tx.engine.labelNodeImages(tx.labelScanScopeLocked(), label, visibleRead)
 	}
 	if tx.snapshotTx != nil {
 		// The pinned label index and bodies share one physical snapshot, as
 		// StreamNodesByLabelProjected already relies on. Use that same reader
 		// rather than rechecking every node's logical head and copying its
 		// freshly decoded image again in the collection adapter.
-		nodes := make([]*Node, 0)
+		nodes := make([]nodeImage, 0)
 		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
-			nodes = append(nodes, node)
+			nodes = append(nodes, decodedNode(node))
 			return nil
 		})
 		return nodes, err
 	}
-	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
+	nodes, err := tx.engine.getNodesByLabelVisibleAtSnapshotWithView(tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
+	return decodedNodes(nodes), err
 }
 
 // labelScanScopeLocked is the node ID prefix of the database the transaction

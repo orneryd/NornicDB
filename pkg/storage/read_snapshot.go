@@ -36,9 +36,9 @@ type badgerReadSnapshot struct {
 	prefix       string
 	b            *BadgerEngine
 	view         *badgerReadView
-	overlayNodes []*Node
+	overlayNodes []nodeImage
 	nodesTouched map[NodeID]bool
-	overlayEdges []*Edge
+	overlayEdges []edgeImage
 	edgesTouched map[EdgeID]bool
 }
 
@@ -104,9 +104,10 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	if err != nil || stopped {
 		return err
 	}
-	// The snapshot retains its overlay for every iteration: hand out copies.
+	// The snapshot keeps borrowed overlay images for every iteration; each
+	// iteration delivers its own copies.
 	for _, node := range s.overlayNodes {
-		if !fn(copyNode(node)) {
+		if !fn(deliverNode(node, nil, false)) {
 			return nil
 		}
 	}
@@ -160,7 +161,7 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 		return err
 	}
 	for _, edge := range s.overlayEdges {
-		if err := fn(copyEdge(edge)); err != nil {
+		if err := fn(deliverEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

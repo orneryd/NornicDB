@@ -787,7 +787,7 @@ func TestTxReads_MergePendingNodesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingNodesLocked([]*Node{nil, committedNode, deletedNode, otherNode}, func(node *Node) bool {
+	merged := tx.mergePendingNodesLocked(decodedNodes([]*Node{nil, committedNode, deletedNode, otherNode}), func(node *Node) bool {
 		if node == nil {
 			return false
 		}
@@ -830,7 +830,7 @@ func TestTxReads_MergePendingEdgesLocked(t *testing.T) {
 		},
 	}
 
-	merged := tx.mergePendingEdgesLocked([]*Edge{nil, committedEdge, deletedEdge}, func(edge *Edge) bool {
+	merged := tx.mergePendingEdgesLocked(decodedEdges([]*Edge{nil, committedEdge, deletedEdge}), func(edge *Edge) bool {
 		return edge != nil && edge.Type == "KNOWS"
 	})
 
@@ -857,7 +857,7 @@ func BenchmarkTxReads_MergePendingNodesLocked_NoOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
+		if got := tx.mergePendingNodesLocked(decodedNodes(committed), include); len(got) != 512 {
 			b.Fatalf("expected 512 nodes, got %d", len(got))
 		}
 	}
@@ -878,7 +878,7 @@ func BenchmarkTxReads_MergePendingNodesLocked_WithOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingNodesLocked(committed, include); len(got) != 512 {
+		if got := tx.mergePendingNodesLocked(decodedNodes(committed), include); len(got) != 512 {
 			b.Fatalf("expected 512 nodes, got %d", len(got))
 		}
 	}
@@ -899,7 +899,7 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := tx.mergePendingEdgesLocked(committed, include); len(got) != 512 {
+		if got := tx.mergePendingEdgesLocked(decodedEdges(committed), include); len(got) != 512 {
 			b.Fatalf("expected 512 edges, got %d", len(got))
 		}
 	}

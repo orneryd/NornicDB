@@ -407,14 +407,15 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 	return bytes, true
 }
 
-func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]nodeImage, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.allNodeImages()
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	nodes, err := tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return decodedNodes(nodes), err
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is
@@ -476,32 +477,31 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]edgeImage, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
 	// instead (PR #1043 read-overlay parity).
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		var edges []*Edge
-		var err error
-		switch direction {
-		case Outgoing:
-			edges, err = tx.engine.GetOutgoingEdges(nodeID)
-		case Incoming:
-			edges, err = tx.engine.GetIncomingEdges(nodeID)
-		default:
+		if direction != Outgoing && direction != Incoming {
 			return nil, ErrInvalidData
 		}
+		// The engine's adjacency images: the transaction merges its own
+		// writes before anything is delivered (NOR-160).
+		reader, err := tx.engine.captureAdjacencyReader(nodeID, direction == Outgoing, direction == Incoming, visibleRead)
 		if err != nil {
 			return nil, err
 		}
-		// Engine adjacency returns caller-owned edges (cacheLoadEdge).
-		return edges, nil
+		if reader.view != nil {
+			defer reader.view.Close()
+		}
+		return reader.read(direction == Outgoing)
 	}
 	if tx.snapshotDeregister != nil {
 		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
 	}
-	return tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	edges, err := tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	return decodedEdges(edges), err
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships visible at
@@ -513,7 +513,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]*Edge, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]edgeImage, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -524,7 +524,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 		return nil, ErrInvalidData
 	}
 	edgeIDs, cached := cache.load(nodeID)
-	edges := make([]*Edge, 0, len(edgeIDs))
+	edges := make([]edgeImage, 0, len(edgeIDs))
 	err := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
 		var err error
 		if !cached {
@@ -539,14 +539,14 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 			if err != nil {
 				return err
 			}
-			edges = make([]*Edge, 0, len(edgeIDs))
+			edges = make([]edgeImage, 0, len(edgeIDs))
 		}
 		var headers map[EdgeID]*Edge
 		if headersOnly {
 			headers = tx.engine.adjacencyHeadersInTxn(snapshot, nodeID, direction)
 		}
 		for _, edgeID := range edgeIDs {
-			var edge *Edge
+			var edge edgeImage
 			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok {
 				// The body is immutable in this view; visibility is not. Reuse
 				// the body and run the same live policy owner on every read.
@@ -554,21 +554,21 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 				if tx.engine.visibilityFiltered() && tx.engine.filterEntityByDecay(visibleRead, cachedEdge, DecayScoringTime()) {
 					continue
 				}
-				edge = copyEdge(cachedEdge)
+				edge = borrowedEdge(cachedEdge)
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
-				edge = header
+				edge = decodedEdge(header)
 			} else {
-				var edgeErr error
-				edge, edgeErr = tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
+				decoded, edgeErr := tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
 				if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
 					continue
 				}
 				if edgeErr != nil {
 					return edgeErr
 				}
-				tx.cacheSnapshotEdgeByIDLocked(edge)
+				tx.cacheSnapshotEdgeByIDLocked(decoded)
+				edge = decodedEdge(decoded)
 			}
-			if edge == nil {
+			if edge.Edge == nil {
 				continue
 			}
 			if direction == Outgoing && edge.StartNode == nodeID || direction == Incoming && edge.EndNode == nodeID {
@@ -618,13 +618,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		// Read-committed: buffered edges are invisible to the pinned snapshot,
 		// so answer from the engine's overlaid header read instead
 		// (PR #1043 read-overlay parity).
-		var committed []*Edge
-		var err error
-		if direction == Outgoing {
-			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
-		} else {
-			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
-		}
+		committed, _, err := tx.engine.edgeHeaderImages(nodeID, direction == Outgoing)
 		if err != nil {
 			return nil, true, err
 		}

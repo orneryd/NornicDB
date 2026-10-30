@@ -50,7 +50,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		// retain only a bounded population. A large/embedded population answers
 		// this first probe while scanning, then declines future cached probes.
 		population = &snapshotEqualityPopulation{nodes: make(map[NodeID]*Node)}
-		var first []*Node
+		var first []nodeImage
 		retainedBytes := 0
 		cacheable := true
 		keyable := false
@@ -91,8 +91,14 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 				}
 			}
 			if !tx.committedNodeSupersededLocked(node.ID) && matches(node) {
-				// Decoded for this read; copied only while the population retains it.
-				first = append(first, shapeNode(node, nil, false, !cacheable))
+				// An image until the lookup knows which result it returns: a
+				// cacheable population answers from its index instead, so
+				// nothing collected here is copied unless it is returned.
+				image := decodedNode(node)
+				if cacheable {
+					image = borrowedNode(node)
+				}
+				first = append(first, image)
 			}
 			return nil
 		})
@@ -110,7 +116,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 					pending = append(pending, node)
 				}
 			}
-			return append(first, callerowned.Each(pending, copyNode)...), true, nil
+			return append(deliverNodes(first, nil, false), callerowned.Each(pending, copyNode)...), true, nil
 		}
 		population.index = newPendingNodeIndex()
 		for _, node := range population.nodes {

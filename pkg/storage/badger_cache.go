@@ -72,35 +72,28 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 }
 
 // cacheFillNode caches node as read by a read that captured gen before it
-// read; a write since then means node may be stale, and it isn't cached.
-// The read owns node, so it can copy the image before taking nodeCacheMu.
-// The generation check under the lock still rejects an invalidated fill.
+// read; a write since then means node may be stale, and it isn't cached. The
+// admission is decided under nodeCacheMu before the image is copied, so a fill
+// that loses to a write, or a query image a full one supersedes, copies
+// nothing (NOR-160).
 func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node, mode nodeReadCacheMode) {
 	if node == nil {
 		return
 	}
-	if mode == nodeReadCacheQuery {
-		// The cache keeps its own image; every exit copies it again for the
-		// caller, so no reader shares it.
-		cached := copyNode(node)
-		b.nodeCacheMu.Lock()
-		if b.nodeCacheGen.current() != gen {
-			b.nodeCacheMu.Unlock()
-			return
-		}
-		if _, full := b.nodeCache[node.ID]; !full {
-			b.putNodeLocked(cached, nodeReadCacheQuery)
-		}
-		b.nodeCacheMu.Unlock()
-		return
-	}
-	cached := copyNode(node)
 	b.nodeCacheMu.Lock()
 	if b.nodeCacheGen.current() != gen {
 		b.nodeCacheMu.Unlock()
 		return
 	}
-	b.putNodeLocked(cached, nodeReadCacheFull)
+	if mode == nodeReadCacheQuery {
+		if _, full := b.nodeCache[node.ID]; !full {
+			// The cache keeps its own image; every exit copies it again.
+			b.putNodeLocked(copyNode(node), nodeReadCacheQuery)
+		}
+		b.nodeCacheMu.Unlock()
+		return
+	}
+	b.putNodeLocked(copyNode(node), nodeReadCacheFull)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNode(node.ID, nodeCacheBodyOnly)
 }
@@ -138,7 +131,10 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	return copyNode(cached), true
 }
 
-func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {
+// cacheLoadNodeBody materializes a cached body in the requested shape. keep,
+// when set, decides on the borrowed body first: a body it rejects is a hit
+// that returns nil without any copy (NOR-160).
+func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, keep ...func(*Node) bool) (*Node, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -156,10 +152,11 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properti
 		return nil, false
 	}
 	entry.referenced.Store(true)
-	node := entry.node
-	if access != nodeBodyBorrowed {
-		node = shapeNode(entry.node, properties, true, false)
+	if len(keep) > 0 && keep[0] != nil && !keep[0](entry.node) {
+		b.nodeBodyCacheMu.RUnlock()
+		return nil, true
 	}
+	node := shapeNode(entry.node, properties, true, false)
 	b.nodeBodyCacheMu.RUnlock()
 	return node, true
 }
@@ -249,22 +246,23 @@ type edgeCacheRead struct {
 	// bufferExcluded: the caller holds the write-behind buffer and has left
 	// out every edge it buffers.
 	bufferExcluded bool
-	// match, when set, inspects the retained image; only an accepted edge is
-	// copied, and a hit it rejects returns (nil, true).
+	// match, when set, inspects the retained image; a hit it rejects returns
+	// a nil image and true.
 	match func(*Edge) bool
 }
 
-// cacheLoadEdge is the edge body cache's only exit and owns its one hit rule:
-// a hit is a caller-owned copy of the cached edge, made once, so no
-// adjacency, type, between or point read hands out a retained image or copies
-// one it then drops (NOR-160). Under write-behind the flusher can cache a body
-// newer than a reader's committed view, so an unpinned read is answered only
-// when it has excluded the buffered edges; otherwise it misses before any
-// copy. Cached bodies are replaced wholesale and never changed in place, so
-// match and the copy run after the lock is released.
-func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (*Edge, bool) {
+// cacheLoadEdge is the edge body cache's only exit and owns its one hit rule.
+// A hit is a borrowed image of the cached edge: the read copies it only when
+// it delivers it (read_delivery.go), so no adjacency, type, between or point
+// read copies a hit it then drops (NOR-160). Under write-behind the flusher
+// can cache a body newer than a reader's committed view, so an unpinned read
+// is answered only when it has excluded the buffered edges. match, when set,
+// decides on the image first; a hit it rejects returns a nil image and true.
+// Cached bodies are replaced wholesale and never changed in place, so the
+// image may be read after the lock is released.
+func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, bool) {
 	if read.version == nil && !read.bufferExcluded && b.writeBehind != nil {
-		return nil, false
+		return edgeImage{}, false
 	}
 	b.edgeCacheMu.RLock()
 	cached, ok := b.edgeCache[id]
@@ -273,12 +271,12 @@ func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (*Edge, bool
 	}
 	b.edgeCacheMu.RUnlock()
 	if !ok || cached == nil {
-		return nil, false
+		return edgeImage{}, false
 	}
 	if read.match != nil && !read.match(cached) {
-		return nil, true
+		return edgeImage{}, true
 	}
-	return copyEdge(cached), true
+	return borrowedEdge(cached), true
 }
 
 // cacheStoreEdge inserts edge into the per-engine edge body cache as written

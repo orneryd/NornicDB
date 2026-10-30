@@ -7,7 +7,7 @@ import "github.com/dgraph-io/badger/v4"
 // A replay cannot move a holder between those candidate sets during the capture.
 func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property string, values []interface{}) ([]*Node, error) {
 	var ids []NodeID
-	var pending []*Node
+	var pending []nodeImage
 	var states map[NodeID]bufferedEntityState
 	if w := b.writeBehind; w != nil {
 		w.ensurePendingValueTracked(label, property)
@@ -54,7 +54,7 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 		}
 		for _, node := range pending {
 			if !seen[node.ID] {
-				nodes = append(nodes, node)
+				nodes = append(nodes, deliverNode(node, nil, false))
 			}
 		}
 		return nil

@@ -82,7 +82,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	if b.writeBehind == nil {
 		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
-	var live []*Edge
+	var live []edgeImage
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
@@ -106,11 +106,11 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		return nil, err
 	}
 	for _, e := range live {
-		if e == nil || e.Type != edgeType {
+		if e.Edge == nil || e.Type != edgeType {
 			continue
 		}
-		if match(edgeMatchCandidate(e, properties)) {
-			matched = append(matched, e)
+		if match(edgeMatchCandidate(e.Edge, properties)) {
+			matched = append(matched, deliverEdge(e))
 		}
 	}
 	return matched, nil
@@ -167,13 +167,13 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 			}
 			// A cached body is the committed edge GetEdge would return:
 			// match it without reading or decoding. The predicate sees its
-			// own projected candidate and only an accepted edge is copied.
+			// own projected candidate and only an accepted edge is delivered.
 			if cached, hit := b.cacheLoadEdge(edgeID, edgeCacheRead{match: func(cached *Edge) bool {
 				return cached.StartNode == startID && cached.EndNode == endID && cached.Type == edgeType &&
 					!b.filterEntityByDecay(visibleRead, cached, nowNanos) && match(edgeMatchCandidate(cached, properties))
 			}}); hit {
-				if cached != nil {
-					matched = append(matched, cached)
+				if cached.Edge != nil {
+					matched = append(matched, deliverEdge(cached))
 				}
 				continue
 			}
