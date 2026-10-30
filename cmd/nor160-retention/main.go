@@ -871,7 +871,12 @@ func (a *analysis) ownedSource(v ssa.Value, seen map[ssa.Value]bool, depth int) 
 		}
 	case *ssa.UnOp:
 		if x.Op == token.MUL {
-			for _, use := range *x.X.Referrers() {
+			// Globals and some other addresses do not track referrers.
+			var uses []ssa.Instruction
+			if refs := x.X.Referrers(); refs != nil {
+				uses = *refs
+			}
+			for _, use := range uses {
 				if st, ok := use.(*ssa.Store); ok && st.Addr == x.X {
 					if s := next(st.Val); s != "" {
 						return s
