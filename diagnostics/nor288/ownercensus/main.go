@@ -1663,6 +1663,9 @@ func main() {
 			f := work[0]
 			work = work[1:]
 			for _, e := range graph.out[f] {
+				if graph.writerless[e.site] {
+					continue // G only: a function value no reachable writer sets
+				}
 				kind := "call"
 				if _, isGo := e.site.(*ssa.Go); isGo {
 					kind = "go"
@@ -1728,6 +1731,9 @@ func main() {
 				shutdownFn = m
 			}
 		}
+		genvValue := *env
+		genvValue.writerless = graph.writerless
+		genv := &genvValue
 		gHook := func(w *flowWalker, it flowItem, use ssa.Instruction) bool {
 			switch it.kind {
 			case "ctx":
@@ -1835,7 +1841,7 @@ func main() {
 					}
 					seen[key] = true
 					g := finding{Class: "G", Func: shortFunc(f), File: rel(pos.Filename), Line: pos.Line, Shape: "context." + o.Name() + " in enrolled work", Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]}
-					w := newFlowWalker(env, 100000, gHook)
+					w := newFlowWalker(genv, 100000, gHook)
 					w.push(call, "ctx", -1, nil)
 					if why := w.run(); why == "" {
 						g.Class, g.Shape = "G-classified", "every use of the context, followed through values, calls, returns, fields and closures, is non-blocking (sinks, Value/Err/Deadline, nil checks, polled Done, deadline parent, owner Shutdown)"
@@ -1954,7 +1960,9 @@ type graphIndex struct {
 	// never assigns (only tests set it): it calls nothing in production.
 	closed      map[ssa.CallInstruction]bool
 	closedSites int
-	// writerlessSites: closed by closeWriterless (every writer unreachable).
+	// writerless: fallback sites whose function value no reachable writer
+	// sets; closed for G only (closeWriterless). writerlessSites counts them.
+	writerless      map[ssa.CallInstruction]bool
 	writerlessSites int
 }
 
@@ -1966,7 +1974,7 @@ type graphIndex struct {
 // exception is computed (decision 3, after audit #31): a call through a load
 // of a struct field that no store in the analysed program assigns is closed.
 func buildGraph(cg *callgraph.Graph, funcs map[*ssa.Function]bool, stored map[*types.Var]bool) *graphIndex {
-	g := &graphIndex{funcs: map[*ssa.Function]bool{}, out: map[*ssa.Function][]edge{}, in: map[*ssa.Function][]edge{}, sites: map[ssa.CallInstruction]bool{}, fallback: map[ssa.CallInstruction]bool{}, closed: map[ssa.CallInstruction]bool{}}
+	g := &graphIndex{funcs: map[*ssa.Function]bool{}, out: map[*ssa.Function][]edge{}, in: map[*ssa.Function][]edge{}, sites: map[ssa.CallInstruction]bool{}, fallback: map[ssa.CallInstruction]bool{}, closed: map[ssa.CallInstruction]bool{}, writerless: map[ssa.CallInstruction]bool{}}
 	add := func(e edge) {
 		g.funcs[e.caller], g.funcs[e.callee] = true, true
 		g.out[e.caller] = append(g.out[e.caller], e)
@@ -2479,6 +2487,8 @@ type flowEnv struct {
 	globals    map[*ssa.Global][]ssa.Value
 	calleesAt  map[ssa.CallInstruction][]*ssa.Function
 	closures   map[*ssa.Function][]*ssa.MakeClosure
+	// writerless is set only in G's environment (closeWriterless).
+	writerless map[ssa.CallInstruction]bool
 }
 
 func newFlowEnv(prog *ssa.Program, graph *graphIndex, fset *token.FileSet, rel func(string) string, sink func(*ssa.Function) bool) *flowEnv {
@@ -2541,7 +2551,7 @@ func (env *flowEnv) where(i ssa.Instruction) string {
 // callees resolves a call site. A load of a function-valued field the program
 // never assigns calls nothing; a call resolved only by signature is reported.
 func (env *flowEnv) callees(site ssa.CallInstruction) ([]*ssa.Function, string) {
-	if env.graph.closed[site] {
+	if env.graph.closed[site] || env.writerless[site] {
 		return nil, ""
 	}
 	if env.graph.fallback[site] {
@@ -3099,29 +3109,8 @@ func closeWriterless(prog *ssa.Program, g *graphIndex) {
 			closing[site] = true
 		}
 	}
-	if len(closing) == 0 {
-		return
-	}
-	keep := func(edges []edge) []edge {
-		out := edges[:0:0]
-		for _, e := range edges {
-			if !closing[e.site] {
-				out = append(out, e)
-			}
-		}
-		return out
-	}
-	for f := range g.out {
-		g.out[f] = keep(g.out[f])
-	}
-	for f := range g.in {
-		g.in[f] = keep(g.in[f])
-	}
 	for site := range closing {
-		delete(g.fallback, site)
-		delete(g.sites, site)
-		g.closed[site] = true
+		g.writerless[site] = true
 		g.writerlessSites++
-		g.fallbackSites--
 	}
 }
