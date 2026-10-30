@@ -62,6 +62,15 @@ func NOR160ControlCapturedEmitter(b *BadgerEngine) []*Node {
 	return out
 }
 
+// NOR160ControlQueueCopier is a second entity copier: it rebuilds a node from
+// its argument and clones its reference fields without the copy owner.
+func NOR160ControlQueueCopier(node *Node) *Node {
+	clone := *node
+	clone.Labels = append([]string(nil), node.Labels...)
+	clone.Properties, _ = copyPropertyValue(node.Properties).(map[string]any)
+	return &clone
+}
+
 // NOR160ControlPartialHit omits its relationship from its caller copy.
 type NOR160ControlPartialHit struct {
 	Props map[string]any
@@ -137,6 +146,7 @@ type report struct {
 	CopierTypes   []string        `json:"copier_types"`
 	Copiers       []copierImpl    `json:"caller_copy_implementations"`
 	CopySites     []string        `json:"copier_call_sites"`
+	EntityCopiers []string        `json:"independent_entity_copiers"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
 }
@@ -419,6 +429,56 @@ func capturedCallee(fn *ssa.Function, c *ssa.CallCommon) *ssa.Function {
 		}
 	}
 	return nil
+}
+
+// rebuiltEntityFields: exported reference fields fn assigns on a storage Node or
+// Edge it initialised by copying another entity (clone := *node).
+func rebuiltEntityFields(fn *ssa.Function) []string {
+	copies := map[ssa.Value]*types.Struct{}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			st, ok := ins.(*ssa.Store)
+			if !ok {
+				continue
+			}
+			load, ok := st.Val.(*ssa.UnOp)
+			if !ok || load.Op != token.MUL {
+				continue
+			}
+			if _, isAlloc := st.Addr.(*ssa.Alloc); !isAlloc || !storageEntity(st.Addr.Type()) {
+				continue
+			}
+			p := types.Unalias(st.Addr.Type()).(*types.Pointer)
+			if s, ok := p.Elem().Underlying().(*types.Struct); ok {
+				copies[st.Addr] = s
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			st, ok := ins.(*ssa.Store)
+			if !ok {
+				continue
+			}
+			fa, ok := st.Addr.(*ssa.FieldAddr)
+			if !ok {
+				continue
+			}
+			s, ok := copies[fa.X]
+			if !ok {
+				continue
+			}
+			f := s.Field(fa.Field)
+			if f.Exported() && refBearing(f.Type(), map[types.Type]bool{}) && !seen[f.Name()] {
+				seen[f.Name()] = true
+				out = append(out, f.Name())
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // retains: fn stores a delivery-derived value into memory that outlives the call
@@ -748,6 +808,20 @@ func main() {
 	}
 	sort.Strings(r.CopySites)
 
+	// 5: every function outside the copy owner that rebuilds a storage node or
+	// edge from its argument and replaces a reference field: a second entity
+	// copier (or a projection, dispositioned in writing).
+	for _, fn := range fns {
+		if copierNames[fullName(fn)] || fn.Name() == "CallerCopy" || strings.Contains(strings.ToLower(fn.Name()), "callerowned") {
+			continue
+		}
+		if fields := rebuiltEntityFields(fn); len(fields) > 0 {
+			file, line := pos(fn, fn.Pos())
+			r.EntityCopiers = append(r.EntityCopiers, fmt.Sprintf("%s:%d %s replaces %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), strings.Join(fields, ",")))
+		}
+	}
+	sort.Strings(r.EntityCopiers)
+
 	// Controls.
 	r.Controls["second copy of an owned delivery"] = false
 	for _, c := range r.Consumers {
@@ -759,6 +833,12 @@ func main() {
 	for _, c := range r.Consumers {
 		if strings.Contains(c.Consumer, "NOR160ControlCapturedEmitter") && len(c.Copies) > 0 {
 			r.Controls["second copy inside a captured emitter"] = true
+		}
+	}
+	r.Controls["second entity copier"] = false
+	for _, c := range r.EntityCopiers {
+		if strings.Contains(c, "NOR160ControlQueueCopier") && strings.Contains(c, "Labels,Properties") {
+			r.Controls["second entity copier"] = true
 		}
 	}
 	partial, complete := false, true
