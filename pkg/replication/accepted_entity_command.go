@@ -153,12 +153,12 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
-		return checkApplyReadiness(r.closed, r.started)
+		return checkApplyReadiness(r.work.Closing(), r.started)
 	}, r.Apply, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
-		if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+		if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 			return err
 		}
 		if !r.isPrimary.Load() {
@@ -169,7 +169,7 @@ func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Co
 }
 
 func (r *MultiRegionReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return nil, err
 	}
 	if !r.IsLeader() {
