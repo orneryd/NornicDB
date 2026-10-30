@@ -234,10 +234,16 @@ type writeRelease[T entityAuthorityResources | bufferedOrderResources] struct{ r
 func (lease *writeRelease[T]) release() {
 	switch resource := any(&lease.resources).(type) {
 	case *entityAuthorityResources:
-		resource.once.Do(func() {
+		// Select one releaser, then detach arbitration before publication can
+		// deliver listeners that reenter this release. The resource's native
+		// keys still retire before its ordered notifications.
+		// Author: NOR-288 lane (Codex), 2026-10-29.
+		release := false
+		resource.once.Do(func() { release = true })
+		if release {
 			resource.releaseKeys()
 			resource.ordered.finish()
-		})
+		}
 	case *bufferedOrderResources:
 		if resource.w != nil {
 			resource.w.order.unlock(&resource.stripes, true)
@@ -642,6 +648,46 @@ func (tx *BadgerTransaction) bufferedWriteConflictLocked(ctx context.Context) er
 // ahead of it.
 var errEndpointChanged = fmt.Errorf("%w: a relationship endpoint changed before commit", ErrConflict)
 
+// revalidatesEndpoints is the one decision whether a commit re-checks its
+// relationship endpoints, for every commit branch (buffered revalidation and
+// the direct conflict check). An accepted application is never re-admitted:
+// its endpoints were validated before the durable decision.
+// Author: NOR-288 lane (Claude), 2026-10-30.
+func (tx *BadgerTransaction) revalidatesEndpoints() bool { return !tx.acceptedApplication }
+
+// revalidateEndpointsBeforeDecisionLocked is a prepared commit's one
+// buffered-aware endpoint check, before its durable decision. It runs under
+// the write-order stripes, as at publication; the entity authority the commit
+// already holds covers its endpoints, so no commit of an endpoint is
+// acknowledged between this check and the decision, and every one
+// acknowledged before it is visible here. Author: NOR-288 lane (Claude), 2026-10-31.
+func (tx *BadgerTransaction) revalidateEndpointsBeforeDecisionLocked(ctx context.Context) error {
+	if !tx.engine.writeBehindEnabled() {
+		return nil
+	}
+	entities, err := operationEntities(ctx, tx.operations)
+	if err != nil {
+		return err
+	}
+	var stripes, deletions orderStripeSet
+	stripes.entities(entities)
+	for _, id := range entities.deletedNodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		deletions.add(string(id))
+	}
+	if err := tx.engine.writeBehind.order.lockMixedContext(ctx, &stripes, &deletions); err != nil {
+		return err
+	}
+	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+	if err := tx.revalidateEndpointsLocked(ctx); err != nil {
+		return err
+	}
+	tx.endpointsDecided = true
+	return nil
+}
+
 // revalidateEndpointsLocked checks tx's final graph against the latest
 // state, buffered commits included: every relationship tx leaves still has
 // both endpoints, and no node tx deletes has a relationship its cascade
@@ -652,7 +698,7 @@ var errEndpointChanged = fmt.Errorf("%w: a relationship endpoint changed before 
 // checked. The caller holds the stripes of tx's entities, a deleted node's
 // exclusively, so neither side changes meanwhile.
 func (tx *BadgerTransaction) revalidateEndpointsLocked(ctx context.Context) error {
-	if len(tx.pendingEdges) == 0 && len(tx.deletedNodes) == 0 {
+	if !tx.revalidatesEndpoints() || tx.endpointsDecided || len(tx.pendingEdges) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
 	var checked map[NodeID]struct{}

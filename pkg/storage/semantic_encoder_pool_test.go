@@ -12,7 +12,7 @@ func TestSemanticEncoderPoolPreservesRawFormatAndOwnedBytes(t *testing.T) {
 	actual, err := EncodeEntityTransaction(request)
 	require.NoError(t, err)
 	owned := bytes.Clone(actual)
-	var wire semanticTransactionWire
+	var wire semanticTransactionWire[semanticTransactionTimestamp]
 	require.NoError(t, msgpack.Unmarshal(actual, &wire))
 	reference, err := msgpack.Marshal(wire)
 	require.NoError(t, err)

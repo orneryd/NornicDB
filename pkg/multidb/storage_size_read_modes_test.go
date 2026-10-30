@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestStorageSizeReadModesPreserveInitializationError(t *testing.T) {
 	reader := &storageSizingErrorEngine{Engine: base, nodesErr: injected}
 	info := &DatabaseInfo{Name: "test", Status: "online", Limits: &Limits{Storage: StorageLimits{MaxBytes: 1000}}, nodeSize: 11, edgeSize: 7, totalSize: 18}
 	manager := &DatabaseManager{inner: reader, databases: map[string]*DatabaseInfo{"test": info}, engines: map[string]storage.Engine{"test": reader}, limitCheckers: make(map[string]*databaseLimitChecker)}
-	total, nodes, edges := manager.GetStorageSize("test")
+	total, nodes, edges := manager.GetStorageSize(context.Background(), "test")
 	require.EqualValues(t, 18, total)
 	require.EqualValues(t, 11, nodes)
 	require.EqualValues(t, 7, edges)
@@ -27,7 +28,7 @@ func TestStorageSizeReadModesPreserveInitializationError(t *testing.T) {
 	err = checker.CheckStorageLimits(t.Context(), "create_node", &storage.Node{ID: "n"}, nil)
 	require.ErrorIs(t, err, injected, "admission propagates the same actual scan failure")
 	require.EqualValues(t, 18, info.accountingOwner().totalSize)
-	missingTotal, missingNodes, missingEdges := manager.GetStorageSize("missing")
+	missingTotal, missingNodes, missingEdges := manager.GetStorageSize(context.Background(), "missing")
 	require.Zero(t, missingTotal)
 	require.Zero(t, missingNodes)
 	require.Zero(t, missingEdges)

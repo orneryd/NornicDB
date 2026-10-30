@@ -105,7 +105,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 							edge.VisibilitySuppressed = false
 							policyBytes += size - measure(edge)
 						}
-						total, gotNodes, gotEdges := h.server.dbManager.GetStorageSize("nornic")
+						total, gotNodes, gotEdges := h.server.dbManager.GetStorageSize(context.Background(), "nornic")
 						if nodeBytes != gotNodes || edgeBytes != gotEdges {
 							// A stored scan and cache read are separate observations.
 							// A live policy publication may fall between them. Retry

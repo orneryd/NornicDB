@@ -623,9 +623,10 @@ func (b *BadgerEngine) IsCurrentTemporalNode(ctx context.Context, node *Node, as
 }
 
 func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error {
-	if err := b.ensureOpen(false); err != nil {
-		return err
+	if !b.work.Enter() {
+		return ErrStorageClosed
 	}
+	defer b.work.Leave()
 	wb := b.db.NewWriteBatch(ctx)
 	defer wb.Cancel()
 	prefixBytes := []byte{prefix}

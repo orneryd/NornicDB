@@ -31,7 +31,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -44,12 +43,18 @@ const DefaultBytesMetricsInterval = 30 * time.Second
 // IndexSizeBytes(); for Plan 04-04 it can be nil (returns 0).
 type SearchSizeFn func() int64
 
+// BytesMetricsSource is what the sweeper reads from storage.
+type BytesMetricsSource interface {
+	EstimateSize(prefix []byte) (keys, values uint64)
+	Size() (lsm, vlog int64)
+}
+
 // BytesMetricsSweeper is the lifecycle.Component that populates the
 // nornicdb_storage_bytes{kind} gauges every interval via
-// badger.DB.EstimateSize(prefix).
+// the engine's EstimateSize(prefix), which Close joins or refuses.
 type BytesMetricsSweeper struct {
 	metrics    *observability.StorageMetrics
-	db         *badger.DB
+	db         BytesMetricsSource
 	searchSize SearchSizeFn
 	interval   time.Duration
 
@@ -60,7 +65,7 @@ type BytesMetricsSweeper struct {
 // NewBytesMetricsSweeper constructs the sweeper. interval ≤ 0 falls back to
 // DefaultBytesMetricsInterval. metrics or db nil disables the sweep
 // (Start returns nil immediately) — defensive for partial-init.
-func NewBytesMetricsSweeper(metrics *observability.StorageMetrics, db *badger.DB, searchSize SearchSizeFn, interval time.Duration) *BytesMetricsSweeper {
+func NewBytesMetricsSweeper(metrics *observability.StorageMetrics, db BytesMetricsSource, searchSize SearchSizeFn, interval time.Duration) *BytesMetricsSweeper {
 	if interval <= 0 {
 		interval = DefaultBytesMetricsInterval
 	}

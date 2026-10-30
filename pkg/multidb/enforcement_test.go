@@ -305,7 +305,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Node(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large node that would exceed the limit
 	largeNode := &storage.Node{
@@ -370,7 +370,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_MaxBytes_Edge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get current size
-	currentSize, _, _ := manager.GetStorageSize(dbName)
+	currentSize, _, _ := manager.GetStorageSize(context.Background(), dbName)
 
 	// Create a large edge that would exceed the limit
 	largeEdge := &storage.Edge{
@@ -1417,7 +1417,7 @@ func TestCalculateCurrentStorageSize(t *testing.T) {
 				require.NoError(t, err)
 
 			}
-			nodeSize, edgeSize, calcErr := manager.calculateStorageSizeFromEngine(store)
+			nodeSize, edgeSize, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), store)
 			require.NoError(t, calcErr)
 			if populated {
 				assert.Greater(t, nodeSize, int64(0), "node size must be > 0")

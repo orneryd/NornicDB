@@ -176,7 +176,12 @@ func TestPreparedEntityTimeoutCleanupDoesNotWaitOrDiscard(t *testing.T) {
 	receipt, resolve := NewCommitReceipt(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, receipt.Wait(ctx), context.Canceled)
+	waitErr := receipt.Wait(ctx)
+	var accepted *AcceptedCommitError
+	require.ErrorAs(t, waitErr, &accepted)
+	require.Equal(t, CommitRecoveryPending, accepted.State)
+	require.NotErrorIs(t, waitErr, context.Canceled)
+	require.ErrorIs(t, accepted.Cause(), context.Canceled)
 	cleanup := make(chan error, 1)
 	go func() { cleanup <- tx.Rollback() }()
 	select {
@@ -222,7 +227,12 @@ func TestNativeSubmitReceiptTimeoutAndPublicCleanup(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, receipt.Wait(ctx), context.Canceled)
+	waitErr := receipt.Wait(ctx)
+	var accepted *AcceptedCommitError
+	require.ErrorAs(t, waitErr, &accepted)
+	require.Equal(t, CommitRecoveryPending, accepted.State)
+	require.NotErrorIs(t, waitErr, context.Canceled)
+	require.ErrorIs(t, accepted.Cause(), context.Canceled)
 	cleanup := make(chan error, 1)
 	go func() { cleanup <- tx.Rollback() }()
 	select {

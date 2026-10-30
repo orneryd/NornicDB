@@ -316,7 +316,7 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID 
 }
 
 func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edge *Edge) error {
-	if edge == nil {
+	if edge == nil || !tx.revalidatesEndpoints() {
 		return nil
 	}
 	// Staging validates both endpoints. Validate the final staged image,

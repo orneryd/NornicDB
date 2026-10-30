@@ -19,7 +19,12 @@ func TestAcceptedReceiptTimeoutRetainsTerminalOwnership(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(t, r.Wait(ctx), context.Canceled)
+	waitErr := r.Wait(ctx)
+	var accepted *AcceptedCommitError
+	require.ErrorAs(t, waitErr, &accepted)
+	require.Equal(t, CommitRecoveryPending, accepted.State)
+	require.NotErrorIs(t, waitErr, context.Canceled)
+	require.ErrorIs(t, accepted.Cause(), context.Canceled)
 	require.Zero(t, settled.Load())
 	require.NoError(t, resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: errors.New("recovery needed")}))
 	require.Zero(t, settled.Load())
@@ -29,7 +34,11 @@ func TestAcceptedReceiptTimeoutRetainsTerminalOwnership(t *testing.T) {
 	default:
 	}
 	require.NoError(t, resolve.Resolve(CommitOutcome{State: CommitApplied, Err: ackErr}))
-	require.ErrorIs(t, r.Wait(context.Background()), ackErr)
+	waitErr = r.Wait(context.Background())
+	require.ErrorAs(t, waitErr, &accepted)
+	require.Equal(t, CommitApplied, accepted.State)
+	require.NotErrorIs(t, waitErr, ackErr)
+	require.ErrorIs(t, accepted.Cause(), ackErr)
 	require.Equal(t, int32(1), settled.Load())
 	require.Error(t, resolve.Resolve(CommitOutcome{State: CommitDiscarded}))
 	require.Equal(t, int32(1), settled.Load())

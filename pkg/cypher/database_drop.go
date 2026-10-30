@@ -2,10 +2,12 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 type databaseDropKind uint8
@@ -76,16 +78,19 @@ func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string,
 	if strings.IndexFunc(name, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(name), nil)
 	}
-	if kind == dropStandardDatabase && !e.dbManager.Exists(name) {
-		if ifExists {
-			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{}}, nil
-		}
-		return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(name), nil)
-	}
 	if kind == dropCompositeDatabase {
 		err = e.dbManager.DropCompositeDatabase(ctx, name)
 	} else {
+		// Author: NOR-288 lane (Claude), 2026-10-30. The DROP owner alone decides
+		// absent, pending completion and existing; a record-only precheck here
+		// would leave an absent-record pending drop unfinished.
 		err = e.dbManager.DropDatabase(ctx, name)
+		if errors.Is(err, multidb.ErrDatabaseNotFound) {
+			if ifExists {
+				return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{}}, nil
+			}
+			return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(name), nil)
+		}
 	}
 	if err != nil {
 		return nil, kind.failure(localization.CypherAdminDropDatabaseFailed(name, err), localization.CypherCompositeDropDatabaseFailed(name, err), err)

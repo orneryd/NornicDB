@@ -41,8 +41,7 @@ func TestAcceptedCommandMemoryWALRetiresNativeFrameRetainsPayload(t *testing.T) 
 	require.Len(t, accepted, 1)
 	cmd := accepted[0]
 	require.NotNil(t, cmd.accepted)
-	_, err = cmd.accepted.prepared.Submit(ctx, base)
-	require.ErrorIs(t, err, storage.ErrStorageClosed, "terminal command no longer owns native frame")
+	require.False(t, cmd.accepted.NativeFrameRetained(), "terminal command no longer owns native frame")
 	peer, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	require.NoError(t, storage.ApplyAcceptedEntityTransaction(peer, cmd.Data))
@@ -76,7 +75,9 @@ func TestAcceptedInnerWALRejectionReleasesNativeFrameKeepsLogicalPending(t *test
 	defer cancel()
 	outcome := receipt.WaitOutcome(ctx)
 	require.Equal(t, storage.CommitRecoveryPending, outcome.State)
-	require.ErrorIs(t, outcome.Err, storage.ErrWALClosed)
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, outcome.Err, &accepted)
+	require.ErrorIs(t, accepted.Cause(), storage.ErrWALClosed)
 	select {
 	case <-receipt.Done():
 		t.Fatal("recorded command falsely discarded")
