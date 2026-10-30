@@ -202,6 +202,79 @@ func (s *NOR160ControlHits) GetHit(k string) *NOR160ControlHit { return nor160Co
 func (s *NOR160ControlHits) GetHitComplete(k string) *NOR160ControlHit {
 	return nor160ControlCloneHitComplete(s.hits[k])
 }
+
+// Exclusion "written after construction": K7 ignores a shared pointer only to
+// a struct type no function writes outside its own allocation. NOR160ControlMeta
+// is written after construction (NOR160Bump), so sharing it must be reported;
+// NOR160ControlFrozen is never written, so sharing it must not.
+type NOR160ControlMeta struct{ Count int }
+
+func (m *NOR160ControlMeta) NOR160Bump() { m.Count++ }
+
+type NOR160ControlFrozen struct{ Name string }
+
+type NOR160ControlRecHit struct {
+	Node   *Node
+	Meta   *NOR160ControlMeta
+	Frozen *NOR160ControlFrozen
+}
+
+// CallerCopy makes the planted record hit a copyable entity.
+func (h *NOR160ControlRecHit) CallerCopy() any {
+	c := *h
+	c.Node = copyNode(h.Node)
+	c.Meta = &NOR160ControlMeta{Count: h.Meta.Count}
+	return &c
+}
+
+type NOR160ControlRecHits struct{ hits map[string]*NOR160ControlRecHit }
+
+// K7: the copy keeps the written record shared with the retained hit.
+func (s *NOR160ControlRecHits) GetSharedMeta(k string) *NOR160ControlRecHit {
+	h := s.hits[k]
+	c := *h
+	c.Node = copyNode(h.Node)
+	return &c
+}
+
+// Clean: the copy shares only the never-written record.
+func (s *NOR160ControlRecHits) GetFrozenShared(k string) *NOR160ControlRecHit {
+	h := s.hits[k]
+	c := *h
+	c.Node = copyNode(h.Node)
+	c.Meta = &NOR160ControlMeta{Count: h.Meta.Count}
+	return &c
+}
+
+// Exclusion "received from another package's public read": a caller that drops
+// a value an exported read of another package delivered is not a member. The
+// same read called inside its own package is not a delivery, so a selection
+// over its copy must still be reported (K1). NOR160ControlReceiver in
+// pkg/cypher is the cross-package clean case.
+func (c *NOR160ControlCache) GetCopied(id NodeID) *Node { return copyNode(c.nodes[id]) }
+
+func (c *NOR160ControlCache) GetCopiedSelected(id NodeID, hidden func(*Node) bool) *Node {
+	n := c.GetCopied(id)
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
+`
+
+const cypherControlFile = `package cypher
+
+import "github.com/orneryd/nornicdb/pkg/storage"
+
+// NOR160ControlReceiver drops a node that storage's public read delivered to
+// it. The census must prove the receipt and not report it.
+func NOR160ControlReceiver(c *storage.NOR160ControlCache, id storage.NodeID, hidden func(*storage.Node) bool) *storage.Node {
+	n := c.GetCopied(id)
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
 `
 
 // control: a planted function and the class that must report it.
@@ -226,6 +299,10 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetClean", true},
 	{"K7", "(*" + storagePkg + ".NOR160ControlHits).GetHitComplete", true},
+	{"K7", "(*" + storagePkg + ".NOR160ControlRecHits).GetSharedMeta", false},
+	{"K7", "(*" + storagePkg + ".NOR160ControlRecHits).GetFrozenShared", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCopiedSelected", false},
+	{"K1", module + "/pkg/cypher.NOR160ControlReceiver", true},
 }
 
 var tree string
@@ -1739,6 +1816,7 @@ func main() {
 	config := workcensus.Config{Dir: tree, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Env: append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")}
 	config.Overlay = map[string][]byte{
 		filepath.Join(tree, "pkg/storage/nor160_census_control.go"): []byte(controlFile),
+		filepath.Join(tree, "pkg/cypher/nor160_census_control.go"):  []byte(cypherControlFile),
 	}
 	p, err := workcensus.LoadProgram(config)
 	if err != nil {
