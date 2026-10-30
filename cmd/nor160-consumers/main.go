@@ -48,6 +48,20 @@ func NOR160ControlSecondCopy(b *BadgerEngine) []*Node {
 	return out
 }
 
+// NOR160ControlCapturedEmitter copies an owned delivery again inside a captured
+// emitter closure, the shape of a transaction stream emitter.
+func NOR160ControlCapturedEmitter(b *BadgerEngine) []*Node {
+	var out []*Node
+	emit := func(n *Node) {
+		out = append(out, copyNode(n))
+	}
+	_ = b.StreamNodesByLabelProjectedInScope("", "L", nil, func(n *Node) error {
+		emit(n)
+		return nil
+	})
+	return out
+}
+
 // NOR160ControlPartialHit omits its relationship from its caller copy.
 type NOR160ControlPartialHit struct {
 	Props map[string]any
@@ -122,6 +136,7 @@ type report struct {
 	Views         []view          `json:"overlay_views"`
 	CopierTypes   []string        `json:"copier_types"`
 	Copiers       []copierImpl    `json:"caller_copy_implementations"`
+	CopySites     []string        `json:"copier_call_sites"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
 }
@@ -335,6 +350,9 @@ func copiesOf(fn *ssa.Function, roots map[ssa.Value]bool, depth int, visited map
 					continue
 				}
 				callee := staticCallee(c)
+				if callee == nil {
+					callee = capturedCallee(fn, c)
+				}
 				if callee == nil || !inModule(callee) || callee.Blocks == nil || i >= len(callee.Params) {
 					continue
 				}
@@ -348,6 +366,59 @@ func copiesOf(fn *ssa.Function, roots map[ssa.Value]bool, depth int, visited map
 		}
 	}
 	return out
+}
+
+// capturedCallee resolves a call through a closure the function captured from
+// its parent (a transaction stream emitter): a free variable bound to the
+// closure, or to a variable the parent stores the closure in.
+func capturedCallee(fn *ssa.Function, c *ssa.CallCommon) *ssa.Function {
+	if c.IsInvoke() {
+		return nil
+	}
+	v := c.Value
+	byRef := false
+	if load, ok := v.(*ssa.UnOp); ok && load.Op == token.MUL {
+		v, byRef = load.X, true
+	}
+	fv, ok := v.(*ssa.FreeVar)
+	if !ok || fn.Parent() == nil {
+		return nil
+	}
+	index := -1
+	for i, free := range fn.FreeVars {
+		if free == fv {
+			index = i
+		}
+	}
+	if index < 0 {
+		return nil
+	}
+	for _, b := range fn.Parent().Blocks {
+		for _, ins := range b.Instrs {
+			mc, ok := ins.(*ssa.MakeClosure)
+			if !ok || mc.Fn != fn || index >= len(mc.Bindings) {
+				continue
+			}
+			binding := mc.Bindings[index]
+			if !byRef {
+				if f := callbackFunction(binding); f != nil {
+					return f
+				}
+				continue
+			}
+			// The parent stores the closure into the captured variable.
+			for _, pb := range fn.Parent().Blocks {
+				for _, pins := range pb.Instrs {
+					if st, ok := pins.(*ssa.Store); ok && st.Addr == binding {
+						if f := callbackFunction(st.Val); f != nil {
+							return f
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // retains: fn stores a delivery-derived value into memory that outlives the call
@@ -646,11 +717,48 @@ func main() {
 		r.Copiers = append(r.Copiers, impl)
 	}
 
+	// 4: every copier call site in the module, for a written disposition each.
+	for _, fn := range fns {
+		if copierNames[fullName(fn)] {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				c := call.Common()
+				name := calleeName(c)
+				if !copierNames[name] || strings.Contains(name, "/pkg/callerowned.") {
+					continue
+				}
+				note := ""
+				if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 {
+					if constTrue(c.Args[3]) {
+						note = " (owned: reshape in place)"
+					} else if _, isConst := c.Args[3].(*ssa.Const); !isConst {
+						note = " (owned=" + c.Args[3].Name() + ")"
+					}
+				}
+				file, line := pos(fn, call.Pos())
+				r.CopySites = append(r.CopySites, fmt.Sprintf("%s:%d %s -> %s%s", file, line, strings.TrimPrefix(fn.String(), module+"/"), name[strings.LastIndex(name, "/")+1:], note))
+			}
+		}
+	}
+	sort.Strings(r.CopySites)
+
 	// Controls.
 	r.Controls["second copy of an owned delivery"] = false
 	for _, c := range r.Consumers {
 		if strings.Contains(c.Consumer, "NOR160ControlSecondCopy") && len(c.Copies) > 0 {
 			r.Controls["second copy of an owned delivery"] = true
+		}
+	}
+	r.Controls["second copy inside a captured emitter"] = false
+	for _, c := range r.Consumers {
+		if strings.Contains(c.Consumer, "NOR160ControlCapturedEmitter") && len(c.Copies) > 0 {
+			r.Controls["second copy inside a captured emitter"] = true
 		}
 	}
 	partial, complete := false, true
