@@ -2,10 +2,12 @@
 //
 // This package implements all apoc.number.* functions for number
 // manipulation, formatting, and conversion.
+// Author: Codex implementation lane for NOR-184 (GCD/LCM aliases), 2026-10-26.
 package number
 
 import (
 	"fmt"
+	apocmath "github.com/orneryd/nornicdb/apoc/math"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 	"strings"
@@ -385,25 +387,22 @@ func IsPrime(number int64) bool {
 	return true
 }
 
-// GCD calculates greatest common divisor.
+// GCD delegates to math.Gcd, returning its non-negative value or overflow error.
 //
 // Example:
 //
 //	apoc.number.gcd(48, 18) => 6
-func GCD(a, b int64) int64 {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
+func GCD(a, b int64) (int64, error) {
+	return apocmath.Gcd(a, b)
 }
 
-// LCM calculates least common multiple.
+// LCM delegates to math.Lcm, returning its non-negative value or overflow error.
 //
 // Example:
 //
 //	apoc.number.lcm(4, 6) => 12
-func LCM(a, b int64) int64 {
-	return (a * b) / GCD(a, b)
+func LCM(a, b int64) (int64, error) {
+	return apocmath.Lcm(a, b)
 }
 
 // Factorial calculates factorial.

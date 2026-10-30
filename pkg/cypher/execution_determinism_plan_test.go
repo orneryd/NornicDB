@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"sync"
@@ -125,7 +127,7 @@ func TestExecutionDeterminismCachedRegistryAndPluginDependencies(t *testing.T) {
 	lookup := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = lookup })
 	loaded := true
-	PluginFunctionLookup = func(name string) (any, bool) { return nil, loaded && name == "toString" }
+	PluginFunctionLookup = checkedTestLookup(func(name string) (any, bool) { return nil, loaded && name == "toString" })
 	require.False(t, exec.canUseResultCache(ctx, nestedInfo, nested))
 	loaded = false
 	require.True(t, exec.canUseResultCache(ctx, nestedInfo, nested))
