@@ -22,7 +22,7 @@ func TestFunctionContextGraphsAllocatesNothing(t *testing.T) {
 		functionContextSink = cypherfn.Context{Graphs: exec}
 	})
 	require.Zero(t, allocs)
-	graphs, composite := functionContextSink.Graphs.CompositeGraphs()
+	graphs, composite := functionContextSink.Graphs.CompositeGraphs(t.Context())
 	require.False(t, composite)
 	require.Nil(t, graphs)
 }

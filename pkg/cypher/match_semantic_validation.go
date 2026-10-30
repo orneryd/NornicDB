@@ -74,7 +74,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(ctx context.Contex
 		return nil
 	}
 
-	if isSchemaCommandStatement(cypher) {
+	if classifyStatement(cypher).schema {
 		return nil
 	}
 	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, cypher)
@@ -1252,29 +1252,6 @@ func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind match
 	}
 	scope[variable] = kind
 	return nil
-}
-
-// schemaCommandKeywords follow CREATE or DROP in a schema command.
-var schemaCommandKeywords = []string{"CONSTRAINT", "INDEX", "FULLTEXT", "VECTOR", "RANGE", "TEXT", "POINT", "LOOKUP", "BTREE", "OR REPLACE"}
-
-// isSchemaCommandStatement reports whether cypher is a schema command
-// (CREATE / DROP CONSTRAINT, INDEX, …): its patterns and expressions declare a
-// schema rule over a pattern (FOR ()-[r:T]-() REQUIRE …) and bind no clause
-// variables.
-func isSchemaCommandStatement(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
-	for _, command := range []string{"CREATE", "DROP"} {
-		if !startsWithKeywordFold(trimmed, command) {
-			continue
-		}
-		rest := strings.TrimSpace(trimmed[len(command):])
-		for _, keyword := range schemaCommandKeywords {
-			if startsWithKeywordFold(rest, keyword) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // validateStaticClauseTypes applies the compile-time type checks of one

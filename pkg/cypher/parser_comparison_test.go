@@ -143,14 +143,13 @@ var testQueries = []struct {
 
 func benchmarkParserValidationIsolation(b *testing.B, parserName string, validate func(string) error) {
 	b.Helper()
-	exec := &StorageExecutor{}
 
 	for _, tc := range testQueries {
 		b.Run(parserName+"/"+tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.query)))
 			if parserName == "Nornic" {
-				if err := exec.validateSyntax(context.Background(), tc.query, false, syntaxNativeCore); err != nil {
+				if err := validateNativeSurfaceSyntax(tc.query, classifyStatement(tc.query)); err != nil {
 					b.Fatalf("preflight native syntax validation failed for %s: %v", tc.name, err)
 				}
 			} else {
@@ -171,9 +170,8 @@ func benchmarkParserValidationIsolation(b *testing.B, parserName string, validat
 // BenchmarkParserValidationIsolation measures the parser/validator cost in isolation,
 // excluding executor routing, store setup, and query execution work.
 func BenchmarkParserValidationIsolation(b *testing.B) {
-	exec := &StorageExecutor{}
 	benchmarkParserValidationIsolation(b, "Nornic", func(query string) error {
-		return exec.validateSyntax(context.Background(), query, false, syntaxNativeCore)
+		return validateNativeSurfaceSyntax(query, classifyStatement(query))
 	})
 	benchmarkParserValidationIsolation(b, "ANTLR", antlrparser.Validate)
 }

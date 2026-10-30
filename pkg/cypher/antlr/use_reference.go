@@ -116,33 +116,37 @@ func (p *CypherParser) useGraphKeyword() bool {
 }
 
 func IsUseClauseFollower(word string, inSubquery bool) bool {
-	followers := useClauseFollowers[:]
-	if inSubquery {
-		followers = subqueryUseClauseFollowers[:]
+	// Query clauses come from the same grammar that admits the statement.
+	// The lists hold only Neo4j's other routing vocabulary, each word once.
+	if isQueryClauseStart(word) {
+		return true
 	}
-	for _, follower := range followers {
-		if strings.EqualFold(word, follower) {
-			return true
+	lists := [][]string{useClauseFollowers[:]}
+	if !inSubquery {
+		lists = append(lists, useAdministrationFollowers[:])
+	}
+	for _, followers := range lists {
+		for _, follower := range followers {
+			if strings.EqualFold(word, follower) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// useClauseFollowers are the words Neo4j's grammar accepts after the graph
-// reference of a top-level USE clause, in the order of Neo4j's SyntaxError
-// "expected …" list (Neo4j 5.26). START / STOP DATABASE and ENABLE SERVER
-// are listed by their first word.
-var useClauseFollowers = [...]string{"FOREACH", "ALTER", "ORDER", "CALL", "CREATE", "LOAD", "START", "STOP",
-	"DEALLOCATE", "DELETE", "DENY", "DETACH", "DROP", "DRYRUN", "FINISH", "GRANT", "INSERT", "LIMIT", "MATCH",
-	"MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REALLOCATE", "REMOVE", "RENAME", "RETURN", "REVOKE", "ENABLE",
-	"SET", "SHOW", "SKIP", "TERMINATE", "UNION", "UNWIND", "USE", "WITH"}
+// useClauseFollowers are the words Neo4j's grammar (5.26) accepts after the
+// graph reference of any USE clause, top-level or starting a subquery (CALL {
+// USE … }), that are not query clauses of the shared grammar
+// (isQueryClauseStart): projections, pagination and Neo4j-only clauses.
+var useClauseFollowers = [...]string{"ORDER", "LOAD", "FINISH", "INSERT", "LIMIT", "NODETACH", "OFFSET",
+	"RETURN", "SKIP", "UNION", "WITH"}
 
-// subqueryUseClauseFollowers are the words Neo4j's grammar accepts after
-// the graph reference of a USE clause that starts a subquery (CALL { USE …
-// }): the query clauses, no administration commands.
-var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE", "LOAD", "DELETE", "DETACH",
-	"FINISH", "INSERT", "LIMIT", "MATCH", "MERGE", "NODETACH", "OFFSET", "OPTIONAL", "REMOVE", "RETURN", "SET",
-	"SKIP", "UNION", "UNWIND", "USE", "WITH"}
+// useAdministrationFollowers are the administration commands Neo4j accepts
+// after a top-level USE graph reference only. START / STOP DATABASE and
+// ENABLE SERVER are listed by their first word.
+var useAdministrationFollowers = [...]string{"ALTER", "START", "STOP", "DEALLOCATE", "DENY", "DROP", "DRYRUN",
+	"GRANT", "REALLOCATE", "RENAME", "REVOKE", "ENABLE", "SHOW", "TERMINATE"}
 
 // UseReferenceError contains only grammar position/role, never source excerpts.
 type UseReferenceError struct {

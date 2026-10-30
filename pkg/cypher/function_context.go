@@ -17,6 +17,7 @@ func (e *StorageExecutor) registryFunctionContext(ctx context.Context, eval func
 		Eval:     eval,
 		Now:      time.Now,
 		Graphs:   e,
+		Request:  ctx,
 		Cypher25: cypherVersionFromContext(ctx) == "25",
 	}
 }

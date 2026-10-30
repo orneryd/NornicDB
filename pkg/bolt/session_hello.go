@@ -173,6 +173,12 @@ func (s *Session) handleHello(data []byte) error {
 		dbName = s.server.dbManager.DefaultDatabaseName()
 	}
 
+	// A database the client names: access first, so a hidden one answers as an
+	// absent one (databaseDenied).
+	if authParams["database"] != "" && s.databaseDenied(dbName) {
+		return s.sendLocalizedFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+	}
+
 	// Validate database exists (if dbManager is configured).
 	// Use constituentAwareExists to accept dotted composite.alias references.
 	if dbName != "" && s.server != nil && s.server.dbManager != nil {

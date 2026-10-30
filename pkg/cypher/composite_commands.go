@@ -349,9 +349,11 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 
 	compositeDbs := e.dbManager.ListCompositeDatabases()
 
-	rows := make([][]interface{}, len(compositeDbs))
-	for i, db := range compositeDbs {
-		rows[i] = []interface{}{db.Name(), db.Type(), db.Status()}
+	rows := make([][]interface{}, 0, len(compositeDbs))
+	for _, db := range compositeDbs {
+		if e.canSeeDatabase(ctx, db.Name()) {
+			rows = append(rows, []interface{}{db.Name(), db.Type(), db.Status()})
+		}
 	}
 
 	return &ExecuteResult{
@@ -406,13 +408,21 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 	}
 
 	// Get constituents
+	// A hidden composite answers exactly as an absent one, so its existence and
+	// its type do not show.
+	if !e.canSeeDatabase(ctx, compositeName) {
+		return nil, localizedError(localization.CypherCompositeGetConstituentsFailed(multidb.ErrDatabaseNotFound), multidb.ErrDatabaseNotFound)
+	}
 	constituents, err := e.dbManager.GetCompositeConstituents(compositeName)
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeGetConstituentsFailed(err), err)
 	}
 
-	rows := make([][]interface{}, len(constituents))
-	for i, c := range constituents {
+	rows := make([][]interface{}, 0, len(constituents))
+	visible := func(alias string) bool {
+		return e.canSeeDatabase(ctx, compositeName+"."+alias)
+	}
+	for _, c := range constituents {
 		// A tagged map carries the same manager-owned connection authority as
 		// the typed adapter. Legacy map cells retain their existing output values.
 		ref, typed := c.(multidb.ConstituentRef)
@@ -427,7 +437,10 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 			if err != nil {
 				return nil, err
 			}
-			rows[i] = []interface{}{
+			if !visible(ref.Alias) {
+				continue
+			}
+			rows = append(rows, []interface{}{
 				ref.Alias,
 				ref.DatabaseName,
 				ref.Type,
@@ -436,10 +449,13 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				ref.SecretRef,
 				ref.AuthMode,
 				multidb.RemoteUserForDisplay(ref.User, ref.AuthMode),
-			}
+			})
 		} else if m, ok := c.(map[string]interface{}); ok {
+			if alias, _ := m["alias"].(string); !visible(alias) {
+				continue
+			}
 			// Fallback for map format (if returned as map)
-			rows[i] = []interface{}{
+			rows = append(rows, []interface{}{
 				m["alias"],
 				m["database_name"],
 				m["type"],
@@ -448,10 +464,10 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				m["secret_ref"],
 				m["auth_mode"],
 				compositeDisplayUser(m["user"], m["auth_mode"]),
-			}
+			})
 		} else {
 			// Unknown type - return empty row
-			rows[i] = []interface{}{"", "", "", "", "", "", "", ""}
+			rows = append(rows, []interface{}{"", "", "", "", "", "", "", ""})
 		}
 	}
 

@@ -1028,12 +1028,9 @@ func TestSchemaDDL_AllowsTrailingOptionsAndBacktickIdentifiers(t *testing.T) {
 		require.NoError(t, err, "expected DDL with OPTIONS/backticks to parse: %s", q)
 	}
 
-	// DROP CONSTRAINT IF EXISTS name is a NornicDB leniency: Neo4j 5.26 and
-	// NORNICDB_PARSER=antlr's grammar take only DROP CONSTRAINT name IF
-	// EXISTS, so it runs under the Nornic parser (#957).
-	restoreParser := config.WithNornicParser()
+	// DROP CONSTRAINT IF EXISTS name is a NornicDB leniency outside Neo4j 5.26's
+	// grammar; the schema owner reads it on either parser (#957).
 	_, err := exec.Execute(ctx, "DROP CONSTRAINT IF EXISTS `uq order id`", nil)
-	restoreParser()
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "DROP CONSTRAINT `uq order id` IF EXISTS", nil)
 	require.NoError(t, err)

@@ -17,8 +17,7 @@ import (
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
 func validateKnownFunctions(expression string) error {
-	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
+	if classifyStatement(expression).declaresRules() {
 		return nil
 	}
 	return forEachFunctionCall(expression, func(name, normalized string) error {

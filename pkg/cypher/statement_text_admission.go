@@ -14,53 +14,76 @@ import (
 // readExecutionModes is the shared header reader for routing, framing and
 // mode execution. Conflict reporting waits until a statement body exists.
 func readExecutionModes(query string, mode ExecutionMode) (ExecutionMode, string, bool) {
+	mode, span, conflict := readExecutionModeExtent(query, mode)
+	return mode, query[span.Start:span.End], conflict
+}
+
+// readExecutionModeExtent is the header owner's source product. Routing,
+// framing and execution use the same reader and retain its exact body window.
+func readExecutionModeExtent(query string, mode ExecutionMode) (ExecutionMode, cyphertext.Span, bool) {
+	start, end := sourceWhitespaceExtent(query)
 	conflict := false
 	for {
-		next, inner := executionModePrefix(query)
+		next, tail := executionModePrefixExtent(query[start:end])
+		base := start
+		start, end = base+tail.Start, base+tail.End
 		if next == ModeNormal {
 			if mode != ModeNormal {
-				inner = strings.TrimSpace(inner[queryGapEnd(inner, 0):])
+				start += queryGapEnd(query[start:end], 0)
+				left, right := sourceWhitespaceExtent(query[start:end])
+				base = start
+				start, end = base+left, base+right
 			}
-			return mode, inner, conflict
+			return mode, cyphertext.Span{Start: start, End: end}, conflict
 		}
 		if mode == ModeNormal {
 			mode = next
 		} else if next != mode {
 			conflict = true
 		}
-		query = inner
 	}
 }
 
 func executionModePrefix(query string) (ExecutionMode, string) {
-	trimmed := strings.TrimSpace(query)
+	mode, span := executionModePrefixExtent(query)
+	return mode, query[span.Start:span.End]
+}
+
+func executionModePrefixExtent(query string) (ExecutionMode, cyphertext.Span) {
+	left, right := sourceWhitespaceExtent(query)
+	trimmed := query[left:right]
 	if len(trimmed) == 0 {
-		return ModeNormal, trimmed
+		return ModeNormal, cyphertext.Span{Start: left, End: right}
 	}
 	// Only a mode keyword or a leading comment can introduce a mode.
 	// Keep ordinary statements on the prefix reader's allocation-free exit.
 	switch trimmed[0] {
 	case 'e', 'E', 'p', 'P', '/':
 	default:
-		return ModeNormal, trimmed
+		return ModeNormal, cyphertext.Span{Start: left, End: right}
 	}
 	start := queryGapEnd(trimmed, 0)
+	mode, keywordEnd := ModeNormal, 0
 	if matchKeywordAt(trimmed, start, "EXPLAIN") {
-		return ModeExplain, executionModeTail(trimmed, start+7)
+		mode, keywordEnd = ModeExplain, start+7
 	}
 	if matchKeywordAt(trimmed, start, "PROFILE") {
-		return ModeProfile, executionModeTail(trimmed, start+7)
+		mode, keywordEnd = ModeProfile, start+7
 	}
-	return ModeNormal, trimmed
+	if mode == ModeNormal {
+		return mode, cyphertext.Span{Start: left, End: right}
+	}
+	tail, unclosed := readQueryGap(trimmed, keywordEnd)
+	if unclosed >= 0 {
+		tail = keywordEnd
+	}
+	tailLeft, tailRight := sourceWhitespaceExtent(trimmed[tail:])
+	return mode, cyphertext.Span{Start: left + tail + tailLeft, End: left + tail + tailRight}
 }
 
-func executionModeTail(query string, start int) string {
-	end, unclosed := readQueryGap(query, start)
-	if unclosed >= 0 {
-		// Preamble stripping retains invalid source for lexical admission.
-		end = start
-	}
-	return strings.TrimSpace(query[end:])
+func executionModeSource(ctx context.Context, text string) (context.Context, ExecutionMode, string) {
+	mode, span, _ := readExecutionModeExtent(text, ModeNormal)
+	return statementSourceWindow(ctx, text, span), mode, text[span.Start:span.End]
 }
 
 // executionModeStatement consumes repeated matching prefixes and admits the

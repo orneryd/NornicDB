@@ -207,8 +207,9 @@ func (b *BoltBackend) executeExplicit(ctx context.Context, query string, params 
 	if err != nil {
 		return QueryResult{}, err
 	}
-	head := strings.ToUpper(strings.TrimSpace(query))
-	administrative := strings.HasPrefix(head, "SHOW DATABASE") || strings.HasPrefix(head, "SHOW DEFAULT DATABASE") || strings.HasPrefix(head, "SHOW HOME DATABASE")
+	// A statement routed to the system database reads no graph to snapshot;
+	// the statement-kind owner decides which statements those are.
+	administrative := cypher.StatementDatabase(b.databaseName, query) == "system"
 	var inTransaction GraphSnapshot
 	if !administrative {
 		inTransaction, err = snapshotWithRunner(ctx, tx.Run)

@@ -16,6 +16,7 @@ func TestUseRawSourceUnicodeSpans(t *testing.T) {
 	require.Equal(t, []string{`'\u0061'`}, reference.Args)
 	require.Equal(t, `RETURN '\u0062' AS x`, rest)
 	require.Equal(t, `  \u0055SE graph.byName('\u0061')`, query[:reference.End])
+	require.Equal(t, rest, query[reference.Remainder.Start:reference.Remainder.End])
 }
 
 func TestUseAcceptedSourceDoesNotProjectAgain(t *testing.T) {
@@ -26,6 +27,7 @@ func TestUseAcceptedSourceDoesNotProjectAgain(t *testing.T) {
 	require.Equal(t, []string{`'\u0061'`}, ref.Args)
 	require.Equal(t, `RETURN '\u0062' AS x`, rest)
 	require.Equal(t, len(`USE graph.byName('\u0061')`), ref.End)
+	require.Equal(t, rest, query[ref.Remainder.Start:ref.Remainder.End])
 	use, _, found, err := ParseUseClause(t.Context(), "USE `\\u0061` RETURN 1", false, cyphertext.AcceptedSource)
 	require.NoError(t, err)
 	require.True(t, found)

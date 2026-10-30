@@ -16,7 +16,7 @@
 //  1. Admin dispatch (Site 1) — emits op_type="admin" BEFORE Analyze() is
 //     called for SHOW DATABASES, CREATE/DROP DATABASE, ALTER DATABASE etc.
 //     Caller passes isAdmin=true.
-//  2. Parse error (Site 2) — emits op_type="parse_error" at validateSyntax()
+//  2. Parse error (Site 2) — emits op_type="parse_error" at validateStatementSyntax()
 //     err path. Caller bypasses this function entirely (or passes nil info)
 //     and emits parse_error directly. The defensive nil-info branch below
 //     surfaces parse_error as a safety net.
@@ -57,7 +57,7 @@ func classifyOpType(info *QueryInfo, isFabric, isAdmin bool) string {
 		return "fabric"
 	}
 	if info == nil {
-		// Defensive — Site 2 (validateSyntax err) callers SHOULD emit
+		// Defensive — Site 2 (validateStatementSyntax err) callers SHOULD emit
 		// parse_error directly. This nil-info branch is the safety net.
 		return "parse_error"
 	}

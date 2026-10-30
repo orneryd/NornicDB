@@ -191,7 +191,7 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 // SHOW USER … PRIVILEGES); SHOW SERVERS is NotSystemDatabaseError.
 func unsupportedAdministrationCommandError(cypher string) error {
 	code := "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
-	if startsWithKeywords(cypher, "SHOW", "SERVERS") || startsWithKeywords(cypher, "SHOW", "SERVER") {
+	if classifyStatement(cypher).command == commandShowServers {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",

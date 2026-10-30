@@ -381,7 +381,7 @@ func TestRowGraphFunctionArguments(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, resolved)
 	require.Nil(t, value)
-	graphs, composite := exec.CompositeGraphs()
+	graphs, composite := exec.CompositeGraphs(context.Background())
 	require.True(t, composite)
 	value, _, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
 	require.NoError(t, err)

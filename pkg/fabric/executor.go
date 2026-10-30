@@ -3,6 +3,7 @@ package fabric
 // Author: declared-list-owners lane (Claude), 2026-10-30: one join projection result header.
 
 import (
+	"errors"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -35,6 +36,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	graphSelected          func(context.Context, string) error
 	remoteStatementPolicy  func(context.Context, string) (RemoteStatementPolicy, error)
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
@@ -325,11 +327,22 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		}
 	}
 	graph, loc, err := e.resolveExecGraph(ctx, f, execParams)
+	// The selection is authorized before what resolving it found is used, so a
+	// graph that doesn't resolve answers as one the principal may not access.
+	var notFound *GraphNotFoundError
+	if errors.As(err, &notFound) {
+		graph = notFound.Name
+	}
+	if e.authorizeGraph != nil && (err == nil || notFound != nil) {
+		if denied := e.authorizeGraph(ctx, graph, f.Query); denied != nil {
+			return nil, nil, ctx, denied
+		}
+	}
 	if err != nil {
 		return nil, nil, ctx, err
 	}
-	if e.authorizeGraph != nil {
-		if err := e.authorizeGraph(ctx, graph, f.Query); err != nil {
+	if e.graphSelected != nil {
+		if err := e.graphSelected(ctx, graph); err != nil {
 			return nil, nil, ctx, err
 		}
 	}
@@ -352,6 +365,12 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 // calls it with the original catalog name before opening a participant.
 func (e *FabricExecutor) SetGraphAuthorizer(authorize func(context.Context, string, string) error) {
 	e.authorizeGraph = authorize
+}
+
+// SetGraphSelected installs what the statement owner does with an authorized
+// graph that resolved, before dispatch opens a participant for it.
+func (e *FabricExecutor) SetGraphSelected(selected func(context.Context, string) error) {
+	e.graphSelected = selected
 }
 
 func materializeIterator(columns []string, it RowIterator) (*ResultStream, error) {

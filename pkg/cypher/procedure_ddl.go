@@ -44,28 +44,6 @@ type persistedProcedureRecord struct {
 	Outputs     []ProcedureColumn `msgpack:"outputs,omitempty"`
 }
 
-// isCreateProcedureCommand reports whether cypher is CREATE [OR REPLACE]
-// PROCEDURE. It runs on every statement's routing, so it doesn't allocate.
-func isCreateProcedureCommand(cypher string) bool {
-	rest := strings.TrimSpace(cypher)
-	if !startsWithKeywordFold(rest, "CREATE") {
-		return false
-	}
-	rest = strings.TrimSpace(rest[len("CREATE"):])
-	if startsWithKeywordFold(rest, "OR") {
-		rest = strings.TrimSpace(rest[len("OR"):])
-		if !startsWithKeywordFold(rest, "REPLACE") {
-			return false
-		}
-		rest = strings.TrimSpace(rest[len("REPLACE"):])
-	}
-	return startsWithKeywordFold(rest, "PROCEDURE")
-}
-
-func isDropProcedureCommand(cypher string) bool {
-	return strings.HasPrefix(upperASCII(strings.TrimSpace(cypher)), "DROP PROCEDURE")
-}
-
 func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherProceduresCreateInTransaction(), nil)
@@ -237,7 +215,7 @@ func (e *StorageExecutor) compilePersistedProcedure(ctx context.Context, record 
 	if err != nil {
 		return ProcedureSpec{}, nil, record, err
 	}
-	if mode == ProcedureModeRead && contract.writes {
+	if mode == ProcedureModeRead && contract.changesState() {
 		return ProcedureSpec{}, nil, record, localizedError(localization.CypherProceduresReadContainsWrite(), nil)
 	}
 

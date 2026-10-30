@@ -2002,6 +2002,10 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			if _, explicitlyNamed := databaseFromMetadata(metadata); !explicitlyNamed && s.database == "" {
 				dbName = s.server.dbManager.DefaultDatabaseName()
 			}
+			if _, named := databaseFromMetadata(metadata); named && s.databaseDenied(dbName) {
+				err = s.sendTransactionControlFailure("Neo.ClientError.Security.Forbidden", s.localize(localization.DatabaseAccessDenied(dbName)))
+				break
+			}
 			txExec, beginErr := s.getExecutorForDatabase(dbName, true)
 			if beginErr != nil {
 				err = s.sendTransactionControlFailure("Neo.ClientError.Database.DatabaseNotFound",

@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -123,16 +122,7 @@ func antlrTokenCount(q string) int {
 func parserOp(parser, mode string) func(q string) error {
 	switch parser + "/" + mode {
 	case "nornic/validate":
-		e := &StorageExecutor{}
-		return func(q string) error {
-			c := e.ensureSyntaxValidationCache()
-			for i := range c.shards {
-				c.shards[i].mu.Lock()
-				clear(c.shards[i].cache)
-				c.shards[i].mu.Unlock()
-			}
-			return e.validateSyntax(context.Background(), q, false, syntaxNativeCore)
-		}
+		return func(q string) error { return validateNativeSurfaceSyntax(q, classifyStatement(q)) }
 	case "nornic/parse":
 		b := NewASTBuilder()
 		return func(q string) error { _, err := b.Build(q); return err }

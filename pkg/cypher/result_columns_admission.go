@@ -4,7 +4,6 @@ import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
-	"strings"
 )
 
 type boundScopeAdmission struct {
@@ -28,28 +27,18 @@ func (admission boundScopeAdmission) verifyColumns(actual []string) error {
 // Administrative commands have a typed command continuation; graph statements
 // cannot decline binding or substitute successful empty facts.
 func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string) (boundScopeAdmission, error) {
-	// Extensions have a real command continuation with its own syntax and
-	// result contract. The graph grammar must not reject them before routing.
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isMetadataCommand(source, metadataCatalogExecution) {
+	// Commands have a real command continuation with its own syntax and
+	// result contract; the statement kind is classifyStatement's.
+	if class := classifyStatement(source); class.commandOwned || class.command != commandNone {
 		return boundScopeAdmission{command: true}, nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
-	if err := ctx.Err(); err != nil {
-		return boundScopeAdmission{}, err
-	}
-	if err != nil {
-		// Non-graph commands retain their command owner's terminal diagnostic.
-		if startsWithKeywordFold(strings.TrimSpace(source), "SHOW") || startsWithKeywordFold(strings.TrimSpace(source), "DROP") {
-			return boundScopeAdmission{command: true}, nil
+	if _, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); err != nil {
+		if err := ctx.Err(); err != nil {
+			return boundScopeAdmission{}, err
 		}
 		return boundScopeAdmission{}, syntaxAdmissionError(ctx, source, AcceptedSource, err)
-	}
-	query := statementSyntaxQuery(syntax)
-	if !query.Valid() {
-		return boundScopeAdmission{command: true}, nil
-	}
-	if !query.ChildRule(cypherantlr.CypherParserRULE_regularQuery).Valid() && !query.ChildRule(cypherantlr.CypherParserRULE_standaloneCall).Valid() {
-		return boundScopeAdmission{command: true}, nil
+	} else if err := ctx.Err(); err != nil {
+		return boundScopeAdmission{}, err
 	}
 	incoming := make([]string, 0, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
 	for name := range e.fabricRecordBindings {
@@ -74,6 +63,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		return boundScopeAdmission{graph: true, columns: program.statement.Columns, program: program.bound}, nil
 	}
 	admission := boundScopeAdmission{}
+	var err error
 	program := e.statementProjectionProgram(ctx, source, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema)
 	if err := ctx.Err(); err != nil {
 		return boundScopeAdmission{}, err

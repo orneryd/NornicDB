@@ -18,18 +18,20 @@ func TestValidateStatementParametersSkipsComments(t *testing.T) {
 		"RETURN /* $a */ 1 AS x",
 		"RETURN 1 AS x /* $a",
 	} {
-		require.NoError(t, validateStatementParameters(query, nil), query)
+		require.Empty(t, statementMissingParameters(query, func(string) bool { return false }), query)
 	}
-	err := validateStatementParameters("RETURN /* $a */ $b AS x", nil)
+	err := parameterMissingError(statementMissingParameters("RETURN /* $a */ $b AS x", func(string) bool { return false }))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Expected parameter(s): b")
 }
 
+func procedureDefinition(query string) bool { return classifyStatement(query).procedureDefinition }
+
 // TestIsCreateProcedureCommandBranches covers CREATE OR without REPLACE.
 func TestIsCreateProcedureCommandBranches(t *testing.T) {
-	require.True(t, isCreateProcedureCommand("CREATE OR REPLACE PROCEDURE p() AS RETURN 1"))
-	require.False(t, isCreateProcedureCommand("CREATE OR FOO PROCEDURE p()"))
-	require.False(t, isCreateProcedureCommand("MATCH (n) RETURN n"))
+	require.True(t, procedureDefinition("CREATE OR REPLACE PROCEDURE p() AS RETURN 1"))
+	require.False(t, procedureDefinition("CREATE OR FOO PROCEDURE p()"))
+	require.False(t, procedureDefinition("MATCH (n) RETURN n"))
 }
 
 // TestMergeUniqueConflictRetryBranches covers the MERGE retry decision for

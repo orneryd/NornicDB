@@ -17,7 +17,7 @@ func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, state
 	if err != nil {
 		return err
 	}
-	if !contract.writes {
+	if !contract.changesState() {
 		return nil
 	}
 	if state != nil {

@@ -295,11 +295,9 @@ func TestCreateDatabaseInvalidStatementsPreserveCatalog(t *testing.T) {
 					require.Error(t, err)
 					var localized *localization.LocalizedError
 					require.ErrorAs(t, err, &localized)
-					wantID := tc.id
-					if parser == "antlr" && tc.id != localization.MessageCypherTransactionsSyntaxUnclosedQuote {
-						wantID = localization.MessageCypherANTLRParseSyntaxError
-					}
-					require.Equal(t, wantID, localized.Message.ID, tc.query)
+					// The administration owner reads every CREATE [OR REPLACE]
+					// DATABASE form on either parser, as the default parser did.
+					require.Equal(t, tc.id, localized.Message.ID, tc.query)
 					require.Equal(t, before, catalogCreateDatabaseSnapshot(manager))
 				})
 			}

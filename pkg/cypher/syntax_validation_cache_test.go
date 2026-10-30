@@ -10,10 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Each validator caches only its own acceptance of a statement text: under
-// NORNICDB_PARSER=antlr a repeated valid statement skips the ANTLR parse
-// (#911), a text the grammar rejects is never cached as valid for it, and
-// the Nornic validator's acceptance doesn't count for ANTLR.
+// Statement acceptance has a shared fact on either parser. The grammar fact
+// stays separate: an extension is not a grammar acceptance.
 func TestSyntaxValidationCachePerValidator(t *testing.T) {
 	previous := config.GetParserType()
 	t.Cleanup(func() { config.SetParserType(previous) })
@@ -21,34 +19,36 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 
 	config.SetParserType(config.ParserTypeANTLR)
 	valid := "MATCH (n:CacheProbe) RETURN n.id"
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement))
-	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidANTLR))
-	require.False(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic))
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement), "served from the cache")
+	require.NoError(t, exec.validateStatementSyntax(context.Background(), valid, false))
+	require.True(t, exec.hasCachedValidSyntax(valid, syntaxStatementAccepted))
+	require.True(t, exec.hasCachedValidSyntax(valid, syntaxGrammarAccepted))
+	require.NoError(t, exec.validateStatementSyntax(context.Background(), valid, false), "served from the cache")
 
 	broken := "MATCH (n:CacheProbe RETURN n"
 	for range 2 {
-		require.Error(t, exec.validateSyntax(context.Background(), broken, false, syntaxStatement))
+		require.Error(t, exec.validateStatementSyntax(context.Background(), broken, false))
 	}
-	require.False(t, exec.hasCachedValidSyntax(broken, syntaxValidANTLR))
+	require.False(t, exec.hasCachedValidSyntax(broken, syntaxStatementAccepted))
+	require.False(t, exec.hasCachedValidSyntax(broken, syntaxGrammarAccepted))
 
 	extension := "SHOW LIMITS"
-	require.NoError(t, exec.validateSyntax(context.Background(), extension, false, syntaxStatement), "a NornicDB extension, checked by the Nornic validator")
-	require.True(t, exec.hasCachedValidSyntax(extension, syntaxValidANTLR))
+	require.NoError(t, exec.validateStatementSyntax(context.Background(), extension, false), "a NornicDB extension, checked by the Nornic validator")
+	require.True(t, exec.hasCachedValidSyntax(extension, syntaxStatementAccepted))
+	require.False(t, exec.hasCachedValidSyntax(extension, syntaxGrammarAccepted))
 
 	config.SetParserType(config.ParserTypeNornic)
 	other := "MATCH (n:CacheProbe) RETURN count(n)"
-	require.NoError(t, exec.validateSyntax(context.Background(), other, false, syntaxStatement))
-	require.True(t, exec.hasCachedValidSyntax(other, syntaxValidNornic))
-	require.False(t, exec.hasCachedValidSyntax(other, syntaxValidANTLR))
-	// The Nornic acceptance of a text ANTLR accepted adds to its entry.
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement))
-	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic|syntaxValidANTLR))
-	require.False(t, exec.hasCachedValidSyntax("", syntaxValidNornic))
-	exec.markCachedValidSyntax("", syntaxValidNornic)
+	require.NoError(t, exec.validateStatementSyntax(context.Background(), other, false))
+	require.True(t, exec.hasCachedValidSyntax(other, syntaxStatementAccepted))
+	require.True(t, exec.hasCachedValidSyntax(other, syntaxGrammarAccepted))
+	// Switching parsers can consume the same complete acceptance fact.
+	require.NoError(t, exec.validateStatementSyntax(context.Background(), valid, false))
+	require.True(t, exec.hasCachedValidSyntax(valid, syntaxStatementAccepted))
+	require.False(t, exec.hasCachedValidSyntax("", syntaxStatementAccepted))
+	exec.markCachedValidSyntax("", syntaxStatementAccepted)
 
 	// Each shard keeps at most its share of the limit, and marking a known
-	// text for another validator adds no entry.
+	// text with another fact adds no entry.
 	cache := exec.ensureSyntaxValidationCache()
 	cache.max = 3 * boundedCacheShardCount
 	entries := func() int {
@@ -60,13 +60,13 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 		return total
 	}
 	for i := range 3 {
-		exec.markCachedValidSyntax(fmt.Sprintf("RETURN %d", i), syntaxValidNornic)
+		exec.markCachedValidSyntax(fmt.Sprintf("RETURN %d", i), syntaxStatementAccepted)
 	}
 	before := entries()
-	exec.markCachedValidSyntax("RETURN 2", syntaxValidANTLR)
+	exec.markCachedValidSyntax("RETURN 2", syntaxGrammarAccepted)
 	require.Equal(t, before, entries())
-	require.True(t, exec.hasCachedValidSyntax("RETURN 7", syntaxValidNornic), "a literal variant, through the canonical form")
-	require.True(t, exec.hasCachedValidSyntax("RETURN 7", syntaxValidANTLR), "RETURN 2 was marked for ANTLR, canonical form included")
+	require.True(t, exec.hasCachedValidSyntax("RETURN 7", syntaxStatementAccepted), "a literal variant, through the canonical form")
+	require.True(t, exec.hasCachedValidSyntax("RETURN 2", syntaxGrammarAccepted), "RETURN 2 was marked with the exact-text grammar fact")
 }
 
 // Under ANTLR, a NornicDB extension statement the Nornic validator rejects
@@ -78,26 +78,8 @@ func TestSyntaxValidationCacheRejectedExtension(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	rejected := "SHOW LIMITS YIELD name WHERE name IN ['a',]"
 	require.True(t, isNornicExtensionStatement(rejected))
-	require.Error(t, exec.validateSyntax(context.Background(), rejected, false, syntaxStatement))
-	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxValidANTLR))
-}
-
-// Isolated native measurements intentionally exclude statement-wide Unicode
-// admission. Keep that slice independent of the configured runtime parser.
-func TestSyntaxValidationNativeCoreScope(t *testing.T) {
-	restoreParserTypeAfter(t)
-	const query = "RETURN −1"
-	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
-		config.SetParserType(parser)
-		core := NewStorageExecutor(newTestMemoryEngine(t))
-		require.NoError(t, core.validateSyntax(t.Context(), query, false, syntaxNativeCore))
-		require.True(t, core.hasCachedValidSyntax(query, syntaxValidNornic))
-		require.False(t, core.hasCachedValidSyntax(query, syntaxValidANTLR))
-		statement := NewStorageExecutor(newTestMemoryEngine(t))
-		err := statement.validateSyntax(t.Context(), query, false, syntaxStatement)
-		requireSemanticDetail(t, err, "InvalidUnicodeCharacter")
-		require.False(t, statement.hasCachedValidSyntax(query, activeSyntaxValidator()))
-	}
+	require.Error(t, exec.validateStatementSyntax(context.Background(), rejected, false))
+	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxStatementAccepted))
 }
 
 func TestSyntaxValidationCanceledStatementCacheHit(t *testing.T) {
@@ -106,16 +88,16 @@ func TestSyntaxValidationCanceledStatementCacheHit(t *testing.T) {
 		config.SetParserType(parser)
 		exec := NewStorageExecutor(newTestMemoryEngine(t))
 		const query = "RETURN 13 AS syntax_cached_value"
-		require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+		require.NoError(t, exec.validateStatementSyntax(t.Context(), query, false))
 		before := exec.cachedSyntaxVerdict(query)
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
-		require.ErrorIs(t, exec.validateSyntax(canceled, query, false, syntaxStatement), context.Canceled)
+		require.ErrorIs(t, exec.validateStatementSyntax(canceled, query, false), context.Canceled)
 		require.Equal(t, before, exec.cachedSyntaxVerdict(query))
 		const uncached = "RETURN 'uncached syntax value' AS fresh_value"
-		require.ErrorIs(t, exec.validateSyntax(canceled, uncached, false, syntaxStatement), context.Canceled)
+		require.ErrorIs(t, exec.validateStatementSyntax(canceled, uncached, false), context.Canceled)
 		require.Zero(t, exec.cachedSyntaxVerdict(uncached))
-		require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+		require.NoError(t, exec.validateStatementSyntax(t.Context(), query, false))
 		result, err := exec.Execute(t.Context(), query, nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"syntax_cached_value"}, result.Columns)
@@ -123,16 +105,30 @@ func TestSyntaxValidationCanceledStatementCacheHit(t *testing.T) {
 	}
 }
 
-func TestSyntaxValidationANTLRRejectionMarksOnlyNativeAcceptance(t *testing.T) {
+func TestSyntaxValidationStatementRejectionIsNeverAccepted(t *testing.T) {
 	restoreParserTypeAfter(t)
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	const query = "RETURN 1 @"
 	for range 2 {
-		err := exec.validateSyntax(t.Context(), query, false, syntaxStatement)
+		err := exec.validateStatementSyntax(t.Context(), query, false)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
-		require.True(t, exec.hasCachedValidSyntax(query, syntaxValidNornic))
-		require.False(t, exec.hasCachedValidSyntax(query, syntaxValidANTLR))
+		require.False(t, exec.hasCachedValidSyntax(query, syntaxStatementAccepted))
 		require.False(t, exec.hasCachedValidSyntax(query, syntaxGrammarAccepted))
+	}
+}
+
+func TestSyntaxValidationNativeCoreDoesNotBorrowStatementGrammar(t *testing.T) {
+	restoreParserTypeAfter(t)
+	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
+		config.SetParserType(parser)
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		const query = "SET n.status = 'active' RETURN n"
+		// NornicDB's start rule answers before the grammar on either parser, as
+		// the default parser always did. Neither verdict is cached or borrowed.
+		err := exec.validateStatementSyntax(t.Context(), query, false)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+		require.ErrorContains(t, err, "query must start with a valid clause")
+		require.False(t, exec.hasCachedValidSyntax(query, syntaxStatementAccepted))
 	}
 }

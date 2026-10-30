@@ -1025,46 +1025,6 @@ func queryGapEnd(query string, index int) int {
 	return end
 }
 
-// hasOwnStatementSyntax reports whether query is one of NornicDB's
-// statements with a syntax of its own, which canonicalizeQueryText leaves as
-// written but for its comments: the knowledge-policy DDL (CREATE / ALTER /
-// DROP / SHOW DECAY, PROMOTION or RETENTION …), whose bodies separate
-// settings and statements by lines; constraint contracts (CREATE CONSTRAINT
-// … REQUIRE { … }, one predicate per line); and CREATE [OR REPLACE]
-// PROCEDURE, which stores its body's text.
-func hasOwnStatementSyntax(query string) bool {
-	var words [3]string
-	count := 0
-	for index := queryGapEnd(query, 0); index < len(query) && count < len(words); index = queryGapEnd(query, index) {
-		end := index
-		end = cyphertext.NamePartEnd(query, end)
-		if end == index {
-			break
-		}
-		words[count] = query[index:end]
-		count++
-		index = end
-	}
-	switch {
-	case strings.EqualFold(words[0], "CREATE") && (strings.EqualFold(words[1], "PROCEDURE") ||
-		strings.EqualFold(words[1], "OR") && strings.EqualFold(words[2], "REPLACE")):
-		return true
-	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
-		// A constraint contract: REQUIRE { one predicate per line }.
-		if require := keywordIndex(query, "REQUIRE"); require >= 0 {
-			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
-				return true
-			}
-		}
-		return false
-	case strings.EqualFold(words[0], "CREATE"), strings.EqualFold(words[0], "ALTER"),
-		strings.EqualFold(words[0], "DROP"), strings.EqualFold(words[0], "SHOW"):
-		return strings.EqualFold(words[1], "DECAY") || strings.EqualFold(words[1], "PROMOTION") ||
-			strings.EqualFold(words[1], "RETENTION")
-	}
-	return false
-}
-
 // leadingShellCommandsEnd returns the end of the shell command lines
 // (:USE db, :param x => 1, …) that start query: the start of the line after
 // the last one, 0 when query starts with none.
@@ -1227,7 +1187,7 @@ func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, er
 	// a statement with its own syntax, or the leading shell command lines
 	// (:USE db, :param …), which end at their line breaks.
 	verbatimEnd := leadingShellCommandsEnd(query)
-	if hasOwnStatementSyntax(query[verbatimEnd:]) {
+	if classifyStatementBody(query[verbatimEnd:]).ownSyntax {
 		verbatimEnd = len(query)
 	}
 	for index := 0; index < len(query); {
@@ -1478,13 +1438,6 @@ func parseLineColumn(message string, start int) (line, column, end int, ok bool)
 	}
 	column, end, ok = number(next + 1)
 	return line, column, end, ok
-}
-
-// isExplainOrProfileText reports whether a canonical statement starts with
-// EXPLAIN or PROFILE.
-func isExplainOrProfileText(query string) bool {
-	query = strings.TrimLeft(query, " ")
-	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
 }
 
 type sourceRestorationPurpose uint8

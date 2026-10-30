@@ -126,7 +126,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Cypher classification. Procedure arguments can hide a mutation from the
 	// outer query text, so keyword matching alone is not an authorization boundary.
 	requirements := cypher.QueryPermissionRequirements(parentCtx, query, cypher.RawSource)
-	isWrite := requirements.Write
+	isWrite := requirements.ChangesState
 
 	// Log query if enabled
 	if s.server != nil && s.server.config.LogQueries {
@@ -168,6 +168,11 @@ func (s *Session) handleRun(data []byte) error {
 			dbName = "nornic" // single-DB mode default
 		}
 	}
+	// Per-database access first: a hidden database answers as an absent one.
+	mode := s.accessMode()
+	if s.databaseDenied(dbName) {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+	}
 	if s.server != nil && s.server.dbManager != nil && dbName != "" && !constituentAwareExists(s.server.dbManager, dbName) {
 		return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
 			s.localize(localization.DatabaseNotFound(dbName)))
@@ -175,14 +180,6 @@ func (s *Session) handleRun(data []byte) error {
 	if err := s.bindDatabaseConnection(dbName); err != nil {
 		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
-	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-	mode := s.accessMode()
-	if mode != nil {
-		if _, allowed := s.graphAccess(mode, dbName); !allowed {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
-		}
-	}
-
 	// Keep explicit transactions pinned to the executor selected at BEGIN.
 	executor := s.executor
 	if s.inTransaction {
@@ -307,18 +304,6 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	s.logRunTiming("OK", dbName, query, time.Since(runStart), rows, nil)
 
-	// Per-database RBAC: filter SHOW DATABASES results by CanSeeDatabase so principals only see DBs they may access
-	if isShowDatabasesQuery(query) && result.Rows != nil && mode != nil {
-		filtered := make([][]interface{}, 0, len(result.Rows))
-		for _, row := range result.Rows {
-			if len(row) > 0 {
-				if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
-					filtered = append(filtered, row)
-				}
-			}
-		}
-		result.Rows = filtered
-	}
 	var resultMemoryLease *memory.Lease
 	if s.server != nil && s.server.memoryPolicy != nil && result != nil && !isWrite {
 		// RUN can return before PULL. Keep a separate reservation with the
@@ -563,14 +548,6 @@ func truncateQuery(q string, maxLen int) string {
 		return q
 	}
 	return q[:maxLen] + "..."
-}
-
-// isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
-// Used to filter SHOW DATABASES results by CanSeeDatabase when per-database RBAC is enabled.
-func isShowDatabasesQuery(query string) bool {
-	norm := strings.TrimSpace(query)
-	norm = strings.Join(strings.Fields(norm), " ")
-	return strings.EqualFold(norm, "SHOW DATABASES")
 }
 
 // parseRunMessage parses a RUN message to extract query, parameters, and metadata.
@@ -1766,6 +1743,18 @@ func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.Principal
 	}
 	access.Entitlement = s.authResult.HasPermission
 	return access
+}
+
+// databaseDenied reports a database the principal may not access. Each place
+// that selects a database asks this before it asks whether the database exists,
+// so a hidden database answers exactly as an absent one.
+func (s *Session) databaseDenied(dbName string) bool {
+	mode := s.accessMode()
+	if mode == nil {
+		return false
+	}
+	_, allowed := s.graphAccess(mode, dbName)
+	return !allowed
 }
 
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's

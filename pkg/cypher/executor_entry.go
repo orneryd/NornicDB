@@ -127,7 +127,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.txContext = member.transaction
 	}
 
-	ctx, source := cyphertext.WithSource(ctx, cypher)
+	ctx, source := statementSource(ctx, cypher, !clientText)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
 			return nil, invalidUnicodeLiteralError(invalid.Offset)
@@ -135,6 +135,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return nil, source.Err
 	}
 	// Retain the original credential context across admission and routing errors.
+	ctx = executingStatementContext(ctx)
 	defer func(original string) {
 		redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
 	}(cypher)
@@ -337,17 +338,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err
 	}
-	if config.IsANTLRParser() {
-		body, _ := stripCypherPreamble(cypher)
-		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(ctx, body) {
-			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
-		}
-	}
 	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
 	var preambleRewrite *queryRewrite
-	cypher, _, preambleRewrite = readCypherPreamble(cypher)
+	cypher, _, _, preambleRewrite = readCypherPreamble(cypher)
 	if preambleRewrite != nil {
 		ctx = withSourceRewrite(ctx, preambleRewrite)
 		defer func() { result, retErr = (resultRestoration{source: preambleRewrite}).restore(result, retErr, nil) }()
@@ -421,7 +416,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Knowledge-policy DDL that cannot be parsed (a missing profile or policy
 	// name, a missing OPTIONS block) is a syntax error on every route, the
 	// auto-commit and HTTP routes included (#514).
-	if isKnowledgePolicyDDLStatement(cypher) {
+	if classifyStatement(cypher).knowledgePolicy {
 		if _, _, err := ParseKnowledgePolicyDDL(ctx, cypher, AcceptedSource); err != nil {
 			return nil, &classifiedCypherError{
 				cause:  err,
@@ -520,24 +515,22 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if fabricQuery || e.shouldUseFabricPlanner(ctx, cypher) {
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
-		mode, modeQuery := parseExecutionMode(cypher)
+		modeCtx, mode, modeQuery := executionModeSource(ctx, cypher)
 		if finishTerminated {
 			ctx = withFinishedStatement(ctx, modeQuery)
+			modeCtx = withFinishedStatement(modeCtx, modeQuery)
 		}
 		if mode != ModeNormal {
-			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
-				return nil, err
-			}
-			if err := e.validateFabricSemanticScopes(ctx, modeQuery, params); err != nil {
+			if err := e.validateFabricSemanticScopes(modeCtx, modeQuery, params); err != nil {
 				return nil, err
 			}
 			if err := e.statementParametersError(ctx, cypher, params); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
-				return e.executeExplain(ctx, modeQuery)
+				return e.executeExplain(modeCtx, modeQuery)
 			}
-			return e.executeProfile(ctx, modeQuery)
+			return e.executeProfile(modeCtx, modeQuery)
 		}
 		info := e.analyzer.Analyze(ctx, cypher)
 		if err := ctx.Err(); err != nil {
@@ -599,8 +592,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// EXPLAIN / PROFILE USE <graph> …: the graph is resolved as for the
 	// statement itself (Neo4j's DatabaseNotFound for a missing one, #744),
 	// and the plan is the target database's.
-	if mode, inner := parseExecutionMode(cypher); mode != ModeNormal {
-		if use, remaining, hasUse, err := parseUseClause(ctx, inner, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if modeCtx, mode, inner := executionModeSource(ctx, cypher); mode != ModeNormal {
+		if useCtx, use, remaining, hasUse, err := readUseStatement(modeCtx, inner, false); hasUse || err != nil {
 			if err != nil {
 				return nil, err
 			}
@@ -611,18 +604,19 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
+			useCtx, routedText := withSourceAffixes(useCtx, remaining, keyword, "")
+			return e.executeOnDatabase(useCtx, use.Name, routedText, params, false)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
-	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if useCtx, use, remaining, hasUse, err := readUseStatement(ctx, cypher, false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
+		return e.executeOnDatabase(useCtx, use.Name, remaining, params, false)
 	}
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates the local evaluator reads. Route source Cypher first: remote
@@ -654,7 +648,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// and so is a statement that reads or writes no graph (RETURN 1,
 	// UNWIND graph.names() AS g RETURN g), which runs on the composite
 	// itself, as in Neo4j.
-	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(cypher) {
+	if isCompositeRoot(e.storage) && !classifyStatement(cypher).compositeRootCommand && statementAccessesGraphText(cypher) {
 		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
@@ -746,8 +740,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}
 
-	// Validate basic syntax
-	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+	// Admit the prepared execution language before binding or execution.
+	if err := e.validateStatementSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -792,15 +786,15 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it. EXPLAIN and PROFILE
 	// check the statement they plan, as Neo4j compiles it.
-	_, scopeText := parseExecutionMode(cypher)
+	scopeCtx, _, scopeText := executionModeSource(ctx, cypher)
 	scopeText, _ = stripWithEmbeddingSuffix(scopeText)
 	if finishTerminated {
-		scopeText += " FINISH"
+		scopeCtx, scopeText = withSourceAffixes(scopeCtx, scopeText, "", " FINISH")
 	}
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
+	if err := e.validateSemanticScopes(scopeCtx, scopeText); err != nil {
 		return nil, err
 	}
-	admission, admissionErr := e.admitBoundStatement(ctx, scopeText)
+	admission, admissionErr := e.admitBoundStatement(scopeCtx, scopeText)
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
@@ -900,7 +894,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// commands bucket as "admin" instead). Single observation point covers
 	// cache-hit early-return AND every downstream execution path so the
 	// counter reflects intent regardless of how the query resolves.
-	opType := classifyOpType(info, false /* isFabric */, isMetadataCommand(cypher, metadataCatalogExecution))
+	opType := classifyOpType(info, false /* isFabric */, classifyStatement(cypher).catalog)
 	e.observeQuery(opType, true /* observeDuration */, slowStart)
 	planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
 	planSpan.End()
@@ -952,15 +946,15 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Prefix consumption and dispatch share one reader, including comments
 	// and EOF. A classifier flag must never re-enter the unchanged statement.
 	if info.HasExplain || info.HasProfile {
-		mode, innerQuery := parseExecutionMode(cypher)
+		modeCtx, mode, innerQuery := executionModeSource(ctx, cypher)
 		if finishTerminated {
-			ctx = withFinishedStatement(ctx, innerQuery)
+			modeCtx = withFinishedStatement(modeCtx, innerQuery)
 		}
 		if mode == ModeExplain {
-			return e.executeExplain(ctx, innerQuery)
+			return e.executeExplain(modeCtx, innerQuery)
 		}
 		if mode == ModeProfile {
-			return e.executeProfile(ctx, innerQuery)
+			return e.executeProfile(modeCtx, innerQuery)
 		}
 	}
 
@@ -979,7 +973,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// implicit transactions: they operate on dbManager/metadata, not graph
 	// storage. Routing them through executeWithoutTransaction directly ensures
 	// correct handling and avoids the write path.
-	if isMetadataCommand(cypher, metadataCatalogExecution) || isOrdinarySchemaDDL(cypher) {
+	if class := classifyStatement(cypher); class.catalog || class.ordinarySchema {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err

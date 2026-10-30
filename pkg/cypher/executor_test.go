@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1833,12 +1832,9 @@ func TestExecuteMatchCreateWithRelationshipProperties(t *testing.T) {
 // This is the exact pattern from the Northwind benchmark that was failing:
 // MATCH (s1), (c1) CREATE (p1) CREATE (p1)-[:REL]->(c1)
 // MATCH (s2), (c2) CREATE (p2) CREATE (p2)-[:REL]->(c2)
-// NOTE: This is a NornicDB-specific extension - ANTLR's OpenCypher grammar doesn't support
-// multiple MATCH...CREATE blocks without semicolons
+// NOTE: This is a NornicDB-specific extension; the shared statement grammar
+// admits it on either parser.
 func TestExecuteMultipleMatchCreateBlocks(t *testing.T) {
-	if config.IsANTLRParser() {
-		t.Skip("Skipping: ANTLR parser doesn't support multiple MATCH...CREATE blocks without semicolons (NornicDB extension)")
-	}
 	baseStore := newTestMemoryEngine(t)
 
 	store := storage.NewNamespacedEngine(baseStore, "test")

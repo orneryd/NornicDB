@@ -62,6 +62,9 @@ func useSyntaxError(message localization.Message) error {
 type UseClauseReference struct {
 	UseClause
 	End int
+	// Remainder is the exact body extent in the supplied query, at its
+	// selected source stage. It accompanies the same bytes returned below.
+	Remainder cyphertext.Span
 }
 
 // ParseUseClause reads a leading USE clause as Neo4j 5.26's grammar does
@@ -168,65 +171,11 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 	if strings.EqualFold(word, "USE") {
 		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseNotFirstClause())
 	}
-	if !inSubquery && IsAdministrationCommand(trimmed[next:]) {
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseAdministrationCommand())
-	}
 	restStart := end + len(trimmed[end:]) - len(strings.TrimLeftFunc(trimmed[end:], cyphertext.IsWhitespace))
 	restEnd := max(restStart, len(strings.TrimRightFunc(trimmed, cyphertext.IsWhitespace)))
 	restSpan, _ := view.OriginalSpan(cyphertext.Span{Start: restStart, End: restEnd}, cyphertext.SourceExtent)
+	clause.Remainder = restSpan
 	return clause, source.Original[restSpan.Start:restSpan.End], true, nil
-}
-
-// IsAdministrationCommand reports whether the statement is one of Neo4j's
-// administration commands (database, alias, server, user, role and
-// privilege management), which Neo4j routes to the system database and
-// refuses after a USE clause. Classified as Neo4j 5.26's grammar does
-// (verified per command): SHOW DATABASE[S] / DEFAULT DATABASE / HOME
-// DATABASE / SERVER[S] / SUPPORTED PRIVILEGES / POPULATED ROLES / ALL
-// ROLES|PRIVILEGES / USER[S] (not USER DEFINED FUNCTIONS) / CURRENT USER /
-// ROLE[S] / PRIVILEGE[S] / ALIAS[ES]; CREATE / DROP / ALTER of a DATABASE,
-// COMPOSITE DATABASE, ALIAS, USER, ROLE or SERVER (and CREATE OR REPLACE of
-// one, ALTER CURRENT USER); GRANT, DENY, REVOKE, RENAME, START, STOP,
-// ENABLE, DRYRUN, DEALLOCATE and REALLOCATE.
-func IsAdministrationCommand(statement string) bool {
-	leading, count := leadingWords(statement)
-	words := leading[:count]
-	if len(words) == 0 {
-		return false
-	}
-	switch words[0] {
-	case "GRANT", "DENY", "REVOKE", "RENAME", "START", "STOP", "ENABLE", "DRYRUN", "DEALLOCATE", "REALLOCATE":
-		return true
-	case "SHOW":
-		if len(words) < 2 {
-			return false
-		}
-		switch words[1] {
-		case "DATABASE", "DATABASES", "DEFAULT", "HOME", "SERVER", "SERVERS", "SUPPORTED", "POPULATED",
-			"USERS", "CURRENT", "ROLE", "ROLES", "PRIVILEGE", "PRIVILEGES", "ALIAS", "ALIASES":
-			return true
-		case "USER":
-			return len(words) < 3 || words[2] != "DEFINED"
-		case "ALL":
-			return len(words) > 2 && (words[2] == "ROLE" || words[2] == "ROLES" || words[2] == "PRIVILEGE" || words[2] == "PRIVILEGES")
-		}
-		return false
-	case "CREATE", "DROP", "ALTER":
-		object := words[1:]
-		if words[0] == "CREATE" && len(object) >= 2 && object[0] == "OR" && object[1] == "REPLACE" {
-			object = object[2:]
-		}
-		if len(object) == 0 {
-			return false
-		}
-		switch object[0] {
-		case "DATABASE", "COMPOSITE", "ALIAS", "USER", "ROLE", "SERVER":
-			return true
-		case "CURRENT":
-			return words[0] == "ALTER" && len(object) > 1 && object[1] == "USER"
-		}
-	}
-	return false
 }
 
 // inputToken is the token Neo4j names in "Invalid input '…'" at i: the run
@@ -246,30 +195,6 @@ func inputToken(s string, i int) string {
 		return s[i:cyphertext.NamePartEnd(s, i)]
 	}
 	return string(cyphertext.RuneAt(s, i))
-}
-
-// leadingWords returns up to four leading words of statement, upper-cased,
-// skipping spaces and comments between them; it stops at the first token
-// that is not a word.
-func leadingWords(statement string) (words [4]string, count int) {
-	i := skipSpacesAndComments(statement, 0)
-	for count < len(words) {
-		word, next, ok := scanWord(statement, i)
-		if !ok {
-			break
-		}
-		// These products classify reserved grammar words, not identifiers.
-		// Unicode case folding must not turn a name into a reserved token.
-		for j := 0; j < len(word); j++ {
-			if word[j] >= 0x80 {
-				return words, count
-			}
-		}
-		words[count] = strings.ToUpper(word)
-		count++
-		i = skipSpacesAndComments(statement, next)
-	}
-	return words, count
 }
 
 // startsWithWordFold reports whether s starts with word (case-insensitive)

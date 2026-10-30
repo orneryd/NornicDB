@@ -45,33 +45,6 @@ func isCompositeRoot(engine storage.Engine) bool {
 	return false
 }
 
-// isCompositeAllowedCommand returns true for system/admin commands that are
-// valid at composite root level without requiring a constituent target.
-func isCompositeAllowedCommand(cypher string) bool {
-	upper := upperASCII(strings.TrimSpace(cypher))
-	prefixes := []string{
-		"SHOW DATABASE", "SHOW COMPOSITE", "SHOW CONSTITUENTS",
-		"SHOW ALIASES", "SHOW LIMITS", "SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTING",
-		// Schema introspection/DDL commands pass through to their own handlers
-		// which return more specific composite-root error messages.
-		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
-		"SHOW CONSTRAINT",
-		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
-		"CREATE CONSTRAINT",
-		"DROP INDEX", "DROP CONSTRAINT",
-		"CREATE DATABASE", "DROP DATABASE",
-		"CREATE COMPOSITE", "DROP COMPOSITE", "ALTER COMPOSITE",
-		"CREATE ALIAS", "DROP ALIAS",
-		"BEGIN", "COMMIT", "ROLLBACK",
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(upper, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
 func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
@@ -90,29 +63,26 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, err
 	}
 
-	upper := upperASCII(cypher)
-
-	// Order matters: check more specific patterns first
+	form := classifyStatement(cypher).schemaCommand
 	var run func(context.Context, string) (*ExecuteResult, error)
-	if strings.Contains(upper, "CREATE CONSTRAINT") {
+	switch form {
+	case schemaCreateConstraint:
 		run = e.executeCreateConstraint
-	} else if strings.Contains(upper, "DROP CONSTRAINT") {
+	case schemaDropConstraint:
 		run = e.executeDropConstraint
-	} else if startsWithKeywords(cypher, "DROP", "INDEX") {
+	case schemaDropIndex:
 		run = e.executeDropIndex
-	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
+	case schemaCreateFulltextIndex:
 		run = e.executeCreateFulltextIndex
-	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
+	case schemaCreateVectorIndex, schemaCreateRangeIndex:
 		run = e.executeCreateIndex
-	} else if strings.Contains(upper, "CREATE RANGE INDEX") {
-		run = e.executeCreateIndex
-	} else if startsWithKeywords(cypher, "CREATE", "TEXT INDEX") || startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
+	case schemaCreateTypedPropertyIndex:
 		run = e.executeCreateTypedPropertyIndex
-	} else if startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX") {
+	case schemaCreateLookupIndex:
 		run = e.executeCreateLookupIndex
-	} else if strings.Contains(upper, "CREATE INDEX") {
+	case schemaCreateIndex:
 		run = e.executeCreateIndex
-	} else {
+	default:
 		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
 	result, err := e.countSchemaChanges(ctx, cypher, run)
@@ -121,7 +91,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 			err = wrapper.tx.StageSchemaChanges()
 		}
 	}
-	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {
+	if err != nil && form == schemaCreateConstraint {
 		var violation *storage.ConstraintViolationError
 		if errors.As(err, &violation) {
 			return nil, &classifiedCypherError{cause: err, code: "Neo.DatabaseError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}

@@ -281,9 +281,7 @@
     "bareWordBeforeLiteral",
     "executeWithoutTransaction",
     "hasAdjacentOperands",
-    "isGraphQueryStatement",
-    "validateLeadingNodePatternTransition",
-    "validateSyntax"
+    "validateLeadingNodePatternTransition"
   ],
   "pkg/cypher/executor_show.go": [
     "applyShowTail",
@@ -386,7 +384,6 @@
     "extractDelimitedSection",
     "firstKeywordIndexFromDefault",
     "followedByTimeZone",
-    "hasOwnStatementSyntax",
     "inPatternClause",
     "indexASCIIFold",
     "isNameableClauseKeyword",
@@ -646,7 +643,6 @@
     "compilePipelineNodeMatchSource"
   ],
   "pkg/cypher/pipeline_shared_clauses.go": [
-    "cypherGrammarVersion",
     "parsePipelineIteration",
     "parsePipelineLet"
   ],
@@ -852,6 +848,17 @@
   "pkg/cypher/statement_caches.go": [
     "cacheDependencyScopes"
   ],
+  "pkg/cypher/statement_class.go": [
+    "isGraphQueryBody",
+    "readStatementBody"
+  ],
+  "pkg/cypher/statement_command.go": [
+    "readLeadingWords",
+    "readStatementCommand",
+    "scanReservedWord",
+    "statementStartWord",
+    "statementTextStart"
+  ],
   "pkg/cypher/statement_framing.go": [
     "explainProfileConflict",
     "firstWordUpper",
@@ -1005,7 +1012,6 @@
     "ReadUseClause",
     "doubleQuoteStringLiterals",
     "inputToken",
-    "leadingWords",
     "matchingParen",
     "scanWord",
     "skipSpacesAndComments",

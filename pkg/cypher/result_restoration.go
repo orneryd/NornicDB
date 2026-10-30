@@ -49,9 +49,9 @@ func (restoration resultRestoration) restore(result *ExecuteResult, err error, p
 		}
 		restoreRows := false
 		if restoration.names != nil {
-			restoreRows = isExplainOrProfile(restoration.names.Original)
+			restoreRows = classifyStatement(restoration.names.Original).prefixMode != prefixNone
 		} else if len(result.Rows) > 0 {
-			restoreRows = isExplainOrProfileText(restoration.source.Text)
+			restoreRows = classifyStatement(restoration.source.Text).prefixMode != prefixNone
 		}
 		var rows any
 		rowsRestored := false

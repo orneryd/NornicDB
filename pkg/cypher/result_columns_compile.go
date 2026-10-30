@@ -60,7 +60,8 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, compiler.source); supported {
+	class := classifyStatement(compiler.source)
+	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, compiler.source, class.command); supported {
 		if err != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
 		}
@@ -82,8 +83,8 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
 	start, end := query.Span()
-	if _, command, failure := parseProcedurePrivilegeCommand(compiler.source[start:end]); command {
-		if failure != nil {
+	if class.command == commandProcedurePrivilege {
+		if _, _, failure := parseProcedurePrivilegeCommand(compiler.source[start:end]); failure != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, failure)
 		}
 		scope := projectionScope(incoming)
@@ -92,9 +93,8 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	}
 	// These commands already declare their fixed schema in the typed SHOW
 	// owner. EXPLAIN reads that declaration without enumerating users.
-	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
-	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
-		(startsWithKeywords(show.Code(), "SHOW", "USERS") || startsWithKeywords(show.Code(), "SHOW", "CURRENT USER")) {
+	if (class.command == commandShowUsers || class.command == commandShowCurrentUser) &&
+		!query.ChildRule(cypherantlr.CypherParserRULE_showCommand).ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() {
 		names := resultmetadata.Known(showUsersColumns)
 		scope := projectionScope(names)
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}

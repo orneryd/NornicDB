@@ -1758,6 +1758,9 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	// The owner answers first: the statement's CYPHER preamble version holds
+	// for every branch.
+	statement := classifyStatement(cypher)
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1809,7 +1812,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", AcceptedSource)
+			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), statement.version == "25" || classifyStatement(query).version == "25", AcceptedSource)
 			if err != nil {
 				return nil, err
 			}

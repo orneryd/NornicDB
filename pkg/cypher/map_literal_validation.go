@@ -9,13 +9,6 @@ import (
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery.
 func validateStaticMapKeys(query string) error {
-	upper := upperASCII(strings.TrimSpace(query))
-	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
-		return nil
-	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
-		return nil
-	}
 	var patternContext *mapPatternContext
 	// Carry the predecessor through this lexical pass. Re-reading from byte
 	// zero for each brace makes a flat list of ordinary maps quadratic.
