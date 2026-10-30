@@ -179,7 +179,14 @@ func TestReplicationR4AllNativeRetirementOutcomes(t *testing.T) {
 				require.ErrorIs(t, result, peer.failure, "lost a sibling peer close outcome")
 			}
 			require.Equal(t, "closed", owner.Health().State)
-			require.NoError(t, owner.Shutdown(), "repeat Shutdown remains a no-op")
+			// A repeat Shutdown joins the same stop and reports its outcome:
+			// an early nil would let a second caller dispose shared state
+			// while the first stop's cleanup failed.
+			repeat := owner.Shutdown()
+			require.ErrorIs(t, repeat, tr.failure, "repeat Shutdown must report the stop's outcome")
+			for _, peer := range peers {
+				require.ErrorIs(t, repeat, peer.failure, "repeat Shutdown lost a sibling peer close outcome")
+			}
 		})
 	}
 	t.Run("standalone borrowed storage", func(t *testing.T) {
