@@ -1003,7 +1003,7 @@ func TestHeimdallCoverage_SchedulerToolHelpers(t *testing.T) {
 	assert.Equal(t, "tool-response", content)
 	assert.Len(t, toolCalls, 1)
 
-	manager.closed = true
+	manager.work.CloseAdmission()
 	_, _, err = manager.GenerateWithTools(context.Background(), nil, nil, DefaultGenerateParams())
 	require.ErrorContains(t, err, "closed")
 

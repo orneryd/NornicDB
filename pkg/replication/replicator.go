@@ -79,14 +79,6 @@ type Replicator interface {
 	NodeID() string
 }
 
-// lifecycleAttempt is the actual completion and result of one admitted native
-// lifecycle operation. Each component publishes it under its existing mutex;
-// the component's existing worker wait group retains the executing operation.
-type lifecycleAttempt struct {
-	done chan struct{}
-	err  error
-}
-
 // Command represents a write operation to be replicated.
 type Command struct {
 	accepted *acceptedEntityCommand
@@ -323,7 +315,6 @@ type StandaloneReplicator struct {
 	storage Storage
 	mu      sync.RWMutex
 	started bool
-	closed  bool
 	work    lifecycle.WorkLifetime // stop signal of this replicator
 
 	// metrics is the Plan-04-06 observation seam. Standalone never
@@ -355,7 +346,7 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.closed {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -365,8 +356,14 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	// The application is accepted work: Shutdown waits for it to return.
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	if !accepted {
+		return ErrClosed
+	}
+	defer release()
 	r.mu.RLock()
-	if err := checkApplyReadiness(r.closed, r.started); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {
 		r.mu.RUnlock()
 		return err
 	}
@@ -414,7 +411,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 	if r.started {
 		state = "ready"
 	}
-	if r.closed {
+	if r.work.Closing() {
 		state = "closed"
 	}
 
@@ -425,7 +422,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 		IsLeader: true,
 		LeaderID: r.config.NodeID,
 		State:    state,
-		Healthy:  r.started && !r.closed,
+		Healthy:  r.started && !r.work.Closing(),
 	}
 }
 
@@ -436,11 +433,7 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
-	r.mu.Lock()
-	r.closed = true
-	r.mu.Unlock()
-	r.work.Cancel()
-	return nil
+	return r.work.Shutdown(context.Background(), nil)
 }
 
 // Mode returns the replication mode.

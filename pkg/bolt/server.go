@@ -221,7 +221,6 @@ type Server struct {
 	lifecycleMu                    sync.Mutex
 	work                           *lifecycle.WorkLifetime
 	serving                        bool
-	stopped                        lifecycle.OnceCompletion // the retirement driver, run once and joined by every stopper
 	mu                             sync.RWMutex
 	sessions                       map[string]*Session
 	connectionListings             map[string]cypher.ConnectionListing

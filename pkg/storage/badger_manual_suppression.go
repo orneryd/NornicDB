@@ -231,19 +231,17 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	if start {
-		if _, err := b.beginHelperTxn(); err != nil {
+		_, release, err := b.beginHelperTxn()
+		if err != nil {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
 			return // Close owns the pending ends after helper admission closes.
 		}
 		go func() {
-			defer b.txnWG.Done()
+			defer release()
 			if err := b.endSuppressions(nil); err != nil && !util.ErrorIsOnly(err, ErrStorageClosed) {
-				outcome := fmt.Errorf("manual-suppression retirement: %w", err)
-				b.mu.Lock()
-				b.retirementOutcomes.Record("", outcome)
-				b.mu.Unlock()
+				b.work.RecordError("", fmt.Errorf("manual-suppression retirement: %w", err))
 			}
 		}()
 	}

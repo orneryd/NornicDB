@@ -542,7 +542,7 @@ func TestServerStopR3ConstructedModels(t *testing.T) {
 					_, _ = s.db.GetCypherExecutor().Execute(context.Background(), "CALL db.infer({prompt:'r3'}) YIELD text RETURN text", nil)
 				}()
 			} else {
-				reranker := search.NewLocalReranker(model, nil)
+				reranker := search.NewLocalReranker(model, nil, s.db.BeginProviderUse)
 				s.db.SetSearchReranker(reranker)
 				go func() {
 					defer close(useDone)

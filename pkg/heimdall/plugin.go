@@ -939,10 +939,10 @@ func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlu
 	host := m.ctx
 	m.mu.RUnlock()
 	lp := &LoadedHeimdallPlugin{Plugin: p, Path: path, Builtin: builtin}
+	// Every registration, started here or later by StartAll, carries the same
+	// obligations: it is signalled by StopAll from Initialize onward, and a
+	// failure stops and disposes what it constructed.
 	fail := func(err error, owned bool) error {
-		if !start {
-			return err
-		}
 		cleanup := cleanupUnpublishedPlugin(lp, host.Config)
 		if owned {
 			m.lifetime().RecordError("", m.redactOutcome(compose.Outcomes(err, cleanup)))
@@ -980,12 +980,10 @@ func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlu
 	m.registering[name] = struct{}{}
 	// Stop is the cancellation contract from construction onward, including
 	// an Initialize which cannot finish until its private worker is signaled.
-	if start {
-		if m.starting == nil {
-			m.starting = make(map[string]*LoadedHeimdallPlugin)
-		}
-		m.starting[name] = lp
+	if m.starting == nil {
+		m.starting = make(map[string]*LoadedHeimdallPlugin)
 	}
+	m.starting[name] = lp
 	registrations := m.registrations
 	ctx := m.ctx
 	ctx.Context = workCtx
@@ -1001,10 +999,10 @@ func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlu
 	if err := p.Initialize(ctx); err != nil {
 		return fail(fmt.Errorf("failed to initialize %s: %w", name, err), true)
 	}
+	if registrations.Closing() {
+		return fail(fmt.Errorf("plugin subsystem is stopping"), true)
+	}
 	if start {
-		if registrations.Closing() {
-			return fail(fmt.Errorf("plugin subsystem is stopping"), true)
-		}
 		if err := p.Start(); err != nil {
 			return fail(fmt.Errorf("start %s: %w", name, err), true)
 		}
@@ -1067,11 +1065,27 @@ func (m *SubsystemManager) GetAction(name string) (ActionFunc, bool) {
 }
 
 // StartAll starts all registered subsystems.
+// Each Start is accepted work of the manager's lifetime and is refused once
+// registration admission is sealed, exactly as a start during registration.
 func (m *SubsystemManager) StartAll() error {
 	plugins := m.listOrderedPlugins()
 
 	for _, lp := range plugins {
-		if err := lp.Plugin.Start(); err != nil {
+		_, release, accepted := m.acquireCallbackWork(context.Background())
+		if !accepted {
+			return fmt.Errorf("plugin subsystem is stopping")
+		}
+		m.mu.Lock()
+		closing := m.registrationsLocked().Closing()
+		m.mu.Unlock()
+		var err error
+		if closing {
+			err = fmt.Errorf("plugin subsystem is stopping")
+		} else {
+			err = lp.Plugin.Start()
+		}
+		release()
+		if err != nil {
 			return fmt.Errorf("failed to start %s: %w", lp.Plugin.Name(), err)
 		}
 	}
@@ -1131,6 +1145,28 @@ func (m *SubsystemManager) StopAll() error {
 
 // ShutdownAll shuts down all registered subsystems.
 func (m *SubsystemManager) ShutdownAll() error {
+	m.mu.RLock()
+	hosted := m.ctx.Lifetime != nil
+	m.mu.RUnlock()
+	if hosted {
+		// A host lifetime is joined by its host before it disposes plugins.
+		return m.redactOutcome(m.disposeAll())
+	}
+	// A manager that owns its lifetime is that lifetime's stop: accepted
+	// callbacks are joined first, then plugins are disposed exactly once. The
+	// next epoch exists only after this one has actually completed.
+	owned := m.lifetime()
+	err := owned.Shutdown(context.Background(), m.disposeAll)
+	m.mu.Lock()
+	if m.owned == owned {
+		m.owned = lifecycle.NewWorkLifetime(context.Background())
+	}
+	m.mu.Unlock()
+	return m.redactOutcome(err)
+}
+
+// disposeAll detaches the installed generation and disposes its plugins.
+func (m *SubsystemManager) disposeAll() error {
 	var plugins []*LoadedHeimdallPlugin
 	for {
 		var generation uint64
@@ -1166,20 +1202,7 @@ func (m *SubsystemManager) ShutdownAll() error {
 	for _, lp := range plugins {
 		joined = compose.Outcomes(joined, lp.dispose())
 	}
-	// A manager that owns its lifetime joins its own accepted callbacks; the
-	// next registration starts a new one. A host lifetime is joined by its host.
-	m.mu.Lock()
-	owned := m.owned
-	if m.ctx.Lifetime == nil {
-		m.owned = nil
-	} else {
-		owned = nil
-	}
-	m.mu.Unlock()
-	if owned != nil {
-		joined = compose.Outcomes(joined, owned.Close())
-	}
-	return m.redactOutcome(joined)
+	return joined
 }
 
 // AllHealth returns health status of all subsystems.

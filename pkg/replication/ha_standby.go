@@ -23,8 +23,8 @@ type HAStandbyReplicator struct {
 	storage Storage
 
 	mu       sync.RWMutex
-	starting *lifecycleAttempt
-	work     lifecycle.WorkLifetime // admission-free stop signal and outcomes of this replicator
+	starting *lifecycle.OnceCompletion // the current start attempt; a retry is a new attempt
+	work     lifecycle.WorkLifetime    // admission-free stop signal and outcomes of this replicator
 
 	// Role state
 	role       string // "primary", "standby" or "fenced" (protected by mu)
@@ -33,7 +33,7 @@ type HAStandbyReplicator struct {
 
 	// promoting is the in-flight Promote, if any (protected by promoteMu).
 	promoteMu sync.Mutex
-	promoting *lifecycleAttempt
+	promoting *lifecycle.OnceCompletion // the current promotion; a retry is a new attempt
 
 	// Primary-side state
 	walStreamer *WALStreamer
@@ -47,9 +47,6 @@ type HAStandbyReplicator struct {
 
 	// Shared state
 	started atomic.Bool
-	closed  atomic.Bool
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
 
 	// metrics is the Plan-04-06 observation seam (D-15a per-event role
 	// updates + per-peer lag/RTT/last_contact). nil-safe — production code
@@ -196,7 +193,6 @@ func NewHAStandbyReplicator(config *Config, storage Storage) (*HAStandbyReplicat
 		config:  config,
 		storage: storage,
 		role:    config.HAStandby.Role,
-		stopCh:  make(chan struct{}),
 	}
 
 	r.isPrimary.Store(config.HAStandby.Role == "primary")
@@ -240,41 +236,48 @@ func (r *HAStandbyReplicator) SetReplicatorMetrics(bag *observability.Replicatio
 // Start initializes and starts the HA standby replicator.
 func (r *HAStandbyReplicator) Start(ctx context.Context) (startErr error) {
 	r.mu.Lock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.Unlock()
 		return ErrClosed
 	}
 	if attempt := r.starting; attempt != nil {
 		r.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		<-attempt.Done()
+		return attempt.Err()
 	}
 	if r.started.Load() {
 		r.mu.Unlock()
 		return nil
 	}
-	attempt := &lifecycleAttempt{done: make(chan struct{})}
+	attempt := &lifecycle.OnceCompletion{}
 	r.starting = attempt
 	r.started.Store(true)
-	r.wg.Add(1)
 	r.mu.Unlock()
+	release, accepted := r.enter()
+	if !accepted {
+		r.mu.Lock()
+		r.started.Store(false)
+		r.starting = nil
+		r.mu.Unlock()
+		attempt.Do(func() error { return ErrClosed })
+		return ErrClosed
+	}
 	defer func() {
 		r.mu.Lock()
 		if startErr != nil {
 			r.started.Store(false)
 		}
-		attempt.err = startErr
 		r.starting = nil
-		close(attempt.done)
 		r.mu.Unlock()
-		r.wg.Done()
+		attempt.Do(func() error { return startErr })
+		release()
 	}()
 	// Initialization observes its caller; running work belongs to the
 	// immutable context created before this replicator was published.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -299,7 +302,7 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) (startErr error) {
 		r.config.HAStandby.WALBatchSize,
 		r.config.HAStandby.WALBatchTimeout,
 	)
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -334,16 +337,13 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) (startErr error) {
 // startPrimary starts the primary node.
 func (r *HAStandbyReplicator) startPrimary(ctx context.Context) error {
 	// Connect to standby
-	r.wg.Add(1)
-	go r.connectToStandbyLoop(ctx)
+	r.goWork(func() { r.connectToStandbyLoop(ctx) })
 
 	// Start WAL streaming
-	r.wg.Add(1)
-	go r.streamWALLoop(ctx)
+	r.goWork(func() { r.streamWALLoop(ctx) })
 
 	// Start heartbeat
-	r.wg.Add(1)
-	go r.primaryHeartbeatLoop(ctx)
+	r.goWork(func() { r.primaryHeartbeatLoop(ctx) })
 
 	return nil
 }
@@ -351,19 +351,16 @@ func (r *HAStandbyReplicator) startPrimary(ctx context.Context) error {
 // startStandby starts the standby node.
 func (r *HAStandbyReplicator) startStandby(ctx context.Context) error {
 	// Start listening for incoming connections
-	r.wg.Add(1)
-	go r.listenForPrimary(ctx)
+	r.goWork(func() { r.listenForPrimary(ctx) })
 
 	// Start primary health monitoring
-	r.wg.Add(1)
-	go r.monitorPrimaryHealth(ctx)
+	r.goWork(func() { r.monitorPrimaryHealth(ctx) })
 
 	return nil
 }
 
 // connectToStandbyLoop continuously tries to connect to the standby.
 func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
-	defer r.wg.Done()
 
 	backoff := r.config.HAStandby.ReconnectInterval
 
@@ -371,7 +368,7 @@ func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		default:
 		}
@@ -408,7 +405,6 @@ func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
 
 // streamWALLoop continuously streams WAL to standby.
 func (r *HAStandbyReplicator) streamWALLoop(ctx context.Context) {
-	defer r.wg.Done()
 
 	ticker := time.NewTicker(r.config.HAStandby.WALBatchTimeout)
 	defer ticker.Stop()
@@ -417,7 +413,7 @@ func (r *HAStandbyReplicator) streamWALLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			r.streamPendingWAL(ctx)
@@ -451,7 +447,6 @@ func (r *HAStandbyReplicator) streamPendingWAL(ctx context.Context) {
 
 // primaryHeartbeatLoop sends heartbeats to standby.
 func (r *HAStandbyReplicator) primaryHeartbeatLoop(ctx context.Context) {
-	defer r.wg.Done()
 
 	ticker := time.NewTicker(r.config.HAStandby.HeartbeatInterval)
 	defer ticker.Stop()
@@ -460,7 +455,7 @@ func (r *HAStandbyReplicator) primaryHeartbeatLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			r.sendHeartbeat(ctx)
@@ -495,20 +490,17 @@ func (r *HAStandbyReplicator) sendHeartbeat(ctx context.Context) {
 
 // listenForPrimary listens for incoming connections from primary.
 func (r *HAStandbyReplicator) listenForPrimary(ctx context.Context) {
-	defer r.wg.Done()
 
 	// Tie listener lifetime to shutdown signal as well as parent context.
 	listenCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
+	r.goWork(func() {
 		select {
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			cancel()
 		case <-listenCtx.Done():
 		}
-	}()
+	})
 
 	handler := func(conn PeerConnection) {
 		r.mu.Lock()
@@ -532,7 +524,6 @@ func (r *HAStandbyReplicator) listenForPrimary(ctx context.Context) {
 
 // monitorPrimaryHealth monitors primary health and triggers failover.
 func (r *HAStandbyReplicator) monitorPrimaryHealth(ctx context.Context) {
-	defer r.wg.Done()
 
 	ticker := time.NewTicker(r.config.HAStandby.HeartbeatInterval)
 	defer ticker.Stop()
@@ -541,7 +532,7 @@ func (r *HAStandbyReplicator) monitorPrimaryHealth(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			r.checkPrimaryHealth(ctx)
@@ -564,14 +555,10 @@ func (r *HAStandbyReplicator) checkPrimaryHealth(ctx context.Context) {
 			r.primaryHealthy.Store(false)
 
 			if r.config.HAStandby.AutoFailover && !r.isPromoted.Load() {
-				r.wg.Add(1) // monitorPrimaryHealth retains this child before launch
-				go func() {
-					defer r.wg.Done()
-					err := r.triggerAutoFailover(ctx)
-					r.mu.Lock()
-					r.work.RecordError("", err)
-					r.mu.Unlock()
-				}()
+				// monitorPrimaryHealth's admitted work enrolls this child before launch.
+				r.goWork(func() {
+					r.work.RecordError("", r.triggerAutoFailover(ctx))
+				})
 			}
 		}
 	}
@@ -623,14 +610,11 @@ func (r *HAStandbyReplicator) fenceOldPrimary(ctx context.Context) error {
 // and return its result, so none reports success before the WAL is flushed
 // and primary status is published. After a failure the next call retries.
 func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
-	r.mu.Lock()
-	if r.closed.Load() {
-		r.mu.Unlock()
+	release, accepted := r.enter()
+	if !accepted {
 		return ErrClosed
 	}
-	r.wg.Add(1)
-	r.mu.Unlock()
-	defer r.wg.Done()
+	defer release()
 	if r.isPrimary.Load() {
 		return nil
 	}
@@ -638,24 +622,23 @@ func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 	r.promoteMu.Lock()
 	if p := r.promoting; p != nil {
 		r.promoteMu.Unlock()
-		<-p.done
-		return p.err
+		<-p.Done()
+		return p.Err()
 	}
 	if r.isPromoted.Load() {
 		r.promoteMu.Unlock()
 		return nil
 	}
-	p := &lifecycleAttempt{done: make(chan struct{})}
+	p := &lifecycle.OnceCompletion{}
 	r.promoting = p
 	r.promoteMu.Unlock()
 
-	p.err = r.promote(ctx)
+	err := r.promote(ctx)
 
 	r.promoteMu.Lock()
 	r.promoting = nil
 	r.promoteMu.Unlock()
-	close(p.done)
-	return p.err
+	return p.Do(func() error { return err })
 }
 
 // promote runs one promotion; Promote ensures only one runs at a time.
@@ -684,7 +667,7 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
 
@@ -804,7 +787,7 @@ func (r *HAStandbyReplicator) Health() *HealthStatus {
 	if r.started.Load() {
 		state = "ready"
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		state = "closed"
 	}
 
@@ -818,7 +801,7 @@ func (r *HAStandbyReplicator) Health() *HealthStatus {
 		Role:        role,
 		IsLeader:    r.isPrimary.Load(),
 		State:       state,
-		Healthy:     r.started.Load() && !r.closed.Load(),
+		Healthy:     r.started.Load() && !r.work.Closing(),
 		LastContact: lastContact,
 		Peers: []PeerStatus{
 			{
@@ -855,18 +838,12 @@ func (r *HAStandbyReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the replicator.
 func (r *HAStandbyReplicator) Shutdown() error {
-	r.mu.Lock()
-	if !r.closed.CompareAndSwap(false, true) {
-		r.mu.Unlock()
-		return nil
-	}
+	return r.work.Shutdown(context.Background(), r.retire)
+}
 
-	close(r.stopCh)
-	r.mu.Unlock()
-	r.work.Cancel()
-
-	r.wg.Wait()
-
+// retire runs once, after every accepted unit of work has returned: it closes
+// the connections and transport the loops used.
+func (r *HAStandbyReplicator) retire() error {
 	r.mu.Lock()
 	standby, primary := r.standbyConn, r.primaryConn
 	transport := r.transport
@@ -888,11 +865,28 @@ func (r *HAStandbyReplicator) Shutdown() error {
 			closeErr = compose.Outcomes(closeErr, fmt.Errorf("HA transport close: %w", err))
 		}
 	}
-
-	r.mu.Lock()
-	closeErr = compose.Outcomes(closeErr, r.work.Err())
-	r.mu.Unlock()
 	return closeErr
+}
+
+// enter admits one unit of accepted work. It is refused once shutdown has
+// sealed admission; the release is called on the work's actual return.
+func (r *HAStandbyReplicator) enter() (func(), bool) {
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	return release, accepted
+}
+
+// goWork launches fn as accepted work: enrolled before the goroutine exists,
+// released when fn actually returns. It reports false once admission is sealed.
+func (r *HAStandbyReplicator) goWork(fn func()) bool {
+	release, accepted := r.enter()
+	if !accepted {
+		return false
+	}
+	go func() {
+		defer release()
+		fn()
+	}()
+	return true
 }
 
 // Mode returns the replication mode.

@@ -2313,10 +2313,11 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// A lifetime lease permits delegated CRUD to acquire its own write
 		// barrier; holding that barrier here would risk recursive-read deadlock.
 		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
-			if _, err := b.beginHelperTxn(); err != nil {
+			_, release, err := b.beginHelperTxn()
+			if err != nil {
 				return err
 			}
-			defer b.txnWG.Done()
+			defer release()
 		}
 		if err := markRecoveryPropertyForeign(engine); err != nil {
 			return err

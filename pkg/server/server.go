@@ -163,6 +163,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -173,6 +174,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1529,7 +1531,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 
 				cfg := search.DefaultLocalRerankerConfig()
 				cfg.Enabled = true
-				r := search.NewLocalReranker(rerankerModel, cfg)
+				r := search.NewLocalReranker(rerankerModel, cfg, db.BeginProviderUse)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
 				s.logEvent(context.Background(), slog.LevelInfo,
@@ -2096,16 +2098,31 @@ func (s *Server) Start() (startErr error) {
 			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}
 
+	// The listener stays owned by pendingListener until Serve has taken it.
+	// ServeTLS can fail loading its certificate before it registers the
+	// listener, without closing it; load the pair here so a certificate error
+	// leaves the listener with its owner, which closes it on Stop.
+	serveListener := listener
+	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
+		certificate, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
+		if err != nil {
+			return fmt.Errorf("HTTP TLS certificate: %w", err)
+		}
+		config := server.TLSConfig.Clone()
+		if config == nil {
+			config = &tls.Config{}
+		}
+		if !slices.Contains(config.NextProtos, "http/1.1") {
+			config.NextProtos = append(config.NextProtos, "http/1.1")
+		}
+		config.Certificates = append(config.Certificates, certificate)
+		serveListener = tls.NewListener(listener, config)
+	}
 	s.lifecycleMu.Lock()
-	s.pendingListener = nil // net/http owns closure, including Serve failure
+	s.pendingListener = nil // Serve registers the listener first, then owns its closure
 	s.lifecycleMu.Unlock()
 	s.runBackground(startCtx, func(context.Context) {
-		var err error
-		if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
-			err = server.ServeTLS(listener, s.config.TLSCertFile, s.config.TLSKeyFile)
-		} else {
-			err = server.Serve(listener)
-		}
+		err := server.Serve(serveListener)
 		if err != nil && err != http.ErrServerClosed {
 			s.shutdown.work.RecordError("", fmt.Errorf("HTTP serve: %w", err))
 			s.logEvent(context.Background(), slog.LevelError, localization.ServerHTTPServeFailedEvent(err))

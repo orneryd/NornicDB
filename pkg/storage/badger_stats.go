@@ -221,19 +221,27 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 	return b.GetSchemaForNamespace("nornic")
 }
 
-// Close closes the BadgerDB database.
+// Close closes the BadgerDB database. It is the engine owner's one stop: the
+// first caller stops the producers and seals admission, and every caller,
+// first or repeated, joins the same retirement and receives the same outcome.
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
+	if !b.work.Closing() {
+		b.sealAdmission()
+	}
+	return b.work.Shutdown(context.Background(), b.retire)
+}
+
+// sealAdmission stops the engine's producers while admission is still open
+// (their final writes are admitted work), then seals admission once every
+// durable write published. Outcomes go to the owner for every Close caller.
+func (b *BadgerEngine) sealAdmission() {
 	// Reject new writers first, then wait for every admitted one to finish,
 	// so the final drain below meets every acknowledged commit: a listener
 	// it delivers that writes again observes ErrStorageClosed instead of
 	// being acknowledged into a generation nothing drains.
 	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return nil
-	}
 	b.closing = true
 	b.mu.Unlock()
 	b.writeBarrier.Lock()
@@ -249,18 +257,18 @@ func (b *BadgerEngine) Close() error {
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
-	var drainErr error
 	if b.writeBehind != nil {
-		drainErr = b.FlushWriteBehind()
+		drainErr := b.FlushWriteBehind()
 		if drainErr != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
+		b.work.RecordError("", drainErr)
 		b.writeBehind.Close()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	suppressionErr := b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
+	b.work.RecordError("", b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()}))
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
@@ -276,36 +284,27 @@ func (b *BadgerEngine) Close() error {
 
 	// Wait for every in-flight durable write (see writeBarrier) so no
 	// commit that already reached Badger has its publication tail torn by
-	// the release below. Mark closed before releasing the barrier; later
-	// writers fail before reaching Badger, while listeners can re-enter.
+	// the release below. Seal before releasing the barrier; later helpers
+	// and writers fail before reaching Badger, while listeners can re-enter.
 	b.writeBarrier.Lock()
-
 	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		b.writeBarrier.Unlock()
-		return nil
-	}
-	b.closed = true
-	db := b.db
+	b.work.CloseAdmission()
 	b.mu.Unlock()
-	// Publication has finished and new writes observe closed. Do not retain
-	// the barrier while listeners re-enter storage; keep state until they finish.
+	// Do not retain the barrier while listeners re-enter storage; the owner
+	// keeps state until their notifications' tickets return.
 	b.writeBarrier.Unlock()
-
-	// Drain in-flight node-deleted notifications before releasing the
-	// callback fields and other engine state they run against (#726). No
-	// new notifications can start: BulkDeleteNodes adds them under mu only
-	// when the engine is not closed.
-	b.txnWG.Wait()
-	b.mu.RLock()
-	backgroundErr := b.retirementOutcomes.Err()
-	b.mu.RUnlock()
 	// Deliver what is ready but undelivered (a replay queues its events for
-	// whoever retired it) before waiting for every reserved notification.
+	// whoever retired it); each delivery returns its notification's ticket.
 	b.drainCommitNotifications()
-	b.notifyWG.Wait()
+}
 
+// retire is the owner's dispose: it runs once, after every admitted helper
+// and reserved notification returned, so nothing runs against the state it
+// releases (#726).
+func (b *BadgerEngine) retire() error {
+	b.mu.RLock()
+	db := b.db
+	b.mu.RUnlock()
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
 	countErr := b.foldRemainingCountDeltasOnClose(db)
@@ -317,9 +316,9 @@ func (b *BadgerEngine) Close() error {
 	b.mu.Unlock()
 
 	if db == nil {
-		return compose.Outcomes(backgroundErr, drainErr, suppressionErr, countErr, propertyErr)
+		return compose.Outcomes(countErr, propertyErr)
 	}
-	return compose.Outcomes(backgroundErr, drainErr, suppressionErr, countErr, propertyErr, db.Close())
+	return compose.Outcomes(countErr, propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after
@@ -327,7 +326,7 @@ func (b *BadgerEngine) Close() error {
 // process exit; retaining the closed Badger handle behind those shells pins
 // in-memory memtable arenas and caches long after the engine is unusable.
 //
-// b.mu must be held and b.closed must already be true.
+// b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil

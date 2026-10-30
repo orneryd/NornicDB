@@ -16,12 +16,24 @@ import (
 // constructor and its server consume this same admission/completion owner.
 func (s *Server) lifetime() *lifecycle.WorkLifetime {
 	s.lifecycleMu.Lock()
-	if s.work == nil {
+	created := s.work == nil
+	if created {
 		s.work = &lifecycle.WorkLifetime{}
 	}
 	w := s.work
 	s.lifecycleMu.Unlock()
+	if created {
+		// Stopping closes the listener so a blocked Accept returns.
+		w.OnStop(s.closeListenerOutcome)
+	}
 	return w
+}
+
+func (s *Server) closeListenerOutcome() error {
+	if err := s.closeListener(); err != nil && !util.ErrorIsOnly(err, net.ErrClosed) {
+		return fmt.Errorf("close Bolt listener: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) beginServe() (context.Context, func(), error) {
@@ -97,28 +109,28 @@ func (s *Server) Close() error { return s.Shutdown(context.Background()) }
 func (s *Server) BeginShutdown() <-chan struct{} {
 	w := s.lifetime()
 	s.closed.Store(true)
-	w.CloseAdmission()
-	w.Cancel()
-	// The retirement driver runs once and is joined through stopped, not as an
-	// admitted user of the group it must drain. No host lock surrounds foreign code.
-	return s.stopped.Go(func() error {
-		if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
-			w.RecordError("close Bolt listener", err)
-		}
-		<-w.Quiescent()
-		s.statementCacheIndex.Close()
-		s.executorsMu.Lock()
-		s.executors = nil
-		s.executorsMu.Unlock()
-		s.fallbackStatementCaches().Dispose()
-		return w.Err()
-	})
+	// Shutdown is the owner's one stop; this caller does not wait for it.
+	go func() { _ = w.Shutdown(context.Background(), s.retire) }()
+	return w.Stopped()
 }
 
-// Shutdown bounds only the caller; the driver retains every actual completion.
+// retire runs once, after every accepted connection and serve loop returned.
+func (s *Server) retire() error {
+	s.statementCacheIndex.Close()
+	s.executorsMu.Lock()
+	s.executors = nil
+	s.executorsMu.Unlock()
+	s.fallbackStatementCaches().Dispose()
+	return nil
+}
+
+// Shutdown bounds only the caller; every caller joins the same actual stop.
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.BeginShutdown()
-	return s.WaitStopped(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.closed.Store(true)
+	return s.lifetime().Shutdown(ctx, s.retire)
 }
 
 // WaitStopped observes actual retirement without initiating another shutdown.
@@ -126,12 +138,7 @@ func (s *Server) WaitStopped(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	select {
-	case <-s.stopped.Done():
-		return s.stopped.Err()
-	case <-ctx.Done():
-		return compose.Outcomes(s.lifetime().Err(), ctx.Err())
-	}
+	return s.lifetime().WaitStopped(ctx)
 }
 
 func (s *Server) startConnection(ctx context.Context, conn net.Conn) {

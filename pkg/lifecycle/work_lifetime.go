@@ -21,6 +21,7 @@ type WorkLifetime struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	outcomes  Outcomes
+	stopped   OnceCompletion // the one stop: quiescence, then dispose, joined by every caller
 }
 type workKey struct{}
 type workTicket struct {
@@ -65,9 +66,58 @@ func (w *WorkLifetime) Close() error { return w.CloseContext(context.Background(
 // CloseContext bounds only the caller's wait. Accepted work retains its ticket
 // and reports its outcome until actual completion, also after this returns.
 func (w *WorkLifetime) CloseContext(ctx context.Context) error {
+	return w.Shutdown(ctx, nil)
+}
+
+// Shutdown is the one stop protocol. The first caller seals admission and
+// signals cancellation; the owner waits for every accepted unit of work to
+// actually return, then runs dispose exactly once. Every caller, first,
+// repeated or concurrent, joins that same completion and receives the same
+// outcomes. ctx bounds only this caller's wait, never the work or the dispose.
+// dispose is reachable only here, after quiescence; later callers' dispose
+// arguments are not run.
+func (w *WorkLifetime) Shutdown(ctx context.Context, dispose func() error) error {
+	requireContext("WorkLifetime.Shutdown", ctx)
 	w.CloseAdmission()
 	w.Cancel()
-	return w.WaitClosed(ctx)
+	w.stopped.Go(func() error {
+		<-w.Quiescent()
+		if dispose != nil {
+			w.RecordError("", dispose())
+		}
+		return nil
+	})
+	return w.WaitStopped(ctx)
+}
+
+// OnStop enrolls a stop signal, such as closing a listener or a transport so
+// that blocked work can return. It runs once when the lifetime is cancelled,
+// outside any owner lock; its outcome is recorded, and quiescence (so also
+// Shutdown's dispose) waits for it. It reports false once admission is closed.
+func (w *WorkLifetime) OnStop(signal func() error) bool {
+	_, release, accepted := w.Acquire(w.Context())
+	if !accepted {
+		return false
+	}
+	context.AfterFunc(w.Context(), func() {
+		defer release()
+		w.RecordError("", signal())
+	})
+	return true
+}
+
+// Stopped closes when Shutdown has disposed after quiescence.
+func (w *WorkLifetime) Stopped() <-chan struct{} { return w.stopped.Done() }
+
+// WaitStopped joins the stop without starting it. ctx bounds only the wait.
+func (w *WorkLifetime) WaitStopped(ctx context.Context) error {
+	requireContext("WorkLifetime.WaitStopped", ctx)
+	select {
+	case <-w.stopped.Done():
+		return w.Err()
+	case <-ctx.Done():
+		return compose.Outcomes(w.Err(), ctx.Err())
+	}
 }
 
 // WaitClosed joins a lifetime whose admission has already been closed.

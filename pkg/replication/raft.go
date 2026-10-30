@@ -124,8 +124,8 @@ type RaftReplicator struct {
 	votedFor    string
 	leaderID    string
 	leaderAddr  string
-	starting    *lifecycleAttempt
-	work        lifecycle.WorkLifetime // admission-free stop signal and outcomes of this replicator
+	starting    *lifecycle.OnceCompletion // the current start attempt; a retry is a new attempt
+	work        lifecycle.WorkLifetime    // admission-free stop signal and outcomes of this replicator
 
 	// applyMu serializes physical application without holding logMu across
 	// storage callbacks. Acquire it before logMu.
@@ -154,7 +154,6 @@ type RaftReplicator struct {
 	transport Transport
 
 	// Channels
-	stopCh      chan struct{}
 	applyCh     chan *applyFuture
 	commitCh    chan struct{}
 	heartbeatCh chan struct{}
@@ -162,8 +161,6 @@ type RaftReplicator struct {
 
 	// State tracking
 	started atomic.Bool
-	closed  atomic.Bool
-	wg      sync.WaitGroup
 
 	// Random source for election timeouts
 	rand *rand.Rand
@@ -229,14 +226,11 @@ type rpcRequest struct {
 
 // HandleRaftVote handles an incoming RequestVote RPC via the cluster transport.
 func (r *RaftReplicator) HandleRaftVote(req *RaftVoteRequest) (*RaftVoteResponse, error) {
-	r.mu.RLock()
-	if r.closed.Load() {
-		r.mu.RUnlock()
+	release, accepted := r.enter()
+	if !accepted {
 		return nil, ErrClosed
 	}
-	r.wg.Add(1)
-	r.mu.RUnlock()
-	defer r.wg.Done()
+	defer release()
 	if req == nil {
 		return nil, localizedError(localization.ReplicationRaftVoteRequestRequired(), nil)
 	}
@@ -255,14 +249,11 @@ func (r *RaftReplicator) HandleRaftVote(req *RaftVoteRequest) (*RaftVoteResponse
 
 // HandleRaftAppendEntries handles an incoming AppendEntries RPC via the cluster transport.
 func (r *RaftReplicator) HandleRaftAppendEntries(req *RaftAppendEntriesRequest) (*RaftAppendEntriesResponse, error) {
-	r.mu.RLock()
-	if r.closed.Load() {
-		r.mu.RUnlock()
+	release, accepted := r.enter()
+	if !accepted {
 		return nil, ErrClosed
 	}
-	r.wg.Add(1)
-	r.mu.RUnlock()
-	defer r.wg.Done()
+	defer release()
 	if req == nil {
 		return nil, localizedError(localization.ReplicationRaftAppendRequestRequired(), nil)
 	}
@@ -306,7 +297,6 @@ func NewRaftReplicator(config *Config, storage Storage) (*RaftReplicator, error)
 		matchIndex:  make(map[string]uint64),
 		peerConns:   make(map[string]PeerConnection),
 		futures:     make(map[uint64]*applyFuture),
-		stopCh:      make(chan struct{}),
 		applyCh:     make(chan *applyFuture, 256),
 		commitCh:    make(chan struct{}, 1),
 		heartbeatCh: make(chan struct{}, 1),
@@ -317,6 +307,8 @@ func NewRaftReplicator(config *Config, storage Storage) (*RaftReplicator, error)
 	// Initialize log with a dummy entry at index 0 (standard Raft practice)
 	r.log = append(r.log, &RaftLogEntry{Index: 0, Term: 0, Command: nil})
 
+	// Shutdown closes the transport and peer connections as its stop signal.
+	r.work.OnStop(r.closeTransports)
 	return r, nil
 }
 
@@ -333,45 +325,51 @@ func (r *RaftReplicator) SetTransport(t Transport) {
 // Start initializes and starts the Raft replicator.
 func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 	r.mu.Lock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.Unlock()
 		return ErrClosed
 	}
 	if attempt := r.starting; attempt != nil {
 		r.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		<-attempt.Done()
+		return attempt.Err()
 	}
 	if r.started.Load() {
 		r.mu.Unlock()
 		return nil
 	}
-	attempt := &lifecycleAttempt{done: make(chan struct{})}
+	attempt := &lifecycle.OnceCompletion{}
 	r.starting = attempt
 	transport := r.transport
-	r.wg.Add(1)
 	r.mu.Unlock()
+	release, accepted := r.enter()
+	if !accepted {
+		r.mu.Lock()
+		r.starting = nil
+		r.mu.Unlock()
+		attempt.Do(func() error { return ErrClosed })
+		return ErrClosed
+	}
 	defer func() {
 		r.mu.Lock()
-		attempt.err = startErr
 		r.starting = nil
-		close(attempt.done)
 		r.mu.Unlock()
-		r.wg.Done()
+		attempt.Do(func() error { return startErr })
+		release()
 	}()
 	// Initialization observes its caller; running work belongs to the
 	// immutable context created before this replicator was published.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
 	r.config.logPrintf(ctx, slog.LevelInfo, "[Raft %s] Starting node", r.config.NodeID)
 
 	if transport == nil {
-		if r.closed.Load() {
+		if r.work.Closing() {
 			return ErrClosed
 		}
 		created, err := NewDefaultTransportFromConfig(r.config)
@@ -379,7 +377,7 @@ func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 			return localizedError(localization.ReplicationRaftInitTransportFailed(err), err)
 		}
 		r.mu.Lock()
-		if r.closed.Load() {
+		if r.work.Closing() {
 			r.mu.Unlock()
 			closeErr := created.Close()
 			r.mu.Lock()
@@ -390,7 +388,7 @@ func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 		r.transport = created
 		r.mu.Unlock()
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -404,12 +402,11 @@ func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 
 	// Start background goroutines
 	ctx = r.work.Context()
-	r.wg.Add(5)
-	go r.runElectionTimer(ctx)
-	go r.runApplyLoop(ctx)
-	go r.runCommitLoop(ctx)
-	go r.runPeerConnector(ctx)
-	go r.runRPCHandler(ctx)
+	r.goWork(func() { r.runElectionTimer(ctx) })
+	r.goWork(func() { r.runApplyLoop(ctx) })
+	r.goWork(func() { r.runCommitLoop(ctx) })
+	r.goWork(func() { r.runPeerConnector(ctx) })
+	r.goWork(func() { r.runRPCHandler(ctx) })
 
 	// If bootstrap mode with no peers, immediately become leader
 	if r.config.Raft.Bootstrap && r.peerCount() == 0 {
@@ -426,8 +423,7 @@ func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 
 	// Start listening for peer connections if transport available
 	if r.transport != nil {
-		r.wg.Add(1)
-		go r.listenForPeers(ctx)
+		r.goWork(func() { r.listenForPeers(ctx) })
 	}
 
 	r.started.Store(true)
@@ -438,7 +434,6 @@ func (r *RaftReplicator) Start(ctx context.Context) (startErr error) {
 
 // runElectionTimer manages election timeouts and triggers elections.
 func (r *RaftReplicator) runElectionTimer(ctx context.Context) {
-	defer r.wg.Done()
 
 	minTimeout := r.config.Raft.ElectionTimeout
 	if minTimeout <= 0 {
@@ -461,7 +456,7 @@ func (r *RaftReplicator) runElectionTimer(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-r.heartbeatCh:
 			// Reset timer when we receive heartbeat from leader
@@ -526,30 +521,29 @@ func (r *RaftReplicator) startElection(ctx context.Context) {
 
 	var wg sync.WaitGroup
 	for _, peer := range peers {
+		p := peer
 		wg.Add(1)
-		r.wg.Add(1)
-		go func(p PeerConfig) {
+		if !r.goWork(func() {
 			defer wg.Done()
-			defer r.wg.Done()
 			r.requestVoteFromPeer(ctx, p, voteReq, term, &votesMu, &votesReceived, votesNeeded)
-		}(peer)
+		}) {
+			wg.Done()
+		}
 	}
 
 	// Wait for vote requests with timeout
 	done := make(chan struct{})
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
+	r.goWork(func() {
 		wg.Wait()
 		close(done)
-	}()
+	})
 
 	select {
 	case <-done:
 	case <-time.After(r.config.Raft.ElectionTimeout):
 		r.config.logPrintf(context.Background(), slog.LevelWarn, "[Raft %s] Election timed out for term %d", r.config.NodeID, term)
 	case <-ctx.Done():
-	case <-r.stopCh:
+	case <-r.work.Context().Done():
 	}
 }
 
@@ -573,7 +567,7 @@ func (r *RaftReplicator) requestVoteFromPeer(ctx context.Context, peer PeerConfi
 	r.mu.Lock()
 
 	// Check if we've moved on (higher term discovered or already won/lost)
-	if r.closed.Load() || r.currentTerm != term || r.state != StateCandidate {
+	if r.work.Closing() || r.currentTerm != term || r.state != StateCandidate {
 		r.mu.Unlock()
 		return
 	}
@@ -642,7 +636,7 @@ func (r *RaftReplicator) sendVoteRequestRPC(ctx context.Context, conn PeerConnec
 // becomeLeader transitions this node to leader state.
 func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
 	r.mu.Lock()
-	if r.closed.Load() || r.currentTerm != term || r.state == StateLeader {
+	if r.work.Closing() || r.currentTerm != term || r.state == StateLeader {
 		r.mu.Unlock()
 		return
 	}
@@ -678,8 +672,7 @@ func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
 	r.metrics.get().observeRoleTransition("leader", term, commitIdx, applyIdx)
 
 	// Start heartbeat routine
-	r.wg.Add(1)
-	go r.runHeartbeats(ctx, term)
+	r.goWork(func() { r.runHeartbeats(ctx, term) })
 
 	// Send immediate heartbeat to establish leadership
 	r.sendHeartbeatsToAllPeers(ctx, term)
@@ -687,7 +680,6 @@ func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
 
 // runHeartbeats sends periodic heartbeats to all peers while leader.
 func (r *RaftReplicator) runHeartbeats(ctx context.Context, term uint64) {
-	defer r.wg.Done()
 
 	ticker := time.NewTicker(r.config.Raft.HeartbeatTimeout)
 	defer ticker.Stop()
@@ -696,7 +688,7 @@ func (r *RaftReplicator) runHeartbeats(ctx context.Context, term uint64) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			r.mu.RLock()
@@ -716,8 +708,8 @@ func (r *RaftReplicator) runHeartbeats(ctx context.Context, term uint64) {
 // sendHeartbeatsToAllPeers sends AppendEntries RPCs to all peers.
 func (r *RaftReplicator) sendHeartbeatsToAllPeers(ctx context.Context, term uint64) {
 	for _, peer := range r.peerConfigs() {
-		r.wg.Add(1)
-		go func(peer PeerConfig) { defer r.wg.Done(); r.replicateLogToPeer(ctx, peer, term) }(peer)
+		peer := peer
+		r.goWork(func() { r.replicateLogToPeer(ctx, peer, term) })
 	}
 }
 
@@ -818,7 +810,7 @@ func (r *RaftReplicator) sendAppendEntriesRPC(ctx context.Context, conn PeerConn
 // handleAppendEntriesResponse processes a response to AppendEntries.
 func (r *RaftReplicator) handleAppendEntriesResponse(peerID string, term uint64, req *AppendEntriesRequest, resp *AppendEntriesResponse) {
 	r.mu.Lock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.Unlock()
 		return
 	}
@@ -881,13 +873,12 @@ func (r *RaftReplicator) handleAppendEntriesResponse(peerID string, term uint64,
 
 // runApplyLoop processes incoming Apply requests.
 func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
-	defer r.wg.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case future := <-r.applyCh:
 			r.processApply(ctx, future)
@@ -909,14 +900,14 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, 
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-r.stopCh:
+			case <-r.work.Context().Done():
 				return ErrClosed
 			}
 		}
 		timeout := queue[0].timeout
 		select {
 		case r.applyCh <- future:
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return ErrClosed
 		case <-time.After(timeout):
 			return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
@@ -924,7 +915,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, 
 		select {
 		case err := <-future.errCh:
 			return err
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return ErrClosed
 		case <-time.After(timeout):
 			return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
@@ -975,8 +966,9 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, 
 
 	// Accepted and ordinary requests share one deadline observer. Only the
 	// accepted coordinator retains logical ownership beyond that deadline.
-	r.wg.Add(1)
-	go func() { defer r.wg.Done(); r.waitForCommit(ctx, future) }()
+	if !r.goWork(func() { r.waitForCommit(ctx, future) }) {
+		future.discardBeforeCommit(ErrClosed)
+	}
 
 	return nil
 }
@@ -1003,7 +995,7 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 			return
 		case <-ctxDone:
 			err = ctx.Err()
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			err = ErrClosed
 		case <-timer.C:
 			err = localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
@@ -1032,13 +1024,12 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 
 // runCommitLoop checks for entries that can be committed.
 func (r *RaftReplicator) runCommitLoop(ctx context.Context) {
-	defer r.wg.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-r.commitCh:
 			r.advanceCommitIndex()
@@ -1139,7 +1130,6 @@ func (r *RaftReplicator) advanceCommitIndex(known ...raftCommittedFrontier) {
 
 // runPeerConnector maintains connections to peers.
 func (r *RaftReplicator) runPeerConnector(ctx context.Context) {
-	defer r.wg.Done()
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -1148,7 +1138,7 @@ func (r *RaftReplicator) runPeerConnector(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			r.maintainPeerConnections(ctx)
@@ -1171,7 +1161,7 @@ func (r *RaftReplicator) maintainPeerConnections(ctx context.Context) {
 
 // getOrConnectPeer gets an existing connection or creates a new one.
 func (r *RaftReplicator) getOrConnectPeer(ctx context.Context, peer PeerConfig) (PeerConnection, error) {
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return nil, ErrClosed
 	}
 	r.peerMu.RLock()
@@ -1192,7 +1182,7 @@ func (r *RaftReplicator) getOrConnectPeer(ctx context.Context, peer PeerConfig) 
 	}
 
 	r.peerMu.Lock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.peerMu.Unlock()
 		closeErr := newConn.Close()
 		if closeErr != nil {
@@ -1211,13 +1201,12 @@ func (r *RaftReplicator) getOrConnectPeer(ctx context.Context, peer PeerConfig) 
 
 // runRPCHandler processes incoming RPC requests.
 func (r *RaftReplicator) runRPCHandler(ctx context.Context) {
-	defer r.wg.Done()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case req := <-r.rpcCh:
 			r.handleRPC(req)
@@ -1268,7 +1257,7 @@ func (r *RaftReplicator) handleVoteRequest(req *VoteRequest) *VoteResponse {
 			r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Granted vote to %s for term %d", r.config.NodeID, candidate, requestedTerm)
 		}
 	}()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return resp
 	}
 
@@ -1332,7 +1321,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		CodecVersion: CurrentCodecVersion,
 	}
 
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.Unlock()
 		return resp
 	}
@@ -1416,8 +1405,10 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 				}
 				r.futuresMu.Unlock()
 				for _, future := range discarded {
-					r.wg.Add(1)
-					go func(future *applyFuture) { defer r.wg.Done(); future.discardBeforeCommit(ErrNotLeader) }(future)
+					future := future
+					if !r.goWork(func() { future.discardBeforeCommit(ErrNotLeader) }) {
+						future.discardBeforeCommit(ErrNotLeader)
+					}
 				}
 				clear(r.log[idx:])
 				r.log = r.log[:idx]
@@ -1455,7 +1446,6 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 
 // listenForPeers listens for incoming peer connections.
 func (r *RaftReplicator) listenForPeers(ctx context.Context) {
-	defer r.wg.Done()
 
 	if r.transport == nil {
 		return
@@ -1504,7 +1494,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		}
 	}()
 
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
 
@@ -1597,7 +1587,7 @@ func (r *RaftReplicator) Health() *HealthStatus {
 	if r.started.Load() {
 		stateStr = "ready"
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		stateStr = "closed"
 	}
 
@@ -1640,7 +1630,7 @@ func (r *RaftReplicator) Health() *HealthStatus {
 	applyFailed := r.applyErr != nil
 	r.logMu.RUnlock()
 
-	if applyFailed && !r.closed.Load() {
+	if applyFailed && !r.work.Closing() {
 		stateStr = "apply_failed"
 	}
 	return &HealthStatus{
@@ -1651,7 +1641,7 @@ func (r *RaftReplicator) Health() *HealthStatus {
 		LeaderID:     leaderID,
 		LeaderAddr:   leaderAddr,
 		State:        stateStr,
-		Healthy:      r.started.Load() && !r.closed.Load() && !applyFailed,
+		Healthy:      r.started.Load() && !r.work.Closing() && !applyFailed,
 		Term:         term,
 		CommitIndex:  commitIdx,
 		AppliedIndex: appliedIdx,
@@ -1668,7 +1658,7 @@ func (r *RaftReplicator) WaitForLeader(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return ErrClosed
 		case <-ticker.C:
 			r.mu.RLock()
@@ -1684,27 +1674,22 @@ func (r *RaftReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the replicator.
 func (r *RaftReplicator) Shutdown() error {
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
+	return r.work.Shutdown(context.Background(), r.retire)
+}
+
+// closeTransports is the stop signal: closing the transport and peer
+// connections unblocks listenForPeers and in-flight RPCs so they can return.
+func (r *RaftReplicator) closeTransports() error {
 	r.mu.Lock()
-	if !r.closed.CompareAndSwap(false, true) {
-		r.mu.Unlock()
-		return nil
-	}
-	close(r.stopCh)
 	transport := r.transport
 	r.mu.Unlock()
-	r.work.Cancel()
-
-	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
 	var closeErr error
-
-	// Close transport to stop listener (unblocks listenForPeers goroutine)
 	if transport != nil {
 		if err := transport.Close(); err != nil {
 			closeErr = compose.Outcomes(closeErr, fmt.Errorf("raft transport close: %w", err))
 		}
 	}
-
-	// Close all peer connections
 	r.peerMu.Lock()
 	peers := make(map[string]PeerConnection, len(r.peerConns))
 	for id, conn := range r.peerConns {
@@ -1718,11 +1703,14 @@ func (r *RaftReplicator) Shutdown() error {
 			}
 		}
 	}
+	return closeErr
+}
 
-	// Stop queue consumers before classifying remaining ownership. Commands
-	// that never entered the log are a definite discard; committed entries
-	// remain recovery-pending even while their unused native snapshot is freed.
-	r.wg.Wait()
+// retire runs once, after every accepted unit of work has returned. Commands
+// that never entered the log are a definite discard; committed entries remain
+// recovery-pending even while their unused native snapshot is freed.
+func (r *RaftReplicator) retire() error {
+	var closeErr error
 	for {
 		select {
 		case future := <-r.applyCh:
@@ -1749,11 +1737,28 @@ queueDrained:
 		}
 		closeErr = compose.Outcomes(closeErr, future.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: ErrClosed}))
 	}
-
-	r.mu.Lock()
-	closeErr = compose.Outcomes(closeErr, r.work.Err())
-	r.mu.Unlock()
 	return closeErr
+}
+
+// enter admits one unit of accepted work. It is refused once shutdown has
+// sealed admission; the release is called on the work's actual return.
+func (r *RaftReplicator) enter() (func(), bool) {
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	return release, accepted
+}
+
+// goWork launches fn as accepted work: enrolled before the goroutine exists,
+// released when fn actually returns. It reports false once admission is sealed.
+func (r *RaftReplicator) goWork(fn func()) bool {
+	release, accepted := r.enter()
+	if !accepted {
+		return false
+	}
+	go func() {
+		defer release()
+		fn()
+	}()
+	return true
 }
 
 // Mode returns the replication mode.
@@ -1769,20 +1774,21 @@ func (r *RaftReplicator) NodeID() string {
 // AddVoter adds a voting member to the cluster.
 func (r *RaftReplicator) AddVoter(id, addr string) error {
 	r.mu.RLock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.RUnlock()
 		return ErrClosed
 	}
 	isLeader := r.state == StateLeader
-	if isLeader {
-		r.wg.Add(1)
-	}
 	r.mu.RUnlock()
 
 	if !isLeader {
 		return ErrNotLeader
 	}
-	defer r.wg.Done()
+	release, accepted := r.enter()
+	if !accepted {
+		return ErrClosed
+	}
+	defer release()
 
 	// Read the log before taking peerMu: the commit path holds logMu while
 	// it takes peerMu, so the reverse order deadlocks.
@@ -1818,20 +1824,21 @@ func (r *RaftReplicator) AddVoter(id, addr string) error {
 // RemoveServer removes a server from the cluster.
 func (r *RaftReplicator) RemoveServer(id string) error {
 	r.mu.RLock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.RUnlock()
 		return ErrClosed
 	}
 	isLeader := r.state == StateLeader
-	if isLeader {
-		r.wg.Add(1)
-	}
 	r.mu.RUnlock()
 
 	if !isLeader {
 		return ErrNotLeader
 	}
-	defer r.wg.Done()
+	release, accepted := r.enter()
+	if !accepted {
+		return ErrClosed
+	}
+	defer release()
 
 	r.peerMu.Lock()
 

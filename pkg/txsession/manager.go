@@ -72,15 +72,35 @@ type Lease struct {
 
 type leaseRetention struct {
 	refs atomic.Int32
+	// work is the request's ticket in the manager's lifetime: WaitClosed and
+	// Shutdown wait for every leased request, including its terminal observer
+	// and response publication, until the last share is released.
+	work func()
 	// panicked keeps the session's existing idle deadline: an operation that
 	// panicked did not complete, so its release grants no new lifetime.
 	panicked atomic.Bool
 }
 
-func (m *Manager) newLease(session *Session) *Lease {
-	retention := &leaseRetention{}
+// newLease enrolls the request in the manager's lifetime. It is refused once
+// the manager is closing; the caller then still owns session.requestMu.
+func (m *Manager) newLease(session *Session) (*Lease, bool) {
+	_, work, accepted := m.work.Acquire(context.Background())
+	if !accepted {
+		return nil, false
+	}
+	retention := &leaseRetention{work: work}
 	retention.refs.Store(1)
-	return &Lease{Session: session, manager: m, retention: retention}
+	return &Lease{Session: session, manager: m, retention: retention}, true
+}
+
+// requestLease leases a just-opened session, which holds requestMu.
+func (m *Manager) requestLease(session *Session) (*Lease, error) {
+	lease, accepted := m.newLease(session)
+	if !accepted {
+		session.requestMu.Unlock()
+		return nil, fmt.Errorf("transaction manager is closed")
+	}
+	return lease, nil
 }
 
 // Retain transfers another share of this accepted request's ownership to its
@@ -113,6 +133,9 @@ func (l *Lease) Release() {
 			l.manager.touch(l.Session, true)
 		}
 		l.Session.requestMu.Unlock()
+		if l.retention != nil && l.retention.work != nil {
+			l.retention.work()
+		}
 	})
 }
 
@@ -153,7 +176,7 @@ func (m *Manager) OpenRequestForOwner(ctx context.Context, dbName, owner string)
 	if err != nil {
 		return nil, err
 	}
-	return m.newLease(session), nil
+	return m.requestLease(session)
 }
 
 func (m *Manager) openForOwner(ctx context.Context, dbName string, owner string, leased bool) (_ *Session, retErr error) {
@@ -187,7 +210,7 @@ func (m *Manager) OpenRequestWithExecutorForOwner(ctx context.Context, dbName st
 	if err != nil {
 		return nil, err
 	}
-	return m.newLease(session), nil
+	return m.requestLease(session)
 }
 
 func (m *Manager) openWithExecutorForOwner(ctx context.Context, dbName string, executor *cypher.StorageExecutor, owner string, leased bool) (_ *Session, retErr error) {
@@ -286,7 +309,12 @@ func (m *Manager) AcquireForOwner(txID, owner string) (*Lease, bool) {
 		}
 		return nil, false
 	}
-	return m.newLease(session), true
+	lease, accepted := m.newLease(session)
+	if !accepted {
+		session.requestMu.Unlock()
+		return nil, false
+	}
+	return lease, true
 }
 
 // Delete retires a forgotten session through the same terminal owner. Its
@@ -358,21 +386,28 @@ func (m *Manager) Close() error {
 	return m.CloseContext(context.Background())
 }
 
-// CloseContext rejects new sessions and drains their active requests before
-// rolling back. If ctx expires while a request still owns a session lease, the
-// session is abandoned from the manager immediately and a cleanup goroutine
-// finishes its rollback after that lease is released.
+// CloseContext rejects new sessions, rolls back every registered session once
+// its active request has released it, and joins the manager's actual
+// completion: rollbacks, leased requests, expiry timers and terminal
+// observers. Every caller, first or repeated, joins the same completion and
+// receives the same outcomes; ctx bounds only this caller's wait.
 func (m *Manager) CloseContext(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	m.beginClose()
+	return m.work.Shutdown(ctx, nil)
+}
+
+// beginClose runs once: it enrolls each registered session's rollback before
+// sealing admission, in the same critical section that removes the sessions
+// from the map, then signals cancellation and launches the rollbacks.
+func (m *Manager) beginClose() {
 	m.mu.Lock()
 	if m.work.Closing() {
 		m.mu.Unlock()
-		return nil
+		return
 	}
-	// Enroll each session's cleanup before sealing admission, in the same
-	// critical section that removes the sessions from the map.
 	sessions := make([]*Session, 0, len(m.sessions))
 	releases := make([]func(), 0, len(m.sessions))
 	for _, session := range m.sessions {
@@ -385,7 +420,6 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	m.mu.Unlock()
 	m.work.Cancel()
 
-	closeResults := make(chan error, len(sessions))
 	for i, session := range sessions {
 		// Stop timers without waiting for a request lease. Most response writes
 		// retain requestMu after releasing session.mu, so this also prevents an
@@ -423,27 +457,13 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 			session.requestMu.Unlock()
 			m.notifyTerminalError(session, terminalErr, notify)
 			m.work.RecordError("", closeErr)
-			closeResults <- closeErr
 		}(session, releases[i])
 	}
-
-	// Preserve the bounded-close contract for registered sessions. Unregistered
-	// opens and expiry workers that already left the map join WaitClosed instead.
-	var closeErr error
-	for remaining := len(sessions); remaining > 0; remaining-- {
-		select {
-		case err := <-closeResults:
-			closeErr = compose.Outcomes(closeErr, err)
-		case <-ctx.Done():
-			return compose.Outcomes(closeErr, ctx.Err())
-		}
-	}
-	return closeErr
 }
 
 // WaitClosed waits for actual cleanup completion after Close/CloseContext starts,
 // including expiry workers already absent from sessions and terminal observers.
-// It does not initiate close or change repeated CloseContext's no-op contract.
+// It does not initiate close.
 func (m *Manager) WaitClosed(ctx context.Context) error {
 	return m.work.WaitClosed(ctx)
 }

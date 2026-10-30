@@ -28,8 +28,8 @@ type MultiRegionReplicator struct {
 	localRaft *RaftReplicator
 
 	mu       sync.RWMutex
-	starting *lifecycleAttempt
-	work     lifecycle.WorkLifetime // admission-free stop signal and outcomes of this replicator
+	starting *lifecycle.OnceCompletion // the current start attempt; a retry is a new attempt
+	work     lifecycle.WorkLifetime    // admission-free stop signal and outcomes of this replicator
 
 	// Cross-region replication
 	remoteConns     map[string]PeerConnection // regionID -> connection
@@ -41,10 +41,7 @@ type MultiRegionReplicator struct {
 
 	// State
 	started   atomic.Bool
-	closed    atomic.Bool
 	isPrimary atomic.Bool // Is this the primary region?
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
 }
 
 // NewMultiRegionReplicator creates a new multi-region replicator.
@@ -69,7 +66,6 @@ func NewMultiRegionReplicator(config *Config, storage Storage) (*MultiRegionRepl
 		localRaft:       localRaft,
 		remoteConns:     make(map[string]PeerConnection),
 		remoteStreaming: make(map[string]bool),
-		stopCh:          make(chan struct{}),
 	}
 
 	// First region listed is primary by default
@@ -92,30 +88,36 @@ func (r *MultiRegionReplicator) SetTransport(transport Transport) {
 // Start initializes and starts the multi-region replicator.
 func (r *MultiRegionReplicator) Start(ctx context.Context) (startErr error) {
 	r.mu.Lock()
-	if r.closed.Load() {
+	if r.work.Closing() {
 		r.mu.Unlock()
 		return ErrClosed
 	}
 	if attempt := r.starting; attempt != nil {
 		r.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		<-attempt.Done()
+		return attempt.Err()
 	}
 	if r.started.Load() {
 		r.mu.Unlock()
 		return nil
 	}
-	attempt := &lifecycleAttempt{done: make(chan struct{})}
+	attempt := &lifecycle.OnceCompletion{}
 	r.starting = attempt
-	r.wg.Add(1)
 	r.mu.Unlock()
+	release, accepted := r.enter()
+	if !accepted {
+		r.mu.Lock()
+		r.starting = nil
+		r.mu.Unlock()
+		attempt.Do(func() error { return ErrClosed })
+		return ErrClosed
+	}
 	defer func() {
 		r.mu.Lock()
-		attempt.err = startErr
 		r.starting = nil
-		close(attempt.done)
 		r.mu.Unlock()
-		r.wg.Done()
+		attempt.Do(func() error { return startErr })
+		release()
 	}()
 	raftCtx := ctx // the local Raft owner signals its own stop at its existing phase
 	// Initialization observes its caller; running work belongs to the
@@ -123,7 +125,7 @@ func (r *MultiRegionReplicator) Start(ctx context.Context) (startErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -144,8 +146,7 @@ func (r *MultiRegionReplicator) Start(ctx context.Context) (startErr error) {
 	ctx = r.work.Context()
 	// Start cross-region replication if we have remote regions
 	if len(r.config.MultiRegion.RemoteRegions) > 0 {
-		r.wg.Add(1)
-		go r.runCrossRegionReplication(ctx)
+		r.goWork(func() { r.runCrossRegionReplication(ctx) })
 	}
 
 	r.started.Store(true)
@@ -155,7 +156,6 @@ func (r *MultiRegionReplicator) Start(ctx context.Context) (startErr error) {
 
 // runCrossRegionReplication manages async WAL streaming to remote regions.
 func (r *MultiRegionReplicator) runCrossRegionReplication(ctx context.Context) {
-	defer r.wg.Done()
 
 	// Connect to remote regions
 	r.connectToRemoteRegions(ctx)
@@ -168,7 +168,7 @@ func (r *MultiRegionReplicator) runCrossRegionReplication(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stopCh:
+		case <-r.work.Context().Done():
 			return
 		case <-ticker.C:
 			// Only stream if we're the local Raft leader
@@ -284,7 +284,7 @@ func (r *MultiRegionReplicator) streamWALToRemoteRegions(ctx context.Context) {
 
 // Apply applies a command through the local Raft cluster.
 func (r *MultiRegionReplicator) Apply(cmd *Command, timeout time.Duration) error {
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
 
@@ -325,7 +325,7 @@ func (r *MultiRegionReplicator) Health() *HealthStatus {
 	if r.started.Load() {
 		state = "ready"
 	}
-	if r.closed.Load() {
+	if r.work.Closing() {
 		state = "closed"
 	}
 
@@ -353,7 +353,7 @@ func (r *MultiRegionReplicator) Health() *HealthStatus {
 		LeaderID:     localHealth.LeaderID,
 		LeaderAddr:   localHealth.LeaderAddr,
 		State:        state,
-		Healthy:      r.started.Load() && !r.closed.Load(),
+		Healthy:      r.started.Load() && !r.work.Closing(),
 		Region:       r.config.MultiRegion.RegionID,
 		CommitIndex:  localHealth.CommitIndex,
 		AppliedIndex: localHealth.AppliedIndex,
@@ -369,20 +369,13 @@ func (r *MultiRegionReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the replicator.
 func (r *MultiRegionReplicator) Shutdown() error {
-	r.mu.Lock()
-	if !r.closed.CompareAndSwap(false, true) {
-		r.mu.Unlock()
-		return nil
-	}
+	r.config.logPrintf(context.Background(), slog.LevelInfo, "[MultiRegion %s] Shutting down", r.config.NodeID)
+	return r.work.Shutdown(context.Background(), r.retire)
+}
 
-	close(r.stopCh)
-	r.mu.Unlock()
-	r.work.Cancel()
-
-	// Wait for cross-region replication to stop
-	r.wg.Wait()
-
-	// Close all remote connections
+// retire runs once, after every accepted unit of work has returned: it closes
+// the remote connections, then the local Raft owner.
+func (r *MultiRegionReplicator) retire() error {
 	r.mu.Lock()
 	connections := r.remoteConns
 	r.remoteConns = make(map[string]PeerConnection)
@@ -395,13 +388,28 @@ func (r *MultiRegionReplicator) Shutdown() error {
 				r.config.NodeID, regionID, err)
 		}
 	}
+	return compose.Outcomes(closeErr, r.localRaft.Shutdown())
+}
 
-	r.config.logPrintf(context.Background(), slog.LevelInfo, "[MultiRegion %s] Shutting down", r.config.NodeID)
-	localErr := r.localRaft.Shutdown()
-	r.mu.Lock()
-	closeErr = compose.Outcomes(closeErr, localErr, r.work.Err())
-	r.mu.Unlock()
-	return closeErr
+// enter admits one unit of accepted work. It is refused once shutdown has
+// sealed admission; the release is called on the work's actual return.
+func (r *MultiRegionReplicator) enter() (func(), bool) {
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	return release, accepted
+}
+
+// goWork launches fn as accepted work: enrolled before the goroutine exists,
+// released when fn actually returns. It reports false once admission is sealed.
+func (r *MultiRegionReplicator) goWork(fn func()) bool {
+	release, accepted := r.enter()
+	if !accepted {
+		return false
+	}
+	go func() {
+		defer release()
+		fn()
+	}()
+	return true
 }
 
 // Mode returns the replication mode.
@@ -426,14 +434,11 @@ func (r *MultiRegionReplicator) IsPrimaryRegion() bool {
 
 // RegionFailover promotes this region to primary.
 func (r *MultiRegionReplicator) RegionFailover(ctx context.Context) error {
-	r.mu.Lock()
-	if r.closed.Load() {
-		r.mu.Unlock()
+	release, accepted := r.enter()
+	if !accepted {
 		return ErrClosed
 	}
-	r.wg.Add(1)
-	r.mu.Unlock()
-	defer r.wg.Done()
+	defer release()
 	if r.isPrimary.Load() {
 		return nil
 	}
@@ -468,18 +473,13 @@ func (r *MultiRegionReplicator) notifyRegionsOfFailover(ctx context.Context) {
 
 		// Send failover notification via heartbeat
 		// Role field indicates primary status
-		r.wg.Add(1) // the admitted failover retains this child before launch
-		go func(rid string, c PeerConnection) {
-			defer r.wg.Done()
+		rid, c := regionID, conn
+		// The admitted failover enrolls this child before launch.
+		r.goWork(func() {
 			notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
-			r.wg.Add(1) // this admitted child retains its cancellation callback
-			stopCancel := context.AfterFunc(r.work.Context(), func() { defer r.wg.Done(); cancel() })
-			defer func() {
-				if stopCancel() {
-					r.wg.Done()
-				}
-			}()
+			stop := context.AfterFunc(r.work.Context(), cancel)
+			defer stop()
 
 			_, err := c.SendHeartbeat(notifyCtx, &HeartbeatRequest{
 				NodeID:    r.config.NodeID,
@@ -496,7 +496,7 @@ func (r *MultiRegionReplicator) notifyRegionsOfFailover(ctx context.Context) {
 			} else {
 				r.config.logPrintf(ctx, slog.LevelInfo, "[MultiRegion %s] Notified region %s of failover", r.config.NodeID, rid)
 			}
-		}(regionID, conn)
+		})
 	}
 }
 
