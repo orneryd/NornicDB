@@ -1113,7 +1113,9 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 // revisit a small set of edges thousands of times per request) into
 // memory-bound work after the first encounter. edgeGen is the edge cache's
 // generation captured before txn was opened (cacheGeneration).
-func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility) ([]edgeImage, []EdgeID, error) {
+// keep, when set, is the rest of the read's selection, decided before any
+// cached body is copied.
+func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility, keep func(*Edge) bool) ([]edgeImage, []EdgeID, error) {
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
@@ -1130,14 +1132,15 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		}
 		ids = append(ids, edgeID)
 
-		edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
+		edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen, func(edge *Edge) bool {
+			return (keep == nil || keep(edge)) && !b.filterEntityByDecay(v, edge, nowNanos)
+		})
 		if err != nil {
 			return nil, nil, err
 		}
-		if edge.Edge == nil || b.filterEntityByDecay(v, edge.Edge, nowNanos) {
-			continue
+		if edge.Edge != nil {
+			edges = append(edges, edge)
 		}
-		edges = append(edges, edge)
 	}
 	return edges, ids, nil
 }
@@ -1253,7 +1256,7 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 				edges = append(edges, decodedEdge(header))
 				continue
 			}
-			edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
+			edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen, nil)
 			if err != nil {
 				return err
 			}
@@ -1324,13 +1327,15 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 	return headers
 }
 
-// readIndexedEdgeInTxn returns the image of the relationship an adjacency
-// entry names: the cached body (borrowed), else its stored record (decoded
-// for this read), which is then admitted to the cache unless the edge cache
-// was written since gen, captured before txn was opened. A missing record
-// returns a nil image; other read or decode errors are returned.
-func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64) (edgeImage, error) {
-	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{}); ok {
+// readIndexedEdgeInTxn returns the relationship an adjacency entry names, if
+// the read's selection (keep, nil for all) accepts it: a cached body is
+// selected in the cache and copied only when accepted; otherwise the stored
+// record is decoded for this read, admitted to the cache (which keeps its own
+// copy) unless the edge cache was written since gen, captured before txn was
+// opened, and then selected. A missing or rejected relationship returns a nil
+// image; other read or decode errors are returned (NOR-160).
+func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64, keep func(*Edge) bool) (edgeImage, error) {
+	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{match: keep}); ok {
 		return cached, nil
 	}
 	item, err := txn.Get(edgeKey(edgeID))
@@ -1341,7 +1346,7 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 		return edgeImage{}, err
 	}
 	version := item.Version()
-	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{version: &version}); ok {
+	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{version: &version, match: keep}); ok {
 		return cached, nil
 	}
 	var edge *Edge
@@ -1353,6 +1358,9 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 		return edgeImage{}, err
 	}
 	b.cacheFillEdgeAtVersion(gen, edge, item.Version())
+	if keep != nil && !keep(edge) {
+		return edgeImage{}, nil
+	}
 	return decodedEdge(edge), nil
 }
 
