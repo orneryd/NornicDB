@@ -90,7 +90,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		txn, readTs, err = db.beginTxn(false)
 	}
 	if err != nil {
-		b.txnWG.Done()
+		b.work.Leave()
 		return nil, err
 	}
 	view := &badgerReadView{scope: strings.Clone(opts.scope), scopeKind: opts.scopeKind, txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
@@ -118,7 +118,9 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		}()
 	}
 	if opts.longLived {
-		b.txnWG.Done()
+		// A long-lived view holds only its oracle timestamp; each scan is
+		// admitted on its own (withView).
+		b.work.Leave()
 	}
 	return view, nil
 }
@@ -136,7 +138,7 @@ func (v *badgerReadView) Close() {
 	}
 	v.db.endRead(v.readTs)
 	if !v.longLived {
-		v.engine.txnWG.Done()
+		v.engine.work.Leave() // the short view's admission, returned by Close
 	}
 }
 
@@ -159,7 +161,7 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	if err != nil {
 		return err
 	}
-	defer v.engine.txnWG.Done()
+	defer v.engine.work.Leave()
 	if db != v.db {
 		return ErrStorageClosed
 	}

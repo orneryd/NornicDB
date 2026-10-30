@@ -38,9 +38,9 @@ func TestIndexBackfill_AdditionalBranches(t *testing.T) {
 				// A ready marker must short-circuit initialization without
 				// registering a job; explicit force mode must still register one.
 				require.NoError(t, engine.startIndexBackfill(tc.kind, initializeIndexBackfill))
-				mu, doneSlot := &engine.labelIndexBackfillMu, &engine.labelIndexBackfillDone
+				mu, doneSlot := &engine.labelIndexBackfillMu, &engine.labelIndexBackfill
 				if tc.kind == startupEdgeBetweenIndex {
-					mu, doneSlot = &engine.edgeBetweenIndexBackfillMu, &engine.edgeBetweenIndexBackfillDone
+					mu, doneSlot = &engine.edgeBetweenIndexBackfillMu, &engine.edgeBetweenIndexBackfill
 				}
 				mu.Lock()
 				dormant := *doneSlot == nil

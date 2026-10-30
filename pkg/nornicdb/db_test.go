@@ -126,7 +126,8 @@ type closeErrReplicator struct {
 	shutdownErr error
 }
 
-func (r *closeErrReplicator) Start(ctx context.Context) error { return nil }
+func (r *closeErrReplicator) Start(ctx context.Context) error  { return nil }
+func (r *closeErrReplicator) LifetimeContext() context.Context { return context.Background() }
 func (r *closeErrReplicator) Apply(cmd *replication.Command, timeout time.Duration) error {
 	return nil
 }

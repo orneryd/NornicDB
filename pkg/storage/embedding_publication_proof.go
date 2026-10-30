@@ -51,7 +51,7 @@ func (proof embeddingPublicationProof) matches(b *BadgerEngine, id NodeID, revis
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed || b.db == nil || proof.oracle != b.db.oracle {
+	if b.work.Closing() || b.db == nil || proof.oracle != b.db.oracle {
 		return false
 	}
 	o := proof.oracle

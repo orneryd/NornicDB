@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"strings"
@@ -60,13 +61,15 @@ func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	}
 	engine.writeBarrier.Lock()
 	engine.mu.Lock()
-	engine.closed = true
+	engine.work.CloseAdmission()
 	// A crash discards the buffer; later fixture cleanup must not drain it.
 	engine.writeBehind = nil
 	db := engine.db
 	engine.mu.Unlock()
-	require.NoError(t, db.Close())
 	engine.writeBarrier.Unlock()
+	// The crash is the owner's stop with only the store's own close as its
+	// dispose; fixture cleanup's Close joins this completion.
+	require.NoError(t, engine.work.Shutdown(context.Background(), db.Close))
 	require.NoError(t, wal.Close())
 }
 

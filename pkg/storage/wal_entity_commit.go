@@ -81,7 +81,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 		releaseAuthority()
 		return nil, err
 	}
-	if w.wal.closed.Load() {
+	if w.wal.work.Closing() {
 		w.wal.mu.Unlock()
 		releaseMutation()
 		releaseAuthority()

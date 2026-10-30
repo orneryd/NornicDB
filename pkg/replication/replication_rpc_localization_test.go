@@ -62,7 +62,7 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		cause := errors.New("forced write failure")
 		netConn := &replicationRPCFailingConn{writeErr: cause}
 		connection := &ClusterConnection{
-			clusterLifecycle: clusterLifecycle[connectionResources]{closeCh: make(chan struct{}), resources: connectionResources{conn: netConn}},
+			clusterLifecycle: clusterLifecycle[connectionResources]{resources: connectionResources{conn: netConn}},
 			writer:           bufio.NewWriter(netConn),
 			pendingRPCs:      make(map[uint64]chan *ClusterMessage),
 		}

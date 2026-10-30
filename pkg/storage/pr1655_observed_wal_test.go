@@ -215,7 +215,7 @@ func TestPR1655ObservedWALPreparationHoldsSnapshotBarrier(t *testing.T) {
 	if unprotected {
 		owner.mutationMu.Unlock()
 	}
-	go func() { snapshotDone <- owner.createSnapshotAndCompact() }()
+	go func() { snapshotDone <- owner.createSnapshotAndCompact(owner.work.Context()) }()
 	require.False(t, unprotected, "snapshot barrier must cover preparation before journal registration")
 	deadline := time.Now().Add(5 * time.Second)
 	for owner.mutationMu.TryRLock() {

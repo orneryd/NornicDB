@@ -98,7 +98,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				<-queueCtx.entered
 				stopped := make(chan struct{})
 				go func() { _ = r.Shutdown(); close(stopped) }()
-				<-r.stopCh
+				<-r.work.Context().Done()
 				select {
 				case <-stopped:
 					t.Fatal("shutdown drained before its admitted queue producer finished")

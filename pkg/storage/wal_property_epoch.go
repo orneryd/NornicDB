@@ -253,7 +253,7 @@ func (w *WAL) ensurePropertyEpochLocked(dictionary *propertyKeyDictionary, bound
 	if w.propertyEpochError != nil {
 		return w.propertyEpochError
 	}
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 	if dictionary == nil {
@@ -298,7 +298,7 @@ func (w *WAL) bindPropertyDictionary(dictionary *propertyKeyDictionary) {
 func (w *WAL) invalidateCleanPropertyEpoch() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 	if err := w.prepareEpochFormatLocked(); err != nil {

@@ -28,7 +28,7 @@ func (b *BadgerEngine) importBufferedWALRecord(data *WALBufferedCommitData, auth
 	if err != nil {
 		return bufferedCommit{}, err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	c := bufferedCommit{
 		recovered: true, logicalTxID: data.LogicalTxID,
 		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,

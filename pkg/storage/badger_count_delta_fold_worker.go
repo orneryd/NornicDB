@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"sync"
+	"context"
 )
 
 // countDeltaFoldBackgroundThreshold is how many appended derived-count delta
@@ -18,10 +18,8 @@ const countDeltaFoldBackgroundThreshold = 50_000
 // at a time, and appends continue to land while it runs (a later fold catches
 // the remainder).
 type countDeltaFoldWorker struct {
-	wake     chan struct{}
-	stop     chan struct{}
-	done     chan struct{}
-	stopOnce sync.Once
+	wake chan struct{}
+	run  *engineWorker
 }
 
 // signal wakes the fold worker once a fold is due.
@@ -52,23 +50,18 @@ func (b *BadgerEngine) recordCountDeltaAppend() {
 // startCountDeltaFoldWorker starts the background fold goroutine of an
 // on-disk engine.
 func (b *BadgerEngine) startCountDeltaFoldWorker() {
-	w := &countDeltaFoldWorker{
-		wake: make(chan struct{}, 1),
-		stop: make(chan struct{}),
-		done: make(chan struct{}),
-	}
+	w := &countDeltaFoldWorker{wake: make(chan struct{}, 1)}
 	b.countFold = w
-	go func() {
-		defer close(w.done)
+	w.run = b.startEngineWorker(b.work.Context(), func(ctx context.Context) {
 		for {
 			select {
-			case <-w.stop:
+			case <-ctx.Done():
 				return
 			case <-w.wake:
 			}
 			b.foldCountDeltasInBackground()
 		}
-	}()
+	})
 }
 
 // foldCountDeltasInBackground folds every persisted label and edge-type delta
@@ -94,6 +87,5 @@ func (b *BadgerEngine) stopCountDeltaFoldWorker() {
 	if w == nil {
 		return
 	}
-	w.stopOnce.Do(func() { close(w.stop) })
-	<-w.done
+	w.run.stopAndJoin()
 }
