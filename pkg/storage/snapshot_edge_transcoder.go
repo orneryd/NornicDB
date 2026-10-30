@@ -1,5 +1,7 @@
 package storage
 
+// Snapshot Edge encoder convergence author: Claude (storage-format-owners lane), 30 October 2026.
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -27,7 +29,8 @@ type snapshotEdgeTranscoder struct {
 
 // writeBody expands the V2 header and dictionary names, copying property bytes
 // only when the strict property reader would reproduce them exactly. Complex
-// values whose normalization has not been proved use the ordinary frame writer.
+// values whose normalization has not been proved are decoded instead; both
+// reach the same encodeSnapshotEdge.
 func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, id EdgeID, body []byte, ids *NamespacedEngine, write func(byte, any) error) (bool, error) {
 	namespace := namespaceForEdgeID(id)
 	edge := &t.edge
@@ -98,9 +101,44 @@ func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, id EdgeID, body []by
 	return true, write(streamSnapshotEdge, t)
 }
 
-// encodeSnapshotStoredEdge mirrors msgpack's reflected Edge field order. The
-// differential compares complete frames against that independent encoder.
-func encodeSnapshotStoredEdge(enc *msgpack.Encoder, edge *Edge, props []snapshotRawProperty) error {
+// snapshotPropertyWriter writes the Properties value of one snapshot Edge
+// record: the stored body's raw values (*snapshotEdgeTranscoder) or a decoded
+// map (snapshotDecodedProperties). Both are pointer-shaped, so neither boxes.
+type snapshotPropertyWriter interface {
+	writeSnapshotProperties(enc *msgpack.Encoder) error
+}
+
+// writeSnapshotProperties copies the name-sorted raw values that writeBody
+// proved the decoded writer would reproduce exactly.
+func (t *snapshotEdgeTranscoder) writeSnapshotProperties(enc *msgpack.Encoder) error {
+	if err := enc.EncodeMapLen(len(t.properties)); err != nil {
+		return err
+	}
+	for _, prop := range t.properties {
+		if err := enc.EncodeString(prop.name); err != nil {
+			return err
+		}
+		if _, err := enc.Writer().Write(prop.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// snapshotDecodedProperties writes a decoded property map exactly as the
+// reflected map encoder does with sorted keys: nil as nil, values by Encode.
+type snapshotDecodedProperties map[string]any
+
+func (p snapshotDecodedProperties) writeSnapshotProperties(enc *msgpack.Encoder) error {
+	return enc.EncodeMapSorted(p)
+}
+
+// encodeSnapshotEdge is the one encoder of the snapshot Edge record and its one
+// field inventory. Its fields and order are msgpack's reflected Edge map, which
+// earlier snapshots wrote (Database is msgpack:"-"); the differential tests
+// compare complete frames with that reflected encoding. The caller sets sorted
+// map keys, so nested maps in decoded values encode as they always did.
+func encodeSnapshotEdge(enc *msgpack.Encoder, edge *Edge, properties snapshotPropertyWriter) error {
 	if err := enc.EncodeMapLen(10); err != nil {
 		return err
 	}
@@ -118,16 +156,8 @@ func encodeSnapshotStoredEdge(enc *msgpack.Encoder, edge *Edge, props []snapshot
 	if err := enc.EncodeString("Properties"); err != nil {
 		return err
 	}
-	if err := enc.EncodeMapLen(len(props)); err != nil {
+	if err := properties.writeSnapshotProperties(enc); err != nil {
 		return err
-	}
-	for _, prop := range props {
-		if err := enc.EncodeString(prop.name); err != nil {
-			return err
-		}
-		if _, err := enc.Writer().Write(prop.value); err != nil {
-			return err
-		}
 	}
 	if err := enc.EncodeString("CreatedAt"); err != nil {
 		return err

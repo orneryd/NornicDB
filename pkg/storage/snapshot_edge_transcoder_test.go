@@ -1,7 +1,10 @@
 package storage
 
+// Snapshot Edge encoder convergence author: Claude (storage-format-owners lane), 30 October 2026.
+
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/rand"
@@ -52,9 +55,11 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 		decoded.StartNode = NodeID(strings.TrimPrefix(string(decoded.StartNode), strip))
 		decoded.EndNode = NodeID(strings.TrimPrefix(string(decoded.EndNode), strip))
 	}
-	var want, got bytes.Buffer
-	oracle := snapshotFrameWriter{writer: &want}
-	require.NoError(t, oracle.write(streamSnapshotEdge, decoded, defaultSnapshotRecordSize))
+	var got, decodedFrame bytes.Buffer
+	want := bytes.NewBuffer(reflectedSnapshotEdgeFrame(t, decoded))
+	// The decoded property writer alone must also reproduce the release frame.
+	require.NoError(t, (&snapshotFrameWriter{writer: &decodedFrame}).write(streamSnapshotEdge, decoded, defaultSnapshotRecordSize))
+	require.Equal(t, want.Bytes(), decodedFrame.Bytes(), "decoded edge frames must be byte-identical to the release encoding")
 	frames := snapshotFrameWriter{writer: &got}
 	transcoder := snapshotEdgeTranscoder{}
 	var ids *NamespacedEngine
@@ -73,12 +78,27 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 	var recovered Edge
 	require.NoError(t, decodeRecoveryPayload(payload, &recovered))
 	// The standard recovery decoder is also the oracle for strict array shape.
-	_, referencePayload, err := readSnapshotFrame(&want)
+	_, referencePayload, err := readSnapshotFrame(want)
 	require.NoError(t, err)
 	var reference Edge
 	require.NoError(t, decodeRecoveryPayload(referencePayload, &reference))
 	require.Equal(t, reference, recovered)
 	return fast
+}
+
+// reflectedSnapshotEdgeFrame is the release frame of a decoded Edge: msgpack's
+// reflected Edge map with sorted keys. It is the independent byte oracle for
+// encodeSnapshotEdge, so a new Edge field missing from the encoder fails here.
+func reflectedSnapshotEdgeFrame(t testing.TB, edge *Edge) []byte {
+	t.Helper()
+	var encoder valueEncoder
+	encoder.reset()
+	encoder.msgpack.SetSortMapKeys(true)
+	require.NoError(t, encoder.msgpack.Encode(prepareRecoveryEdge(edge)))
+	payload := encoder.buffer.Bytes()
+	frame := binary.LittleEndian.AppendUint32([]byte{streamSnapshotEdge}, uint32(len(payload)))
+	frame = append(frame, payload...)
+	return binary.LittleEndian.AppendUint32(frame, crc32Checksum(payload))
 }
 
 func TestSnapshotTranscoderDifferential(t *testing.T) {
