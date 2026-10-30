@@ -502,6 +502,97 @@ func (c *NOR160ControlCache) GetCallbackAll() []*Node {
 	c.nor160Each(func(n *Node) { first = append(first, copyNode(n)) })
 	return first
 }
+
+// Real-shape plants: a generic mapper before a stoppable loop (K3); a
+// population gathered through a closure that another closure captures, then
+// filtered in place by a caller (K1); copies a callback writes into a captured
+// variable behind a call that returns an error (K1). Clean twins: the generic
+// mapper's result returned whole; the gathered population returned whole; the
+// callback population returned on every path.
+func nor160ControlMapG[T any](xs []T, f func(T) T) []T {
+	if xs == nil {
+		return nil
+	}
+	out := make([]T, len(xs))
+	for i, x := range xs {
+		out[i] = f(x)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) StreamGenericTail(tail []*Node, visit func(*Node) error) error {
+	for _, n := range nor160ControlMapG(tail, copyNode) {
+		if err := visit(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *NOR160ControlCache) GetGenericCopies(tail []*Node) []*Node {
+	return nor160ControlMapG(tail, copyNode)
+}
+
+func (c *NOR160ControlCache) nor160Gather(more bool) []*Node {
+	var out []*Node
+	include := func(n *Node) { out = append(out, n) }
+	later := func() {
+		for _, n := range c.nodes {
+			include(n)
+		}
+	}
+	for _, n := range c.nodes {
+		include(copyNode(n))
+	}
+	if more {
+		later()
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetGatheredFiltered(skip map[NodeID]bool) []*Node {
+	all := c.nor160Gather(false)
+	out := all[:0]
+	for _, n := range all {
+		if skip[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetGatheredAll() []*Node {
+	return c.nor160Gather(false)
+}
+
+func (c *NOR160ControlCache) nor160EachErr(visit func(*Node)) error {
+	for _, n := range c.nodes {
+		visit(n)
+	}
+	return nil
+}
+
+func (c *NOR160ControlCache) GetCallbackFirstErr(small bool) ([]*Node, error) {
+	var first []*Node
+	err := c.nor160EachErr(func(n *Node) { first = append(first, copyNode(n)) })
+	if err != nil {
+		return nil, err
+	}
+	if small {
+		return c.nor160CopyAll(), nil
+	}
+	return first, nil
+}
+
+func (c *NOR160ControlCache) GetCallbackAllErr() ([]*Node, error) {
+	var first []*Node
+	err := c.nor160EachErr(func(n *Node) { first = append(first, copyNode(n)) })
+	if err != nil {
+		return nil, err
+	}
+	return first, nil
+}
 `
 
 const cypherControlFile = `package cypher
@@ -564,6 +655,12 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAll", true},
 	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamMappedTail", false},
 	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamEachCopied", true},
+	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamGenericTail", false},
+	{"K3", "(*" + storagePkg + ".NOR160ControlCache).GetGenericCopies", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetGatheredFiltered", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetGatheredAll", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackFirstErr", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAllErr", true},
 }
 
 var tree string
@@ -636,12 +733,13 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
-	p       *workcensus.Program
-	fns     []*ssa.Function
-	sums    map[*ssa.Function]*summary
-	states  map[*ssa.Function]*fnState
-	callees map[ssa.CallInstruction][]*ssa.Function
-	callers map[*ssa.Function][]*ssa.Function
+	cellRoot bool // mayDrop is following callback-filled variables
+	p        *workcensus.Program
+	fns      []*ssa.Function
+	sums     map[*ssa.Function]*summary
+	states   map[*ssa.Function]*fnState
+	callees  map[ssa.CallInstruction][]*ssa.Function
+	callers  map[*ssa.Function][]*ssa.Function
 }
 
 // ---------------------------------------------------------------- types
@@ -783,6 +881,10 @@ func isErrorType(t types.Type) bool {
 
 func inModule(fn *ssa.Function) bool {
 	for fn != nil && fn.Pkg == nil {
+		if o := fn.Origin(); o != nil && o != fn {
+			fn = o // an instance of a generic function
+			continue
+		}
 		fn = fn.Parent()
 	}
 	if fn == nil || fn.Pkg == nil {
@@ -964,8 +1066,8 @@ func (a *analysis) freeEnv(fn *ssa.Function, i int) (org, bool) {
 // in fn writes, and what it writes there.
 func (a *analysis) closureWrites(fn *ssa.Function, s *fnState, call ssa.CallInstruction) map[memKey]org {
 	c := call.Common()
-	mc, ok := c.Value.(*ssa.MakeClosure)
-	if !ok {
+	mc := closureOf(c.Value)
+	if mc == nil {
 		return nil
 	}
 	g, _ := mc.Fn.(*ssa.Function)
@@ -1423,6 +1525,10 @@ func (a *analysis) funcValueResult(fn *ssa.Function, s *fnState, v ssa.Value, ar
 		g = x
 	case *ssa.MakeClosure:
 		g, _ = x.Fn.(*ssa.Function)
+	case *ssa.UnOp:
+		if mc := closureOf(x); mc != nil {
+			g, _ = mc.Fn.(*ssa.Function)
+		}
 	case *ssa.Parameter:
 		if i := paramIndex(fn, x); i >= 0 {
 			return org{FuncRes: bit(i)}
@@ -1750,7 +1856,7 @@ func (a *analysis) derived(fn *ssa.Function, s *fnState, roots []ssa.Value, elem
 					}
 					// A closure that stores its argument into a captured
 					// variable puts the root into that variable.
-					if mc, ok := c.Value.(*ssa.MakeClosure); ok {
+					if mc := closureOf(c.Value); mc != nil {
 						if g, _ := mc.Fn.(*ssa.Function); g != nil && a.sums[g] != nil {
 							for i, b := range mc.Bindings {
 								al, ok := b.(*ssa.Alloc)
@@ -1862,6 +1968,9 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		population = whole[0]
 	}
 	rootCall, _ := root.(*ssa.Call)
+	if a.cellRoot {
+		rootCall = nil // the call's own results say nothing about the cells
+	}
 	has := func(v ssa.Value) bool { return d[v] }
 	var start *ssa.BasicBlock
 	idx := -1
@@ -2023,8 +2132,8 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 // closureWritesTo: captured variables a call of a closure made here writes
 // with a value accepted by has.
 func (a *analysis) closureWritesTo(call *ssa.Call, has func(ssa.Value) bool) []*ssa.Alloc {
-	mc, ok := call.Call.Value.(*ssa.MakeClosure)
-	if !ok {
+	mc := closureOf(call.Call.Value)
+	if mc == nil {
 		return nil
 	}
 	g, _ := mc.Fn.(*ssa.Function)
@@ -2364,6 +2473,12 @@ func (a *analysis) funcOf(v ssa.Value) *ssa.Function {
 		}
 	case *ssa.ChangeType:
 		return a.funcOf(x.X)
+	case *ssa.UnOp:
+		if mc := closureOf(x); mc != nil {
+			if g, ok := mc.Fn.(*ssa.Function); ok {
+				return a.unwrapped(g)
+			}
+		}
 	}
 	return nil
 }
@@ -2389,8 +2504,8 @@ func emptyReslice(x *ssa.Slice) bool {
 func (a *analysis) callbackWrites(call ssa.CallInstruction) map[memKey]org {
 	var out map[memKey]org
 	for _, arg := range callArgs(call.Common()) {
-		mc, ok := arg.(*ssa.MakeClosure)
-		if !ok {
+		mc := closureOf(arg)
+		if mc == nil {
 			continue
 		}
 		g, _ := mc.Fn.(*ssa.Function)
@@ -2429,6 +2544,34 @@ func (a *analysis) callbackCopyCells(call ssa.CallInstruction) []ssa.Value {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pos() < out[j].Pos() })
 	return out
+}
+
+// closureOf: the closure a function value is, directly or loaded from a local
+// variable cell that only ever holds that closure.
+func closureOf(v ssa.Value) *ssa.MakeClosure {
+	switch x := v.(type) {
+	case *ssa.MakeClosure:
+		return x
+	case *ssa.UnOp:
+		al, ok := x.X.(*ssa.Alloc)
+		if !ok || x.Op != token.MUL || al.Referrers() == nil {
+			return nil
+		}
+		var only *ssa.MakeClosure
+		for _, r := range *al.Referrers() {
+			st, ok := r.(*ssa.Store)
+			if !ok || st.Addr != al {
+				continue
+			}
+			mc, ok := st.Val.(*ssa.MakeClosure)
+			if !ok || (only != nil && only != mc) {
+				return nil
+			}
+			only = mc
+		}
+		return only
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- report
@@ -2689,7 +2832,10 @@ func main() {
 					continue
 				}
 				d := a.derived(fn, s, cells, true)
-				if k, _ := a.mayDrop(fn, s, call, d); k == dropPlain {
+				a.cellRoot = true
+				k, _ := a.mayDrop(fn, s, call, d)
+				a.cellRoot = false
+				if k == dropPlain {
 					add("K1", fn, call.Pos(), "copies a callback writes into captured variables can be left undelivered")
 				}
 			}
