@@ -126,8 +126,7 @@ type closeErrReplicator struct {
 	shutdownErr error
 }
 
-func (r *closeErrReplicator) Start(ctx context.Context) error  { return nil }
-func (r *closeErrReplicator) LifetimeContext() context.Context { return context.Background() }
+func (r *closeErrReplicator) Start(ctx context.Context) error { return nil }
 func (r *closeErrReplicator) Apply(cmd *replication.Command, timeout time.Duration) error {
 	return nil
 }
@@ -139,6 +138,7 @@ func (r *closeErrReplicator) LeaderAddr() string                      { return "
 func (r *closeErrReplicator) LeaderID() string                        { return "" }
 func (r *closeErrReplicator) Health() *replication.HealthStatus       { return nil }
 func (r *closeErrReplicator) WaitForLeader(ctx context.Context) error { return nil }
+func (r *closeErrReplicator) LifetimeContext() context.Context        { return context.Background() }
 func (r *closeErrReplicator) Shutdown() error                         { return r.shutdownErr }
 func (r *closeErrReplicator) Mode() replication.ReplicationMode       { return replication.ModeStandalone }
 func (r *closeErrReplicator) NodeID() string                          { return "n1" }
@@ -392,7 +392,7 @@ func TestClose(t *testing.T) {
 
 		err = db.Close()
 		assert.NoError(t, err)
-		assert.True(t, db.closed)
+		assert.True(t, db.work.Closing())
 	})
 
 	t.Run("close is idempotent", func(t *testing.T) {
@@ -408,7 +408,7 @@ func TestClose(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("closeInternal aggregates close errors and cancels build context", func(t *testing.T) {
+	t.Run("Close aggregates close errors and cancels build context", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Database.PersistSearchIndexes = true
 		cfg.Database.DataDir = t.TempDir()
@@ -429,32 +429,30 @@ func TestClose(t *testing.T) {
 			embedQueue: NewEmbedWorker(nil, searchEngine, &EmbedWorkerConfig{
 				DeferWorkerStart: true,
 			}),
-			clusterTicker:     time.NewTicker(time.Hour),
-			clusterTickerStop: make(chan struct{}),
-			buildCtx:          ctx,
-			buildCancel:       cancel,
+			clusterTicker: time.NewTicker(time.Hour),
+			buildCtx:      ctx,
+			buildCancel:   cancel,
 		}
 		t.Cleanup(func() {
-			// closeInternal already calls Close() on this queue; this is just defensive.
+			// Close already calls Close() on this queue; this is just defensive.
 			if db.embedQueue != nil {
 				db.embedQueue.Close()
 			}
 		})
 
-		err := db.closeInternal()
+		err := db.Close()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "base close failed")
 
 		select {
 		case <-ctx.Done():
 		default:
-			t.Fatal("build context should be canceled by closeInternal")
+			t.Fatal("build context should be canceled by Close")
 		}
 		require.Nil(t, db.clusterTicker)
-		require.Nil(t, db.clusterTickerStop)
 	})
 
-	t.Run("closeInternal aggregates replication shutdown errors", func(t *testing.T) {
+	t.Run("Close aggregates replication shutdown errors", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		db := &DB{
 			config: DefaultConfig(),
@@ -468,7 +466,7 @@ func TestClose(t *testing.T) {
 			buildCancel: cancel,
 		}
 
-		err := db.closeInternal()
+		err := db.Close()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "replicator shutdown failed")
 		require.Contains(t, err.Error(), "transport close failed")
@@ -1671,10 +1669,9 @@ func TestSearchAndHybridSearch_RetryWhileIndexBuilding(t *testing.T) {
 		buildCtx:          context.Background(),
 	}
 	db.searchServices["nornic"] = &dbSearchService{
-		dbName:    "nornic",
-		engine:    ns,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "nornic",
+		engine: ns,
+		svc:    svc,
 	}
 
 	results, err := db.Search(ctx, "missing", nil, 10)
@@ -1699,12 +1696,11 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 	}))
 
 	entry := &dbSearchService{
-		dbName:    "nornic",
-		engine:    ns,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "nornic",
+		engine: ns,
+		svc:    svc,
 	}
-	entry.buildOnce.Do(func() {})
+	finishBuild := holdInitialBuild(entry)
 
 	db := &DB{
 		config:            DefaultConfig(),
@@ -1725,7 +1721,7 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 	case <-time.After(25 * time.Millisecond):
 	}
 
-	close(entry.buildDone)
+	finishBuild()
 	require.NoError(t, <-errCh)
 	require.Equal(t, 0, svc.EmbeddingCount())
 }
@@ -2325,7 +2321,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 		require.NoError(t, db.PauseLifecycle())
 		require.NoError(t, db.ResumeLifecycle())
 
-		db.closed = true
+		db.work.CloseAdmission()
 		_, err = db.LifecycleStatus()
 		require.ErrorIs(t, err, ErrClosed)
 		require.ErrorIs(t, db.TriggerLifecyclePrune(ctx), ErrClosed)

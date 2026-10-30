@@ -21,7 +21,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			dims := config.Memory.EmbeddingDimensions
 			if dims <= 0 {

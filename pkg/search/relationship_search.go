@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -79,7 +80,7 @@ type relationshipSearch struct {
 	// fields are separate from the loader's live-write ordering state.
 	workerMu      sync.Mutex
 	workerStarted bool
-	done          chan struct{}
+	worker        lifecycle.OnceCompletion // the worker's one completion (embedding and its saves)
 	embedMu       sync.Mutex
 	saveErr       error
 	// staged belongs to the embedding worker. Failed saves keep the batch
@@ -106,7 +107,7 @@ type relationshipSearch struct {
 	// every source; zero when none was set.
 	policy uint64
 	wake   chan struct{}
-	ready  chan struct{}
+	loaded lifecycle.OnceCompletion // the startup load has completed
 	start  sync.Once
 
 	// While the loader (runRelationshipIndex) applies the stored
@@ -136,9 +137,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 		embed:    embed,
 		pending:  make(map[string]*storage.Edge),
 		wake:     make(chan struct{}, 1),
-		ready:    make(chan struct{}),
 		staged:   make(map[string]relationshipEntry),
-		done:     make(chan struct{}),
 
 		syncDirectory: storage.SyncDir,
 	})
@@ -194,12 +193,16 @@ func (s *Service) StartRelationshipIndex() {
 		rs.mu.Lock()
 		rs.loading, rs.live = true, make(map[string]struct{})
 		rs.mu.Unlock()
-		go s.runRelationshipIndex(rs)
+		if !s.RunBackgroundTask(func() {
+			rs.worker.Do(func() error { s.runRelationshipIndex(rs); return rs.saveErr })
+		}) {
+			rs.loaded.Do(func() error { return nil })
+			rs.worker.Do(func() error { return nil })
+		}
 	})
 }
 
 func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
-	defer close(rs.done)
 	ctx := s.lifecycleCtx
 	persisted, err := s.loadRelationshipVectors()
 	if err != nil {
@@ -208,7 +211,7 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 		rs.loadErr = err
 		rs.mu.Unlock()
 		rs.saveErr = err
-		close(rs.ready)
+		rs.loaded.Do(func() error { return nil })
 		return
 	}
 	seen := make(map[string]bool)
@@ -225,7 +228,7 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	rs.mu.Lock()
 	rs.loading, rs.live = false, nil
 	rs.mu.Unlock()
-	close(rs.ready)
+	rs.loaded.Do(func() error { return nil })
 	s.embedRelationships(ctx, rs)
 }
 
@@ -598,12 +601,12 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
 func (s *Service) joinRelationshipIndex() error {
 	if rs := s.relationshipSearch(); rs != nil {
 		rs.workerMu.Lock()
-		done := rs.done
 		started := rs.workerStarted
 		rs.workerMu.Unlock()
 		if started {
-			<-done
-			return rs.saveErr
+			// Join the dispatched worker; never race it for its completion.
+			<-rs.worker.Done()
+			return rs.worker.Err()
 		}
 	}
 	return nil
@@ -622,6 +625,11 @@ type relationshipCandidate struct {
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
 func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return nil, localizedError(localization.SearchRelationshipsDisabled(), ErrRelationshipSearchDisabled)
@@ -630,7 +638,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		opts = DefaultSearchOptions()
 	}
 	select {
-	case <-rs.ready:
+	case <-rs.loaded.Done():
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

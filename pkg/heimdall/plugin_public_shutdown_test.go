@@ -66,7 +66,7 @@ func TestSolPublicStopOwnsInFlightDispatch(t *testing.T) {
 	}()
 	StartEventDispatcher()
 	dispatcher.mu.RLock()
-	retired := dispatcher.done
+	retired := dispatcher.gen.Context().Done()
 	dispatcher.mu.RUnlock()
 	EmitDatabaseEvent(&DatabaseEvent{Type: EventNodeCreated})
 	select {
