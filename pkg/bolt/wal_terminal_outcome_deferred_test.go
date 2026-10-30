@@ -1,5 +1,5 @@
 // Author: Codex,NOR-180 compiled deferred-consumer classes,29October2026;
-// memory_commit order by Claude, 30 October 2026.
+// memory_commit order and the per-child WAL profiles by Claude, 30 October 2026.
 package bolt
 
 import (
@@ -22,6 +22,8 @@ func TestBoltWALTerminalDeferredOutcomeValue(t *testing.T) {
 		walterminal.ContractProfiles[0], // distinct abort primaries
 		walterminal.ContractProfiles[2], // committed child plus aborted child
 		walterminal.ContractProfiles[4], // aborted retriable child, then committed child
+		walterminal.ContractProfiles[5], // aborted retriable child, then a committed child with a written record
+		walterminal.ContractProfiles[6], // the same, committed child first
 	}
 	for _, profile := range profiles {
 		for _, mode := range []string{"pull_completion", "discard", "reset_abandons", "pull_then_reset", "next_run_abandons"} {
@@ -131,8 +133,10 @@ func TestBoltWALTerminalDeferredOutcomeValue(t *testing.T) {
 					} else {
 						aggregate.RequireNative(t)
 					}
-					if closed {
-						require.ErrorIs(t, actual, storage.ErrWALClosed)
+					if closed || (aggregate != nil && aggregate.Flow.WantError) {
+						if closed {
+							require.ErrorIs(t, actual, storage.ErrWALClosed)
+						}
 						require.Equal(t, byte(MsgFailure), kind)
 						code, _ := metadata["code"].(string)
 						message, _ := metadata["message"].(string)

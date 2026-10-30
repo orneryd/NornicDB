@@ -1,4 +1,5 @@
 // Author: Codex,NOR-180 HTTP outcome contract,29October2026.
+// Per-child WAL profiles (failure expected from the flow) by Claude, 30 October 2026.
 package server
 
 import (
@@ -19,7 +20,7 @@ func TestHTTPWALTerminalOutcomeValueViews(t *testing.T) {
 					status, response := request(http.MethodPost, "/db/nornic/tx/commit", walHTTPStatements(c.Flow.Query))
 					c.RequireNative(t)
 					require.Equal(t, http.StatusOK, status)
-					if !closed {
+					if !c.Flow.WantError {
 						require.Empty(t, response.Errors)
 						return
 					}

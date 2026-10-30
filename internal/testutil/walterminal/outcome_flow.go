@@ -36,8 +36,10 @@ func RequireCommitMarkerFailure(t testing.TB, message string) {
 }
 
 type OutcomeFlow struct {
-	Query          string
-	Primary        error
+	Query   string
+	Primary error
+	// PostCommit is a committed child's post-commit failure (commit_postcommit).
+	PostCommit     error
 	Closed         bool
 	WantError      bool
 	CommittedNodes int64
@@ -100,12 +102,19 @@ func NewOutcomeFlow(t testing.TB, engine *Engine, family, outcome string, closed
 		f.Primary = Primary("memory")
 	case "commit":
 		f.CommittedNodes = 1
+	case "commit_postcommit":
+		// Author: Claude, NOR-180 one committed representation, 30 October 2026.
+		// The native commit and its COMMIT record succeed (this child's WAL
+		// stays writable); its post-commit suppression step then fails with a
+		// transient storage error, so its committed failure has no WAL failure.
+		f.CommittedNodes, f.PostCommit, closed = 1, storage.ErrStorageRestoring, false
+		f.Closed, f.WantError = false, true
 	case "empty":
 	default:
 		t.Fatalf("unknown logical terminal outcome %q", outcome)
 	}
 	if family == "implicit" || family == "transactional_call" {
-		f.WantError = closed || f.Primary != nil
+		f.WantError = closed || f.Primary != nil || f.PostCommit != nil
 	}
 	var calls atomic.Int64
 	step := registerFlowProcedure(t, false, func(ctx context.Context, exec *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
@@ -118,6 +127,11 @@ func NewOutcomeFlow(t testing.TB, engine *Engine, family, outcome string, closed
 			var err error
 			result, err = exec.Execute(ctx, "CREATE (:WalWire) RETURN 1 AS value", nil)
 			if err != nil {
+				return nil, err
+			}
+		}
+		if f.PostCommit != nil {
+			if _, err := exec.Execute(ctx, "MATCH (n:WalWire) CALL kp.suppress(n)", nil); err != nil {
 				return nil, err
 			}
 		}
@@ -186,6 +200,17 @@ type MultipleOutcomeOptions struct {
 	ObservePrimary func(error)
 }
 
+// PostCommitFault fails the post-commit manual-suppression step with Cause.
+type PostCommitFault struct {
+	storage.Engine
+	Cause error
+}
+
+func (e *PostCommitFault) GetInnerEngine() storage.Engine { return e.Engine }
+func (e *PostCommitFault) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+	return e.Cause
+}
+
 func NewMultipleOutcomeFlow(t testing.TB, engines []*Engine, options ...MultipleOutcomeOptions) *OutcomeFlow {
 	t.Helper()
 	var option MultipleOutcomeOptions
@@ -206,11 +231,21 @@ func NewMultipleOutcomeFlow(t testing.TB, engines []*Engine, options ...Multiple
 		child := NewOutcomeFlow(t, engine, "implicit", kind, closed)
 		if option.ObservePrimary != nil {
 			option.ObservePrimary(child.Primary)
+			if child.PostCommit != nil {
+				option.ObservePrimary(child.PostCommit)
+			}
 		}
 		if f.Primary == nil {
 			f.Primary = child.Primary
 		}
-		exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
+		// A committed child's failure is retained even by this count-only
+		// consumer, which discards its children's returns.
+		f.WantError = f.WantError || child.PostCommit != nil
+		var store storage.Engine = storage.NewNamespacedEngine(engine, "nornic")
+		if child.PostCommit != nil {
+			store = &PostCommitFault{Engine: store, Cause: child.PostCommit}
+		}
+		exec := cypher.NewStorageExecutor(store)
 		callbacks = append(callbacks, flowCallbackFunc(func(ctx context.Context) (*cypher.ExecuteResult, error) {
 			return exec.Execute(ctx, child.Query, nil)
 		}))

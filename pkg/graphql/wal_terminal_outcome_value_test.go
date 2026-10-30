@@ -1,4 +1,5 @@
 // Author: Codex,NOR-180 GraphQL outcome contract,29October2026.
+// Per-child WAL profiles (failure expected from the flow) by Claude, 30 October 2026.
 package graphql
 
 import (
@@ -37,7 +38,7 @@ func TestGraphQLWALTerminalOutcomeValueViews(t *testing.T) {
 						Errors []struct{ Message string } `json:"errors"`
 					}
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &wire))
-					if !closed {
+					if !c.Flow.WantError {
 						require.Empty(t, wire.Errors)
 						return
 					}

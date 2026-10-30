@@ -1,4 +1,5 @@
 // Author: Codex,NOR-180 public immutable-outcome contract,29October2026.
+// Per-child WAL profiles (failure expected from the flow) by Claude, 30 October 2026.
 package cypher_test
 
 import (
@@ -23,7 +24,7 @@ func TestWALTerminalOutcomeValueViews(t *testing.T) {
 					exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(outer, "nornic"))
 					result, err := exec.Execute(context.Background(), c.Flow.Query, nil)
 					c.RequireNative(t)
-					if !closed {
+					if !c.Flow.WantError {
 						require.NoError(t, err)
 						require.NotNil(t, result)
 						return

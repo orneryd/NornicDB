@@ -1,4 +1,5 @@
 // Author: Codex,NOR-180 public shell outcome contract,29October2026.
+// Per-child WAL profiles (failure expected from the flow) by Claude, 30 October 2026.
 package main
 
 import (
@@ -38,7 +39,7 @@ func TestCLIWALTerminalOutcomeValueViews(t *testing.T) {
 					cmd.Flags().String("data-dir", t.TempDir(), "")
 					require.NoError(t, runShell(cmd, nil))
 					c.RequireNative(t)
-					if !closed {
+					if !c.Flow.WantError {
 						require.NotContains(t, output.String(), "failed to write WAL tx")
 						return
 					}

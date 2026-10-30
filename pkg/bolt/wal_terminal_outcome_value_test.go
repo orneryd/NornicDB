@@ -1,4 +1,5 @@
 // Author: Codex,NOR-180 immediate Bolt outcome contract,29October2026.
+// Per-child WAL profiles (failure expected from the flow) by Claude, 30 October 2026.
 package bolt
 
 import (
@@ -18,7 +19,7 @@ func TestBoltWALTerminalOutcomeValueViews(t *testing.T) {
 					c := walterminal.NewOutcomeContract(t, profile, closed, parallel)
 					conn := openBoltTestConn(t, startTransactionLifecycleServerWithStore(t, storage.NewNamespacedEngine(outer, "nornic")))
 					require.NoError(t, SendRun(t, conn, c.Flow.Query, nil, nil))
-					if !closed {
+					if !c.Flow.WantError {
 						require.NoError(t, ReadSuccess(t, conn))
 						require.NoError(t, SendPull(t, conn, nil))
 						for {

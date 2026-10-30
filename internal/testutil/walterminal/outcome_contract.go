@@ -1,8 +1,11 @@
 // Author: Codex,NOR-180 consumer-class regressions,29October2026; the
-// driver retry-decision oracle and memory_commit order by Claude, 30 October 2026.
+// driver retry-decision oracle, memory_commit order and the per-child WAL
+// (commit_postcommit) profiles by Claude, 30 October 2026.
 package walterminal
 
 import (
+	"errors"
+
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/db"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,7 +26,20 @@ var ContractProfiles = []ContractProfile{
 	{"memory_memory", []string{"abort_memory", "abort_memory"}},
 	// The reverse of commit_memory: a retriable aborted child comes first.
 	{"memory_commit", []string{"abort_memory", "commit"}},
+	// A committed child whose own WAL stays writable (its COMMIT record is
+	// written, its post-commit step fails transiently) beside a retriable
+	// aborted child whose WAL fails or not, in both orders.
+	{"memory_postcommit", []string{"abort_memory", "commit_postcommit"}},
+	{"postcommit_memory", []string{"commit_postcommit", "abort_memory"}},
 }
+
+// committedKind reports a child whose native work committed.
+func committedKind(kind string) bool { return kind == "commit" || kind == "commit_postcommit" }
+
+// reaches reports whether a child's outcome reaches the client. A count-only
+// consumer discards its children's returns; only terminal outcomes survive
+// (every child's failed WAL record, and a committed child's failure always).
+func (c *OutcomeContract) reaches(kind string) bool { return c.Closed || kind == "commit_postcommit" }
 
 // DriverRetries is the managed-client retry decision for a failure with code,
 // taken from the pinned neo4j-go-driver itself (ExecuteWrite retries exactly
@@ -61,7 +77,7 @@ func (c *OutcomeContract) RequireNative(t testing.TB) {
 	t.Helper()
 	for i, engine := range c.Engines {
 		want := int64(0)
-		if c.Profile.Kinds[i] == "commit" {
+		if committedKind(c.Profile.Kinds[i]) {
 			want = 1
 		}
 		require.Equal(t, want, Count(t, engine), "native child%d", i)
@@ -74,16 +90,33 @@ func ContractStatus(kind string) (string, string) {
 	if kind == "rollback" {
 		return nornicerrors.TransactionRollbackFailed, ""
 	}
+	if kind == "commit_postcommit" {
+		return nornicerrors.Neo4jStatus(storage.ErrStorageRestoring)
+	}
 	return nornicerrors.Neo4jStatus(Primary(strings.TrimPrefix(kind, "abort_")))
 }
 func (c *OutcomeContract) RequireIdentity(t testing.TB, err error) {
 	t.Helper()
-	require.ErrorIs(t, err, storage.ErrWALClosed)
 	observed := c.Flow.Observed()
 	require.Len(t, observed, len(c.Profile.Kinds))
 	for _, child := range observed {
-		require.ErrorIs(t, child, storage.ErrWALClosed)
+		if errors.Is(child, storage.ErrStorageRestoring) {
+			require.NotErrorIs(t, child, storage.ErrWALClosed, "the committed child's own WAL record was written")
+			continue
+		}
+		if c.Closed {
+			require.ErrorIs(t, child, storage.ErrWALClosed)
+		}
 	}
+	for _, kind := range c.Profile.Kinds {
+		if kind == "commit_postcommit" {
+			require.ErrorIs(t, err, storage.ErrStorageRestoring, "a committed child's discarded failure is retained")
+		}
+	}
+	if !c.Closed {
+		return
+	}
+	require.ErrorIs(t, err, storage.ErrWALClosed)
 	for _, primary := range c.Primaries {
 		if primary != nil {
 			require.ErrorIs(t, err, primary, "each directly captured original primary identity")
@@ -94,21 +127,29 @@ func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 	t.Helper()
 	codes := map[string]int{}
 	messages := map[string]int{}
-	commits, aborts := 0, 0
+	commits, aborts, committed, first := 0, 0, false, ""
 	for _, kind := range c.Profile.Kinds {
+		if !c.reaches(kind) {
+			continue
+		}
 		ownCode, ownMessage := ContractStatus(kind)
 		codes[ownCode]++
 		if ownMessage != "" {
 			messages[strings.TrimSpace(ownMessage)]++
 		}
-		if kind == "commit" {
+		if first == "" {
+			first = ownCode
+		}
+		committed = committed || committedKind(kind)
+		switch kind {
+		case "commit":
 			commits++
-		} else {
+		case "commit_postcommit":
+		default:
 			aborts++
 		}
 	}
 	if code != "" {
-		committed := commits != 0
 		// The client's retry decision: work that is stored is never retried.
 		require.False(t, committed && DriverRetries(code), "a driver would retry committed work on %s", code)
 		if c.Parallel {
@@ -118,8 +159,7 @@ func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 			}
 			require.True(t, found, "primary classification belongs to an actual child: %s", code)
 		} else {
-			want, _ := ContractStatus(c.Profile.Kinds[0])
-			require.Equal(t, OutcomeStatus(want, committed), code)
+			require.Equal(t, OutcomeStatus(first, committed), code)
 		}
 	}
 	// A single protocol status cannot represent several distinct child statuses.
@@ -132,5 +172,7 @@ func (c *OutcomeContract) RequireView(t testing.TB, code, message string) {
 	}
 	require.Equal(t, aborts, strings.Count(message, "failed to write WAL tx abort"))
 	require.Equal(t, commits, strings.Count(message, "committed, but failed to write WAL tx commit"))
-	require.Contains(t, message, storage.ErrWALClosed.Error())
+	if aborts+commits != 0 {
+		require.Contains(t, message, storage.ErrWALClosed.Error())
+	}
 }
