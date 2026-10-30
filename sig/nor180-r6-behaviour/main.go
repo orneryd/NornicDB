@@ -451,11 +451,11 @@ func main() {
 			owner = fn
 		}
 	}
-	if owner == nil {
-		panic("render owner renderStatus not found")
-	}
+	// The release subject predates the render owner: render kinds then
+	// relate every function as outside-owner, and only the inventory and the
+	// non-render kinds are compared.
 	leaf := map[*ssa.Function]bool{}
-	for queue := []*ssa.Function{owner}; len(queue) > 0; queue = queue[1:] {
+	for queue := []*ssa.Function{owner}; owner != nil && len(queue) > 0; queue = queue[1:] {
 		for _, next := range edges[queue[0]] {
 			if !leaf[next] {
 				leaf[next] = true
@@ -471,8 +471,11 @@ func main() {
 			callers[to] = append(callers[to], from)
 		}
 	}
-	upstream := map[*ssa.Function]bool{owner: true}
-	for queue := []*ssa.Function{owner}; len(queue) > 0; queue = queue[1:] {
+	upstream := map[*ssa.Function]bool{}
+	if owner != nil {
+		upstream[owner] = true
+	}
+	for queue := []*ssa.Function{owner}; owner != nil && len(queue) > 0; queue = queue[1:] {
 		for _, prev := range callers[queue[0]] {
 			if !upstream[prev] {
 				upstream[prev] = true
@@ -483,7 +486,7 @@ func main() {
 	reaches := func(fn *ssa.Function) bool { return upstream[fn] }
 	relation := func(fn *ssa.Function) string {
 		switch {
-		case fn == owner:
+		case owner != nil && fn == owner:
 			return "owner"
 		case reaches(fn):
 			return "reaches-owner"
@@ -519,6 +522,59 @@ func main() {
 				add(fn, finding{"render-caller", position(fn.Pos()), strings.TrimPrefix(next.String(), module) + " " + relation(next)})
 			}
 		}
+	}
+	// Work primitives of the two files #1636 L1 also changes: what each
+	// function starts, waits on or bounds (go, channels, select, sync, context
+	// lifetimes, timers). Compared head against release by function.
+	for fn := range seen {
+		pos := position(fn.Pos())
+		if !strings.HasPrefix(pos, "pkg/txsession/manager.go:") && !strings.HasPrefix(pos, "pkg/lifecycle/supervisor.go:") {
+			continue
+		}
+		set := map[string]bool{}
+		for _, block := range fn.Blocks {
+			for _, ins := range block.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Go:
+					set["go"] = true
+				case *ssa.MakeChan:
+					set["make-chan"] = true
+				case *ssa.Select:
+					set["select"] = true
+				case *ssa.Send:
+					set["send"] = true
+				case *ssa.UnOp:
+					if x.Op == token.ARROW {
+						set["receive"] = true
+					}
+				}
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				name := ""
+				if callee := call.Common().StaticCallee(); callee != nil {
+					name = callee.String()
+				} else if call.Common().IsInvoke() {
+					name = call.Common().Method.FullName()
+				}
+				for _, prefix := range []string{"sync.", "(*sync.", "context.With", "time.After", "time.NewTimer", "time.NewTicker", "(*time.Timer)", "(*time.Ticker)"} {
+					if strings.HasPrefix(name, prefix) {
+						set[name] = true
+					}
+				}
+			}
+		}
+		list := make([]string, 0, len(set))
+		for k := range set {
+			list = append(list, k)
+		}
+		sort.Strings(list)
+		detail := strings.Join(list, ",")
+		if detail == "" {
+			detail = "none"
+		}
+		add(fn, finding{"work-primitive", position(fn.Pos()), detail})
 	}
 	for fn := range seen {
 		sig := fn.Signature
