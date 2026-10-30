@@ -29,6 +29,8 @@ const module = "github.com/orneryd/nornicdb"
 // reported as a retention exit (or, for the last, as a double copy).
 const controlFile = `package storage
 
+import "github.com/orneryd/nornicdb/pkg/callerowned"
+
 type NOR160ControlCache struct{ m map[string]*Node }
 
 func (c *NOR160ControlCache) Get(k string) *Node { return c.m[k] }
@@ -79,13 +81,60 @@ func NewNOR160ControlRegistry(p *NOR160ControlReplay) *NOR160ControlRegistry {
 
 func (r *NOR160ControlRegistry) Pull(id string) [][]any { return r.s[id].Page(0, 1) }
 
+// v5 paired controls. Shell: copies a record and replaces every exported
+// reference field through the owner (clean) / leaves one shared (flagged).
+type NOR160ControlRecord struct {
+	Node *Node
+	Tags []string
+}
+
+type NOR160ControlRecords struct{ m map[string]*NOR160ControlRecord }
+
+func nor160ShellOK(r *NOR160ControlRecord) *NOR160ControlRecord {
+	out := *r
+	out.Node = copyNode(r.Node)
+	out.Tags = callerowned.Strings(r.Tags)
+	return &out
+}
+
+func nor160ShellLeaky(r *NOR160ControlRecord) *NOR160ControlRecord {
+	out := *r
+	out.Node = copyNode(r.Node)
+	return &out
+}
+
+func (c *NOR160ControlRecords) GetOK(k string) *NOR160ControlRecord { return nor160ShellOK(c.m[k]) }
+
+func (c *NOR160ControlRecords) GetLeaky(k string) *NOR160ControlRecord { return nor160ShellLeaky(c.m[k]) }
+
+// Strong update: a captured local overwritten by a copy before it is
+// returned (clean) / re-stored with the retained image after the copy (flagged).
+func (c *NOR160ControlCache) GetReassigned(k string) *Node {
+	var n *Node
+	read := func() { n = c.m[k] }
+	read()
+	n = copyNode(n)
+	return n
+}
+
+func (c *NOR160ControlCache) GetReassignedLeaky(k string) *Node {
+	var n *Node
+	n = copyNode(c.m[k])
+	read := func() { n = c.m[k] }
+	read()
+	return n
+}
+
 func NOR160ControlDoubleCopy(n *Node) *Node {
 	owned := copyNode(n)
 	return copyNode(owned)
 }
 `
 
-var controls = []string{"NOR160ControlCache).Get", "NOR160ControlCache).Visit", "NOR160ControlReplay).Page", "NOR160ControlSecondary).Label", "NOR160ControlHit).Materialize", "NOR160ControlOverlay).Read", "NOR160ControlRegistry).Pull"}
+var controls = []string{"NOR160ControlCache).Get", "NOR160ControlCache).Visit", "NOR160ControlReplay).Page", "NOR160ControlSecondary).Label", "NOR160ControlHit).Materialize", "NOR160ControlOverlay).Read", "NOR160ControlRegistry).Pull", "NOR160ControlRecords).GetLeaky", "NOR160ControlCache).GetReassignedLeaky"}
+
+// Controls that must NOT be reported: a correct shell and a strong update.
+var cleanControls = []string{"NOR160ControlRecords).GetOK", "NOR160ControlCache).GetReassigned"}
 
 const doubleControl = "NOR160ControlDoubleCopy"
 
@@ -263,6 +312,9 @@ func fieldName(t types.Type, index int) string {
 type tags map[string]bool
 
 func (t tags) add(o tags) bool {
+	if t == nil {
+		return false // values that cannot reach a reference carry no retention
+	}
 	changed := false
 	for k := range o {
 		if !t[k] {
@@ -365,9 +417,102 @@ func freeVarBinding(fv *ssa.FreeVar, walk func(ssa.Value) bool) bool {
 }
 
 // flowFunction computes per-value retained tags in fn and updates its summary.
+// localKey is one tracked location of a local allocation: a field of a struct
+// variable, or the whole variable (field -1) for other types.
+type localKey struct {
+	alloc *ssa.Alloc
+	field int
+}
+
+// rdState maps each tracked local location to the retained tags of the
+// definitions reaching a program point.
+type rdState map[localKey]tags
+
+func (s rdState) clone() rdState {
+	out := make(rdState, len(s))
+	for k, v := range s {
+		c := tags{}
+		c.add(v)
+		out[k] = c
+	}
+	return out
+}
+
+func (s rdState) join(o rdState) bool {
+	changed := false
+	for k, v := range o {
+		if s[k] == nil {
+			s[k] = tags{}
+		}
+		changed = s[k].add(v) || changed
+	}
+	return changed
+}
+
+func allocStruct(al *ssa.Alloc) *types.Struct {
+	st, _ := types.Unalias(al.Type()).(*types.Pointer).Elem().Underlying().(*types.Struct)
+	return st
+}
+
+// keysOf lists the tracked locations of a local; for a struct only exported
+// reference-bearing fields can be handed to a caller, so only they carry tags.
+func keysOf(al *ssa.Alloc) []localKey {
+	st := allocStruct(al)
+	if st == nil {
+		return []localKey{{al, -1}}
+	}
+	var out []localKey
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		if f.Exported() && refBearing(f.Type(), map[types.Type]bool{}) {
+			out = append(out, localKey{al, i})
+		}
+	}
+	return out
+}
+
+func storedKeys(addr ssa.Value) (keys []localKey, strong bool) {
+	switch x := addr.(type) {
+	case *ssa.Alloc:
+		return keysOf(x), true
+	case *ssa.FieldAddr:
+		if al, ok := x.X.(*ssa.Alloc); ok && allocStruct(al) != nil {
+			for _, k := range keysOf(al) {
+				if k.field == x.Field {
+					return []localKey{k}, true
+				}
+			}
+			return nil, true // a scalar or unexported field: nothing handed out
+		}
+	}
+	return nil, false
+}
+
+// capturedAllocs lists locals bound into closures; a call may run those
+// closures, so their stores reach every later point (without killing).
+func capturedAllocs(fn *ssa.Function) map[*ssa.Alloc]bool {
+	out := map[*ssa.Alloc]bool{}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if mc, ok := ins.(*ssa.MakeClosure); ok {
+				for _, bound := range mc.Bindings {
+					if al, ok := bound.(*ssa.Alloc); ok {
+						out[al] = true
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
 func (a *analysis) flowFunction(fn *ssa.Function) bool {
 	val := map[ssa.Value]tags{}
 	get := func(v ssa.Value) tags {
+		// A value that cannot reach a mutable reference carries no retention.
+		if v == nil || !refBearing(v.Type(), map[types.Type]bool{}) {
+			return nil
+		}
 		if t := val[v]; t != nil {
 			return t
 		}
@@ -375,8 +520,7 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 		val[v] = t
 		return t
 	}
-	// address -> tags of values stored there (Alloc, FieldAddr, IndexAddr, FreeVar, Global)
-	mem := map[ssa.Value]tags{}
+	mem := map[ssa.Value]tags{} // conservative memory for non-local addresses
 	memGet := func(v ssa.Value) tags {
 		if t := mem[v]; t != nil {
 			return t
@@ -385,31 +529,89 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 		mem[v] = t
 		return t
 	}
-	// base address of an element/field address, for container tracking
-	var base func(ssa.Value) ssa.Value
-	base = func(v ssa.Value) ssa.Value {
-		switch x := v.(type) {
-		case *ssa.FieldAddr:
-			if _, ok := x.X.(*ssa.Alloc); ok {
-				return x.X
-			}
-		case *ssa.IndexAddr:
-			return base(x.X)
-		}
-		return v
-	}
+	captured := capturedAllocs(fn)
 	for i, p := range fn.Params {
 		if fn.Signature.Recv() != nil && i == 0 {
 			continue
 		}
-		get(p)[fmt.Sprintf("param:%d", i)] = true
+		if t := get(p); t != nil {
+			t[fmt.Sprintf("param:%d", i)] = true
+		}
+	}
+	// at records the reaching state before each instruction of the last pass.
+	at := map[ssa.Instruction]rdState{}
+	transfer := func(ins ssa.Instruction, state rdState) {
+		switch x := ins.(type) {
+		case *ssa.Store:
+			if keys, strong := storedKeys(x.Addr); strong {
+				t := get(x.Val)
+				for _, k := range keys {
+					c := tags{}
+					c.add(t)
+					if _, whole := x.Addr.(*ssa.Alloc); whole && k.field >= 0 {
+						// a whole struct store defines each field from the value
+						c.add(memGet(x.Val))
+					}
+					state[k] = c
+				}
+			}
+		case *ssa.Call, *ssa.Go, *ssa.Defer:
+			for al := range captured {
+				if t := allocStores[al]; len(t) > 0 {
+					for _, k := range keysOf(al) {
+						if state[k] == nil {
+							state[k] = tags{}
+						}
+						state[k].add(t)
+					}
+				}
+			}
+		}
+	}
+	runRD := func() {
+		in := map[*ssa.BasicBlock]rdState{}
+		out := map[*ssa.BasicBlock]rdState{}
+		for iter, changed := 0, true; changed && iter < 50; iter++ {
+			changed = false
+			for _, b := range fn.Blocks {
+				state := rdState{}
+				for _, p := range b.Preds {
+					if o := out[p]; o != nil {
+						state.join(o)
+					}
+				}
+				if in[b] == nil || !equalState(in[b], state) {
+					in[b] = state
+				}
+				cur := state.clone()
+				for _, ins := range b.Instrs {
+					at[ins] = cur.clone()
+					transfer(ins, cur)
+				}
+				if out[b] == nil || !equalState(out[b], cur) {
+					out[b] = cur
+					changed = true
+				}
+			}
+		}
+	}
+	loadLocal := func(ins ssa.Instruction, addr ssa.Value) (tags, bool) {
+		keys, strong := storedKeys(addr)
+		if !strong {
+			return nil, false
+		}
+		out := tags{}
+		for _, k := range keys {
+			out.add(at[ins][k])
+		}
+		return out, true
 	}
 	changed := true
 	for round := 0; changed && round < 12; round++ {
 		changed = false
+		runRD()
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
-				v, isVal := ins.(ssa.Value)
 				switch x := ins.(type) {
 				case *ssa.FieldAddr:
 					if isReceiver(fn, x.X) {
@@ -425,6 +627,10 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 					changed = get(x).add(get(x.X)) || changed
 				case *ssa.UnOp:
 					if x.Op == token.MUL {
+						if local, ok := loadLocal(ins, x.X); ok {
+							changed = get(x).add(local) || changed
+							break
+						}
 						if g, ok := x.X.(*ssa.Global); ok && inModule(fn) && handedOut(x.Type()) {
 							changed = get(x).add(tags{"global " + g.Name(): true}) || changed
 						}
@@ -432,9 +638,6 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 						changed = get(x).add(get(x.X)) || changed
 						if fv, ok := x.X.(*ssa.FreeVar); ok {
 							changed = get(x).add(a.freeVarTags(fv)) || changed
-						}
-						if al, ok := x.X.(*ssa.Alloc); ok {
-							changed = get(x).add(allocStores[al]) || changed
 						}
 					} else {
 						changed = get(x).add(get(x.X)) || changed
@@ -470,26 +673,21 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 				case *ssa.ChangeInterface:
 					changed = get(x).add(get(x.X)) || changed
 				case *ssa.Store:
+					if _, strong := storedKeys(x.Addr); strong {
+						break // tracked by reaching definitions
+					}
 					t := get(x.Val)
 					changed = memGet(x.Addr).add(t) || changed
-					changed = memGet(base(x.Addr)).add(t) || changed
+					if fa, ok := x.Addr.(*ssa.FieldAddr); ok {
+						changed = memGet(fa.X).add(t) || changed
+					}
 					if fv, ok := x.Addr.(*ssa.FreeVar); ok && len(t) > 0 {
 						a.recordFreeVarStore(fv, t)
 					}
-				case *ssa.Alloc:
-					changed = get(x).add(memGet(x)) || changed
 				case *ssa.MapUpdate:
 					changed = get(x.Map).add(get(x.Value)) || changed
 				case *ssa.Call:
 					changed = a.flowCall(fn, x.Common(), get, val, x) || changed
-				case *ssa.Go, *ssa.Defer:
-					_ = v
-				}
-				if isVal && v != nil {
-					// a struct value assembled from fields loaded off an allocation
-					if u, ok := v.(*ssa.UnOp); ok && u.Op == token.MUL {
-						changed = get(v).add(memGet(base(u.X))) || changed
-					}
 				}
 			}
 		}
@@ -497,14 +695,26 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 	// Results and callback deliveries.
 	s := a.sum(fn)
 	before := len(s.returns) + len(s.callback)
+	resultTags := func(ins ssa.Instruction, v ssa.Value) tags {
+		out := tags{}
+		if al, ok := v.(*ssa.Alloc); ok {
+			// returning &local hands out its reaching field definitions
+			for _, k := range keysOf(al) {
+				out.add(at[ins][k])
+			}
+			return out
+		}
+		out.add(get(v))
+		out.add(memGet(v))
+		return out
+	}
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
 			switch x := ins.(type) {
 			case *ssa.Return:
 				for _, r := range x.Results {
 					if handedOut(r.Type()) {
-						s.returns.add(get(r))
-						s.returns.add(memGet(r))
+						s.returns.add(resultTags(ins, r))
 					}
 				}
 			case *ssa.Call:
@@ -515,8 +725,7 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 					}
 					for _, arg := range x.Common().Args {
 						if handedOut(arg.Type()) {
-							target.callback.add(fieldOnly(get(arg)))
-							target.callback.add(fieldOnly(memGet(arg)))
+							target.callback.add(fieldOnly(resultTags(ins, arg)))
 						}
 					}
 				}
@@ -524,6 +733,24 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 		}
 	}
 	return len(s.returns)+len(s.callback) != before
+}
+
+func equalState(a, b rdState) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		w := b[k]
+		if len(v) != len(w) {
+			return false
+		}
+		for t := range v {
+			if !w[t] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func fieldOnly(t tags) tags {
@@ -598,7 +825,9 @@ func (a *analysis) recordFreeVarStore(fv *ssa.FreeVar, t tags) {
 					if allocStores[bound] == nil {
 						allocStores[bound] = tags{}
 					}
-					allocStores[bound].add(t)
+					if allocStores[bound].add(t) {
+						storesChanged = true
+					}
 				}
 			}
 		}
@@ -606,6 +835,10 @@ func (a *analysis) recordFreeVarStore(fv *ssa.FreeVar, t tags) {
 }
 
 var allocStores = map[*ssa.Alloc]tags{}
+
+// storesChanged makes the outer fixpoint repeat when a closure adds a store
+// its parent must see.
+var storesChanged bool
 
 func (a *analysis) freeVarTags(fv *ssa.FreeVar) tags {
 	out := tags{}
@@ -1057,6 +1290,7 @@ func main() {
 	}
 	for round := 0; round < 10; round++ {
 		changed := false
+		storesChanged = false
 		for _, fn := range fns {
 			if a.copiers[origin(fn)] {
 				continue
@@ -1065,7 +1299,7 @@ func main() {
 				changed = true
 			}
 		}
-		if !changed {
+		if !changed && !storesChanged {
 			break
 		}
 	}
@@ -1109,12 +1343,23 @@ func main() {
 	for _, c := range controls {
 		found := false
 		for _, e := range r.Exits {
-			if strings.Contains(e.Exit, c) {
+			if strings.HasSuffix(e.Exit, c) {
 				found = true
 			}
 		}
 		r.Controls[c] = found
 		r.AllControlsOK = r.AllControlsOK && found
+	}
+	for _, c := range cleanControls {
+		reported := false
+		for _, e := range r.Exits {
+			if strings.HasSuffix(e.Exit, c) {
+				reported = true
+			}
+		}
+		// A clean control passes when it is NOT reported.
+		r.Controls["clean:"+c] = !reported
+		r.AllControlsOK = r.AllControlsOK && !reported
 	}
 	foundDouble := false
 	for _, x := range r.Recopies {
