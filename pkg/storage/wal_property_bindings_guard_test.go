@@ -1,17 +1,10 @@
 package storage
 
+// Shared loader extraction author: Claude (storage-format-owners lane), 30 October 2026.
+
 import (
-	"encoding/json"
 	"go/ast"
-	"go/importer"
-	"go/parser"
-	"go/token"
 	"go/types"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,69 +14,10 @@ import (
 // Every mutation is type-checked separately with the complete production
 // package. SSA erases declaration spelling and follows actual values/aliases.
 func TestBufferedWALBindingOwner(t *testing.T) {
-	output, err := exec.Command("go", "list", "-deps", "-export", "-json", ".").Output()
-	require.NoError(t, err)
-	exports := make(map[string]string)
-	var dir, pkgPath string
-	var names []string
-	decoder := json.NewDecoder(strings.NewReader(string(output)))
-	for {
-		var p struct {
-			ImportPath, Dir, Export string
-			GoFiles                 []string
-		}
-		err := decoder.Decode(&p)
-		if err == io.EOF {
-			break
-		}
-		require.NoError(t, err)
-		exports[p.ImportPath] = p.Export
-		if p.ImportPath == "github.com/orneryd/nornicdb/pkg/storage" {
-			dir, pkgPath, names = p.Dir, p.ImportPath, p.GoFiles
-		}
-	}
-	require.NotEmpty(t, names)
-	fset := token.NewFileSet()
-	var files []*ast.File
-	for _, name := range names {
-		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
-		require.NoError(t, err)
-		files = append(files, file)
-	}
-	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) { return os.Open(exports[path]) })
+	population := loadStorageSSAPopulation(t)
 	check := func(t *testing.T, source string) map[string]bool {
-		population := append([]*ast.File(nil), files...)
-		if source != "" {
-			mutation, err := parser.ParseFile(fset, "wal_binding_guard_mutation.go", "package storage\n"+source, parser.SkipObjectResolution)
-			require.NoError(t, err)
-			population = append(population, mutation)
-		}
-		info := &types.Info{
-			Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{},
-			Implicits: map[ast.Node]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Scopes: map[ast.Node]*types.Scope{},
-			Instances: map[*ast.Ident]types.Instance{}, FileVersions: map[*ast.File]string{},
-		}
-		conf := types.Config{Importer: imp}
-		pkg, err := conf.Check(pkgPath, fset, population, info)
-		require.NoError(t, err, "production and this mutation must independently type-check")
-		prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions)
-		seen := map[*types.Package]bool{}
-		var imports func(*types.Package)
-		imports = func(p *types.Package) {
-			if seen[p] {
-				return
-			}
-			seen[p] = true
-			for _, dependency := range p.Imports() {
-				imports(dependency)
-			}
-			if p != pkg {
-				prog.CreatePackage(p, nil, nil, true)
-			}
-		}
-		imports(pkg)
-		ssaPkg := prog.CreatePackage(pkg, population, info, true)
-		ssaPkg.Build()
+		built := population.build(t, "wal_binding_guard_mutation.go", source)
+		pkg, info, prog, ssaPkg := built.pkg, built.info, built.prog, built.ssa
 		var functions []*ssa.Function
 		owners := map[*ssa.Function]bool{}
 		method := func(receiver, name string) *types.Func {
@@ -113,7 +47,7 @@ func TestBufferedWALBindingOwner(t *testing.T) {
 				add(nested, owner)
 			}
 		}
-		for _, file := range population {
+		for _, file := range built.files {
 			for _, declaration := range file.Decls {
 				if fn, ok := declaration.(*ast.FuncDecl); ok {
 					owner := ownerObjects[info.Defs[fn.Name].(*types.Func)]
