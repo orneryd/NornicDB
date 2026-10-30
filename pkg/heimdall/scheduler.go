@@ -480,9 +480,6 @@ func (m *Manager) SetLifetime(use func(context.Context) (context.Context, func()
 // beginUse admits one model call in the manager's own lifetime, and also in
 // the bound host admission when one is set.
 func (m *Manager) beginUse(ctx context.Context) (context.Context, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	_, release, accepted := m.work.Acquire(m.work.Context())
 	if !accepted {
 		return nil, nil, fmt.Errorf("manager is closed")
