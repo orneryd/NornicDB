@@ -3549,6 +3549,24 @@ func (a *analysis) reachSet(fn *ssa.Function, rs *readScope) map[ssa.Value]bool 
 	}
 	sinkCall := func(c *ssa.CallCommon, call ssa.CallInstruction) {
 		args := callArgs(c)
+		if _, builtin := c.Value.(*ssa.Builtin); !builtin {
+			if _, isParam := c.Value.(*ssa.Parameter); !isParam {
+				// An unresolved or synthetic callee: not followed, so kept.
+				opaque := len(a.calleesOf(call)) == 0
+				for _, g := range a.calleesOf(call) {
+					if a.states[g] == nil {
+						opaque = true
+					}
+				}
+				if opaque {
+					for _, arg := range args {
+						if family(arg.Type()) || pointee(arg.Type()) != nil {
+							add(arg)
+						}
+					}
+				}
+			}
+		}
 		if pv, ok := c.Value.(*ssa.Parameter); ok {
 			if k := paramIndex(fn, pv); k >= 0 && (exitCallback(fn, k) || flags(rs.cb, fn, len(fn.Params))[k]) {
 				for _, arg := range c.Args {
@@ -3595,6 +3613,25 @@ func (a *analysis) reachSet(fn *ssa.Function, rs *readScope) map[ssa.Value]bool 
 				}
 			case ssa.CallInstruction:
 				sinkCall(x.Common(), x)
+			case *ssa.MakeClosure:
+				// A bound method value, or a closure that escapes into memory
+				// (stored, not only called or passed): its variables are not
+				// followed, so they are kept.
+				g, _ := x.Fn.(*ssa.Function)
+				escapes := g == nil || g.Synthetic != ""
+				if x.Referrers() != nil {
+					for _, u := range *x.Referrers() {
+						switch u.(type) {
+						case *ssa.Store, *ssa.MapUpdate, *ssa.MakeInterface:
+							escapes = true
+						}
+					}
+				}
+				if escapes {
+					for _, bnd := range x.Bindings {
+						add(bnd)
+					}
+				}
 			}
 		}
 	}
@@ -3751,6 +3788,9 @@ func (a *analysis) computeReadScope() {
 			r := a.reachSet(fn, rs)
 			sets[fn] = r
 			for j, p := range fn.Params {
+				if sg := a.sums[fn]; sg != nil && j < len(sg.Copies) && sg.Copies[j] {
+					continue // a copier hands out its copy, never its source
+				}
 				if r[p] {
 					changed = set(rs.param, fn, len(fn.Params), j) || changed
 				}
@@ -3768,6 +3808,20 @@ func (a *analysis) computeReadScope() {
 								changed = set(rs.cell, g, len(g.FreeVars), i) || changed
 							}
 						}
+						if x.Referrers() != nil {
+							for _, u := range *x.Referrers() {
+								switch u.(type) {
+								case *ssa.Store, *ssa.MapUpdate, *ssa.MakeInterface:
+									// Escaping closures are not followed: kept.
+									for i := 0; i < g.Signature.Results().Len(); i++ {
+										changed = set(rs.ret, g, g.Signature.Results().Len(), i) || changed
+									}
+									for k := range g.Params {
+										changed = set(rs.param, g, len(g.Params), k) || changed
+									}
+								}
+							}
+						}
 					case *ssa.UnOp:
 						if x.Op == token.MUL && r[x] {
 							if k, ok := fieldOf(x.X); ok && !rs.field[k] {
@@ -3782,6 +3836,9 @@ func (a *analysis) computeReadScope() {
 					args := callArgs(call.Common())
 					for _, g := range a.calleesOf(call) {
 						nres := g.Signature.Results().Len()
+						if w := a.unwrapped(g); w != g {
+							g = w // a wrapper's results are its method's
+						}
 						if v, ok := call.(*ssa.Call); ok {
 							if nres == 1 && r[v] {
 								changed = set(rs.ret, g, nres, 0) || changed
