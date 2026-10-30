@@ -1087,13 +1087,17 @@ func (m *Model) Close() error {
 // RerankerModel wraps a GGUF model for reranking (query, document) pairs.
 // It encodes the query and document as a model-specific classification pair.
 type RerankerModel struct {
-	model *Model
+	backend RerankerBackend
+	model   *Model
 }
 
 // LoadRerankerModel loads a GGUF reranker model (e.g. BGE-Reranker-v2-m3).
 // Uses the same loader as embedding models; the model file must be a
 // reranker/classification GGUF that outputs a single score per (query, doc) pair.
 func LoadRerankerModel(opts Options) (*RerankerModel, error) {
+	if model, supplied, err := loadRerankerBackend(opts); supplied {
+		return model, err
+	}
 	model, err := LoadModel(opts)
 	if err != nil {
 		return nil, err
@@ -1107,6 +1111,9 @@ func LoadRerankerModel(opts Options) (*RerankerModel, error) {
 
 // Score returns a relevance score in [0, 1] for the (query, document) pair.
 func (r *RerankerModel) Score(ctx context.Context, query, document string) (float32, error) {
+	if r != nil && r.backend != nil {
+		return r.backend.Score(ctx, query, document)
+	}
 	if r == nil || r.model == nil {
 		return 0, fmt.Errorf("reranker model not loaded")
 	}
@@ -1154,6 +1161,10 @@ func sigmoid32(x float32) float32 {
 
 // Close releases the underlying model.
 func (r *RerankerModel) Close() error {
+	if r != nil && r.backend != nil {
+		return r.backend.Close()
+	}
+
 	if r == nil || r.model == nil {
 		return nil
 	}

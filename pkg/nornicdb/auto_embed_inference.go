@@ -2,9 +2,11 @@ package nornicdb
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -21,14 +23,16 @@ func (db *DB) onNodeEmbedded(node *storage.Node) {
 	}
 	// Full-text publication belongs exclusively to the accepted storage event. Only inference is asynchronous.
 	nodeCopy := storage.CopyNode(node)
-	go func(n *storage.Node) {
-		db.runInferenceForEmbeddedNode(n)
-	}(nodeCopy)
+	db.RunBackgroundTask(func() {
+		if err := db.runInferenceForEmbeddedNode(nodeCopy); err != nil {
+			db.recordBackgroundError(fmt.Errorf("embedded node %s inference: %w", nodeCopy.ID, err))
+		}
+	})
 }
 
-func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
+func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) error {
 	if db == nil || node == nil {
-		return
+		return nil
 	}
 
 	hasEmbedding := false
@@ -39,37 +43,41 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 		}
 	}
 	if !hasEmbedding {
-		return
+		return nil
 	}
 
 	dbName, local, ok := splitQualifiedID(string(node.ID))
 	if !ok {
-		return
+		return nil
 	}
 
 	// System DB and reserved internal IDs should never participate in Auto-TLP.
 	if dbName == "system" || strings.HasPrefix(local, "qdrant:") {
-		return
+		return nil
 	}
 
-	inferEngine, _ := db.getOrCreateInferenceService(dbName, nil)
+	inferEngine, err := db.getOrCreateInferenceService(dbName, nil)
+	if err != nil {
+		return err
+	}
 	if inferEngine == nil {
-		return
+		return nil
 	}
 
 	suggestions, err := inferEngine.OnStoreBestOfChunks(context.Background(), local, node.ChunkEmbeddings)
 	if err != nil || len(suggestions) == 0 {
-		return
+		return err
 	}
 
 	// Suggestions use local IDs; resolve the manager-owned storage chain so
 	// background relationship writes observe the same quotas as user writes.
 	storageEngine, err := db.resolveDatabaseStorage(dbName)
 	if err != nil {
-		return
+		return err
 	}
 
 	now := time.Now()
+	var outcomes error
 	for _, suggestion := range suggestions {
 		edge := &storage.Edge{
 			ID:            storage.EdgeID(generateID()),
@@ -84,6 +92,7 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) {
 				"method": suggestion.Method,
 			},
 		}
-		_ = storageEngine.CreateEdge(edge) // Best effort
+		outcomes = compose.Outcomes(outcomes, storageEngine.CreateEdge(edge))
 	}
+	return outcomes
 }

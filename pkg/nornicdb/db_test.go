@@ -127,7 +127,6 @@ type closeErrReplicator struct {
 }
 
 func (r *closeErrReplicator) Start(ctx context.Context) error { return nil }
-func (r *closeErrReplicator) LifetimeContext() context.Context        { return context.Background() }
 func (r *closeErrReplicator) Apply(cmd *replication.Command, timeout time.Duration) error {
 	return nil
 }
@@ -139,6 +138,7 @@ func (r *closeErrReplicator) LeaderAddr() string                      { return "
 func (r *closeErrReplicator) LeaderID() string                        { return "" }
 func (r *closeErrReplicator) Health() *replication.HealthStatus       { return nil }
 func (r *closeErrReplicator) WaitForLeader(ctx context.Context) error { return nil }
+func (r *closeErrReplicator) LifetimeContext() context.Context        { return context.Background() }
 func (r *closeErrReplicator) Shutdown() error                         { return r.shutdownErr }
 func (r *closeErrReplicator) Mode() replication.ReplicationMode       { return replication.ModeStandalone }
 func (r *closeErrReplicator) NodeID() string                          { return "n1" }
@@ -1704,7 +1704,7 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 		svc:       svc,
 		buildDone: make(chan struct{}),
 	}
-	entry.buildOnce.Do(func() {})
+	entry.buildOnce.Run(func() {})
 
 	db := &DB{
 		config:            DefaultConfig(),

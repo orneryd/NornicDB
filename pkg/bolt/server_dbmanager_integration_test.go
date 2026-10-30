@@ -467,8 +467,9 @@ func databaseScopedExecutor(t *testing.T, store storage.Engine, transaction ...b
 // startBoltTestServer pre-binds a loopback listener for the test server and
 // runs the accept loop directly, avoiding racy reads of server.listener and the
 // reserve-then-rebind TOCTOU window.
-func startBoltTestServer(t *testing.T, server *Server) int {
+func startBoltTestServer(t *testing.T, server *Server, shutdownChecks ...func(error)) int {
 	t.Helper()
+	require.LessOrEqual(t, len(shutdownChecks), 1)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -483,8 +484,14 @@ func startBoltTestServer(t *testing.T, server *Server) int {
 	}()
 
 	t.Cleanup(func() {
-		require.NoError(t, server.Close())
-		require.NoError(t, <-errCh)
+		shutdownErr := server.Close()
+		serveErr := <-errCh
+		if len(shutdownChecks) == 1 {
+			shutdownChecks[0](shutdownErr)
+		} else {
+			require.NoError(t, shutdownErr)
+		}
+		require.NoError(t, serveErr)
 	})
 	return addr.Port
 }
