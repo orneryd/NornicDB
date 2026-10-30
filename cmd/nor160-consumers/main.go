@@ -36,6 +36,18 @@ import (
 const module = "github.com/orneryd/nornicdb"
 const storagePkg = module + "/pkg/storage"
 
+// ownerControlFile plants a second Copier dispatch rule inside the owner
+// package; it declares its own interface so it compiles on every revision.
+const ownerControlFile = `package callerowned
+
+func nor160ControlSecondDispatch(v any) any {
+	if c, ok := v.(interface{ CallerCopy() any }); ok {
+		return c.CallerCopy()
+	}
+	return v
+}
+`
+
 const controlFile = `package storage
 
 // NOR160ControlSecondCopy consumes an owned label-stream delivery and copies it again.
@@ -98,6 +110,39 @@ func NOR160ControlDispatch(v any) any {
 	return v
 }
 
+// NOR160ControlDroppedCopy copies a relationship and may drop the copy on a
+// condition its copy does not decide (the write-behind second copy shape).
+func NOR160ControlDroppedCopy(edge *Edge, deliver bool) *Edge {
+	copied := copyEdge(edge)
+	if deliver {
+		return copied
+	}
+	return nil
+}
+
+// NOR160ControlStripAfterDelivery strips the vectors of a delivered node in the
+// consumer, after its source copied them (vectors copied then dropped).
+func NOR160ControlStripAfterDelivery(b *BadgerEngine) []*Node {
+	var out []*Node
+	_ = b.StreamNodesByLabelProjectedInScope("", "L", nil, func(n *Node) error {
+		out = append(out, shapeNode(n, nil, true, true))
+		return nil
+	})
+	return out
+}
+
+// NOR160ControlShallowEntities copies a retained entity slice shallowly at an exit.
+func NOR160ControlShallowEntities(nodes []*Node) []*Node {
+	return append([]*Node(nil), nodes...)
+}
+
+// nor160ControlCloneHit is a clone that leaves a graph-bearing field shared.
+func nor160ControlCloneHit(h *NOR160ControlCompleteHit) *NOR160ControlCompleteHit {
+	c := *h
+	c.Props = nor160ControlCloneMap(h.Props)
+	return &c
+}
+
 // NOR160ControlPartialHit omits its relationship from its caller copy.
 type NOR160ControlPartialHit struct {
 	Props map[string]any
@@ -143,6 +188,7 @@ type consumer struct {
 	FromStorage bool     `json:"storage_reader"`
 	Site        string   `json:"call_site"`
 	Copies      []string `json:"copies_of_delivery,omitempty"`
+	Strips      []string `json:"strips_delivery_vectors,omitempty"`
 	Retains     bool     `json:"retains_delivery"`
 }
 
@@ -176,6 +222,9 @@ type report struct {
 	EntityCopiers []string        `json:"independent_entity_copiers"`
 	SliceCopiers  []string        `json:"slice_copiers"`
 	Dispatchers   []string        `json:"copier_dispatch_rules"`
+	OwnerDispatch []string        `json:"owner_dispatch_functions"`
+	DroppedCopies []string        `json:"copies_that_may_be_dropped"`
+	ShallowCopies []string        `json:"shallow_entity_copies"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
 }
@@ -354,6 +403,23 @@ func constTrue(v ssa.Value) bool {
 	return ok && k.Value != nil && k.Value.String() == "true"
 }
 
+func constFalse(v ssa.Value) bool {
+	k, ok := v.(*ssa.Const)
+	return ok && k.Value != nil && k.Value.String() == "false"
+}
+
+// splitStrips separates the STRIP findings from the copy findings.
+func splitStrips(all []string) (copies, strips []string) {
+	for _, x := range all {
+		if strings.HasPrefix(x, "STRIP ") {
+			strips = append(strips, strings.TrimPrefix(x, "STRIP "))
+		} else {
+			copies = append(copies, x)
+		}
+	}
+	return copies, strips
+}
+
 // copiesOf lists every copier fn applies to a value derived from roots, following
 // the module functions and closures it hands such a value to (depth-bounded).
 func copiesOf(fn *ssa.Function, roots map[ssa.Value]bool, depth int, visited map[string]bool) []string {
@@ -376,6 +442,12 @@ func copiesOf(fn *ssa.Function, roots map[ssa.Value]bool, depth int, visited map
 				file, line := pos(fn, call.Pos())
 				at := fmt.Sprintf("%s:%d", file, line)
 				if copierNames[name] {
+					if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 && i == 0 && !constFalse(c.Args[2]) && !constFalse(c.Args[3]) {
+						out = append(out, fmt.Sprintf("STRIP %s shapeNode(strip=%s, owned=%s) at %s", fn.Name(), c.Args[2].Name(), c.Args[3].Name(), at))
+					}
+					if strings.HasSuffix(name, ".copyNodeWithoutEmbeddings") {
+						out = append(out, fmt.Sprintf("STRIP %s copyNodeWithoutEmbeddings at %s", fn.Name(), at))
+					}
 					if strings.HasSuffix(name, ".shapeNode") && len(c.Args) == 4 {
 						if constTrue(c.Args[3]) {
 							continue // reshape in place
@@ -592,6 +664,184 @@ func storedAsElement(call *ssa.Call) bool {
 	return false
 }
 
+// copierElement: a slice element type that is a storage entity or a Copier.
+func copierElement(t types.Type, copier *types.Interface) bool {
+	if storageEntity(t) {
+		return true
+	}
+	if copier == nil {
+		return false
+	}
+	return types.Implements(t, copier) || types.Implements(types.NewPointer(t), copier)
+}
+
+// entityResult: a result (or a tuple's first result) that is a storage entity.
+func entityResult(t types.Type) bool {
+	if tuple, ok := t.(*types.Tuple); ok {
+		return tuple.Len() > 0 && storageEntity(tuple.At(0).Type())
+	}
+	return storageEntity(t)
+}
+
+// copyingExits: module functions whose entity results are always a structural
+// copy (or nil): their callers receive a fresh copy, e.g. a cache exit.
+func copyingExits(fns []*ssa.Function) map[*ssa.Function]bool {
+	out := map[*ssa.Function]bool{}
+	for _, fn := range fns {
+		if fn.Signature.Results().Len() == 0 || !storageEntity(fn.Signature.Results().At(0).Type()) {
+			continue
+		}
+		copied, any := true, false
+		for _, b := range fn.Blocks {
+			if ret, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return); ok && len(ret.Results) > 0 {
+				switch v := ret.Results[0].(type) {
+				case *ssa.Const:
+				case *ssa.Call:
+					if !elementCopier(v.Common()) {
+						copied = false
+					}
+					any = true
+				default:
+					copied = false
+				}
+			}
+		}
+		if copied && any {
+			out[origin(fn)] = true
+		}
+	}
+	return out
+}
+
+// results: the call's value and the values derived from it (tuple fields).
+func callResults(call *ssa.Call) map[ssa.Value]bool {
+	out := map[ssa.Value]bool{call: true}
+	if refs := call.Referrers(); refs != nil {
+		for _, ref := range *refs {
+			if x, ok := ref.(*ssa.Extract); ok {
+				out[x] = true
+			}
+		}
+	}
+	return out
+}
+
+// delivers: ins hands a value derived from roots onward (returns, stores,
+// appends, passes it to a call that returns something other than a bool, or
+// sends it); a predicate call that only reads it is not a delivery.
+func delivers(ins ssa.Instruction, roots map[ssa.Value]bool) bool {
+	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
+	switch x := ins.(type) {
+	case *ssa.Return:
+		for _, v := range x.Results {
+			if in(v) {
+				return true
+			}
+		}
+	case *ssa.Store:
+		return in(x.Val)
+	case *ssa.Send:
+		return in(x.X)
+	case *ssa.MapUpdate:
+		return in(x.Value)
+	case ssa.CallInstruction:
+		c := x.Common()
+		predicate := c.Signature().Results().Len() == 1 && types.Identical(c.Signature().Results().At(0).Type(), types.Typ[types.Bool])
+		for _, a := range c.Args {
+			if in(a) && !predicate {
+				return true
+			}
+		}
+	case *ssa.Phi:
+		for _, e := range x.Edges {
+			if in(e) {
+				roots[x] = true
+			}
+		}
+	}
+	return false
+}
+
+// derivedCond: an If condition decided by the copy itself (its ok result, or a
+// nil comparison of it); present reports which branch holds the copy.
+func derivedCond(cond ssa.Value, roots map[ssa.Value]bool) (derived bool, present int) {
+	if roots[cond] {
+		return true, 0
+	}
+	if bin, ok := cond.(*ssa.BinOp); ok && (bin.Op == token.EQL || bin.Op == token.NEQ) {
+		for _, side := range []ssa.Value{bin.X, bin.Y} {
+			if roots[side] {
+				if bin.Op == token.EQL {
+					return true, 1
+				}
+				return true, 0
+			}
+		}
+	}
+	return false, 0
+}
+
+// mayDrop: from the copy, some path reaches the function's end or the copy's
+// own block again without delivering it, through a condition the copy does
+// not decide.
+func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
+	roots := callResults(call)
+	for _, ins := range start.Instrs[index+1:] {
+		if delivers(ins, roots) {
+			return false
+		}
+	}
+	type state struct {
+		b       *ssa.BasicBlock
+		foreign bool
+	}
+	seen := map[state]bool{}
+	var next func(b *ssa.BasicBlock, foreign bool) []state
+	next = func(b *ssa.BasicBlock, foreign bool) []state {
+		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok {
+			if d, present := derivedCond(iff.Cond, roots); d {
+				return []state{{b.Succs[present], foreign}}
+			}
+			return []state{{b.Succs[0], true}, {b.Succs[1], true}}
+		}
+		var out []state
+		for _, s := range b.Succs {
+			out = append(out, state{s, foreign})
+		}
+		return out
+	}
+	stack := next(start, false)
+	for len(stack) > 0 {
+		st := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[st] {
+			continue
+		}
+		seen[st] = true
+		if st.b == start {
+			if st.foreign {
+				return true
+			}
+			continue
+		}
+		delivered := false
+		for _, ins := range st.b.Instrs {
+			if delivers(ins, roots) {
+				delivered = true
+				break
+			}
+		}
+		if delivered {
+			continue
+		}
+		if _, ret := st.b.Instrs[len(st.b.Instrs)-1].(*ssa.Return); ret && st.foreign {
+			return true
+		}
+		stack = append(stack, next(st.b, st.foreign)...)
+	}
+	return false
+}
+
 // retains: fn stores a delivery-derived value into memory that outlives the call
 // (a field, global, captured variable or append into one).
 func retains(fn *ssa.Function, roots map[ssa.Value]bool) bool {
@@ -698,6 +948,16 @@ func assignedFields(fn *ssa.Function, st *types.Struct, out map[string]bool, dep
 				}
 				out[st.Field(fa.Field).Name()] = true
 			case ssa.CallInstruction:
+				// The owner's whole-value walk assigns every field of a value of st.
+				if name := calleeName(x.Common()); strings.HasSuffix(name, "/pkg/callerowned.Of") || strings.HasSuffix(name, "/pkg/callerowned.Value") {
+					for _, arg := range x.Common().Args {
+						if types.Identical(arg.Type().Underlying(), st) {
+							for i := 0; i < st.NumFields(); i++ {
+								out[st.Field(i).Name()] = true
+							}
+						}
+					}
+				}
 				if callee := staticCallee(x.Common()); callee != nil && inModule(callee) {
 					assignedFields(callee, st, out, depth+1, visited)
 				}
@@ -776,7 +1036,10 @@ func main() {
 	}
 	defer cleanup()
 	config := workcensus.Config{Dir: tree, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Env: append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")}
-	config.Overlay = map[string][]byte{filepath.Join(tree, "pkg/storage/nor160_consumer_control.go"): []byte(controlFile)}
+	config.Overlay = map[string][]byte{
+		filepath.Join(tree, "pkg/storage/nor160_consumer_control.go"):  []byte(controlFile),
+		filepath.Join(tree, "pkg/callerowned/nor160_owner_control.go"): []byte(ownerControlFile),
+	}
 	p, err := workcensus.LoadProgram(config)
 	if err != nil {
 		panic(err)
@@ -800,7 +1063,8 @@ func main() {
 						roots[v] = true
 					}
 					file, line := pos(fn, call.Pos())
-					r.Views = append(r.Views, view{Function: fn.String(), File: file, Line: line, Reader: name, Copies: copiesOf(fn, roots, 0, map[string]bool{})})
+					copies, _ := splitStrips(copiesOf(fn, roots, 0, map[string]bool{}))
+					r.Views = append(r.Views, view{Function: fn.String(), File: file, Line: line, Reader: name, Copies: copies})
 				}
 				fromStorage := deliversFromStorage(c)
 				for _, arg := range c.Args {
@@ -817,8 +1081,9 @@ func main() {
 					}
 					file, line := pos(cb, cb.Pos())
 					sf, sl := pos(fn, call.Pos())
+					copies, strips := splitStrips(copiesOf(cb, roots, 0, map[string]bool{}))
 					r.Consumers = append(r.Consumers, consumer{Consumer: cb.String(), File: file, Line: line, Callee: name, FromStorage: fromStorage,
-						Site: fmt.Sprintf("%s:%d", sf, sl), Copies: copiesOf(cb, roots, 0, map[string]bool{}), Retains: retains(cb, roots)})
+						Site: fmt.Sprintf("%s:%d", sf, sl), Copies: copies, Strips: strips, Retains: retains(cb, roots)})
 				}
 			}
 		}
@@ -866,7 +1131,7 @@ func main() {
 			continue
 		}
 		lower := strings.ToLower(fn.Name())
-		if fn.Name() != "CallerCopy" && !strings.Contains(lower, "callerowned") && !copierNames[fullName(fn)] {
+		if fn.Name() != "CallerCopy" && !strings.Contains(lower, "callerowned") && !strings.HasPrefix(lower, "clone") && !copierNames[fullName(fn)] {
 			continue
 		}
 		var copied types.Type
@@ -977,6 +1242,90 @@ func main() {
 	sort.Strings(r.SliceCopiers)
 	sort.Strings(r.Dispatchers)
 
+	// 8: owner dispatch functions: every function of the owner package that
+	// calls CallerCopy through an interface. One rule means one function.
+	for _, fn := range fns {
+		owner := fn
+		for owner.Pkg == nil && owner.Parent() != nil {
+			owner = owner.Parent()
+		}
+		if owner.Pkg == nil || owner.Pkg.Pkg.Path() != module+"/pkg/callerowned" {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				if call, ok := ins.(ssa.CallInstruction); ok && call.Common().IsInvoke() && call.Common().Method.Name() == "CallerCopy" {
+					file, line := pos(fn, call.Pos())
+					r.OwnerDispatch = append(r.OwnerDispatch, fmt.Sprintf("%s:%d %s", file, line, strings.TrimPrefix(fn.String(), module+"/")))
+				}
+			}
+		}
+	}
+	sort.Strings(r.OwnerDispatch)
+
+	// 9: copies that may be dropped: a structural copy (or a copying exit) whose
+	// result can reach the function's end or the next loop iteration without
+	// being delivered, on a path decided by a condition the copy does not decide.
+	exits := copyingExits(fns)
+	for _, fn := range fns {
+		if copierNames[fullName(fn)] || exits[origin(fn)] {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for i, ins := range b.Instrs {
+				call, ok := ins.(*ssa.Call)
+				if !ok {
+					continue
+				}
+				c := call.Common()
+				callee := staticCallee(c)
+				copying := elementCopier(c) || (callee != nil && exits[origin(callee)])
+				if !copying || !entityResult(call.Type()) {
+					continue
+				}
+				if mayDrop(call, b, i) {
+					file, line := pos(fn, call.Pos())
+					r.DroppedCopies = append(r.DroppedCopies, fmt.Sprintf("%s:%d %s -> %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(c)))
+				}
+			}
+		}
+	}
+	sort.Strings(r.DroppedCopies)
+
+	// 10: shallow copies of entity collections: append(nil, s...) or
+	// slices.Clone(s) of a slice whose elements are entities or Copiers.
+	for _, fn := range fns {
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(*ssa.Call)
+				if !ok {
+					continue
+				}
+				c := call.Common()
+				var src ssa.Value
+				if bi, ok := c.Value.(*ssa.Builtin); ok && bi.Name() == "append" && len(c.Args) == 2 {
+					if k, ok := c.Args[0].(*ssa.Const); ok && k.IsNil() {
+						if _, varargs := c.Args[1].(*ssa.Slice); !varargs {
+							src = c.Args[1]
+						}
+					}
+				} else if name := calleeName(c); strings.HasPrefix(name, "slices.Clone") && len(c.Args) == 1 {
+					src = c.Args[0]
+				}
+				if src == nil {
+					continue
+				}
+				sl, ok := src.Type().Underlying().(*types.Slice)
+				if !ok || !copierElement(sl.Elem(), copierIface) {
+					continue
+				}
+				file, line := pos(fn, call.Pos())
+				r.ShallowCopies = append(r.ShallowCopies, fmt.Sprintf("%s:%d %s copies []%s shallowly", file, line, strings.TrimPrefix(fn.String(), module+"/"), strings.TrimPrefix(sl.Elem().String(), module+"/")))
+			}
+		}
+	}
+	sort.Strings(r.ShallowCopies)
+
 	// Controls.
 	r.Controls["second copy of an owned delivery"] = false
 	for _, c := range r.Consumers {
@@ -1006,6 +1355,36 @@ func main() {
 	for _, c := range r.Dispatchers {
 		if strings.Contains(c, "NOR160ControlDispatch") {
 			r.Controls["second Copier dispatch rule"] = true
+		}
+	}
+	r.Controls["copy dropped on an unrelated condition"] = false
+	for _, x := range r.DroppedCopies {
+		if strings.Contains(x, "NOR160ControlDroppedCopy") {
+			r.Controls["copy dropped on an unrelated condition"] = true
+		}
+	}
+	r.Controls["vectors stripped after delivery"] = false
+	for _, c := range r.Consumers {
+		if strings.Contains(c.Consumer, "NOR160ControlStripAfterDelivery") && len(c.Strips) > 0 {
+			r.Controls["vectors stripped after delivery"] = true
+		}
+	}
+	r.Controls["second dispatch rule inside the owner"] = false
+	for _, x := range r.OwnerDispatch {
+		if strings.Contains(x, "nor160ControlSecondDispatch") {
+			r.Controls["second dispatch rule inside the owner"] = true
+		}
+	}
+	r.Controls["shallow entity slice copy"] = false
+	for _, x := range r.ShallowCopies {
+		if strings.Contains(x, "NOR160ControlShallowEntities") {
+			r.Controls["shallow entity slice copy"] = true
+		}
+	}
+	r.Controls["partial clone of a graph-bearing struct"] = false
+	for _, c := range r.Copiers {
+		if strings.Contains(c.Implementation, "nor160ControlCloneHit") && len(c.Unassigned) == 1 && c.Unassigned[0] == "Rel" {
+			r.Controls["partial clone of a graph-bearing struct"] = true
 		}
 	}
 	partial, complete := false, true
