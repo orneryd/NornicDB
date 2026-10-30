@@ -258,7 +258,11 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 func calculateNodeSize(node *storage.Node) (int64, error) {
 	if node != nil {
 		canonical := *node
-		canonical.Database = "" // Query provenance does not consume stored-byte quota.
+		{
+			metadata := canonical.RuntimeMetadata()
+			metadata.Database = "" // Query provenance does not consume stored-byte quota.
+			canonical.SetRuntimeMetadata(metadata)
+		}
 		if len(canonical.Properties) == 0 {
 			canonical.Properties = nil
 		}

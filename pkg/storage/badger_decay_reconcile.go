@@ -136,7 +136,7 @@ func (b *BadgerEngine) readNodeSuppressionState(nodeID NodeID) (bool, []string, 
 			if err != nil {
 				return err
 			}
-			suppressed = node.VisibilitySuppressed
+			suppressed = node.RuntimeMetadata().VisibilitySuppressed
 			labels = append([]string(nil), node.Labels...)
 			return nil
 		})

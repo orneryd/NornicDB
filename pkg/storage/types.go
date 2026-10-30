@@ -208,18 +208,12 @@ type EdgeID string
 //
 //	Node structs are NOT thread-safe. The storage engine handles concurrency.
 type Node struct {
-	// Database is query-value provenance. It is never persisted or a property.
-	Database string `json:"-" msgpack:"-"`
-
-	embeddingOwner   *BadgerEngine
-	embeddingOwnerID NodeID
-	// Transient storage snapshot and attempt identity; never part of user data.
-	embeddingRevision    EmbeddingBodyRevision `json:"-" msgpack:"-"`
-	embeddingAttempt     *EmbeddingAttempt     `json:"-" msgpack:"-"`
-	embeddingPublication embeddingPublicationProof
-	ID                   NodeID         `json:"id"`
-	Labels               []string       `json:"labels"`
-	Properties           map[string]any `json:"properties"`
+	// runtime is shared immutable provenance and storage metadata. Mutators
+	// replace this record so detached node images remain independent.
+	runtime    *nodeRuntime
+	ID         NodeID         `json:"id"`
+	Labels     []string       `json:"labels"`
+	Properties map[string]any `json:"properties"`
 
 	// NornicDB extensions
 	CreatedAt       time.Time            `json:"-"`
@@ -230,10 +224,6 @@ type Node struct {
 	// Embedding metadata (separate from user Properties to avoid namespace pollution)
 	// Keys: embedding_model, embedding_dimensions, has_embedding, embedded_at, has_chunks, chunk_count
 	EmbedMeta map[string]any `json:"-"`
-
-	// Internal storage flags (not exposed to users, used during encode/decode)
-	EmbeddingsStoredSeparately bool `json:"-"` // True when embeddings are stored in separate keys (large node optimization)
-	VisibilitySuppressed       bool `json:"-"` // Set by deindex cleanup when decay score falls below visibility threshold
 }
 
 // Edge represents a directed graph relationship (arc) between two nodes.

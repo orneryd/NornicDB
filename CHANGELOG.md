@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go node runtime provenance and flags use `RuntimeMetadata` / `SetRuntimeMetadata`
+  and immutable shared records. Stored and replication wire formats stay unchanged;
+  see the [Go migration guide](docs/development/node-runtime-metadata.md).
+
 - Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
   knowledge-policy edits. Composite participant callbacks bind their complete
   terminal contract together; see the [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
@@ -86,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Unify database-info metadata projection and range/vector index creation while
+  preserving their public result, schema-transaction and vector-registration contracts.
 
 - Preserve canonical parse diagnostics for malformed statements under both parser
   modes, including extra UNWIND aliases; standalone validator diagnostics retain

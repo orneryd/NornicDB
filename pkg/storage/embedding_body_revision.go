@@ -22,23 +22,24 @@ func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
-	current := node.embeddingRevision
+	state := node.runtimeState()
+	current := state.embeddingRevision
 	if revision == current {
 		return true, nil
 	}
-	if revision.bufferedSequence == 0 || current.physical == 0 || node.embeddingOwner == nil {
+	if revision.bufferedSequence == 0 || current.physical == 0 || state.embeddingOwner == nil {
 		return false, nil
 	}
 	var same bool
-	err := node.embeddingOwner.withReadView(nil, func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey(node.embeddingOwnerID))
+	err := state.embeddingOwner.withReadView(nil, func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(state.embeddingOwnerID))
 		if err != nil {
 			return err
 		}
 		if item.Version() != current.physical {
 			return nil
 		}
-		same, err = revision.matches(node.embeddingOwner, txn, node.embeddingOwnerID, item.Version())
+		same, err = revision.matches(state.embeddingOwner, txn, state.embeddingOwnerID, item.Version())
 		return err
 	})
 	return same, err
@@ -105,10 +106,14 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 // needs to acquire a revision when that cache came from a body write. Copies
 // and namespace decorators preserve the private reader provenance.
 func SnapshotNodeForEmbedding(node *Node) (*Node, error) {
-	if node == nil || !node.embeddingRevision.isZero() || node.embeddingOwner == nil {
+	if node == nil {
 		return node, nil
 	}
-	b, id := node.embeddingOwner, node.embeddingOwnerID
+	state := node.runtimeState()
+	if !state.embeddingRevision.isZero() || state.embeddingOwner == nil {
+		return node, nil
+	}
+	b, id := state.embeddingOwner, state.embeddingOwnerID
 	snapshot, err := b.getNodeSnapshot(id, true)
 	if err == nil {
 		snapshot.ID = node.ID

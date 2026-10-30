@@ -495,7 +495,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if !ok {
 					continue
 				}
-				id := projection.nodeIdentity(node.Database, node.ID)
+				id := projection.nodeIdentity(node.RuntimeMetadata().Database, node.ID)
 				if projection.NodeProperties[id] == nil {
 					projection.NodeProperties[id] = make(map[string]interface{})
 				}
@@ -503,7 +503,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			}
 		}
 		if labels != nil {
-			id := projection.nodeIdentity(node.Database, node.ID)
+			id := projection.nodeIdentity(node.RuntimeMetadata().Database, node.ID)
 			projection.NodeIDs = append(projection.NodeIDs, id)
 			projection.NodeLabels[id] = labels
 		}

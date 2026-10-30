@@ -88,7 +88,7 @@ func TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses(t *testing.T) 
 	require.NoError(t, err,
 		"rebind: relabeling away from a suppressing binding must un-suppress on next read")
 	require.Equal(t, []string{"Untargeted"}, got.Labels)
-	require.False(t, got.VisibilitySuppressed,
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed,
 		"the suppressed flag must be cleared because the new labels have no binding")
 }
 
@@ -111,7 +111,7 @@ func TestLabelChange_UntargetedToTargeted_RescoresAndSuppresses(t *testing.T) {
 	require.NoError(t, err)
 	got, err := eng.GetNode("test:n2")
 	require.NoError(t, err, "precondition: untargeted stale node is visible")
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 
 	// Relabel into Doc — now the binding applies and the age should
 	// suppress it on the next read.
@@ -194,19 +194,9 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 	require.True(t, became, "precondition: must suppress under Doc binding")
 
 	// Read the persisted node directly through badger to bypass the
-	// in-memory cache (the cache still holds the pre-suppress copy from
-	// CreateNode and would mask the persisted true flag).
-	var persisted *Node
-	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey("test:rmw"))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			var decodeErr error
-			persisted, decodeErr = eng.decodeNodeWithEmbeddings(txn, val, "test:rmw")
-			return decodeErr
-		})
-	}))
-	require.True(t, persisted.VisibilitySuppressed,
+	// in-memory cache, so the precondition proves the actual on-disk flag.
+	persisted := readLabelChangeStoredNode(t, eng, "test:rmw")
+	require.True(t, persisted.RuntimeMetadata().VisibilitySuppressed,
 		"the persisted struct must reflect suppressed state for the test to be meaningful")
 
 	// Modify labels (Cypher: REMOVE :Doc SET :Untargeted) and write back.
@@ -217,28 +207,17 @@ func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *te
 	// The new labels have no decay binding, so on the next read the score
 	// must NOT be suppressed. We re-fetch the persisted struct directly
 	// from badger (bypassing the in-memory cache) to verify the flag has
-	// actually been cleared on disk — the cache-hit path can hide the
-	// stale persisted flag because copyNode does not preserve it, but
-	// every restart, secondary read path, or cross-process reader sees
-	// the persisted flag and would mis-suppress.
-	var afterUpdate *Node
-	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey("test:rmw"))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			var decodeErr error
-			afterUpdate, decodeErr = eng.decodeNodeWithEmbeddings(txn, val, "test:rmw")
-			return decodeErr
-		})
-	}))
-	require.False(t, afterUpdate.VisibilitySuppressed,
+	// actually been cleared on disk independently of any cached image.
+	// Every restart or secondary reader must observe the same transition.
+	afterUpdate := readLabelChangeStoredNode(t, eng, "test:rmw")
+	require.False(t, afterUpdate.RuntimeMetadata().VisibilitySuppressed,
 		"persisted suppression flag must be cleared on disk by UpdateNode after a label rebind")
 	require.Equal(t, []string{"Untargeted"}, afterUpdate.Labels)
 
 	// And the GetNode read path must also see the node visible.
 	got, err := eng.GetNode("test:rmw")
 	require.NoError(t, err)
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, []string{"Untargeted"}, got.Labels)
 }
 
@@ -260,17 +239,8 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 	require.NoError(t, err)
 
 	// Read persisted struct directly — flag should be false to start.
-	var persisted *Node
-	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey("test:rmw2"))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			var decodeErr error
-			persisted, decodeErr = eng.decodeNodeWithEmbeddings(txn, val, "test:rmw2")
-			return decodeErr
-		})
-	}))
-	require.False(t, persisted.VisibilitySuppressed)
+	persisted := readLabelChangeStoredNode(t, eng, "test:rmw2")
+	require.False(t, persisted.RuntimeMetadata().VisibilitySuppressed)
 
 	// Cypher SET label :Doc REMOVE label :Untargeted — labels move INTO
 	// the suppressing binding; the rescore on UpdateNode must flip the
@@ -278,17 +248,8 @@ func TestLabelChange_ReadModifyWrite_UntargetedToTargeted_RescoresOnUpdate(t *te
 	persisted.Labels = []string{"Doc"}
 	require.NoError(t, eng.UpdateNode(persisted))
 
-	var afterUpdate *Node
-	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey("test:rmw2"))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			var decodeErr error
-			afterUpdate, decodeErr = eng.decodeNodeWithEmbeddings(txn, val, "test:rmw2")
-			return decodeErr
-		})
-	}))
-	require.True(t, afterUpdate.VisibilitySuppressed,
+	afterUpdate := readLabelChangeStoredNode(t, eng, "test:rmw2")
+	require.True(t, afterUpdate.RuntimeMetadata().VisibilitySuppressed,
 		"label change INTO a suppressing binding must mark the persisted flag suppressed")
 	require.Equal(t, []string{"Doc"}, afterUpdate.Labels)
 
@@ -321,6 +282,25 @@ func TestLabelChange_NoDecayLabelToNoDecayLabel_StaysVisible(t *testing.T) {
 
 	got, err := eng.GetNode("test:n4")
 	require.NoError(t, err)
-	require.False(t, got.VisibilitySuppressed)
+	require.False(t, got.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, []string{"Other"}, got.Labels)
+}
+
+// readLabelChangeStoredNode keeps the persisted-state oracle independent of
+// caches and visibility filters, including the full body needed for updates.
+func readLabelChangeStoredNode(t *testing.T, engine *BadgerEngine, id NodeID) *Node {
+	t.Helper()
+	var node *Node
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(id))
+		if err != nil {
+			return err
+		}
+		return item.Value(func(value []byte) error {
+			var err error
+			node, err = engine.decodeNodeWithEmbeddings(txn, value, id)
+			return err
+		})
+	}))
+	return node
 }

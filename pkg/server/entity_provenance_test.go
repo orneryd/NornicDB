@@ -12,7 +12,8 @@ func TestHTTPEntityProvenance(t *testing.T) {
 	graph := &GraphResult{}
 	state := &transactionHTTPValueState{graph: graph}
 	for _, database := range []string{"one", "two"} {
-		node := &storage.Node{ID: "same", Database: database, Properties: map[string]interface{}{"db": database}}
+		node := &storage.Node{ID: "same", Properties: map[string]interface{}{"db": database}}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: database})
 		edge := &storage.Edge{ID: "rel", Database: database, StartNode: "same", EndNode: "target", Type: "R", Properties: map[string]interface{}{}}
 		_, meta := server.transactionHTTPValue(node, "comp", state)
 		require.Equal(t, "4:"+database+":same", meta[0].(map[string]interface{})["elementId"])

@@ -10,7 +10,7 @@ import (
 func TestPreparedCountDeltaProjectsPrivateImagesWithoutCopies(t *testing.T) {
 	vector := make([]float32, 16384)
 	vector[0] = 42
-	p := &PreparedEntityCommit{namespace: "test", changes: []StoredEntityChange{{AfterNode: &Node{ID: "test:hidden", VisibilitySuppressed: true, ChunkEmbeddings: [][]float32{vector}}}, {BeforeNode: &Node{ID: "test:deleted"}}, {AfterEdge: &Edge{ID: "test:e", VisibilitySuppressed: true}}, {AfterNode: &Node{ID: "test-other:foreign"}}, {AfterEdge: &Edge{ID: "foreign:e"}}}}
+	p := &PreparedEntityCommit{namespace: "test", changes: []StoredEntityChange{{AfterNode: &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "test:hidden", ChunkEmbeddings: [][]float32{vector}}}, {BeforeNode: &Node{ID: "test:deleted"}}, {AfterEdge: &Edge{ID: "test:e", VisibilitySuppressed: true}}, {AfterNode: &Node{ID: "test-other:foreign"}}, {AfterEdge: &Edge{ID: "foreign:e"}}}}
 	nodes, edges := p.CountDelta()
 	require.Zero(t, nodes)
 	require.EqualValues(t, 1, edges)
@@ -32,7 +32,7 @@ func TestPreparedCountDeltaIncludesCascadeAndHiddenStoredEntities(t *testing.T) 
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err = b.CreateNode(&Node{ID: id, VisibilitySuppressed: true})
+		_, err = b.CreateNode(&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: id})
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", VisibilitySuppressed: true}))

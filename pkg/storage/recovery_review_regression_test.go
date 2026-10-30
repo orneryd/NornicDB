@@ -47,7 +47,7 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	require.Len(t, visitor.nodes, 1)
 	restored := visitor.nodes[0]
 	require.Empty(t, restored.ChunkEmbeddings)
-	require.False(t, restored.EmbeddingsStoredSeparately)
+	require.False(t, restored.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.NotEqual(t, true, restored.EmbedMeta["has_embedding"])
 	require.NotEqual(t, true, restored.EmbedMeta["has_chunks"])
 	require.NotContains(t, restored.EmbedMeta, "chunk_count")

@@ -35,7 +35,7 @@ func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 							node, err := read(id)
 							require.NoError(t, err)
 							require.Empty(t, node.ChunkEmbeddings)
-							require.False(t, node.EmbeddingsStoredSeparately)
+							require.False(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
 							require.True(t, node.HasChunkEmbeddings())
 							require.Equal(t, tc.chunks, chunkCountFromMeta(node.EmbedMeta))
 							require.Equal(t, "t", node.Properties["title"])

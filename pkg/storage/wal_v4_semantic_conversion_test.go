@@ -10,14 +10,14 @@ import (
 func TestConvertV4SemanticWALRecordRewritesHistoricalEntityCommit(t *testing.T) {
 	stamp := time.Date(2024, 3, 5, 10, 20, 30, 123456789, time.UTC)
 	node := &Node{
-		ID: "test:n", Labels: []string{"Item"},
-		Properties:           map[string]any{"count": int64(9), "name": "café", "when": stamp},
-		EmbedMeta:            map[string]any{"source": "fixture"},
-		NamedEmbeddings:      map[string][]float32{"vector": {1, 2}},
-		ChunkEmbeddings:      [][]float32{{3, 4}},
-		CreatedAt:            stamp,
-		UpdatedAt:            stamp,
-		VisibilitySuppressed: true,
+		runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+		ID:      "test:n", Labels: []string{"Item"},
+		Properties:      map[string]any{"count": int64(9), "name": "café", "when": stamp},
+		EmbedMeta:       map[string]any{"source": "fixture"},
+		NamedEmbeddings: map[string][]float32{"vector": {1, 2}},
+		ChunkEmbeddings: [][]float32{{3, 4}},
+		CreatedAt:       stamp,
+		UpdatedAt:       stamp,
 	}
 	edge := &Edge{
 		ID: "test:e", StartNode: "test:n", EndNode: "test:other", Type: "LINK",

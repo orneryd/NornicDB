@@ -199,8 +199,12 @@ func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
 	if result.sourceNode != nil {
 		node = *result.sourceNode
 	}
-	if node.Database == "" && len(database) > 0 {
-		node.Database = database[0]
+	if node.RuntimeMetadata().Database == "" && len(database) > 0 {
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.Database = database[0]
+			node.SetRuntimeMetadata(metadata)
+		}
 	}
 	node.ID = result.NodeID
 	if node.ID == "" {

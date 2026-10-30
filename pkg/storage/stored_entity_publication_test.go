@@ -138,11 +138,7 @@ func assertStoredNodeImage(t *testing.T, expected, actual *Node, message ...any)
 	require.NotNil(t, actual)
 	clean := func(source *Node) Node {
 		node := *source
-		node.embeddingOwner = nil
-		node.embeddingOwnerID = ""
-		node.embeddingRevision = EmbeddingBodyRevision{}
-		node.embeddingAttempt = nil
-		node.embeddingPublication = embeddingPublicationProof{}
+		node.CopyEmbeddingIdentityFrom(nil)
 		return node
 	}
 	require.Equal(t, clean(expected), clean(actual), message...)

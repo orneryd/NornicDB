@@ -132,16 +132,25 @@ func (b *BadgerEngine) evaluateSuppressionInTxn(txn *badger.Txn, input suppressi
 		}
 	}
 	var entity any = node
-	var flag *bool
+	var wasSuppressed bool
+	metadata := NodeRuntimeMetadata{}
 	if isEdge {
-		entity, flag = edge, &edge.VisibilitySuppressed
+		entity = edge
+		wasSuppressed = edge.VisibilitySuppressed
+		edge.VisibilitySuppressed = false
 	} else {
-		flag = &node.VisibilitySuppressed
+		metadata = node.RuntimeMetadata()
+		wasSuppressed = metadata.VisibilitySuppressed
+		metadata.VisibilitySuppressed = false
+		node.SetRuntimeMetadata(metadata)
 	}
-	wasSuppressed := *flag
-	*flag = false
 	suppress := b.filterEntityByDecay(visibleRead, entity, DecayScoringTime())
-	*flag = suppress
+	if isEdge {
+		edge.VisibilitySuppressed = suppress
+	} else {
+		metadata.VisibilitySuppressed = suppress
+		node.SetRuntimeMetadata(metadata)
+	}
 	if suppress == wasSuppressed {
 		return suppressionMutation{}, nil
 	}

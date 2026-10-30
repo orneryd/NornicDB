@@ -205,7 +205,9 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
 				if c.version.CommitSequence != 0 {
-					op.Node.embeddingRevision = EmbeddingBodyRevision{bufferedSequence: c.version.CommitSequence}
+					state := op.Node.runtimeState()
+					state.embeddingRevision = EmbeddingBodyRevision{bufferedSequence: c.version.CommitSequence}
+					op.Node.setRuntimeState(state)
 				}
 				b.clearEntityDeletion(bufferedNodeEntity, string(op.Node.ID))
 				b.nodes[op.Node.ID] = op.Node

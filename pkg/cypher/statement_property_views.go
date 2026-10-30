@@ -109,7 +109,8 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	// when its complete scoring input equals our detached snapshot: timestamps
 	// alone are not a body version, and an ID alone is never sufficient.
 	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
-		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Database: source.Database, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: source.RuntimeMetadata().Database})
 		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(source)}
 		v.nodeBodies[identity] = body
 	}

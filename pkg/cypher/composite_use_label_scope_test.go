@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +15,7 @@ import (
 // the statement never defines is still rejected.
 func TestCompositeUseRouteLabelTestScopes(t *testing.T) {
 	ctx := context.Background()
-	manager, err := multidb.NewDatabaseManager(ctx, storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(ctx, newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	defer manager.Close()
 	require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: "lbl_shard"}))

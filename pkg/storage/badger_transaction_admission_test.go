@@ -64,7 +64,7 @@ func TestTransactionWriteAdmissionDecidesEveryWrite(t *testing.T) {
 			return tx.UpdateGraphNode(&Node{ID: "adm:a", Labels: []string{"A"}, Properties: map[string]interface{}{"v": int64(1)}}, ClientNodeEdits)
 		}},
 		{"UpdateGraphNodeStoredImages", func() error {
-			return tx.UpdateGraphNode(&Node{ID: "adm:a", Labels: []string{"A"}, VisibilitySuppressed: true}, StoredNodeImages)
+			return tx.UpdateGraphNode(&Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "adm:a", Labels: []string{"A"}}, StoredNodeImages)
 		}},
 		{"DeleteGraphNode", func() error { return tx.DeleteGraphNode("adm:a", CascadeEdges) }},
 		{"DeleteGraphNodeRejectConnected", func() error {
