@@ -1856,7 +1856,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 
 	var newlySuppressed, alreadySuppressed, aboveThreshold int
 	for _, node := range nodes {
-		if node.VisibilitySuppressed {
+		if node.RuntimeMetadata().VisibilitySuppressed {
 			alreadySuppressed++
 			continue
 		}
@@ -1943,7 +1943,7 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 	labelStats := make(map[string]struct{ count, suppressed int })
 
 	for _, node := range nodes {
-		if node.VisibilitySuppressed {
+		if node.RuntimeMetadata().VisibilitySuppressed {
 			suppressed++
 		}
 

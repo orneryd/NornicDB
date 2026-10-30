@@ -511,30 +511,30 @@
     {
       "space": "prefixEdge",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_deindex_enqueue.go:158",
-      "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158",
-      "where": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158"
+      "origin": "pkg/storage/badger_deindex_enqueue.go:167",
+      "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:167",
+      "where": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:167"
     },
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_deindex_enqueue.go:158",
-      "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158",
-      "where": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158"
+      "origin": "pkg/storage/badger_deindex_enqueue.go:167",
+      "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:167",
+      "where": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:167"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
       "class": "access-metadata",
-      "origin": "pkg/storage/badger_deindex_enqueue.go:204",
-      "func": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:204",
-      "where": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:204"
+      "origin": "pkg/storage/badger_deindex_enqueue.go:213",
+      "func": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:213",
+      "where": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:213"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
       "class": "access-metadata",
-      "origin": "pkg/storage/badger_deindex_enqueue.go:214",
-      "func": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:214",
-      "where": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:214"
+      "origin": "pkg/storage/badger_deindex_enqueue.go:223",
+      "func": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:223",
+      "where": "pkg/storage.clearTombstonesForEntityInTxn pkg/storage/badger_deindex_enqueue.go:223"
     },
     {
       "space": "prefixMVCCMetaEdgeTypeCountDelta",
@@ -1024,14 +1024,14 @@
       "class": "entity-head",
       "origin": "pkg/storage/badger_managed.go:457",
       "func": "pkg/storage.managedWriteBatch.Delete$1 pkg/storage/badger_managed.go:457",
-      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1418"
+      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1422"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
       "origin": "pkg/storage/badger_managed.go:457",
       "func": "pkg/storage.managedWriteBatch.Delete$1 pkg/storage/badger_managed.go:457",
-      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1421"
+      "where": "pkg/storage.BadgerEngine.RebuildMVCCHeads pkg/storage/badger_mvcc.go:1425"
     },
     {
       "space": "prefixTemporalIndex",
@@ -1316,170 +1316,170 @@
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2047",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047"
+      "origin": "pkg/storage/badger_mvcc.go:2051",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2047",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047"
+      "origin": "pkg/storage/badger_mvcc.go:2051",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2047",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047"
+      "origin": "pkg/storage/badger_mvcc.go:2051",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2047",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2047"
+      "origin": "pkg/storage/badger_mvcc.go:2051",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2051"
     },
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2060",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060"
+      "origin": "pkg/storage/badger_mvcc.go:2064",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2060",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060"
+      "origin": "pkg/storage/badger_mvcc.go:2064",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2060",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060"
+      "origin": "pkg/storage/badger_mvcc.go:2064",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2060",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2060"
+      "origin": "pkg/storage/badger_mvcc.go:2064",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2064"
     },
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2075",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2075",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2075"
+      "origin": "pkg/storage/badger_mvcc.go:2079",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2079",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2079"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2078",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2078",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2078"
+      "origin": "pkg/storage/badger_mvcc.go:2082",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2082",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2082"
     },
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2089",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2089",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2089"
+      "origin": "pkg/storage/badger_mvcc.go:2093",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2093",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2093"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2092",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2092",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2092"
+      "origin": "pkg/storage/badger_mvcc.go:2096",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2096",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2096"
     },
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2108",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2108",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2108"
+      "origin": "pkg/storage/badger_mvcc.go:2112",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2112",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2112"
     },
     {
       "space": "prefixMVCCEdge",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2169",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169"
+      "origin": "pkg/storage/badger_mvcc.go:2173",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2169",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169"
+      "origin": "pkg/storage/badger_mvcc.go:2173",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173"
     },
     {
       "space": "prefixMVCCNode",
       "class": "entity-version",
-      "origin": "pkg/storage/badger_mvcc.go:2169",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169"
+      "origin": "pkg/storage/badger_mvcc.go:2173",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:2169",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2169"
+      "origin": "pkg/storage/badger_mvcc.go:2173",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2173"
     },
     {
       "space": "prefixMVCCPruneFloor",
       "class": "version-retention",
-      "origin": "pkg/storage/badger_mvcc.go:2180",
-      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2180",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2180"
+      "origin": "pkg/storage/badger_mvcc.go:2184",
+      "func": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2184",
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2184"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2295",
-      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2295",
-      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2295"
+      "origin": "pkg/storage/badger_mvcc.go:2299",
+      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2299",
+      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2299"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:2297",
-      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2297",
-      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2297"
+      "origin": "pkg/storage/badger_mvcc.go:2301",
+      "func": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2301",
+      "where": "pkg/storage.BadgerEngine.writeMVCCHeadForLogicalKeyInTxn pkg/storage/badger_mvcc.go:2301"
     },
     {
       "space": "prefixMVCCIncomingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:326",
-      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:326",
-      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:326"
+      "origin": "pkg/storage/badger_mvcc.go:330",
+      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330",
+      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330"
     },
     {
       "space": "prefixMVCCOutgoingAdj",
       "class": "entity-adjacency",
-      "origin": "pkg/storage/badger_mvcc.go:326",
-      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:326",
-      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:326"
+      "origin": "pkg/storage/badger_mvcc.go:330",
+      "func": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330",
+      "where": "pkg/storage.BadgerEngine.writeAdjacencyMVCCVersionInTxn pkg/storage/badger_mvcc.go:330"
     },
     {
       "space": "prefixMVCCEdgeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:579",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:579",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:579"
+      "origin": "pkg/storage/badger_mvcc.go:583",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:583",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.edgeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:583"
     },
     {
       "space": "prefixMVCCNodeHead",
       "class": "entity-head",
-      "origin": "pkg/storage/badger_mvcc.go:579",
-      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:579",
-      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:579"
+      "origin": "pkg/storage/badger_mvcc.go:583",
+      "func": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:583",
+      "where": "pkg/storage.writeMVCCHeadWithFloorInTxn[pkg/storage.nodeMVCCHeadKeyWriter] pkg/storage/badger_mvcc.go:583"
     },
     {
       "space": "prefixMVCCIncomingAdj",
@@ -1533,51 +1533,51 @@
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:550",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:550",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:550"
+      "origin": "pkg/storage/badger_nodes.go:557",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:557",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:557"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:569",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:569",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:569"
+      "origin": "pkg/storage/badger_nodes.go:576",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:576",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:576"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:625",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:625",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:625"
+      "origin": "pkg/storage/badger_nodes.go:632",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:632",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:632"
     },
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:643",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:643",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:643"
+      "origin": "pkg/storage/badger_nodes.go:650",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:650",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:650"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:665",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:665",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:665"
+      "origin": "pkg/storage/badger_nodes.go:672",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:672",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:672"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:689",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:689",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:689"
+      "origin": "pkg/storage/badger_nodes.go:696",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:696",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:696"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:695",
-      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:695",
-      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:695"
+      "origin": "pkg/storage/badger_nodes.go:702",
+      "func": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:702",
+      "where": "pkg/storage.BadgerEngine.updateNodeWithWriteContext$5 pkg/storage/badger_nodes.go:702"
     },
     {
       "space": "prefixPendingEmbed",
@@ -2039,42 +2039,42 @@
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1316",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1316",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2081"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2085"
     },
     {
       "space": "prefixIDDictEdgeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1316",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1316",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2095"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2099"
     },
     {
       "space": "prefixIDDictNodeReverse",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1323",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1323",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2081"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2085"
     },
     {
       "space": "prefixIDDictEdgeReverse",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1323",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1323",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2095"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2099"
     },
     {
       "space": "prefixIDDictNodeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1327",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.NodeID] pkg/storage/id_dictionary.go:1327",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2081"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2085"
     },
     {
       "space": "prefixIDDictEdgeForward",
       "class": "id-dictionary",
       "origin": "pkg/storage/id_dictionary.go:1327",
       "func": "pkg/storage.deleteIDEntryInTxn[pkg/storage.EdgeID] pkg/storage/id_dictionary.go:1327",
-      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2095"
+      "where": "pkg/storage.BadgerEngine.pruneMVCCKeyspaceInTxn$1 pkg/storage/badger_mvcc.go:2099"
     },
     {
       "space": "prefixIDDictCounter",
@@ -2452,13 +2452,13 @@
       "field": "pkg/multidb.databaseLimitChecker.activeQueries",
       "class": "query concurrency",
       "func": "pkg/multidb.databaseLimitChecker.CheckQueryLimits",
-      "pos": "pkg/multidb/enforcement.go:322"
+      "pos": "pkg/multidb/enforcement.go:326"
     },
     {
       "field": "pkg/multidb.databaseLimitChecker.activeQueries",
       "class": "query concurrency",
       "func": "pkg/multidb.databaseLimitChecker.CheckQueryLimits$3",
-      "pos": "pkg/multidb/enforcement.go:340"
+      "pos": "pkg/multidb/enforcement.go:344"
     },
     {
       "field": "pkg/multidb.reservedUsage.bytes",
@@ -2542,13 +2542,13 @@
       "field": "pkg/storage.BadgerEngine.cacheHits",
       "class": "metrics",
       "func": "pkg/storage.BadgerEngine.getNodeByID",
-      "pos": "pkg/storage/badger_nodes.go:300"
+      "pos": "pkg/storage/badger_nodes.go:307"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheMisses",
       "class": "metrics",
       "func": "pkg/storage.BadgerEngine.getNodeByID",
-      "pos": "pkg/storage/badger_nodes.go:298"
+      "pos": "pkg/storage/badger_nodes.go:305"
     },
     {
       "field": "pkg/storage.BadgerEngine.countDeltaPending",
@@ -2578,13 +2578,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:293"
-    },
-    {
-      "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
-      "class": "read cache",
-      "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:298"
+      "pos": "pkg/storage/badger_cache.go:296"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
@@ -2596,19 +2590,25 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.putEdgeLocked",
-      "pos": "pkg/storage/badger_cache.go:303"
+      "pos": "pkg/storage/badger_cache.go:304"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
+      "class": "read cache",
+      "func": "pkg/storage.BadgerEngine.putEdgeLocked",
+      "pos": "pkg/storage/badger_cache.go:306"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheDeleteEdge",
-      "pos": "pkg/storage/badger_cache.go:322"
+      "pos": "pkg/storage/badger_cache.go:325"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheInvalidateEdges",
-      "pos": "pkg/storage/badger_cache.go:331"
+      "pos": "pkg/storage/badger_cache.go:334"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
@@ -2626,31 +2626,31 @@
       "field": "pkg/storage.BadgerEngine.edgeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts",
-      "pos": "pkg/storage/badger_cache.go:607"
+      "pos": "pkg/storage/badger_cache.go:610"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnEdgeCreatedWithCounts",
-      "pos": "pkg/storage/badger_cache.go:640"
+      "pos": "pkg/storage/badger_cache.go:643"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnEdgeDeletedWithCounts",
-      "pos": "pkg/storage/badger_cache.go:683"
+      "pos": "pkg/storage/badger_cache.go:686"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnEdgesDeleted",
-      "pos": "pkg/storage/badger_cache.go:697"
+      "pos": "pkg/storage/badger_cache.go:700"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-      "pos": "pkg/storage/badger_cache.go:746"
+      "pos": "pkg/storage/badger_cache.go:749"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCount",
@@ -2722,25 +2722,25 @@
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnEdgesDeleted",
-      "pos": "pkg/storage/badger_cache.go:713"
+      "pos": "pkg/storage/badger_cache.go:716"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-      "pos": "pkg/storage/badger_cache.go:753"
+      "pos": "pkg/storage/badger_cache.go:756"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.addNamespaceEdgeCount",
-      "pos": "pkg/storage/badger_cache.go:779"
+      "pos": "pkg/storage/badger_cache.go:782"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.addNamespaceEdgeCountFromNode",
-      "pos": "pkg/storage/badger_cache.go:789"
+      "pos": "pkg/storage/badger_cache.go:792"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2770,13 +2770,13 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-      "pos": "pkg/storage/badger_cache.go:740"
+      "pos": "pkg/storage/badger_cache.go:743"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.addNamespaceNodeCount",
-      "pos": "pkg/storage/badger_cache.go:769"
+      "pos": "pkg/storage/badger_cache.go:772"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2800,19 +2800,19 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.cacheStoreNodeBody",
-      "pos": "pkg/storage/badger_cache.go:183"
+      "pos": "pkg/storage/badger_cache.go:186"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.removeNodeBodyCacheEntryLocked",
-      "pos": "pkg/storage/badger_cache.go:206"
+      "pos": "pkg/storage/badger_cache.go:209"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
       "class": "read cache",
       "func": "pkg/storage.BadgerEngine.removeNodeBodyCacheEntryLocked",
-      "pos": "pkg/storage/badger_cache.go:208"
+      "pos": "pkg/storage/badger_cache.go:211"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheBytes",
@@ -2842,19 +2842,19 @@
       "field": "pkg/storage.BadgerEngine.nodeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodeCreatedWithCounts",
-      "pos": "pkg/storage/badger_cache.go:565"
+      "pos": "pkg/storage/badger_cache.go:568"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts",
-      "pos": "pkg/storage/badger_cache.go:600"
+      "pos": "pkg/storage/badger_cache.go:603"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
       "class": "entity-count",
       "func": "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-      "pos": "pkg/storage/badger_cache.go:726"
+      "pos": "pkg/storage/badger_cache.go:729"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -3202,7 +3202,7 @@
       "field": "pkg/storage.CommitBuffer.deletes",
       "class": "write-behind generation contents",
       "func": "pkg/storage.CommitBuffer.addDelete",
-      "pos": "pkg/storage/commit_buffer.go:371"
+      "pos": "pkg/storage/commit_buffer.go:373"
     },
     {
       "field": "pkg/storage.CommitBuffer.deletes",
@@ -3220,31 +3220,31 @@
       "field": "pkg/storage.CommitBuffer.edgeCreateCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:254"
+      "pos": "pkg/storage/commit_buffer.go:256"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeCreateCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.addEdge",
-      "pos": "pkg/storage/commit_buffer.go:345"
+      "pos": "pkg/storage/commit_buffer.go:347"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeDeleteCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:229"
+      "pos": "pkg/storage/commit_buffer.go:231"
     },
     {
       "field": "pkg/storage.CommitBuffer.edgeDeleteCount",
       "class": "entity-count",
       "func": "pkg/storage.CommitBuffer.AddCommit",
-      "pos": "pkg/storage/commit_buffer.go:259"
+      "pos": "pkg/storage/commit_buffer.go:261"
     },
     {
       "field": "pkg/storage.CommitBuffer.ops",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.rotate",
-      "pos": "pkg/storage/commit_buffer.go:652"
+      "pos": "pkg/storage/commit_buffer.go:654"
     },
     {
       "field": "pkg/storage.CommitOutcome.State",
@@ -3262,19 +3262,13 @@
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:541"
+      "pos": "pkg/storage/commit_buffer.go:543"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:544"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.curInterval",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:789"
+      "pos": "pkg/storage/commit_buffer.go:546"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
@@ -3286,79 +3280,79 @@
       "field": "pkg/storage.WriteBehindBuffer.curInterval",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:794"
+      "pos": "pkg/storage/commit_buffer.go:793"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.curInterval",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:796"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.drainDur",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:784"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.drainDur",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:787"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.drainRate",
-      "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:783"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.drainRate",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
       "pos": "pkg/storage/commit_buffer.go:786"
     },
     {
-      "field": "pkg/storage.WriteBehindBuffer.maxDelay",
+      "field": "pkg/storage.WriteBehindBuffer.drainDur",
       "class": "write-behind scheduling",
-      "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:532"
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:789"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.drainRate",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:785"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.drainRate",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.drainOne",
+      "pos": "pkg/storage/commit_buffer.go:788"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.maxDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:538"
+      "pos": "pkg/storage/commit_buffer.go:534"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.maxDelay",
+      "class": "write-behind scheduling",
+      "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
+      "pos": "pkg/storage/commit_buffer.go:540"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.minDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:529"
+      "pos": "pkg/storage/commit_buffer.go:531"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.minDelay",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.SetDelayBounds",
-      "pos": "pkg/storage/commit_buffer.go:535"
+      "pos": "pkg/storage/commit_buffer.go:537"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendNode",
-      "pos": "pkg/storage/commit_buffer.go:564"
+      "pos": "pkg/storage/commit_buffer.go:566"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendEdge",
-      "pos": "pkg/storage/commit_buffer.go:580"
+      "pos": "pkg/storage/commit_buffer.go:582"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.AppendDelete",
-      "pos": "pkg/storage/commit_buffer.go:594"
-    },
-    {
-      "field": "pkg/storage.WriteBehindBuffer.opCount",
-      "class": "write-behind generation size",
-      "func": "pkg/storage.WriteBehindBuffer.AppendCommit",
-      "pos": "pkg/storage/commit_buffer.go:610"
+      "pos": "pkg/storage/commit_buffer.go:596"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
@@ -3369,20 +3363,26 @@
     {
       "field": "pkg/storage.WriteBehindBuffer.opCount",
       "class": "write-behind generation size",
+      "func": "pkg/storage.WriteBehindBuffer.AppendCommit",
+      "pos": "pkg/storage/commit_buffer.go:614"
+    },
+    {
+      "field": "pkg/storage.WriteBehindBuffer.opCount",
+      "class": "write-behind generation size",
       "func": "pkg/storage.WriteBehindBuffer.rotate",
-      "pos": "pkg/storage/commit_buffer.go:655"
+      "pos": "pkg/storage/commit_buffer.go:657"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.targetOps",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.drainOne",
-      "pos": "pkg/storage/commit_buffer.go:796"
+      "pos": "pkg/storage/commit_buffer.go:798"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.warnState",
       "class": "write-behind scheduling",
       "func": "pkg/storage.WriteBehindBuffer.sizingWarningLocked",
-      "pos": "pkg/storage/commit_buffer.go:1585"
+      "pos": "pkg/storage/commit_buffer.go:1587"
     },
     {
       "field": "pkg/storage.bufferedCardinalityDeltas.edgeTotal",
@@ -4265,7 +4265,7 @@
     {
       "func": "pkg/cypher.StorageExecutor.executeCreateConstraint",
       "pos": "-",
-      "gates": "pkg/cypher.StorageExecutor.executeCreateConstraint pkg/cypher/schema.go:234 -> pkg/storage.ValidateConstraintOnCreationForEngine pkg/storage/constraint_validation.go:35 -> pkg/storage.validateRelationshipConstraintOnCreationForEngine pkg/storage/constraint_validation_rel_stream.go:91 -> pkg/storage.newRelationshipConstraintCheck pkg/storage/constraint_validation_rel_stream.go:116 -> pkg/storage.newRelPolicyCheck pkg/storage/constraint_validation_rel_stream.go:323 -> pkg/cypher.algorithmRelationshipReader.GetSchema - -> pkg/cypher.graphIdentityStorage.GetSchema - -> pkg/cypher.transactionOwnedStorage.GetSchema - -> pkg/cypher.transactionStorageWrapper.GetSchema pkg/cypher/transaction_storage_wrapper.go:767 -> pkg/multidb.sizeTrackingEngine.GetSchema - -> pkg/storage.NamespacedEngine.GetSchema pkg/storage/namespaced.go:519 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:260 -> pkg/storage.BadgerEngine.transitionNamespaceSchema - -> pkg/storage.BadgerEngine.transitionNamespaceSchema$2 pkg/storage/badger_schema.go:298 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:23 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:26",
+      "gates": "pkg/cypher.StorageExecutor.executeCreateConstraint pkg/cypher/schema.go:234 -> pkg/storage.ValidateConstraintOnCreationForEngine pkg/storage/constraint_validation.go:35 -> pkg/storage.validateRelationshipConstraintOnCreationForEngine pkg/storage/constraint_validation_rel_stream.go:91 -> pkg/storage.newRelationshipConstraintCheck pkg/storage/constraint_validation_rel_stream.go:116 -> pkg/storage.newRelPolicyCheck pkg/storage/constraint_validation_rel_stream.go:323 -> pkg/cypher.algorithmRelationshipReader.GetSchema - -> pkg/cypher.graphIdentityStorage.GetSchema - -> pkg/cypher.transactionOwnedStorage.GetSchema - -> pkg/cypher.transactionStorageWrapper.GetSchema pkg/cypher/transaction_storage_wrapper.go:775 -> pkg/multidb.sizeTrackingEngine.GetSchema - -> pkg/storage.NamespacedEngine.GetSchema pkg/storage/namespaced.go:523 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:260 -> pkg/storage.BadgerEngine.transitionNamespaceSchema - -> pkg/storage.BadgerEngine.transitionNamespaceSchema$2 pkg/storage/badger_schema.go:298 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:23 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:26",
       "owners": [
         "pkg/storage.BadgerEngine.evaluateSuppressionInTxn",
         "pkg/storage.BadgerEngine.forgetManualSuppression",
@@ -4274,8 +4274,8 @@
     },
     {
       "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn",
-      "pos": "pkg/storage/badger_deindex_enqueue.go:145",
-      "gates": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158",
+      "pos": "pkg/storage/badger_deindex_enqueue.go:154",
+      "gates": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:167",
       "owners": [
         "pkg/storage.BadgerEngine.evaluateSuppressionInTxn"
       ]

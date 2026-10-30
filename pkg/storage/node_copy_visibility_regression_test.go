@@ -16,17 +16,22 @@ func TestNamespacedNodesPreserveSuppressionFlag(t *testing.T) {
 			eng := newTestEngine(t)
 			eng.SetRevealAll(true)
 			ns := NewNamespacedEngine(eng, "test")
-			node := &Node{ID: "n", VisibilitySuppressed: !update}
+			node := &Node{ID: "n"}
+			metadata := node.RuntimeMetadata()
+			metadata.VisibilitySuppressed = !update
+			node.SetRuntimeMetadata(metadata)
 			_, err := ns.CreateNode(node)
 			require.NoError(t, err)
 			if update {
-				node.VisibilitySuppressed = true
+				metadata := node.RuntimeMetadata()
+				metadata.VisibilitySuppressed = true
+				node.SetRuntimeMetadata(metadata)
 				node.Properties = map[string]any{"edited": true}
 				require.NoError(t, ns.UpdateNode(node))
 			}
 			got, err := eng.GetNode("test:n")
 			require.NoError(t, err)
-			require.True(t, got.VisibilitySuppressed, "namespace node copies retain visibility metadata")
+			require.True(t, got.RuntimeMetadata().VisibilitySuppressed, "namespace node copies retain visibility metadata")
 			require.Equal(t, NodeID("n"), node.ID)
 		})
 	}
@@ -34,9 +39,9 @@ func TestNamespacedNodesPreserveSuppressionFlag(t *testing.T) {
 
 func TestNodeCopyPreservesEntityFields(t *testing.T) {
 	now := time.Now().UTC()
-	node := &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(7)}, CreatedAt: now, UpdatedAt: now.Add(time.Hour),
-		NamedEmbeddings: map[string][]float32{"title": {1, 2}}, ChunkEmbeddings: [][]float32{{3, 4}}, EmbedMeta: map[string]any{"chunk_count": int64(1)},
-		EmbeddingsStoredSeparately: true, VisibilitySuppressed: true}
+	node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true, VisibilitySuppressed: true}},
+		ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(7)}, CreatedAt: now, UpdatedAt: now.Add(time.Hour),
+		NamedEmbeddings: map[string][]float32{"title": {1, 2}}, ChunkEmbeddings: [][]float32{{3, 4}}, EmbedMeta: map[string]any{"chunk_count": int64(1)}}
 	require.Equal(t, node, copyNode(node), "full copy preserves every entity field")
 	got := copyNodeWithoutEmbeddings(node)
 	expected := *node

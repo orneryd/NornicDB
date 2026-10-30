@@ -153,7 +153,7 @@ func TestBadgerEngine_GetNodeVisibleAtCurrentHeadCachesByBadgerBodyVersion(t *te
 	require.NotZero(t, entryV1.itemVersion)
 	require.Equal(t, "v1", entryV1.node.Properties["name"])
 	require.Empty(t, entryV1.node.ChunkEmbeddings, "decoded body cache must not retain vectors")
-	require.True(t, entryV1.node.EmbeddingsStoredSeparately)
+	require.True(t, entryV1.node.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Len(t, first.ChunkEmbeddings, 1)
 
 	first.Properties["name"] = "caller-mutated"
@@ -247,11 +247,11 @@ func TestNodeBodyCacheExcludesEmbeddingsAndEvictsByBytes(t *testing.T) {
 
 	for _, id := range []NodeID{NodeID(prefixTestID("body-cache-a")), NodeID(prefixTestID("body-cache-b"))} {
 		engine.cacheStoreNodeBody(id, 1, &Node{
-			ID:                         id,
-			Labels:                     []string{"Document"},
-			Properties:                 map[string]any{"text": strings.Repeat("x", 500)},
-			ChunkEmbeddings:            [][]float32{{1, 2, 3, 4}},
-			EmbeddingsStoredSeparately: true,
+			runtime:         &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}},
+			ID:              id,
+			Labels:          []string{"Document"},
+			Properties:      map[string]any{"text": strings.Repeat("x", 500)},
+			ChunkEmbeddings: [][]float32{{1, 2, 3, 4}},
 		})
 	}
 

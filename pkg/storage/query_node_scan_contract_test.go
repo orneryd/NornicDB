@@ -27,7 +27,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 			b.SetDecayEnabled(true)
 			for _, node := range []*Node{
 				{ID: "other:visible", Labels: []string{"Doc"}},
-				{ID: "test:hidden", Labels: []string{"Doc"}, VisibilitySuppressed: true},
+				{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: "test:hidden", Labels: []string{"Doc"}},
 				{ID: "test:visible", Labels: []string{"Doc"}},
 			} {
 				if buffered && node.ID != "other:visible" {

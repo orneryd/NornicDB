@@ -70,6 +70,81 @@ func TestCallDbInfoExtended(t *testing.T) {
 	}
 }
 
+// TestCallDbInfoWithoutIdentityMetadata pins the null identity and date
+// columns of a manager that supplies no administrative identity, and that
+// db.info() and dbms.info() agree about the columns they share.
+func TestCallDbInfoWithoutIdentityMetadata(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	exec.SetDatabaseManager(newMockDatabaseManager(t))
+	ctx := context.Background()
+	_, err := exec.storage.CreateNode(&storage.Node{ID: "n1", Labels: []string{"A"}})
+	require.NoError(t, err)
+	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
+
+	result, err := exec.Execute(ctx, `CALL db.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"}, result.Columns)
+	require.Equal(t, [][]interface{}{{nil, "test", nil, int64(1), int64(1)}}, result.Rows)
+
+	result, err = exec.Execute(ctx, `CALL dbms.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"id", "name", "creationDate"}, result.Columns)
+	require.Equal(t, [][]interface{}{{nil, "system", nil}}, result.Rows)
+}
+
+// TestDbInfoUsesSelectedDatabase pins that db.info() reports the database the
+// statement selects, not the executor's own namespace, and counts its rows.
+func TestDbInfoUsesSelectedDatabase(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "own_db")
+	exec := NewStorageExecutor(store)
+	ctx := context.WithValue(context.Background(), ctxKeyUseDatabase, "selected_db")
+
+	result, err := exec.Execute(ctx, `CALL db.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, "selected_db", nil, int64(0), int64(0)}}, result.Rows)
+}
+
+// TestInfoCreationDateIsUTCTimestamp pins the creation date format both
+// procedures project: UTC, RFC 3339 with nanoseconds, even for a local time.
+func TestInfoCreationDateIsUTCTimestamp(t *testing.T) {
+	zone := time.FixedZone("offset", 3*60*60)
+	createdAt := time.Date(2025, time.April, 5, 9, 7, 8, 123, zone)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "db"))
+	exec.SetDatabaseManager(&fixedIdentityDatabaseManager{
+		mockDatabaseManager: newMockDatabaseManager(t),
+		databaseID:          "db-uuid",
+		createdAt:           createdAt,
+	})
+
+	result, err := exec.Execute(context.Background(), `CALL db.info() YIELD id, creationDate`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"db-uuid", createdAt.UTC().Format(time.RFC3339Nano)}}, result.Rows)
+	require.Equal(t, "2025-04-05T06:07:08.000000123Z", result.Rows[0][1])
+
+	result, err = exec.Execute(context.Background(), `CALL dbms.info() YIELD id, creationDate`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"db-uuid", createdAt.UTC().Format(time.RFC3339Nano)}}, result.Rows)
+}
+
+// fixedIdentityDatabaseManager supplies one persisted identity for every
+// database and the DBMS, whatever name is asked for.
+type fixedIdentityDatabaseManager struct {
+	*mockDatabaseManager
+	databaseID string
+	createdAt  time.Time
+}
+
+func (m *fixedIdentityDatabaseManager) DatabaseIdentity(string) (string, time.Time) {
+	return m.databaseID, m.createdAt
+}
+
+func (m *fixedIdentityDatabaseManager) ServerIdentity() (string, time.Time) {
+	return "server-uuid", m.createdAt
+}
+
 func TestCallDbInfoYield(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 

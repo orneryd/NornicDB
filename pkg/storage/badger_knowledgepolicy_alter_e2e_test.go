@@ -78,7 +78,7 @@ func TestE2E_AlterDecayProfileUnsuppressesExistingNodeEdgeAndProperties(t *testi
 
 	node, err := eng.GetNode("test:source")
 	require.NoError(t, err)
-	require.False(t, node.VisibilitySuppressed)
+	require.False(t, node.RuntimeMetadata().VisibilitySuppressed)
 	edge, err := eng.GetEdge("test:edge-1")
 	require.NoError(t, err)
 	require.False(t, edge.VisibilitySuppressed)
@@ -143,5 +143,5 @@ func TestE2E_AlterPromotionPolicyUnsuppressesExistingNode(t *testing.T) {
 
 	node, err := eng.GetNode("test:fact-1")
 	require.NoError(t, err)
-	require.False(t, node.VisibilitySuppressed)
+	require.False(t, node.RuntimeMetadata().VisibilitySuppressed)
 }

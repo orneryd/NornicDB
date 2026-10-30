@@ -53,7 +53,7 @@ func ensureBuiltInProceduresRegistered() {
 			},
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbInfo(ctx)
+				return e.callInfo(ctx, infoScopeDatabase)
 			})
 		registerProcedure(ProcedureSpec{
 			Name:               "db.ping",
@@ -177,7 +177,7 @@ func ensureBuiltInProceduresRegistered() {
 			},
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbmsInfo()
+				return e.callInfo(ctx, infoScopeDBMS)
 			})
 		registerProcedure(dbmsListConfigProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

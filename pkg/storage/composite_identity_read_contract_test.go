@@ -64,7 +64,7 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 						node, err := read(NodeID("4:" + database + ":" + string(same)))
 						require.NoError(t, err)
 						require.Equal(t, same, node.ID)
-						require.Equal(t, database, node.Database)
+						require.Equal(t, database, node.RuntimeMetadata().Database)
 						require.Equal(t, database, node.Properties["db"])
 					}
 					_, err := read(NodeID("4:missing:" + string(same)))
@@ -109,8 +109,8 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			batch, err := composite.BatchGetNodes([]NodeID{one, two, NodeID("4:missing:" + string(same))})
 			require.NoError(t, err)
 			require.Len(t, batch, 2)
-			require.Equal(t, "one", batch[one].Database)
-			require.Equal(t, "two", batch[two].Database)
+			require.Equal(t, "one", batch[one].RuntimeMetadata().Database)
+			require.Equal(t, "two", batch[two].RuntimeMetadata().Database)
 			seen := make(map[string]bool)
 			require.NoError(t, composite.StreamNodesWithOptions(context.Background(), StreamNodesOptions{}, func(node *Node) error {
 				seen[node.IdentityKey()] = true
@@ -126,7 +126,7 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			if !namespaced {
 				node, err := engines["one"].GetNode(same)
 				require.NoError(t, err)
-				require.Empty(t, node.Database, "composite provenance must not mutate constituent records")
+				require.Empty(t, node.RuntimeMetadata().Database, "composite provenance must not mutate constituent records")
 			}
 		})
 	}

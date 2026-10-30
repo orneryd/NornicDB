@@ -108,7 +108,7 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 					} else {
 						require.NotSame(t, f.node, got)
 						require.Equal(t, NodeID("n"), got.ID)
-						require.Equal(t, "tenant", got.Database)
+						require.Equal(t, "tenant", got.RuntimeMetadata().Database)
 						require.Equal(t, f.node.Properties, got.Properties)
 					}
 					if f.node != nil {

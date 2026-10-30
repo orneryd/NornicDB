@@ -10,7 +10,9 @@ import (
 
 func TestMVCCSnapshotNodeStripsEmbeddingsAndDeepCopies(t *testing.T) {
 	original := &Node{
-		ID:     NodeID("mvcc-helper-node"),
+		runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{EmbeddingsStoredSeparately: true}},
+		ID:      NodeID("mvcc-helper-node"),
+
 		Labels: []string{"Doc", "Versioned"},
 		Properties: map[string]any{
 			"title": "original",
@@ -21,8 +23,7 @@ func TestMVCCSnapshotNodeStripsEmbeddingsAndDeepCopies(t *testing.T) {
 		NamedEmbeddings: map[string][]float32{
 			"title": {1, 2, 3},
 		},
-		ChunkEmbeddings:            [][]float32{{4, 5, 6}},
-		EmbeddingsStoredSeparately: true,
+		ChunkEmbeddings: [][]float32{{4, 5, 6}},
 	}
 
 	snapshot := mvccSnapshotNode(original)
@@ -47,7 +48,7 @@ func TestMVCCSnapshotNodeStripsEmbeddingsAndDeepCopies(t *testing.T) {
 	if snapshot.NamedEmbeddings != nil {
 		t.Fatalf("snapshot NamedEmbeddings = %#v, want nil", snapshot.NamedEmbeddings)
 	}
-	if snapshot.EmbeddingsStoredSeparately {
+	if snapshot.RuntimeMetadata().EmbeddingsStoredSeparately {
 		t.Fatal("snapshot should not mark embeddings stored separately")
 	}
 	if snapshot.EmbedMeta["model"] != "mini" {
