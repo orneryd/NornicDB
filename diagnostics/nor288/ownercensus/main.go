@@ -335,8 +335,11 @@ func (b *BadgerEngine) nor288PlantedWriteDecider(p *PreparedEntityCommit) error 
 
 import "context"
 
+// nor288PlantedBlockOn waits on its context: Close can end it only through ctx.
+func nor288PlantedBlockOn(ctx context.Context) { <-ctx.Done() }
+
 func (b *BadgerEngine) nor288PlantedEnrolledBackground(p *PreparedEntityCommit) bool {
-	return b.RunAcceptedContinuation(func(ctx context.Context) { _, _ = b.SubmitEntityCommit(context.Background(), p, nil) })
+	return b.RunAcceptedContinuation(func(ctx context.Context) { nor288PlantedBlockOn(context.Background()) })
 }
 `, true},
 	{"pkg/storage/zz_nor288_g_hop.go", "nor288PlantedEnrolledHop", "G", `package storage
@@ -344,7 +347,7 @@ func (b *BadgerEngine) nor288PlantedEnrolledBackground(p *PreparedEntityCommit) 
 import "context"
 
 func (b *BadgerEngine) nor288PlantedEnrolledHopHelper(p *PreparedEntityCommit) {
-	_, _ = b.SubmitEntityCommit(context.Background(), p, nil)
+	nor288PlantedBlockOn(context.Background())
 }
 
 func (b *BadgerEngine) nor288PlantedEnrolledHop(p *PreparedEntityCommit) bool {
@@ -359,6 +362,76 @@ import "context"
 func (b *BadgerEngine) nor288PlantedEnrolledOwnerContext(p *PreparedEntityCommit) bool {
 	return b.RunAcceptedContinuation(func(ctx context.Context) { _, _ = b.SubmitEntityCommit(ctx, p, nil) })
 }
+`, false},
+	// F: a phase decider returning the sealed phase, whose caller gates a write.
+	{"pkg/storage/zz_nor288_f_decider_bool.go", "nor288PlantedPhaseDecider", "F", `package storage
+
+import "context"
+
+func (b *BadgerEngine) nor288PlantedPhaseDecider() bool { return b.work.Closing() }
+
+func (b *BadgerEngine) nor288PlantedPhaseDeciderCaller(p *PreparedEntityCommit) {
+	if !b.nor288PlantedPhaseDecider() {
+		_, _ = b.SubmitEntityCommit(context.Background(), p, nil)
+	}
+}
+`, true},
+	// F negative: a sealed-phase read that gates only a read.
+	{"pkg/storage/zz_nor288_f_readonly.go", "nor288PlantedReadOnlyClosing", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedReadOnlyClosing() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.work.Closing() {
+		return 0
+	}
+	return len(b.acceptedApplications)
+}
+`, false},
+	// G classification plants, each reached from enrolled work.
+	{"pkg/storage/zz_nor288_g_classes.go", "nor288PlantedG", "G", `package storage
+
+import (
+	"context"
+	"log/slog"
+	"time"
+)
+
+func nor288PlantedLogOnlyHelper(ctx context.Context) { slog.Default().Log(ctx, slog.LevelInfo, "planted") }
+
+func nor288PlantedLogThenWaitHelper(ctx context.Context) {
+	slog.Default().Log(ctx, slog.LevelInfo, "planted")
+	<-ctx.Done()
+}
+
+func (b *BadgerEngine) nor288PlantedGClasses(p *PreparedEntityCommit) bool {
+	return b.RunAcceptedContinuation(func(ctx context.Context) {
+		nor288PlantedGLogOnly()
+		nor288PlantedGLogThenWait()
+		nor288PlantedGDeadline()
+		nor288PlantedGCancel()
+		b.nor288PlantedGJoin()
+		b.nor288PlantedGAcquire()
+		nor288PlantedGFuncValue(p, b)
+	})
+}
+
+func nor288PlantedGLogOnly()       { nor288PlantedLogOnlyHelper(context.Background()) }
+func nor288PlantedGLogThenWait()   { nor288PlantedLogThenWaitHelper(context.Background()) }
+func nor288PlantedGDeadline()      { _, cancel := context.WithTimeout(context.Background(), time.Second); cancel() }
+func nor288PlantedGCancel()        { _, cancel := context.WithCancel(context.Background()); cancel() }
+func (b *BadgerEngine) nor288PlantedGJoin() { _ = b.work.Shutdown(context.Background(), nil) }
+func (b *BadgerEngine) nor288PlantedGAcquire() {
+	if _, release, ok := b.work.Acquire(context.Background()); ok {
+		release()
+	}
+}
+
+func nor288PlantedGHookTarget(p *PreparedEntityCommit, b *BadgerEngine) { nor288PlantedBlockOn(context.Background()) }
+
+var nor288PlantedGHook = nor288PlantedGHookTarget
+
+func nor288PlantedGFuncValue(p *PreparedEntityCommit, b *BadgerEngine) { nor288PlantedGHook(p, b) }
 `, false},
 }
 
@@ -502,6 +575,7 @@ func main() {
 		engineWork = field(storagePkg, "BadgerEngine", "work")
 	}
 	writeDecider := method(storagePkg, "BadgerEngine", "ensureOpen")
+	ownerClose := method(storagePkg, "BadgerEngine", "Close")
 	var lifetimeType types.Type
 	if lp := byPath[nornic+"pkg/lifecycle"]; lp != nil {
 		acquire = methodOpt(lp.Types, "WorkLifetime", "Acquire")
@@ -607,6 +681,62 @@ func main() {
 	}
 
 	added := addedLines(root, base)
+	// Write-admission sites (object identity) and the non-fallback call graph.
+	writeSites := map[*ssa.Function]bool{}
+	for _, m := range []*types.Func{methodOpt(storagePkg, "BadgerEngine", "beginBarrierWrite"), methodOpt(storagePkg, "BadgerEngine", "beginLifecycleWrite"),
+		methodOpt(storagePkg, "BadgerEngine", "beginEntityWrite"), methodOpt(storagePkg, "BadgerEngine", "submitAcceptedEntityApplication"),
+		methodOpt(storagePkg, "PreparedEntityCommit", "startCommit")} {
+		if m != nil {
+			if f := prog.FuncValue(m); f != nil {
+				writeSites[f] = true
+			}
+		}
+	}
+	reachesWrite := func(f *ssa.Function, depth int) bool {
+		seen := map[*ssa.Function]bool{}
+		frontier := []*ssa.Function{f}
+		for d := 0; d <= depth && len(frontier) > 0; d++ {
+			var next []*ssa.Function
+			for _, g := range frontier {
+				if writeSites[g] {
+					return true
+				}
+				if seen[g] {
+					continue
+				}
+				seen[g] = true
+				for _, e := range graph.out[g] {
+					if !graph.fallback[e.site] {
+						next = append(next, e.callee)
+					}
+				}
+				next = append(next, g.AnonFuncs...)
+			}
+			frontier = next
+		}
+		return false
+	}
+	gatesWrite := func(obj *types.Func) bool {
+		if obj == nil {
+			return false
+		}
+		f := prog.FuncValue(obj)
+		if f == nil {
+			return false
+		}
+		if reachesWrite(f, 3) {
+			return true
+		}
+		// A decider returning the phase: its callers gate on it.
+		if r := f.Signature.Results(); r.Len() == 1 && types.Identical(r.At(0).Type(), types.Typ[types.Bool]) {
+			for _, e := range graph.in[f] {
+				if !graph.fallback[e.site] && reachesWrite(e.caller, 3) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	rel := func(file string) string {
 		r, err := filepath.Rel(root, file)
 		if err != nil || strings.HasPrefix(r, "..") {
@@ -615,6 +745,15 @@ func main() {
 		return filepath.ToSlash(r)
 	}
 	var findings, lifetimeSites, receiptWaits []finding
+	unitPackages := []string{"pkg/storage", "pkg/replication", "pkg/multidb", "pkg/qdrantgrpc", "pkg/cypher"}
+	inUnitFile := func(file string) bool {
+		for _, u := range unitPackages {
+			if strings.HasPrefix(file, u+"/") {
+				return true
+			}
+		}
+		return false
+	}
 	var candidatesA []string
 	record := func(class, file string, fn *ast.FuncDecl, shape string) {
 		findings = append(findings, finding{Class: class, Func: funcName(fn), File: rel(file), Line: fset.Position(fn.Pos()).Line, Shape: shape})
@@ -765,7 +904,7 @@ func main() {
 						if !ok || reported {
 							return !reported
 						}
-						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider {
+						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider && fnObj != ownerClose && gatesWrite(fnObj) {
 							if recv, ok := sel.X.(*ast.SelectorExpr); ok {
 								if rs := info.Selections[recv]; rs != nil && rs.Obj() == types.Object(engineWork) {
 									record("F", path, fn, "decides on the engine owner's sealed phase instead of the write decider")
@@ -862,12 +1001,39 @@ func main() {
 			}
 			return out
 		}
-		for f := range graph.funcs {
-			enrolls := false
+		inUnit := func(f *ssa.Function) bool {
+			if f == nil || f.Pkg == nil {
+				return false
+			}
+			for _, u := range unitPackages {
+				if f.Pkg.Pkg.Path() == nornic+u {
+					return true
+				}
+			}
+			return false
+		}
+		callsAcquire := func(f *ssa.Function) bool {
 			for _, block := range f.Blocks {
 				for _, instr := range block.Instrs {
 					if c, ok := instr.(ssa.CallInstruction); ok && acquire != nil && staticObj(c.Common()) == types.Object(acquire) {
-						enrolls = true
+						return true
+					}
+				}
+			}
+			return false
+		}
+		for f := range graph.funcs {
+			if !inUnit(f) {
+				continue
+			}
+			// Enrolls with a unit owner: Acquire directly, or through a unit helper.
+			enrolls := callsAcquire(f)
+			for _, block := range f.Blocks {
+				for _, instr := range block.Instrs {
+					if c, ok := instr.(ssa.CallInstruction); ok && !enrolls {
+						if h := c.Common().StaticCallee(); inUnit(h) && callsAcquire(h) {
+							enrolls = true
+						}
 					}
 				}
 			}
@@ -905,6 +1071,108 @@ func main() {
 				enqueueVia(anon, f, "anonymous function of", anon.Pos())
 			}
 		}
+		// VTA-only reach: the same roots, no signature-fallback edges.
+		vtaReach := map[*ssa.Function]bool{}
+		var vq []*ssa.Function
+		for f, st := range via {
+			if strings.HasPrefix(st.kind, "root:") {
+				vtaReach[f] = true
+				vq = append(vq, f)
+			}
+		}
+		for len(vq) > 0 {
+			f := vq[0]
+			vq = vq[1:]
+			next := append([]*ssa.Function{}, f.AnonFuncs...)
+			for _, e := range graph.out[f] {
+				if !graph.fallback[e.site] {
+					next = append(next, e.callee)
+				}
+			}
+			for _, c := range next {
+				if c != nil && !vtaReach[c] && c.Pkg != nil && strings.HasPrefix(c.Pkg.Pkg.Path(), nornic) {
+					vtaReach[c] = true
+					vq = append(vq, c)
+				}
+			}
+		}
+		sinkPkg := func(path string) bool {
+			return path == "log/slog" || path == "log" || path == nornic+"pkg/observability" || strings.HasPrefix(path, "go.opentelemetry.io/")
+		}
+		memo := map[string]int{} // 1 non-blocking, 2 blocking-or-unknown, 3 in progress
+		var nonBlocking func(fn *ssa.Function, idx, depth int) bool
+		nonBlocking = func(fn *ssa.Function, idx, depth int) bool {
+			if fn == nil || idx >= len(fn.Params) || depth > 6 {
+				return false
+			}
+			if fn.Pkg != nil && sinkPkg(fn.Pkg.Pkg.Path()) {
+				return true
+			}
+			key := fn.String() + "#" + strconv.Itoa(idx)
+			switch memo[key] {
+			case 1, 3:
+				return true
+			case 2:
+				return false
+			}
+			memo[key] = 3
+			ok := true
+			for _, ref := range *fn.Params[idx].Referrers() {
+				c, isCall := ref.(ssa.CallInstruction)
+				if !isCall {
+					ok = false
+					break
+				}
+				cc := c.Common()
+				if cc.IsInvoke() && cc.Value == fn.Params[idx] {
+					if m := cc.Method.Name(); m != "Value" && m != "Err" {
+						ok = false
+					}
+					continue
+				}
+				callee := cc.StaticCallee()
+				pos := -1
+				for i, a := range cc.Args {
+					if a == fn.Params[idx] {
+						pos = i
+					}
+				}
+				if callee == nil || pos < 0 || !(callee.Pkg != nil && sinkPkg(callee.Pkg.Pkg.Path()) || nonBlocking(callee, pos, depth+1)) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				memo[key] = 1
+			} else {
+				memo[key] = 2
+			}
+			return ok
+		}
+		ctxDeadline := map[types.Object]bool{ctxPkg.Types.Scope().Lookup("WithTimeout"): true, ctxPkg.Types.Scope().Lookup("WithDeadline"): true}
+		var shutdownFn types.Object
+		if lp := byPath[nornic+"pkg/lifecycle"]; lp != nil {
+			if m := methodOpt(lp.Types, "WorkLifetime", "Shutdown"); m != nil {
+				shutdownFn = m
+			}
+		}
+		classifyG := func(cc *ssa.CallCommon, arg *ssa.Call) string {
+			o := staticObj(cc)
+			if o != nil && ctxDeadline[o] {
+				return "deadline parent: the derived context is bounded by its deadline"
+			}
+			if o != nil && o == shutdownFn {
+				return "the owner's own Shutdown join (bounded when its enrolled work is, which this census checks)"
+			}
+			if callee := cc.StaticCallee(); callee != nil {
+				for i, a := range cc.Args {
+					if a == ssa.Value(arg) && nonBlocking(callee, i, 0) {
+						return "context used only non-blockingly (logging, metrics or tracing sinks, Value, Err)"
+					}
+				}
+			}
+			return ""
+		}
 		seen := map[string]bool{}
 		for f := range reached {
 			for _, block := range f.Blocks {
@@ -936,7 +1204,7 @@ func main() {
 							continue
 						}
 						pos := fset.Position(call.Pos())
-						if pos.Filename == "" {
+						if pos.Filename == "" || !(planted[pos.Filename] || inUnitFile(rel(pos.Filename))) {
 							continue
 						}
 						key := rel(pos.Filename) + ":" + strconv.Itoa(pos.Line)
@@ -948,7 +1216,13 @@ func main() {
 						if i := strings.LastIndex(name, "."); i >= 0 {
 							name = name[i+1:]
 						}
-						findings = append(findings, finding{Class: "G", Func: name, File: rel(pos.Filename), Line: pos.Line, Shape: "context." + o.Name() + " in enrolled work", Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]})
+						g := finding{Class: "G", Func: name, File: rel(pos.Filename), Line: pos.Line, Shape: "context." + o.Name() + " in enrolled work", Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]}
+						if why := classifyG(c.Common(), call); why != "" {
+							g.Class, g.Shape = "G-classified", why
+						} else if !vtaReach[f] {
+							g.Class, g.Shape = "G-closed", "reached only through the signature fallback; VTA alone (no fallback edges) finds no path from any root"
+						}
+						findings = append(findings, g)
 					}
 				}
 			}
@@ -962,7 +1236,32 @@ func main() {
 	})
 	sort.Strings(candidatesA)
 	verdicts, valid := map[string]string{}, true
+	classControls := []struct{ marker, class string }{
+		{"nor288PlantedGLogOnly", "G-classified"}, {"nor288PlantedGLogThenWait", "G"},
+		{"nor288PlantedGDeadline", "G-classified"}, {"nor288PlantedGCancel", "G"},
+		{"nor288PlantedGJoin", "G-classified"}, {"nor288PlantedGAcquire", "G"},
+		{"nor288PlantedGHook", "G"},
+	}
+	for _, cc := range classControls {
+		found := false
+		for _, f := range findings {
+			found = found || (f.Class == cc.class && strings.Contains(f.Func, cc.marker))
+		}
+		valid = valid && found
+		verdicts["Gclass:"+cc.marker] = fmt.Sprintf("expected class=%s found=%v pass=%v", cc.class, found, found)
+	}
+	closeInternal := true
+	for _, f := range findings {
+		if f.Class == "F" && strings.HasSuffix(f.Func, "(BadgerEngine).Close") {
+			closeInternal = false
+		}
+	}
+	valid = valid && closeInternal
+	verdicts["F:close-internal (BadgerEngine).Close"] = fmt.Sprintf("expected reported=false pass=%v", closeInternal)
 	for _, c := range active {
+		if c.marker == "nor288PlantedG" {
+			continue
+		}
 		found := false
 		for _, f := range findings {
 			found = found || (f.Class == c.class && strings.Contains(f.Func, c.marker))
@@ -995,7 +1294,7 @@ func main() {
 		"beyond_owner_count":        counts,
 		"beyond_owner":              beyond,
 		"receipt_waits":             receiptWaits,
-		"scope_FG":                  "whole causal unit, every line (audit #30); added_line marks this diff",
+		"scope_FG":                  "unit scope of reassessment §7 (packages storage, replication, multidb, qdrantgrpc, cypher; unit-owner roots), every line; added_line marks this diff; G-classified and G-closed are computed",
 		"findings":                  findings,
 		"probe_candidates_A":        candidatesA,
 		"lifetime_sites_introduced": lifetimeSites,
