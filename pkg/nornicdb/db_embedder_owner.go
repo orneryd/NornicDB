@@ -15,25 +15,19 @@ import (
 // lifetime, and waits outside that lock. Providers which honor context cancel
 // promptly; an uncancellable call retains its model until it actually returns.
 func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
+	ctx, release, accepted := db.work.Acquire(ctx)
+	if !accepted {
 		return nil, nil, ErrClosed
 	}
-	db.foregroundWg.Add(1)
-	db.mu.RUnlock()
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(db.LifetimeContext(), cancel)
 	return ctx, func() {
 		stop()
 		cancel()
-		db.foregroundWg.Done()
+		release()
 	}, nil
 }
 
@@ -100,13 +94,13 @@ func (db *DB) OwnProvider(name string, provider interface{}) (release func() err
 	// a non-comparable custom value panic when used as an interface/map key.
 	for _, resource := range db.ownedProviders {
 		if sameProvider(provider, resource.provider) {
-			accepted = !db.closed
+			accepted = !db.work.Closing()
 			db.mu.Unlock()
 			return func() error { return db.releaseProvider(resource) }, accepted
 		}
 	}
 	resource := &providerResource{provider: provider, name: name}
-	accepted = !db.closed
+	accepted = !db.work.Closing()
 	if accepted {
 		db.ownedProviders = append(db.ownedProviders, resource)
 	}
@@ -127,12 +121,10 @@ func (db *DB) releaseProvider(resource *providerResource) error {
 	// A caller constructing after the DB outcome was published owns its own
 	// rejected attempt; it cannot mutate the completed DB outcome retroactively.
 	published := false
-	if db.closeDone != nil {
-		select {
-		case <-db.closeDone:
-			published = true
-		default:
-		}
+	select {
+	case <-db.work.Stopped():
+		published = true
+	default:
 	}
 	report := !resource.reported && !published
 	if report {
@@ -185,7 +177,7 @@ func (db *DB) SetInferenceManager(manager *heimdall.Manager) bool {
 	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	if db.closed {
+	if db.work.Closing() {
 		return false
 	}
 	db.cypherExecutor.SetInferenceManager(manager)

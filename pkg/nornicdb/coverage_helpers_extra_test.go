@@ -158,7 +158,7 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	require.True(t, db.shouldIgnoreSearchIndexingError(storage.ErrStorageClosed))
 	require.True(t, db.shouldIgnoreSearchIndexingError(ErrClosed))
 	require.False(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
-	db.closed = true
+	db.work.CloseAdmission()
 	require.True(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
 
 	dbName, local, ok := splitQualifiedID("tenant:n1")

@@ -67,7 +67,7 @@ func openConsumerDB(t *testing.T, relationships bool) (*DB, *search.Service) {
 func installConsumerBarrier(t *testing.T, db *DB) *consumerWriteBarrier {
 	t.Helper()
 	// Startup's background build reads db.storage; let it finish first.
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	db.mu.Lock()
 	original := db.storage
 	namespaced := original.(*storage.NamespacedEngine)

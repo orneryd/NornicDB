@@ -40,7 +40,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
@@ -106,7 +106,7 @@ func (db *DB) HasConsent(ctx context.Context, userID, purpose string) (bool, err
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return false, ErrClosed
 	}
 
@@ -137,7 +137,7 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
@@ -177,7 +177,7 @@ func (db *DB) GetUserConsents(ctx context.Context, userID string) ([]Consent, er
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 

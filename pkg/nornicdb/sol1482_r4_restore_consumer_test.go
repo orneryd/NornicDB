@@ -20,7 +20,7 @@ func TestSol1482R4RestoreRebindsCypherConsumer(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 	require.NoError(t, err)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	_, err = db.ExecuteCypher(ctx, "CREATE VECTOR INDEX docvec FOR (n:Doc) ON (n.vec) OPTIONS {indexConfig: {`vector.dimensions`: 2, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 	_, err = db.storage.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"vec": []float32{1, 0}}})

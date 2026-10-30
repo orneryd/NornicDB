@@ -164,6 +164,15 @@ func (w *WorkLifetime) CloseAdmission() bool {
 	return true
 }
 
+// Active reports how many admitted units have not yet returned. It is an
+// observation for diagnostics and tests; admission and completion decisions
+// use Acquire, Enter and Quiescent.
+func (w *WorkLifetime) Active() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.active
+}
+
 // Closing reports whether admission has been closed.
 func (w *WorkLifetime) Closing() bool { return w.closing.Load() }
 

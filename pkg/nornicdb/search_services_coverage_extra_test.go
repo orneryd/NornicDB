@@ -85,7 +85,7 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 	t.Run("startBackgroundTask false resets pendingFlushRunning", func(t *testing.T) {
 		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
-		db.closed = true
+		db.work.CloseAdmission()
 		svc := search.NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3, nil)
 		entry := &dbSearchService{
 			dbName:            "tenant",

@@ -190,7 +190,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.False(t, db.shouldIgnoreSearchIndexingError(nil))
 		require.False(t, db.shouldIgnoreSearchIndexingError(errors.New("boom")))
 
-		db.closed = true
+		db.work.CloseAdmission()
 		require.True(t, db.shouldIgnoreSearchIndexingError(errors.New("after close")))
 	})
 
@@ -218,7 +218,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.Eventually(t, func() bool {
 			return svc.EmbeddingCount() == 1
 		}, time.Second, 10*time.Millisecond)
-		db.bgWg.Wait()
+		waitDBWorkIdle(t, db)
 	})
 }
 
@@ -533,7 +533,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
 		if db.buildCancel != nil {
 			db.buildCancel()
 		}
-		db.bgWg.Wait()
+		waitDBWorkIdle(t, db)
 
 		// Add namespace lister branch coverage (skips empty/system namespaces).
 		db.baseStorage = &namespaceListEngine{
@@ -852,7 +852,7 @@ func TestSearchServices_ClosedDBCannotCreateService(t *testing.T) {
 	if db.buildCancel != nil {
 		db.buildCancel()
 	}
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	db.ResetSearchService(defaultName)
 	db.ResetSearchService("tenant_closed")
 	require.NoError(t, db.Close())

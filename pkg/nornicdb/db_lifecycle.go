@@ -15,28 +15,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// Close closes the database.
+// Close closes the database. It is the DB owner's one stop: the first caller
+// signals every producer while holding a ticket, so retirement cannot overtake
+// the signal; every caller, first or repeated, joins the same retirement and
+// receives the same outcome.
 func (db *DB) Close() error {
-	db.mu.Lock()
-	if db.closeDone != nil {
-		done := db.closeDone
-		db.mu.Unlock()
-		<-done
-		db.mu.RLock()
-		err := db.closeErr
-		db.mu.RUnlock()
-		return err
+	if db.work.Enter() {
+		if db.work.CloseAdmission() {
+			db.signalStop()
+		}
+		db.work.Leave()
 	}
-	db.closed = true
-	db.closeDone = make(chan struct{})
-	db.mu.Unlock()
-
-	err := db.closeInternal()
-	db.mu.Lock()
-	db.closeErr = err
-	close(db.closeDone)
-	db.mu.Unlock()
-	return err
+	return db.work.Shutdown(context.Background(), db.retire)
 }
 
 // LifetimeContext returns a context that is cancelled when the database
@@ -88,12 +78,10 @@ func (db *DB) retentionPoliciesPath() string {
 	return filepath.Join(dataDir, "retention-policies.json")
 }
 
-// closeInternal performs cleanup without requiring the lock.
-// Used during initialization failures and normal close.
-func (db *DB) closeInternal() error {
-	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+// signalStop stops the producers so accepted work can return. Admission is
+// sealed: SetEmbedder refuses, so embedQueue is final here.
+func (db *DB) signalStop() {
 	db.mu.Lock()
-	db.closed = true
 	embedQueue := db.embedQueue
 	db.mu.Unlock()
 
@@ -103,14 +91,10 @@ func (db *DB) closeInternal() error {
 	// A retained DB consumer can be waiting on the native owner's admission
 	// or leader state. Start that owner's stop before joining those consumers;
 	// its existing Shutdown still owns native signal, join and physical close.
-	var replicationStopped <-chan error
 	if replicator := db.replicator; replicator != nil {
-		outcome := make(chan error, 1)
-		replicationStopped = outcome
-		go func() { outcome <- replicator.Shutdown() }()
+		db.replicationStop.Go(replicator.Shutdown)
 	}
 	db.searchServicesMu.Lock()
-	db.searchClosing = true
 	servicesToStop := make([]*search.Service, 0, len(db.searchServices))
 	for _, entry := range db.searchServices {
 		if entry != nil && entry.svc != nil {
@@ -125,8 +109,11 @@ func (db *DB) closeInternal() error {
 	if embedQueue != nil {
 		embedQueue.Close()
 	}
-	db.bgWg.Wait()
-	db.foregroundWg.Wait()
+}
+
+// retire is the owner's dispose: it runs once, after queue workers,
+// initializers, constructors and foreground provider users actually returned.
+func (db *DB) retire() error {
 	if db.cypherExecutor != nil {
 		db.cypherExecutor.StatementCaches().Dispose()
 	}
@@ -142,8 +129,9 @@ func (db *DB) closeInternal() error {
 			errs = append(errs, err)
 		}
 	}
-	if replicationStopped != nil {
-		if err := <-replicationStopped; err != nil {
+	if db.replicator != nil {
+		<-db.replicationStop.Done()
+		if err := db.replicationStop.Err(); err != nil {
 			errs = append(errs, err)
 		}
 	}

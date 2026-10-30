@@ -79,7 +79,7 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 		return true
 	}
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	return closed
 }
@@ -205,7 +205,7 @@ func (db *DB) ensureSearchClustering(svc *search.Service) {
 // GetOrCreateSearchService checks the DB lifetime before entering its existing search registry.
 func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return nil, ErrClosed
@@ -215,21 +215,26 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 
 func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (service *search.Service, resultErr error) {
 	// This path is also entered by storage callbacks while db.mu is held.
-	// Enroll under the existing service registry admission, before any resolver
-	// or construction. Close seals this gate before waiting on the same bgWg.
+	// Enroll in the DB owner and the current constructor epoch under the
+	// registry lock, before any resolver or construction.
 	db.searchServicesMu.Lock()
-	if db.searchClosing || db.searchRetiring {
+	if db.searchRetirement != nil || !db.work.Enter() {
 		db.searchServicesMu.Unlock()
 		return nil, ErrClosed
 	}
-	if db.searchConstructing == 0 {
-		db.searchConstructionDone = make(chan struct{})
+	if db.searchConstruction == nil {
+		db.searchConstruction = &lifecycle.WorkLifetime{}
 	}
-	db.searchConstructing++
-	db.bgWg.Add(1)
+	// A reset seals the epoch only after publishing searchRetirement under
+	// this lock, so entering here cannot be refused.
+	epoch := db.searchConstruction
+	entered := epoch.Enter()
 	db.searchServicesMu.Unlock()
-	defer db.bgWg.Done()
-	defer db.finishSearchConstruction()
+	defer db.work.Leave()
+	if !entered {
+		return nil, ErrClosed
+	}
+	defer epoch.Leave()
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
@@ -440,7 +445,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// This construction was admitted before a retiring phase. That phase
 	// joins admitted preparation before advancing the native generation, so
 	// its original publication must complete and then be retired by Reset.
-	unavailable := db.searchClosing
+	unavailable := db.work.Closing()
 	db.searchServicesMu.RUnlock()
 	if unavailable {
 		return nil, ErrClosed
@@ -472,7 +477,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.SetRefreshRetryOwner(db.searchRefreshRetry(entry))
 
 	db.searchServicesMu.Lock()
-	if db.searchClosing {
+	if db.work.Closing() {
 		db.searchServicesMu.Unlock()
 		return nil, ErrClosed
 	}
@@ -493,18 +498,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	return svc, nil
 }
 
-// finishSearchConstruction discharges the existing registry's preparation
-// admission only after publication or actual failed-candidate disposal. Reset
-// joins this population outside the native generation fence; it owns no second
-// resource/task registry and does not decide an origin or generation.
-func (db *DB) finishSearchConstruction() {
-	db.searchServicesMu.Lock()
-	db.searchConstructing--
-	if db.searchConstructing == 0 {
-		close(db.searchConstructionDone)
-	}
-	db.searchServicesMu.Unlock()
-}
 
 func (db *DB) getOrCreateSearchContinuationRegistry() (*resultstream.Registry, error) {
 	db.searchContinuationMu.Lock()

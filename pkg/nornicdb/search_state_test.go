@@ -76,7 +76,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			require.NotNil(t, db.replicationAdapter)
 			_, isReplicated := db.GetBaseStorageForManager().(*replication.ReplicatedEngine)
 			require.True(t, isReplicated, "the configuration under test has no ReplicatedEngine")
@@ -93,7 +93,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			return db, direct(t, db)
 		}},
 		{name: "in-memory", open: func(t *testing.T) (*DB, func(t *testing.T, cmd replication.CommandType, payload any)) {
@@ -101,7 +101,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open("", config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			return db, direct(t, db)
 		}},
 		{name: "ha primary", open: replicated("primary")},
@@ -190,7 +190,7 @@ func openPersistedSearchDB(t *testing.T, dataDir string) *DB {
 	config.Database.PersistSearchIndexes = true
 	db, err := Open(dataDir, config)
 	require.NoError(t, err)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	return db
 }
 

@@ -64,7 +64,7 @@ func TestDBRefreshScopeSystemDatabaseErrorReachesOperation(t *testing.T) {
 func TestDBRefreshScopeClosedDBError(t *testing.T) {
 	ctx := context.Background()
 	db, ns := dbRefreshScopeTestDB(t)
-	db.closed = true
+	db.work.CloseAdmission()
 	scope := dbRefreshScope{db: db, dbName: "nornic", storage: ns}
 	require.ErrorIs(t, search.RefreshIndexes(ctx, scope, search.RefreshRequest{Node: "node"}), ErrClosed)
 }
