@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"testing"
@@ -35,13 +37,13 @@ func TestPluginFunctionLookupIntegration(t *testing.T) {
 	t.Run("plugin lookup configured - calls plugin function", func(t *testing.T) {
 		// Configure a mock plugin lookup
 		mockCalled := false
-		PluginFunctionLookup = func(name string) (interface{}, bool) {
+		PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 			if name == "myplugin.double" {
 				mockCalled = true
 				return func(x float64) float64 { return x * 2 }, true
 			}
 			return nil, false
-		}
+		})
 
 		// This should try to call the plugin function
 		result, err := exec.Execute(ctx, "RETURN myplugin.double(21) AS value", nil)
@@ -56,7 +58,7 @@ func TestPluginFunctionLookupIntegration(t *testing.T) {
 	})
 
 	t.Run("plugin returns sum function", func(t *testing.T) {
-		PluginFunctionLookup = func(name string) (interface{}, bool) {
+		PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 			if name == "test.sum" {
 				return func(vals []interface{}) float64 {
 					sum := 0.0
@@ -74,7 +76,7 @@ func TestPluginFunctionLookupIntegration(t *testing.T) {
 				}, true
 			}
 			return nil, false
-		}
+		})
 
 		result, err := exec.Execute(ctx, "RETURN test.sum([10, 20, 30]) AS total", nil)
 		require.NoError(t, err)
@@ -83,10 +85,10 @@ func TestPluginFunctionLookupIntegration(t *testing.T) {
 	})
 
 	t.Run("plugin not found falls back to built-in", func(t *testing.T) {
-		PluginFunctionLookup = func(name string) (interface{}, bool) {
+		PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 			// Plugin doesn't have this function
 			return nil, false
-		}
+		})
 
 		// Built-in apoc.coll.sum should still work
 		result, err := exec.Execute(ctx, "RETURN apoc.coll.sum([1, 2, 3, 4]) AS total", nil)
@@ -97,12 +99,12 @@ func TestPluginFunctionLookupIntegration(t *testing.T) {
 	})
 
 	t.Run("plugin string function", func(t *testing.T) {
-		PluginFunctionLookup = func(name string) (interface{}, bool) {
+		PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 			if name == "text.shout" {
 				return func(s string) string { return s + "!!!" }, true
 			}
 			return nil, false
-		}
+		})
 
 		result, err := exec.Execute(ctx, "RETURN text.shout('hello') AS greeting", nil)
 		require.NoError(t, err)

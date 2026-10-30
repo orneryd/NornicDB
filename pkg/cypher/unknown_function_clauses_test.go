@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"testing"
@@ -61,7 +63,7 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			previous := PluginFunctionLookup
-			PluginFunctionLookup = mode.lookup
+			PluginFunctionLookup = checkedTestLookup(mode.lookup)
 			t.Cleanup(func() { PluginFunctionLookup = previous })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "unknown_function_clauses"))
 			ctx := context.Background()
@@ -89,12 +91,12 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 // A plugin's dotted function passes the check, in any clause.
 func TestPluginFunctionPassesTheCheckInEveryClause(t *testing.T) {
 	previous := PluginFunctionLookup
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 		if name == "zzplugin.double" {
 			return func(value int64) int64 { return value * 2 }, true
 		}
 		return nil, false
-	}
+	})
 	t.Cleanup(func() { PluginFunctionLookup = previous })
 	err := validateKnownFunctions("UNWIND [1] AS x WITH x WHERE zzplugin.double(x) = 2 RETURN zzplugin.double(x)")
 	require.NoError(t, err)

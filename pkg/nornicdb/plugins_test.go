@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"errors"
@@ -63,7 +65,7 @@ func TestPluginFunctionRegistry(t *testing.T) {
 		pluginsMu.Lock()
 		pluginFunctions["test.plugin.sum"] = PluginFunction{
 			Name:        "test.plugin.sum",
-			Handler:     func(vals []interface{}) float64 { return 42.0 },
+			Handler:     mustCallableForTest(func(vals []interface{}) float64 { return 42.0 }),
 			Description: "Test sum function",
 			Category:    "test",
 		}
@@ -276,7 +278,7 @@ func TestPluginFunctionHandlerTypes(t *testing.T) {
 			pluginsMu.Lock()
 			pluginFunctions["test."+tc.name] = PluginFunction{
 				Name:    "test." + tc.name,
-				Handler: tc.handler,
+				Handler: mustCallableForTest(tc.handler),
 			}
 			pluginsMu.Unlock()
 
@@ -872,8 +874,8 @@ func (m *mockTypeNonString) Type() int { return 7 }
 
 type badFunctionsReturn struct{}
 
-func (badFunctionsReturn) Functions() (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (badFunctionsReturn) Functions() (map[string]interface{}, string) {
+	return map[string]interface{}{}, "invalid non-error result"
 }
 
 type nonMapFunctionsReturn struct{}

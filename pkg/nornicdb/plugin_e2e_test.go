@@ -1,5 +1,7 @@
 package nornicdb
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"os"
@@ -33,19 +35,19 @@ func TestPluginFunctionE2E(t *testing.T) {
 		pluginsMu.Lock()
 		pluginFunctions["test.double"] = PluginFunction{
 			Name:        "test.double",
-			Handler:     func(x float64) float64 { return x * 2 },
+			Handler:     mustCallableForTest(func(x float64) float64 { return x * 2 }),
 			Description: "Double a number",
 			Category:    "test",
 		}
 		pluginFunctions["test.greet"] = PluginFunction{
 			Name:        "test.greet",
-			Handler:     func(name string) string { return "Hello, " + name + "!" },
+			Handler:     mustCallableForTest(func(name string) string { return "Hello, " + name + "!" }),
 			Description: "Greet someone",
 			Category:    "test",
 		}
 		pluginFunctions["test.sum"] = PluginFunction{
 			Name: "test.sum",
-			Handler: func(vals []interface{}) float64 {
+			Handler: mustCallableForTest(func(vals []interface{}) float64 {
 				sum := 0.0
 				for _, v := range vals {
 					switch n := v.(type) {
@@ -58,7 +60,7 @@ func TestPluginFunctionE2E(t *testing.T) {
 					}
 				}
 				return sum
-			},
+			}),
 			Description: "Sum numbers",
 			Category:    "test",
 		}
@@ -126,7 +128,7 @@ func TestPluginLookupWiring(t *testing.T) {
 	pluginsMu.Lock()
 	pluginFunctions["myplugin.compute"] = PluginFunction{
 		Name:        "myplugin.compute",
-		Handler:     func(x float64) float64 { return x * x },
+		Handler:     mustCallableForTest(func(x float64) float64 { return x * x }),
 		Description: "Square a number",
 		Category:    "myplugin",
 	}
@@ -210,10 +212,10 @@ func TestPluginOverridesBuiltIn(t *testing.T) {
 	loadedPlugins = make(map[string]*LoadedPlugin)
 	pluginFunctions["apoc.coll.sum"] = PluginFunction{
 		Name: "apoc.coll.sum",
-		Handler: func(vals []interface{}) float64 {
+		Handler: mustCallableForTest(func(vals []interface{}) float64 {
 			// Custom implementation that returns 999 to prove it was called
 			return 999.0
-		},
+		}),
 		Description: "Custom sum that always returns 999",
 		Category:    "apoc.coll",
 	}

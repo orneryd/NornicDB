@@ -97,6 +97,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control, and transaction scripts retain bound parameters. No storage-format
   migration is introduced. See [participant lifecycle](docs/development/fabric-participant-lifecycle.md).
 
+<!-- Author: Codex NOR-184 implementation lane, 2026-10-29. -->
+- Share one checked integer owner for APOC math/number GCD and LCM. Return
+  nonnegative values, apply the zero identities, and reject unrepresentable
+  results without signed-magnitude or multiplication overflow. Registered calls
+  reject null, fractional and out-of-range integer arguments through the existing
+  checked numeric policy. The four Go exports now return `(int64, error)`;
+  published handler fields now use admitted `registry.Callable` values, so
+  registry and plugin consumers cannot silently discard an error result. Ordinary
+  and error-bearing functions share the same checked callable invoker; root APOC
+  and Cypher retain their argument policies without separate scalar invokers.
+  See [the integer API and handler migration](docs/api-reference/apoc-integer-values.md).
+
 - Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
   administration and system history, matching Neo4j collection behavior.
 - Recheck transaction detachment under the publication lock and detach returned

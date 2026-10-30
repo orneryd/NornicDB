@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"math"
@@ -18,14 +20,12 @@ import (
 // correction. Every case checks its public result before timing, so an old
 // silent-discard/error path cannot masquerade as a faster valid baseline.
 func BenchmarkCheckedNumericInputs(b *testing.B) {
-	previous := PluginFunctionLookup
 	handlers := map[string]interface{}{
 		"apoc.convert.toIntList": apocconvert.ToIntList, "apoc.convert.toInteger": apocconvert.ToInteger, "apoc.coll.sumLongs": apoccoll.SumLongs,
 		"apoc.math.percentile": apocmath.Percentile, "apoc.stats.histogram": apocstats.Histogram, "apoc.number.format": apocnumber.Format,
 		"zz.numeric.int32": func(value int32) int64 { return int64(value) },
 	}
-	PluginFunctionLookup = func(name string) (interface{}, bool) { handler, ok := handlers[name]; return handler, ok }
-	defer func() { PluginFunctionLookup = previous }()
+	withPluginFunctions(b, handlers)
 	for _, input := range []struct {
 		Name, Expression string
 		Value, Want      interface{}
