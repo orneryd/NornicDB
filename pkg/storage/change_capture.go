@@ -156,7 +156,7 @@ func (b *BadgerEngine) SetChangeCapture(namespace string, mode ChangeCaptureMode
 	defer b.changes.jobMu.Unlock()
 	if b.changes.job == nil {
 		b.changes.job = newChangeRetentionJob(b, 0)
-		b.changes.job.Start(context.Background())
+		b.changes.job.Start(b.work.Context())
 	}
 }
 

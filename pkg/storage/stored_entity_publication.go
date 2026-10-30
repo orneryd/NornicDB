@@ -461,7 +461,7 @@ func (b *BadgerEngine) initializeManagedEntityNamespace(ctx context.Context, nam
 // operation neither journals nor publishes the prepared changes.
 func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, operations []Operation, mode EntityCommitMode) (*PreparedEntityCommit, func(CommitOutcome), error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, nil, ErrInvalidData // every caller passes its own context; none substitutes one
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err

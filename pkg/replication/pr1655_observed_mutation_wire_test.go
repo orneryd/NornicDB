@@ -228,7 +228,7 @@ func TestPR1655LeaderNormalizesRequest(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, adapter.Close()) })
 
 	ctx := context.Background()
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, adapter.ApplyCommand(ctx, &Command{
 		Type:      CmdCreateNode,
 		Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, pr1655Node("test:n", map[string]any{"name": "stored"})),
 		Timestamp: time.Now(),
@@ -251,10 +251,7 @@ func TestPR1655LeaderNormalizesRequest(t *testing.T) {
 	require.NotEmpty(t, normalized.RequestID)
 
 	// Abandon the prepared frame: nothing may have been published.
-	normalized.accepted.prepared.AbortNative()
-	if settle != nil {
-		settle(storage.CommitOutcome{State: storage.CommitDiscarded})
-	}
+	normalized.accepted.Discard(settle, nil)
 	stored, err := backing.GetNode("test:n")
 	require.NoError(t, err)
 	require.Equal(t, "stored", stored.Properties["name"], "preparing admission must not publish the mutation")

@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestRetiredCommandSlotsRejectBeforeJournal(t *testing.T) {
 	defer adapter.Close()
 	before := adapter.wal.Sequence()
 	for _, slot := range []CommandType{7, 8, 9} {
-		require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: slot, Data: []byte("historical payload")}), ErrRetiredCommand)
+		require.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: slot, Data: []byte("historical payload")}), ErrRetiredCommand)
 		require.Equal(t, before, adapter.wal.Sequence(), "retired records must not enter the journal")
 	}
 }

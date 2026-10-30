@@ -320,7 +320,8 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // taken so far are released either way.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
 	if ctx == nil {
-		ctx = context.Background()
+		// Every caller passes its owner's context; a wait nobody can end is refused.
+		return nil, ErrInvalidData
 	}
 	if len(keys) == 0 {
 		return func() {}, nil

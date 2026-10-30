@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"bytes"
@@ -175,8 +176,8 @@ func TestEmbeddingPendingCounterNamespaceAndExclusion(t *testing.T) {
 	}
 	store := NewNamespacedEngine(disk, "one")
 	seen := map[NodeID]bool{"a": true} // claimed/DLQ, also present in MAIN
-	require.Equal(t, 1, CountPendingEmbeddingIDs(store, func(id []byte) bool { return !seen[NodeID(id)] }))
-	require.Equal(t, 2, CountPendingEmbeddingIDs(store, nil))
+	require.Equal(t, 1, CountPendingEmbeddingIDs(context.Background(), store, func(id []byte) bool { return !seen[NodeID(id)] }))
+	require.Equal(t, 2, CountPendingEmbeddingIDs(context.Background(), store, nil))
 	require.Equal(t, 3, disk.PendingEmbeddingsCount())
 }
 

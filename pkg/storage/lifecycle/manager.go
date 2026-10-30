@@ -71,7 +71,7 @@ func (m *MVCCLifecycleManager) StartLifecycle(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if ctx == nil {
-		ctx = context.Background()
+		return // the loop runs only under its owner's context, which ends it
 	}
 	m.parentCtx = ctx
 	if m.running || !m.config.Enabled || m.config.CycleInterval <= 0 {

@@ -20,16 +20,15 @@ func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
-	h := NewAcceptedEntityCommitHandle(p)
-	r, err := h.Submit(context.Background(), b)
+	h, _, err := AcceptEntityCommit(context.Background(), b, p)
 	require.NoError(t, err)
+	require.NoError(t, h.ApplyContext(context.Background(), nil))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, r.Wait(ctx))
-	h.Retire()
-	require.Nil(t, h.prepared.Load())
-	_, err = h.Submit(ctx, b)
-	require.ErrorIs(t, err, ErrStorageClosed)
+	require.NoError(t, h.native.Wait(ctx))
+	require.True(t, h.NativeFrameRetained())
+	h.Terminal(nil)(CommitOutcome{State: CommitApplied})
+	require.False(t, h.NativeFrameRetained())
 	node, err := b.GetStoredNode("test:a")
 	require.NoError(t, err)
 	require.Len(t, node.ChunkEmbeddings, 1)
@@ -46,7 +45,12 @@ type parkedAcceptedSubmitter struct {
 func (p *parkedAcceptedSubmitter) SubmitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome)) (*CommitReceipt, error) {
 	defer close(p.returned)
 	close(p.entered)
-	<-p.release
+	// Like a real submitter, it yields to its caller's cancellation.
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	route, _ := EntityCommitSubmitterFor(p.Engine)
 	return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 }
@@ -80,7 +84,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	}
 	pending, ok := w.pendingEntityCommits.Load(p.LogicalID())
 	require.True(t, ok)
-	handle := pending.(*walAcceptedEntityCommit).prepared
+	handle := pending.(*walAcceptedEntityCommit).handle
 	snapshotDone := make(chan error, 1)
 	snapshotJoined := make(chan struct{})
 	go func() { defer close(snapshotJoined); snapshotDone <- w.createSnapshotAndCompact(w.work.Context()) }()
@@ -119,7 +123,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("snapshot retained pending mutation lease")
 	}
-	require.Nil(t, handle.prepared.Load())
+	require.False(t, handle.NativeFrameRetained())
 	require.Equal(t, CommitRecoveryPending, receipt.Outcome().State)
 	require.False(t, settled)
 	select {
@@ -130,4 +134,48 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	release()
 	// The original journal payload remains available for startup recovery.
 	require.Greater(t, wal.sequence.Load(), uint64(0))
+}
+
+type arbitrationProbeSubmitter struct {
+	inner  EntityCommitSubmitter
+	handle *AcceptedEntityCommitHandle
+	t      *testing.T
+}
+
+func (s *arbitrationProbeSubmitter) SubmitEntityCommit(ctx context.Context, prepared *PreparedEntityCommit, settle func(CommitOutcome)) (*CommitReceipt, error) {
+	// Enter the owner's arbitration from its foreign native-submit callback.
+	// This is a deterministic single-caller reentry, not a TryLock observation.
+	joined := make(chan struct{})
+	go func() { s.handle.once.Do(func() {}); close(joined) }()
+	select {
+	case <-joined:
+	case <-time.After(time.Second):
+		s.t.Error("native submission runs while accepted arbitration is held")
+	}
+	return s.inner.SubmitEntityCommit(ctx, prepared, settle)
+}
+
+// Author: NOR-288 lane (Claude), 2026-10-30. Moved from the replication
+// transport with the owner: foreign submission runs outside arbitration.
+func TestAcceptedHandleSubmitsOutsideArbitration(t *testing.T) {
+	b := newTestEngine(t)
+	tx, err := b.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, tx.SetNamespace("test"))
+	_, err = tx.CreateNode(&Node{ID: "test:arbitration"})
+	require.NoError(t, err)
+	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
+	require.NoError(t, err)
+	defer p.Abort()
+	h, _, err := AcceptEntityCommit(context.Background(), b, p)
+	require.NoError(t, err)
+	h.inner = &arbitrationProbeSubmitter{inner: h.inner, handle: h, t: t}
+	require.NoError(t, h.ApplyContext(context.Background(), nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, h.native.Wait(ctx))
+	h.Terminal(nil)(CommitOutcome{State: CommitApplied})
+	_, err = b.GetStoredNode("test:arbitration")
+	require.NoError(t, err)
 }

@@ -90,11 +90,16 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				storage.ReviewSetDropTailFailure(b, func(string) error { return failure })
 				t.Cleanup(func() { storage.ReviewSetDropTailFailure(b, nil) })
 				if managed {
+					// An applied DROP is accepted work: its failed cleanup is
+					// reported as an accepted outcome whose cause is the failure.
 					err = manager.DropDatabase(t.Context(), "tenant")
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, err, &accepted)
+					require.ErrorIs(t, accepted.Cause(), failure)
 				} else {
 					_, _, err = b.DeleteByPrefix("tenant:")
+					require.ErrorIs(t, err, failure)
 				}
-				require.ErrorIs(t, err, failure)
 				peerWork, workErr := b.GetDeindexWorkItem("tenant:opaque-peer")
 				require.NoError(t, workErr)
 				require.NotNil(t, peerWork)

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -59,7 +60,7 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 				require.NoError(t, err)
 				_, err = peer.CreateNode(&storage.Node{ID: "after"})
 				require.NoError(t, err)
-				reported, _, _ := manager.GetStorageSize("victim")
+				reported, _, _ := manager.GetStorageSize(context.Background(), "victim")
 				t.Logf("last-known size report after Restore=%d; admission, not this report, is the oracle", reported)
 				_, err = tenant.CreateNode(body("new000"))
 				require.NoError(t, err, "empty restored tenant must admit its first node under the retained quota")
@@ -68,7 +69,7 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 				require.Equal(t, body("victim:new000").Properties, stored.Properties)
 				require.Equal(t, stamp, stored.CreatedAt)
 				require.Equal(t, stamp, stored.UpdatedAt)
-				actualBytes, _, _ := manager.GetStorageSize("victim")
+				actualBytes, _, _ := manager.GetStorageSize(context.Background(), "victim")
 				require.Equal(t, originalBytes, actualBytes, "equal-sized stored image must consume exactly the original measured quota")
 				_, err = tenant.CreateNode(body("next00"))
 				require.Error(t, err, "a second image must exceed the count or exact byte ceiling")
@@ -96,7 +97,7 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 				backup := filepath.Join(t.TempDir(), "nonempty.bak")
 				require.NoError(t, base.Backup(backup))
 				require.NoError(t, tenant.DeleteNode("old000"))
-				currentBytes, _, _ := manager.GetStorageSize("victim")
+				currentBytes, _, _ := manager.GetStorageSize(context.Background(), "victim")
 				require.Zero(t, currentBytes, "pre-Restore live admission has observed the deletion")
 				require.NoError(t, base.Restore(backup))
 				restored, err := tenant.GetNode("old000")
@@ -110,7 +111,7 @@ func TestReview1406ManagedRestoreNonemptyAdmission(t *testing.T) {
 				exists, err := storage.ReviewRawEntityExists(base, storage.StoredEntityNodeKind, "victim:next00")
 				require.NoError(t, err)
 				require.False(t, exists, "rejected growth must not partially write")
-				actualBytes, _, _ := manager.GetStorageSize("victim")
+				actualBytes, _, _ := manager.GetStorageSize(context.Background(), "victim")
 				require.Equal(t, originalBytes, actualBytes, "admission refreshes the actual restored image")
 				_, err = peer.GetNode("keep")
 				require.NoError(t, err)
@@ -158,7 +159,7 @@ func newReview1406Probe(t *testing.T, buffered bool, quota string) *review1406Pr
 	require.NoError(t, tenant.BulkCreateNodes([]*storage.Node{body("old000")}))
 	_, err = peer.CreateNode(&storage.Node{ID: "keep"})
 	require.NoError(t, err)
-	originalBytes, _, _ := manager.GetStorageSize("victim")
+	originalBytes, _, _ := manager.GetStorageSize(context.Background(), "victim")
 	require.Positive(t, originalBytes)
 	limits := &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}
 	if quota == "bytes" {

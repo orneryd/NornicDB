@@ -86,7 +86,12 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 	// This reduces write amplification from 4 separate writes to 1 batch operation.
 	// We still validate existence via a read transaction first.
 	var exists bool
-	err = b.db.View(func(txn *badger.Txn) error {
+	db, err := b.beginHelperTxn()
+	if err != nil {
+		return err
+	}
+	defer b.work.Leave()
+	err = db.View(func(txn *badger.Txn) error {
 		// Check if edge already exists
 		key := edgeKey(edge.ID)
 		_, err := txn.Get(key)

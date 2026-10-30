@@ -183,6 +183,12 @@ func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
 	// Only allow dropping Qdrant collections (must have meta node).
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
+		// Author: NOR-288 lane (Claude), 2026-10-30. An unavailable name may
+		// be a drop the DROP owner already accepted; the owner decides and
+		// finishes only that, never a live database of another kind.
+		if err := s.dbManager.FinishPendingDrop(ctx, name); !errors.Is(err, multidb.ErrDatabaseNotFound) {
+			return err
+		}
 		return ErrCollectionNotFound
 	}
 	if _, err := readCollectionMeta(engine); err != nil {

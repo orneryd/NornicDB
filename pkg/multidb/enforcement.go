@@ -24,7 +24,7 @@
 //	}
 //
 //	// Check if creating this node would exceed limits
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		return fmt.Errorf("cannot create node: %w", err)
 //	}
 //
@@ -63,7 +63,7 @@ type LimitChecker interface {
 	// CheckStorageLimits checks if storage operations are within limits.
 	// Returns error if limit would be exceeded.
 	// For create operations, pass the node/edge being created to calculate exact size.
-	CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error
+	CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error
 
 	// CheckQueryLimits checks if query execution is allowed.
 	// Returns error if limit would be exceeded.
@@ -123,7 +123,7 @@ func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
 //		Labels: []string{"User"},
 //		Properties: map[string]any{"name": "Alice", "email": "alice@example.com"},
 //	}
-//	if err := checker.CheckStorageLimits("create_node", node, nil); err != nil {
+//	if err := checker.CheckStorageLimits(ctx, "create_node", node, nil); err != nil {
 //		// Error message: "storage limit exceeded: database 'tenant_a' would exceed
 //		// max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
 //		return err
@@ -138,7 +138,7 @@ func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
 //   - MaxNodes: "has reached max_nodes limit (1000/1000)"
 //   - MaxEdges: "has reached max_edges limit (5000/5000)"
 //   - MaxBytes: "would exceed max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
-func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error {
+func (c *databaseLimitChecker) CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error {
 	limits := c.policy().snapshot()
 	if limits == nil || limits.IsUnlimited() {
 		return nil // No limits
@@ -177,7 +177,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 
 	// Check MaxBytes limit if set
 	if storageLimits.MaxBytes > 0 {
-		currentSize, _, _, err := c.manager.readStorageSize(c.databaseName, engine, sizeForAdmission)
+		currentSize, _, _, err := c.manager.readStorageSize(ctx, c.databaseName, engine, sizeForAdmission)
 		if err != nil {
 			return localizedError(localization.MultidbStorageGetSizeFailed(err), err)
 		}

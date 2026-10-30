@@ -126,7 +126,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// commit before this acquisition, so revalidate under the existing key order.
 	// Entity and endpoint authority precedes unique values for every native commit.
 	nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
-	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(tx.commitCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
+	// A commit without a caller context (Commit, or after acceptance cleared
+	// it) waits under the engine owner's lifetime, as the value locks below do.
+	authorityCtx := tx.commitCtx
+	if authorityCtx == nil {
+		authorityCtx = tx.engine.work.Context()
+	}
+	releaseEntityAuthority, authorityErr := tx.engine.GetSchemaForNamespace(tx.namespace).acquireUniqueConstraintCommitLocks(authorityCtx, tx.ID, entityCommitKeys(nodes, edges, endpoints))
 	if authorityErr != nil {
 		return tx.abortCommitLocked(authorityErr)
 	}
@@ -198,6 +204,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// Preparation hands immutable semantic images to the accepted command owner
 	// only after the normal validation/order pipeline, before any commit bytes.
 	if prepare != nil {
+		// A prepared commit decides its endpoints before the durable decision,
+		// so an endpoint conflict rejects it before any accepted command exists.
+		if err := tx.revalidateEndpointsBeforeDecisionLocked(); err != nil {
+			return tx.abortCommitLocked(err)
+		}
 		if err := prepare(); err != nil {
 			return tx.abortCommitLocked(err)
 		}
@@ -482,6 +493,12 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 // validateCommitLocked keeps both optimistic and protected validation on the
 // same constraint/conflict and consumer error-classification owner.
 func (tx *BadgerTransaction) validateCommitLocked() error {
+	// Author: NOR-288 lane (Codex), 2026-10-26. The leader/preparation owner
+	// validated accepted command semantics before the durable decision. Only
+	// the physical application may retry; user constraints are not re-admitted.
+	if tx.acceptedApplication {
+		return nil
+	}
 	if err := tx.resolveConnectedDeletesLocked(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err

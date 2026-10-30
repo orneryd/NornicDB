@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestPR1655RawObservedRequestCannotEnterApplyWAL(t *testing.T) {
 			}
 			payload, err := encodeEntityCommandPayload(kind, request)
 			require.NoError(t, err)
-			assert.ErrorIs(t, adapter.ApplyCommand(&Command{Type: kind, Data: payload, Timestamp: time.Now()}), storage.ErrInvalidData)
+			assert.ErrorIs(t, adapter.ApplyCommand(context.Background(), &Command{Type: kind, Data: payload, Timestamp: time.Now()}), storage.ErrInvalidData)
 			require.NoError(t, adapter.FlushWAL())
 			position, err := adapter.GetWALPosition()
 			require.NoError(t, err)

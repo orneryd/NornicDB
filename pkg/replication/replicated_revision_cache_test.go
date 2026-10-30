@@ -37,7 +37,7 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 
 	read(1)
 	read(1)
-	require.NoError(t, adapter.ApplyCommand(&replication.Command{
+	require.NoError(t, adapter.ApplyCommand(context.Background(), &replication.Command{
 		Type:      replication.CmdDeleteNode,
 		Data:      []byte("library:item"),
 		Timestamp: time.Now(),

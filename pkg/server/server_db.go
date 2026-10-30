@@ -408,7 +408,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 	if err != nil {
 		edgeCount = 0
 	}
-	_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(dbName)
+	_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(r.Context(), dbName)
 	_, _, managedEmbeddingBytes := s.db.GetDatabaseManagedEmbeddingStats(dbName)
 
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
@@ -489,7 +489,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 			stats = append(stats, row)
 			continue
 		}
-		_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(c.DatabaseName)
+		_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(r.Context(), c.DatabaseName)
 		_, _, managedEmbeddingBytes := s.db.GetDatabaseManagedEmbeddingStats(c.DatabaseName)
 		searchStatus := s.db.GetDatabaseSearchStatus(c.DatabaseName)
 		row["nodeCount"] = nodeCount

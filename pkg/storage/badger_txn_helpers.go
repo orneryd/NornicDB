@@ -14,9 +14,16 @@ import (
 // ensureOpen rejects a closed engine; write admission also rejects Close in progress.
 func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.work.Closing() || (writing && b.closing)
-	b.mu.RUnlock()
-	if closed {
+	defer b.mu.RUnlock()
+	return b.ensureOpenLocked(writing)
+}
+
+// ensureOpenLocked is the same decider for a caller that already holds b.mu:
+// reads (writing false) are refused once the owner sealed admission, writes
+// already once Close began. It is the engine's one reader of its owner's
+// sealed phase outside Close. Author: NOR-288 lane (Claude), 2026-10-30.
+func (b *BadgerEngine) ensureOpenLocked(writing bool) error {
+	if b.work.Closing() || (writing && b.closing) {
 		return ErrStorageClosed
 	}
 	return nil

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -275,7 +276,7 @@ func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
 	require.NoError(t, err)
-	currentBytes, _, _ := manager.GetStorageSize("nornic")
+	currentBytes, _, _ := manager.GetStorageSize(context.Background(), "nornic")
 	require.Positive(t, currentBytes)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
 
@@ -611,8 +612,8 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 			initialized := info.sizeInitialized
 			info.sizeMu.RUnlock()
 			require.False(t, initialized)
-			total, nodeBytes, edgeBytes := manager.GetStorageSize(database)
-			wantNodes, wantEdges, calcErr := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(inner, database))
+			total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), database)
+			wantNodes, wantEdges, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(inner, database))
 			require.NoError(t, calcErr)
 			assert.Equal(t, wantNodes+wantEdges, total)
 			assert.Equal(t, wantNodes, nodeBytes)
@@ -816,7 +817,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 
 		manager.IncrementStorageSize("tenant_b", 100, 50)
 		manager.DecrementStorageSize("tenant_b", 200, 100)
-		total, nodeSize, edgeSize := manager.GetStorageSize("tenant_b")
+		total, nodeSize, edgeSize := manager.GetStorageSize(context.Background(), "tenant_b")
 		assert.Zero(t, total)
 		assert.Zero(t, nodeSize)
 		assert.Zero(t, edgeSize)
@@ -896,7 +897,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	require.NoError(t, err)
 
 	// Seed cache at zero to force incremental path for later writes.
-	total, nodeBytes, edgeBytes := manager.GetStorageSize("tenant_delta")
+	total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), "tenant_delta")
 	assert.Zero(t, total)
 	assert.Zero(t, nodeBytes)
 	assert.Zero(t, edgeBytes)
@@ -938,9 +939,9 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	// Delete node with connected edge; cached edge bytes should also decrement.
 	require.NoError(t, store.DeleteNode(storage.NodeID("n1")))
 
-	gotTotal, gotNodeBytes, gotEdgeBytes := manager.GetStorageSize("tenant_delta")
+	gotTotal, gotNodeBytes, gotEdgeBytes := manager.GetStorageSize(context.Background(), "tenant_delta")
 	base := storage.NewNamespacedEngine(inner, "tenant_delta")
-	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(base)
+	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(context.Background(), base)
 	require.NoError(t, calcErr)
 	assert.Equal(t, wantNodeBytes+wantEdgeBytes, gotTotal)
 	assert.Equal(t, wantNodeBytes, gotNodeBytes)
@@ -982,7 +983,7 @@ func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.
 			default:
 				// Force re-init writes on size cache while other goroutine snapshots metadata.
 				manager.markStorageSizeDirty("tenant_race")
-				manager.GetStorageSize("tenant_race")
+				manager.GetStorageSize(context.Background(), "tenant_race")
 			}
 		}
 	}()

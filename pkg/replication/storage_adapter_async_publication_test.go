@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestStorageAdapterAsyncWALPublishesOnceBeforeApplyReturns(t *testing.T) {
 	command := &Command{Type: CmdCreateNode, Data: fixtureowner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "once", Labels: []string{"Once"}}), Timestamp: time.Now()}
 	joined := make(chan struct{})
 	var applyErr error
-	go func() { defer close(joined); applyErr = adapter.ApplyCommand(command) }()
+	go func() { defer close(joined); applyErr = adapter.ApplyCommand(context.Background(), command) }()
 	t.Cleanup(func() {
 		releaseListener()
 		select {

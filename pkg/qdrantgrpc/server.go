@@ -439,7 +439,8 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		paired.dropDatabase = func(ctx context.Context, name string) error {
 			engine, err := store.dbManager.GetStorage(name)
 			if err != nil {
-				return err
+				// No live storage means no live index; the DROP owner decides.
+				return store.dropDatabase(ctx, name)
 			}
 			svc, err := searchProvider(name, engine)
 			if err != nil {

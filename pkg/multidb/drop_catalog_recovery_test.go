@@ -46,9 +46,37 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 				case "catalog-completion-rejected":
 					e.rejectAt = 2
 				}
-				require.ErrorIs(t, m.DropDatabase(t.Context(), "victim"), storage.ErrConflict)
-				require.True(t, m.Exists("victim"))
-				if phase == "intent-rejected" {
+				dropErr := m.DropDatabase(t.Context(), "victim")
+				// Author: NOR-288 lane (Claude), 2026-10-30. An applied intent whose
+				// acknowledgement failed is finished by the DROP owner in the same
+				// call. The accepted outcome is non-retryable; its cause stays
+				// diagnostic only.
+				completed := phase == "intent-applied-ack-error"
+				if completed {
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, dropErr, &accepted)
+					require.Equal(t, storage.CommitApplied, accepted.State)
+					require.NotErrorIs(t, dropErr, storage.ErrConflict)
+					require.True(t, catalogAcceptedDiagnosticContains(accepted, storage.ErrConflict))
+					require.False(t, m.Exists("victim"))
+				} else if phase == "intent-rejected" {
+					// Rejected before acceptance: nothing was accepted.
+					require.ErrorIs(t, dropErr, storage.ErrConflict)
+					require.True(t, m.Exists("victim"))
+				} else {
+					// A failure after the intent was accepted leaves completion to the
+					// owner and is an accepted pending outcome, never a retryable
+					// rejection a name-only retry could carry to a newer database.
+					var accepted *storage.AcceptedCommitError
+					require.ErrorAs(t, dropErr, &accepted)
+					require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+					require.NotErrorIs(t, dropErr, storage.ErrConflict)
+					require.True(t, catalogAcceptedDiagnosticContains(accepted, storage.ErrConflict))
+					require.True(t, m.Exists("victim"))
+				}
+				if completed {
+					require.False(t, m.pendingDrops["victim"])
+				} else if phase == "intent-rejected" {
 					require.False(t, m.pendingDrops["victim"])
 					view, err := m.GetStorage("victim")
 					require.NoError(t, err)
@@ -68,7 +96,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 						require.ErrorIs(t, err, ErrDatabaseOffline, "status changes cannot override an unfinished DROP")
 					}
 				}
-				if phase != "intent-rejected" {
+				if phase != "intent-rejected" && !completed {
 					// A standby loads the durable admission without applying DROP,
 					// initializing a live view, or publishing another catalog write.
 					updates := e.updates
@@ -93,7 +121,9 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					backup := filepath.Join(t.TempDir(), "pending-catalog.bak")
 					require.NoError(t, base.Backup(backup))
 					require.NoError(t, base.Restore(backup))
-					if phase == "intent-rejected" {
+					if completed {
+						require.False(t, m.Exists("victim"), "Restore keeps the finished DROP")
+					} else if phase == "intent-rejected" {
 						kept, err := victimView.GetNode("keep")
 						require.NoError(t, err)
 						require.Equal(t, "victim", kept.Properties["value"])
@@ -114,6 +144,8 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 						require.Equal(t, "victim", node.Properties["value"])
 						require.NoError(t, m.DropDatabase(t.Context(), "victim"))
 					}
+				} else if completed {
+					require.ErrorIs(t, m.DropDatabase(t.Context(), "victim"), ErrDatabaseNotFound, "a later DROP of the finished name is a new request")
 				} else {
 					require.NoError(t, m.DropDatabase(t.Context(), "victim"))
 				}

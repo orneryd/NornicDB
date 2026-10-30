@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -95,9 +96,9 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.Equal(t, reservedUsage{nodes: 1}, info.reserved)
 	check := func(nodes, edges int64) {
 		t.Helper()
-		wantNodeBytes, wantEdgeBytes, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(engine, "test"))
+		wantNodeBytes, wantEdgeBytes, err := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(engine, "test"))
 		require.NoError(t, err)
-		total, nodeBytes, edgeBytes := manager.GetStorageSize("test")
+		total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), "test")
 		require.Equal(t, wantNodeBytes, nodeBytes)
 		require.Equal(t, wantEdgeBytes, edgeBytes)
 		require.Equal(t, wantNodeBytes+wantEdgeBytes, total)
@@ -160,9 +161,9 @@ func TestManagedUsageConcurrentInitializationAndPublication(t *testing.T) {
 	require.True(t, info.sizeInitialized)
 	require.Equal(t, int64(writers+1), info.usageNodes)
 	require.Zero(t, info.usageEdges)
-	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(engine, "test"))
+	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(engine, "test"))
 	require.NoError(t, err)
-	total, nodes, edges := manager.GetStorageSize("test")
+	total, nodes, edges := manager.GetStorageSize(context.Background(), "test")
 	require.Equal(t, wantNodes, nodes)
 	require.Equal(t, wantEdges, edges)
 	require.Equal(t, wantNodes+wantEdges, total)
@@ -195,14 +196,14 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	require.Equal(t, reservedUsage{}, info.reserved)
 	require.Equal(t, int64(3), info.usageNodes)
 	require.Equal(t, int64(1), info.usageEdges)
-	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(engine, "test"))
+	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(engine, "test"))
 	require.NoError(t, err)
-	total, nodeBytes, edgeBytes := manager.GetStorageSize("test")
+	total, nodeBytes, edgeBytes := manager.GetStorageSize(context.Background(), "test")
 	require.Equal(t, wantNodes, nodeBytes)
 	require.Equal(t, wantEdges, edgeBytes)
 	require.Equal(t, wantNodes+wantEdges, total)
 	require.NoError(t, engine.FlushWriteBehind(nil))
-	afterTotal, afterNodes, afterEdges := manager.GetStorageSize("test")
+	afterTotal, afterNodes, afterEdges := manager.GetStorageSize(context.Background(), "test")
 	require.Equal(t, total, afterTotal)
 	require.Equal(t, nodeBytes, afterNodes)
 	require.Equal(t, edgeBytes, afterEdges)
@@ -297,7 +298,7 @@ func TestManagedUsageLazyCountThenByteUpgradeIncludesStoredVectorsAndHiddenEntit
 	require.Equal(t, int64(1), info.usageEdges)
 	require.Equal(t, reservedUsage{nodes: 1}, info.reserved)
 	require.Len(t, info.pending, 1)
-	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(engine, "test"))
+	wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(context.Background(), storage.NewNamespacedEngine(engine, "test"))
 	require.NoError(t, err)
 	require.Equal(t, wantNodes, info.nodeSize)
 	require.Equal(t, wantEdges, info.edgeSize)

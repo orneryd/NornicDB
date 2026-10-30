@@ -82,7 +82,7 @@ func TestNewStorageAdapter(t *testing.T) {
 			require.True(t, info.Mode().IsRegular())
 
 			node := &storage.Node{ID: storage.NodeID("default-dir"), Labels: []string{"Test"}}
-			require.NoError(t, adapter.ApplyCommand(&Command{
+			require.NoError(t, adapter.ApplyCommand(context.Background(), &Command{
 				Type:      CmdCreateNode,
 				Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
 				Timestamp: time.Now(),
@@ -181,7 +181,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		err := adapter.ApplyCommand(context.Background(), cmd)
 		require.NoError(t, err)
 
 		// Flush WAL to ensure async write completes
@@ -203,7 +203,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
-		err := adapter.ApplyCommand(nil)
+		err := adapter.ApplyCommand(context.Background(), nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "nil command")
 	})
@@ -294,7 +294,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 					Timestamp: time.Now(),
 				}
 
-				err := adapter.ApplyCommand(cmd)
+				err := adapter.ApplyCommand(context.Background(), cmd)
 				if isRetiredCommand(tt.cmdType) {
 					require.ErrorIs(t, err, ErrRetiredCommand)
 				} else {
@@ -315,7 +315,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		err := adapter.ApplyCommand(context.Background(), cmd)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown command type")
 	})
@@ -344,7 +344,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			err := adapter.ApplyCommand(cmd)
+			err := adapter.ApplyCommand(context.Background(), cmd)
 			require.NoError(t, err)
 		}
 
@@ -372,7 +372,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			err := adapter.ApplyCommand(cmd)
+			err := adapter.ApplyCommand(context.Background(), cmd)
 			require.NoError(t, err)
 		}
 
@@ -402,7 +402,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			err := adapter1.ApplyCommand(cmd)
+			err := adapter1.ApplyCommand(context.Background(), cmd)
 			require.NoError(t, err)
 		}
 		require.NoError(t, adapter1.FlushWAL())
@@ -468,7 +468,7 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			err := adapter.ApplyCommand(cmd)
+			err := adapter.ApplyCommand(context.Background(), cmd)
 			require.NoError(t, err)
 
 			// Flush WAL to ensure async write completes
@@ -499,7 +499,7 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			err := adapter1.ApplyCommand(cmd)
+			err := adapter1.ApplyCommand(context.Background(), cmd)
 			require.NoError(t, err)
 		}
 
@@ -528,7 +528,7 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 			Data:      data,
 			Timestamp: time.Now(),
 		}
-		err = adapter2.ApplyCommand(cmd)
+		err = adapter2.ApplyCommand(context.Background(), cmd)
 		require.NoError(t, err)
 
 		// Flush WAL to ensure async write completes
@@ -560,7 +560,7 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 		require.NoError(t, err)
 		for i := 0; i < 2; i++ {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("corrupt-n%d", i)), Labels: []string{"Test"}}
-			require.NoError(t, writer.ApplyCommand(&Command{
+			require.NoError(t, writer.ApplyCommand(context.Background(), &Command{
 				Type:      CmdCreateNode,
 				Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
 				Timestamp: time.Now(),
@@ -594,7 +594,7 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 		// Appending after the repair must succeed: the damaged tail is gone,
 		// so the log stays readable.
 		node := &storage.Node{ID: storage.NodeID("post-repair"), Labels: []string{"Test"}}
-		require.NoError(t, recovered.ApplyCommand(&Command{
+		require.NoError(t, recovered.ApplyCommand(context.Background(), &Command{
 			Type:      CmdCreateNode,
 			Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, node),
 			Timestamp: time.Now(),
@@ -671,7 +671,7 @@ func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		require.ErrorIs(t, adapter.ApplyCommand(cmd), ErrRetiredCommand)
+		require.ErrorIs(t, adapter.ApplyCommand(context.Background(), cmd), ErrRetiredCommand)
 		_, err := cypher.NewStorageExecutor(adapter.engine).Execute(context.Background(), cypherCmd.Query, cypherCmd.Params)
 		require.NoError(t, err)
 
@@ -705,7 +705,7 @@ func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		require.ErrorIs(t, adapter.ApplyCommand(cmd), ErrRetiredCommand)
+		require.ErrorIs(t, adapter.ApplyCommand(context.Background(), cmd), ErrRetiredCommand)
 		_, err := cypher.NewStorageExecutor(adapter.engine).Execute(context.Background(), cypherCmd.Query, cypherCmd.Params)
 		require.NoError(t, err)
 	})
@@ -727,7 +727,7 @@ func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		err := adapter.ApplyCommand(context.Background(), cmd)
 		require.Error(t, err)
 		require.ErrorIs(t, err, ErrRetiredCommand)
 	})
@@ -742,7 +742,7 @@ func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		err := adapter.ApplyCommand(context.Background(), cmd)
 		require.Error(t, err)
 		require.ErrorIs(t, err, ErrRetiredCommand)
 	})
@@ -798,7 +798,7 @@ func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 						Data:      data,
 						Timestamp: time.Now(),
 					}
-					err := adapter.ApplyCommand(cmd)
+					err := adapter.ApplyCommand(context.Background(), cmd)
 					assert.NoError(t, err)
 				}
 			}(i)
@@ -828,7 +828,7 @@ func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			adapter.ApplyCommand(cmd)
+			adapter.ApplyCommand(context.Background(), cmd)
 		}
 
 		// Wait for WAL sync to ensure entries are persisted
@@ -865,7 +865,7 @@ func TestStorageAdapter_WriteSnapshot(t *testing.T) {
 				Data:      data,
 				Timestamp: time.Now(),
 			}
-			adapter.ApplyCommand(cmd)
+			adapter.ApplyCommand(context.Background(), cmd)
 		}
 
 		// Flush WAL to ensure all async writes complete

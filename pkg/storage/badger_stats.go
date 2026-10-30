@@ -269,7 +269,7 @@ func (b *BadgerEngine) sealAdmission() {
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: context.Background(), engine: b, owner: newEngineWriteLockOwner()}))
+	b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: b.work.Context(), engine: b, owner: newEngineWriteLockOwner()}))
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
@@ -329,6 +329,7 @@ func (b *BadgerEngine) retire() error {
 //
 // b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
+	b.acceptedApplications = nil
 	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
 	b.nodeCache = nil
@@ -364,9 +365,17 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 
 // Sync forces a sync of all data to disk.
 // This is useful for ensuring durability before a crash.
+// A commit's settlement can call it after its worker left the lifecycle owner,
+// so it takes its own short admission: Close joins a Sync in progress and
+// refuses a later one, and it holds nothing a settlement that closes the engine
+// would wait for. Author: NOR-288 lane (Claude), 2026-10-31.
 func (b *BadgerEngine) Sync() error {
-	if err := b.ensureOpen(false); err != nil {
-		return err
+	if !b.work.Enter() {
+		return ErrStorageClosed
+	}
+	defer b.work.Leave()
+	if b.nativeSyncHook != nil {
+		b.nativeSyncHook()
 	}
 	return b.db.Sync()
 }
@@ -374,19 +383,30 @@ func (b *BadgerEngine) Sync() error {
 // RunGC runs garbage collection on the BadgerDB value log.
 // Should be called periodically for long-running applications.
 func (b *BadgerEngine) RunGC() error {
-	if err := b.ensureOpen(false); err != nil {
-		return err
+	if !b.work.Enter() {
+		return ErrStorageClosed
 	}
+	defer b.work.Leave()
 	return b.db.RunValueLogGC(0.5)
 }
 
 // Size returns the approximate size of the database in bytes.
 func (b *BadgerEngine) Size() (lsm, vlog int64) {
-	if b.ensureOpen(false) != nil {
+	if !b.work.Enter() {
 		return 0, 0
 	}
-
+	defer b.work.Leave()
 	return b.db.Size()
+}
+
+// EstimateSize returns the approximate key and value bytes under prefix, or
+// zero once Close sealed admission.
+func (b *BadgerEngine) EstimateSize(prefix []byte) (keys, values uint64) {
+	if !b.work.Enter() {
+		return 0, 0
+	}
+	defer b.work.Leave()
+	return b.db.EstimateSize(prefix)
 }
 
 // FindNodeNeedingEmbedding returns a node that needs embedding.
@@ -564,7 +584,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
 // Note: This requires a scan of the pending index, so use sparingly.
 func (b *BadgerEngine) PendingEmbeddingsCount() int {
-	return b.CountPendingEmbeddingIDs(nil)
+	return b.CountPendingEmbeddingIDs(b.work.Context(), nil)
 }
 
 // InvalidatePendingEmbeddingsIndex discards only the derived candidate catalog.
