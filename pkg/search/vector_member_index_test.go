@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"sync"
 	"testing"
@@ -15,7 +16,7 @@ func memberIndexService(t *testing.T) (*Service, *storage.Node) {
 	t.Helper()
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	var candidates []Candidate
@@ -126,7 +127,7 @@ func TestMemberIndexWeakAliasStillExpandsCurrentMembers(t *testing.T) {
 			t.Run(fmt.Sprintf("mixed=%t/%s", mixed, alias), func(t *testing.T) {
 				t.Setenv(EnvSearchResultCacheEnabled, "false")
 				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-				engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+				engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 				svc := NewService(engine, 2, nil)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				id := "winner"

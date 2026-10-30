@@ -3837,55 +3837,7 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return err
 	}
-	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	constraints := schema.GetConstraintsForLabels(node.Labels)
-
-	for _, constraint := range constraints {
-		switch constraint.Type {
-		case ConstraintUnique:
-			if len(constraint.Properties) > 1 {
-				if err := tx.checkNodeKeyConstraint(node, constraint); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := tx.checkUniqueConstraint(node, constraint); err != nil {
-				return err
-			}
-		case ConstraintNodeKey:
-			if err := tx.checkNodeKeyConstraint(node, constraint); err != nil {
-				return err
-			}
-		case ConstraintExists:
-			if err := tx.checkExistenceConstraint(node, constraint); err != nil {
-				return err
-			}
-		case ConstraintTemporal:
-			if err := tx.checkTemporalConstraint(node, constraint); err != nil {
-				return err
-			}
-		case ConstraintDomain:
-			if len(constraint.Properties) == 1 && len(constraint.AllowedValues) > 0 {
-				prop := constraint.Properties[0]
-				value := node.Properties[prop]
-				if value != nil && !isValueInAllowedList(value, constraint.AllowedValues) {
-					message := localization.StorageValidationPropertyDomainInvalid(prop, value, constraint.AllowedValues)
-					return newLocalizedConstraintViolation(ConstraintDomain, constraint.Label, []string{prop}, message, nil)
-				}
-			}
-		}
-	}
-
-	typeConstraints := schema.GetPropertyTypeConstraintsForLabels(node.Labels)
-	for _, constraint := range typeConstraints {
-		value := node.Properties[constraint.Property]
-		if err := ValidatePropertyType(value, constraint.ExpectedType); err != nil {
-			message := localization.StorageValidationPropertyTypeRequired(constraint.Property, string(constraint.ExpectedType), err)
-			return newLocalizedConstraintViolation(ConstraintPropertyType, constraint.Label, []string{constraint.Property}, message, err)
-		}
-	}
-
-	return nil
+	return (nodeConstraintValidation{schema: tx.engine.GetSchemaForNamespace(tx.namespace), transaction: tx}).validate(node)
 }
 
 // checkUniqueConstraint ensures property value is unique across ALL data.
@@ -4067,16 +4019,13 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 
 // checkNodeKeyConstraint ensures composite key uniqueness across ALL data.
 func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) error {
-	values := make([]interface{}, len(c.Properties))
-	for i, prop := range c.Properties {
-		values[i] = node.Properties[prop]
-		if values[i] == nil {
-			if c.Type == ConstraintUnique {
-				return nil
-			}
-			message := localization.StorageValidationNodeKeyNull(prop)
-			return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
+	values, missing := nodeConstraintKeyValues(node, c.Properties)
+	if missing >= 0 {
+		if c.Type == ConstraintUnique {
+			return nil
 		}
+		message := localization.StorageValidationNodeKeyNull(c.Properties[missing])
+		return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
 	}
 
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {

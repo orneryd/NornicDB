@@ -514,10 +514,7 @@ func TestTxReads_GetEdge_DeletedReturnsNotFound(t *testing.T) {
 }
 
 func TestTxReads_GetOutgoingEdges(t *testing.T) {
-	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
+	tx := beginDirectionalReadFixture(t)
 
 	out := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-2"}, edgeIDs(out))
@@ -556,10 +553,7 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 }
 
 func TestTxReads_GetIncomingEdges(t *testing.T) {
-	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
+	tx := beginDirectionalReadFixture(t)
 
 	in := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:carol"})
 	require.Equal(t, []string{"test:e-follows", "test:e-knows-2"}, edgeIDs(in))
@@ -578,19 +572,14 @@ func TestTxReads_GetIncomingEdges(t *testing.T) {
 }
 
 func TestTxReads_GetEdgesBetween(t *testing.T) {
-	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
+	tx := beginDirectionalReadFixture(t)
 
 	// alice→bob has exactly one edge.
-	got, err := tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
-	require.NoError(t, err)
+	got := readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
 	require.Equal(t, []string{"test:e-knows-1"}, edgeIDs(got))
 
 	// bob→alice has none (directed).
-	got, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:bob", Other: "test:alice"})
-	require.NoError(t, err)
+	got = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:bob", Other: "test:alice"})
 	require.Empty(t, got)
 
 	// Add a second alice→bob edge as pending; the result must
@@ -599,8 +588,7 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 		ID: "test:e-knows-3", StartNode: "test:alice", EndNode: "test:bob",
 		Type: "RIVALS",
 	}))
-	got, err = tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
-	require.NoError(t, err)
+	got = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:alice", Other: "test:bob"})
 	require.Equal(t, []string{"test:e-knows-1", "test:e-knows-3"}, edgeIDs(got))
 }
 
@@ -1057,4 +1045,15 @@ func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request Transacti
 	edges, err := tx.ReadEdges(request)
 	require.NoError(t, err)
 	return edges
+}
+
+// beginDirectionalReadFixture retains the committed graph and rollback lifetime
+// shared by outgoing, incoming and endpoint-pair read controls.
+func beginDirectionalReadFixture(t *testing.T) *BadgerTransaction {
+	t.Helper()
+	engine := txReadFixture(t)
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return tx
 }

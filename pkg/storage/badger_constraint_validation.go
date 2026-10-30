@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // compareValues compares two property values for equality.
@@ -78,23 +79,43 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	if node == nil || schema == nil {
 		return nil
 	}
+	return (nodeConstraintValidation{engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
+}
 
-	constraints := schema.GetConstraintsForLabels(node.Labels)
+// nodeConstraintValidation owns schema iteration, first-error ordering, DOMAIN
+// and property-type policy. Reads remain attached to their actual authority:
+// a transaction's pending/current view or the caller's physical publishing txn.
+// The concrete context avoids interface boxes and retains original error values.
+type nodeConstraintValidation struct {
+	engine      *BadgerEngine
+	native      *badger.Txn
+	schema      *SchemaManager
+	namespace   string
+	exclude     NodeID
+	transaction *BadgerTransaction
+}
+
+func (v nodeConstraintValidation) validate(node *Node) error {
+	constraints := v.schema.GetConstraintsForLabels(node.Labels)
 	for _, c := range constraints {
 		switch c.Type {
 		case ConstraintUnique:
-			if len(c.Properties) > 1 {
-				values := make([]interface{}, len(c.Properties))
-				complete := true
-				for index, property := range c.Properties {
-					values[index] = node.Properties[property]
-					if values[index] == nil {
-						complete = false
-						break
-					}
+			if v.transaction != nil {
+				var err error
+				if len(c.Properties) > 1 {
+					err = v.transaction.checkNodeKeyConstraint(node, c)
+				} else {
+					err = v.transaction.checkUniqueConstraint(node, c)
 				}
-				if complete {
-					if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			if len(c.Properties) > 1 {
+				values, missing := nodeConstraintKeyValues(node, c.Properties)
+				if missing < 0 {
+					if err := v.engine.scanForNodeKeyViolationInTxn(v.native, v.namespace, c.Label, c.Properties, values, v.exclude); err != nil {
 						if violation, ok := err.(*ConstraintViolationError); ok {
 							violation.Type = ConstraintUnique
 						}
@@ -111,45 +132,44 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			if value == nil {
 				continue
 			}
-			if existingNode, found, constrained, cacheComplete := schema.LookupUniqueConstraintValue(c.Label, prop, value); constrained && cacheComplete {
-				if found && existingNode != excludeNodeID {
+			if existingNode, found, constrained, cacheComplete := v.schema.LookupUniqueConstraintValue(c.Label, prop, value); constrained && cacheComplete {
+				if found && existingNode != v.exclude {
 					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 				}
 				continue
 			}
-			if err := b.scanForUniqueViolationInTxn(txn, namespace, c.Label, prop, value, excludeNodeID); err != nil {
+			if err := v.engine.scanForUniqueViolationInTxn(v.native, v.namespace, c.Label, prop, value, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintNodeKey:
-			values := make([]interface{}, len(c.Properties))
-			for i, prop := range c.Properties {
-				values[i] = node.Properties[prop]
-				if values[i] == nil {
-					return &ConstraintViolationError{
-						Type:       ConstraintNodeKey,
-						Label:      c.Label,
-						Properties: c.Properties,
-						Message:    fmt.Sprintf("NODE KEY property %s cannot be null", prop),
-					}
+			if v.transaction != nil {
+				if err := v.transaction.checkNodeKeyConstraint(node, c); err != nil {
+					return err
+				}
+				continue
+			}
+			values, missing := nodeConstraintKeyValues(node, c.Properties)
+			if missing >= 0 {
+				return &ConstraintViolationError{
+					Type: ConstraintNodeKey, Label: c.Label, Properties: c.Properties,
+					Message: fmt.Sprintf("NODE KEY property %s cannot be null", c.Properties[missing]),
 				}
 			}
-			if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
+			if err := v.engine.scanForNodeKeyViolationInTxn(v.native, v.namespace, c.Label, c.Properties, values, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintExists:
+			if v.transaction != nil {
+				if err := v.transaction.checkExistenceConstraint(node, c); err != nil {
+					return err
+				}
+				continue
+			}
 			if len(c.Properties) != 1 {
 				continue
 			}
 			prop := c.Properties[0]
-			if node.Properties == nil {
-				return &ConstraintViolationError{
-					Type:       ConstraintExists,
-					Label:      c.Label,
-					Properties: []string{prop},
-					Message:    fmt.Sprintf("Required property %s is missing", prop),
-				}
-			}
-			if val, ok := node.Properties[prop]; !ok || val == nil {
+			if node.Properties[prop] == nil {
 				return &ConstraintViolationError{
 					Type:       ConstraintExists,
 					Label:      c.Label,
@@ -158,6 +178,12 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 			}
 		case ConstraintTemporal:
+			if v.transaction != nil {
+				if err := v.transaction.checkTemporalConstraint(node, c); err != nil {
+					return err
+				}
+				continue
+			}
 			spec, ok := splitTemporalKeySpec(c.Properties)
 			if !ok {
 				return fmt.Errorf("TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)")
@@ -181,7 +207,7 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 			}
 
-			if err := b.scanForTemporalOverlapInTxn(txn, namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, excludeNodeID); err != nil {
+			if err := v.engine.scanForTemporalOverlapInTxn(v.native, v.namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -189,6 +215,10 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				prop := c.Properties[0]
 				value := node.Properties[prop]
 				if value != nil && !isValueInAllowedList(value, c.AllowedValues) {
+					if v.transaction != nil {
+						message := localization.StorageValidationPropertyDomainInvalid(prop, value, c.AllowedValues)
+						return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{prop}, message, nil)
+					}
 					return &ConstraintViolationError{
 						Type:       ConstraintDomain,
 						Label:      c.Label,
@@ -200,10 +230,14 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 		}
 	}
 
-	typeConstraints := schema.GetPropertyTypeConstraintsForLabels(node.Labels)
+	typeConstraints := v.schema.GetPropertyTypeConstraintsForLabels(node.Labels)
 	for _, c := range typeConstraints {
 		value := node.Properties[c.Property]
 		if err := ValidatePropertyType(value, c.ExpectedType); err != nil {
+			if v.transaction != nil {
+				message := localization.StorageValidationPropertyTypeRequired(c.Property, string(c.ExpectedType), err)
+				return newLocalizedConstraintViolation(ConstraintPropertyType, c.Label, []string{c.Property}, message, err)
+			}
 			return &ConstraintViolationError{
 				Type:       ConstraintPropertyType,
 				Label:      c.Label,
@@ -1110,4 +1144,18 @@ func labelsEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// nodeConstraintKeyValues projects a composite key once in declared property
+// order. A nonnegative index names its first null member; UNIQUE skips that
+// tuple while NODE KEY reports the original property-specific error.
+func nodeConstraintKeyValues(node *Node, properties []string) ([]interface{}, int) {
+	values := make([]interface{}, len(properties))
+	for index, property := range properties {
+		values[index] = node.Properties[property]
+		if values[index] == nil {
+			return values, index
+		}
+	}
+	return values, -1
 }

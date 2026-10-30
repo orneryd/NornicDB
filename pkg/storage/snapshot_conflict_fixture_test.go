@@ -1,20 +1,14 @@
 package storage
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // newSnapshotConflictEngine builds the on-disk engine plus the two edge
 // endpoints every error-classification case in this file starts from.
 func newSnapshotConflictEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newIsolatedBadgerEngine(t)
 	createEdgeEndpoints(t, engine)
 	return engine
 }

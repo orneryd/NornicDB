@@ -84,7 +84,7 @@ func TestBadgerEngine_MVCCNodeLatestSnapshotAndRecreate(t *testing.T) {
 	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "v2"}}}))
 	v2, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
-	require.Equal(t, "v2", mustGetNodeLatestVisible(t, engine, nodeID).Properties["name"])
+	require.Equal(t, "v2", mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["name"])
 
 	require.NoError(t, engine.DeleteNode(nodeID))
 	v3, err := engine.GetNodeCurrentHead(nodeID)
@@ -98,7 +98,7 @@ func TestBadgerEngine_MVCCNodeLatestSnapshotAndRecreate(t *testing.T) {
 	v4, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 	require.False(t, v4.Tombstoned)
-	require.Equal(t, "v4", mustGetNodeLatestVisible(t, engine, nodeID).Properties["name"])
+	require.Equal(t, "v4", mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["name"])
 
 	nodeAtV1, err := engine.GetNodeVisibleAt(nodeID, v1.Version)
 	require.NoError(t, err)
@@ -274,14 +274,13 @@ func TestBadgerEngine_MVCCLatestVisibleFallsBackToVersionRecords(t *testing.T) {
 		Properties: map[string]any{"source": "version-record"},
 	}, nodeVersion))
 
-	latestNode, err := engine.GetNodeLatestVisible(nodeID)
-	require.NoError(t, err)
+	latestNode := mustReadNode(t, engine.GetNodeLatestVisible, nodeID)
 	require.Equal(t, nodeID, latestNode.ID)
 	require.Equal(t, "version-record", latestNode.Properties["source"])
 
 	tombstonedNodeID := NodeID(prefixTestID("mvcc-version-only-tombstone"))
 	require.NoError(t, engine.AppendNodeTombstone(tombstonedNodeID, MVCCVersion{CommitTimestamp: nodeVersion.CommitTimestamp.Add(time.Second), CommitSequence: 12}))
-	_, err = engine.GetNodeLatestVisible(tombstonedNodeID)
+	_, err := engine.GetNodeLatestVisible(tombstonedNodeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	edgeID := EdgeID(prefixTestID("mvcc-version-only-edge"))
@@ -336,7 +335,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// the version keyspace). The critical invariant is that reads
 	// still resolve to the current live body via the primary key.
 	require.LessOrEqual(t, afterHead.Version.Compare(beforeHead.Version), 0)
-	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["version"])
 
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
 	require.NoError(t, err)
@@ -345,7 +344,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// many prior versions were archived — not on the number of
 	// commits. The invariant we care about here is that pruning
 	// preserves the live body (primary key).
-	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustReadNode(t, engine.GetNodeLatestVisible, nodeID).Properties["version"])
 
 	oldVersion, err := engine.GetNodeVisibleAt(nodeID, MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-24 * time.Hour), CommitSequence: ^uint64(0)})
 	if err == nil {
@@ -1271,13 +1270,6 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetEdgesBetweenVisibleAt(NodeID("mvcc-fallback-node-ns"), NodeID("mvcc-fallback-node-ns"), version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-}
-
-func mustGetNodeLatestVisible(t *testing.T, engine *BadgerEngine, id NodeID) *Node {
-	t.Helper()
-	node, err := engine.GetNodeLatestVisible(id)
-	require.NoError(t, err)
-	return node
 }
 
 // mvccAdjacencyHistory declares one write history for a single edge and owns

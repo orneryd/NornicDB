@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"io/fs"
 	"math"
@@ -237,7 +238,7 @@ func TestDocsCorpusFixture_DeterministicAndSufficientScale(t *testing.T) {
 
 func buildDocsSearchFixture(tb testing.TB, chunks []docsCorpusChunk) *Service {
 	tb.Helper()
-	base := newTestMemoryEngine(tb)
+	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "docs-benchmark")
 	svc := NewService(engine, docsVectorDims, nil)
 	svc.resultCache = nil

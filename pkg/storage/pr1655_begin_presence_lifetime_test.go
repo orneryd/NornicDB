@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -18,11 +17,11 @@ func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) 
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, func() time.Time { return clock })
 	require.NoError(t, policy.Refresh())
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir: t.TempDir(), LowMemory: true, WriteBehind: true,
-		WriteBehindInterval: time.Hour, MemoryPolicy: policy,
-	}))
-	require.NoError(t, err)
+	// These cases explicitly control each flush and inspect its exact generation.
+	// Adaptive background draining may replace that generation before capture.
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
+		lowMemory: true, manualDrain: true, memoryPolicy: policy,
+	})
 	return engine, policy
 }
 

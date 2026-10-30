@@ -13,7 +13,7 @@ import (
 // directory. The caller owns dir's lifetime (usually t.TempDir()).
 func newSearchPersistenceTestService(t *testing.T, engine storage.Engine, dir string, hnsw bool) *Service {
 	t.Helper()
-	svc := NewService(engine, 3, nil)
+	svc := ownVectorService(t, engine, 3)
 	svc.FixVectorDimensions()
 	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
 	svc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
@@ -21,6 +21,5 @@ func newSearchPersistenceTestService(t *testing.T, engine storage.Engine, dir st
 		svc.SetHNSWIndexPath(filepath.Join(dir, "hnsw"))
 	}
 	svc.SetPersistenceEnabled(true)
-	t.Cleanup(func() { _ = svc.Close() })
 	return svc
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -18,21 +19,8 @@ func tracedSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	previous := otel.GetTracerProvider()
-	otel.SetTracerProvider(provider)
-	t.Cleanup(func() {
-		otel.SetTracerProvider(previous)
-		_ = provider.Shutdown(context.Background())
-	})
+	fixtureowner.InstallTracerProvider(t, provider, nil)
 	return recorder
-}
-
-func tracedSpanAttrs(s sdktrace.ReadOnlySpan) map[string]string {
-	attrs := make(map[string]string, len(s.Attributes()))
-	for _, a := range s.Attributes() {
-		attrs[string(a.Key)] = a.Value.Emit()
-	}
-	return attrs
 }
 
 // tracedSpanNamed returns the single ended span with the given name, failing the
@@ -149,7 +137,7 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 				"facade must keep its distinct operation span name")
 			require.Equal(t, trace.SpanKindInternal, storageSpan.SpanKind(),
 				"storage spans must be SpanKindInternal")
-			require.Equal(t, step.want.kind, tracedSpanAttrs(storageSpan)["kind"],
+			require.Equal(t, step.want.kind, fixtureowner.SpanAttrs(storageSpan.Attributes())["kind"],
 				"storage spans must carry the entity kind attribute")
 			require.Equal(t, parent.SpanContext().SpanID(), storageSpan.Parent().SpanID(),
 				"storage span must be parented by the SetContext context")
@@ -171,7 +159,7 @@ func TestTracedEngine_SpanEndsOnBackingPanic(t *testing.T) {
 	require.Len(t, spans, 1, "span must be ended even though the backing call panicked")
 	require.Equal(t, "nornicdb.storage.DeleteNode", spans[0].Name())
 	require.Equal(t, trace.SpanKindInternal, spans[0].SpanKind())
-	require.Equal(t, "node", tracedSpanAttrs(spans[0])["kind"])
+	require.Equal(t, "node", fixtureowner.SpanAttrs(spans[0].Attributes())["kind"])
 }
 
 // panickingEngine panics from a mutation method to prove span lifetime is tied to

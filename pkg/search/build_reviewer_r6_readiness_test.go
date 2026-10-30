@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"log/slog"
 	"os"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
-	engine := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
+	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)

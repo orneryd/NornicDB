@@ -5,9 +5,9 @@
 package storagefault
 
 import (
-	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -16,24 +16,11 @@ import (
 // Entered, then waits for Release before UpdateNode returns. Consumers can
 // then commit another write before the caller's refresh runs. No goroutine
 // stacks are inspected.
-type PostUpdateBarrier struct {
-	// Armed is a pointer because a collection store that opens engines per
-	// request must share one arm across the engines it returns.
-	Armed   *atomic.Bool
-	Entered chan struct{}
-	Release chan struct{}
-	opened  sync.Once
-}
+type PostUpdateBarrier struct{ *testfixture.PauseGate }
 
-// NewPostUpdateBarrier returns a barrier with its channels allocated. ReleaseWrites is
-// idempotent so a failed test releases a paused writer from cleanup.
+// NewPostUpdateBarrier returns a shared gate with a post-success storage adapter.
 func NewPostUpdateBarrier() *PostUpdateBarrier {
-	return &PostUpdateBarrier{Armed: new(atomic.Bool), Entered: make(chan struct{}), Release: make(chan struct{})}
-}
-
-// ReleaseWrites releases a paused writer; later calls do nothing.
-func (barrier *PostUpdateBarrier) ReleaseWrites() {
-	barrier.opened.Do(func() { close(barrier.Release) })
+	return &PostUpdateBarrier{PauseGate: testfixture.NewPauseGate()}
 }
 
 // PauseUpdateAfterCommit returns engine wrapped so it shares this barrier.
@@ -49,9 +36,8 @@ type barrierUpdateEngine struct {
 
 func (e *barrierUpdateEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	err := e.Engine.UpdateNode(updateRequest)
-	if err == nil && e.barrier.Armed.CompareAndSwap(true, false) {
-		close(e.barrier.Entered)
-		<-e.barrier.Release
+	if err == nil {
+		e.barrier.Pause(e.barrier.Armed, e.barrier.Entered)
 	}
 	return err
 }
@@ -75,9 +61,6 @@ func NewConsumerBarrier(engine storage.Engine) *ConsumerBarrier {
 }
 
 func (b *ConsumerBarrier) DeleteNode(id storage.NodeID) error {
-	if b.DeleteArm.CompareAndSwap(true, false) {
-		close(b.DeleteEntered)
-		<-b.Release
-	}
+	b.Pause(&b.DeleteArm, b.DeleteEntered)
 	return b.Engine.DeleteNode(id)
 }

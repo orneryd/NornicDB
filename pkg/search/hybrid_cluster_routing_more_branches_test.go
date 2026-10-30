@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 
 func buildClusteredServiceForRouting(t *testing.T) *Service {
 	t.Helper()
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "a1", Properties: map[string]interface{}{"text": "alpha one"}, ChunkEmbeddings: [][]float32{{1, 0}}}))
@@ -66,7 +67,7 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 
 func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 	t.Run("nil_fields_and_nonclustered_empty_index", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.applyBM25SeedHints() // nil cluster/fulltext
 
 		svc.EnableClustering(nil, 2)
@@ -75,7 +76,7 @@ func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 	})
 
 	t.Run("no_indices_for_seed_ids", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 2)
 		require.NoError(t, svc.clusterIndex.Add("existing", []float32{1, 0}))
 		svc.setFulltext(&seedOverrideFulltext{FulltextIndexV2: NewFulltextIndexV2WithAnalyzer(nil), seedIDs: []string{"missing"}})

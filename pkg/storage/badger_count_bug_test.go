@@ -1,22 +1,8 @@
 package storage
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
-
-// newBadgerCountEngine builds the real on-disk BadgerEngine the count tests
-// use; no AsyncEngine or WALEngine is wrapped around it.
-func newBadgerCountEngine(t *testing.T) *BadgerEngine {
-	t.Helper()
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-	return engine
-}
 
 // TestBadgerEngine_UpdateNode_WasInsertAfterDelete tests that UpdateNode
 // correctly detects new nodes as inserts after all nodes have been deleted.
@@ -32,7 +18,7 @@ func TestBadgerEngine_UpdateNode_WasInsertAfterDelete(t *testing.T) {
 		recreateIsUpdate: true,
 		nameProperties:   true,
 		wantCounts:       [3]int64{10, 0, 5},
-	}.run(t, newBadgerCountEngine(t))
+	}.run(t, newIsolatedBadgerEngine(t))
 }
 
 // TestBadgerEngine_UpdateNode_WasInsertWithSameIDs tests what happens when
@@ -44,5 +30,5 @@ func TestBadgerEngine_UpdateNode_WasInsertWithSameIDs(t *testing.T) {
 		recreateIsUpdate: true,
 		recreateLabel:    "Test",
 		wantCounts:       [3]int64{5, 0, 5},
-	}.run(t, newBadgerCountEngine(t))
+	}.run(t, newIsolatedBadgerEngine(t))
 }

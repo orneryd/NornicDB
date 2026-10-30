@@ -4,61 +4,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// privilegeBatchFailure rejects the second selected operation in each real
-// staged transaction, after the first has been staged. One counter/transaction
-// adapter owns CREATE, DELETE and immutable UPDATE failure schedules.
-type privilegeMutation uint8
-
-const (
-	privilegeCreate privilegeMutation = iota + 1
-	privilegeDelete
-	privilegeUpdate
-)
-
-type privilegeBatchFailure struct {
-	storage.Engine
-	failure privilegeMutation
-	calls   int
-}
-
-func (e *privilegeBatchFailure) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		staged := *e
-		staged.Engine = view
-		return mutate(&staged)
-	})
-}
-func (e *privilegeBatchFailure) rejects(operation privilegeMutation) bool {
-	if operation != e.failure {
-		return false
-	}
-	e.calls++
-	return e.calls == 2
-}
-func (e *privilegeBatchFailure) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if e.rejects(privilegeCreate) {
-		return "", errSystemStorage
-	}
-	return e.Engine.CreateNode(node)
-}
-func (e *privilegeBatchFailure) DeleteNode(id storage.NodeID) error {
-	if e.rejects(privilegeDelete) {
-		return errSystemStorage
-	}
-	return e.Engine.DeleteNode(id)
-}
-func (e *privilegeBatchFailure) UpdateNode(request storage.NodeUpdateRequest) error {
-	if e.rejects(privilegeUpdate) {
-		return errSystemStorage
-	}
-	return e.Engine.UpdateNode(request)
-}
-
+// The privilege batches' mutations: the second selected operation fails in the
+// real staged transaction, after the first has been staged. The shared
+// storage fault fixture owns the selection and the staged view.
 func TestProcedurePrivilegeBatchFailureChangesNothing(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		t.Run(map[bool]string{false: "grant", true: "revoke"}[revoke], func(t *testing.T) {
@@ -66,18 +20,17 @@ func TestProcedurePrivilegeBatchFailureChangesNothing(t *testing.T) {
 			system := storage.NewNamespacedEngine(newTestMemoryEngine(t), "system")
 			store := auth.NewProcedurePrivilegeStore(system)
 			query := "GRANT EXECUTE PROCEDURE db.a, db.b ON DBMS TO viewer"
+			operation := storagefault.MutationCreate
 			if revoke {
 				require.NoError(t, store.Grant(ctx, "viewer", "db.a", false, false))
 				require.NoError(t, store.Grant(ctx, "viewer", "db.b", false, false))
 				query = "REVOKE EXECUTE PROCEDURE db.a, db.b ON DBMS FROM viewer"
+				operation = storagefault.MutationDelete
 			}
 			before, err := store.List(ctx)
 			require.NoError(t, err)
-			failure := privilegeCreate
-			if revoke {
-				failure = privilegeDelete
-			}
-			exec := NewStorageExecutor(&privilegeBatchFailure{Engine: system, failure: failure})
+			faults := storagefault.NewMutationFailureEngine(system, operation, errSystemStorage, 2, auth.WithStoreTransaction)
+			exec := NewStorageExecutor(faults)
 			_, err = exec.Execute(ctx, query, nil)
 			require.ErrorIs(t, err, errSystemStorage)
 			after, err := store.List(ctx)
@@ -95,7 +48,8 @@ func TestImmutableUpgradeFailureChangesNothing(t *testing.T) {
 	require.NoError(t, grants.Grant(ctx, "viewer", "db.b", false, false))
 	before, err := grants.List(ctx)
 	require.NoError(t, err)
-	exec := NewStorageExecutor(&privilegeBatchFailure{Engine: system, failure: privilegeUpdate})
+	faults := storagefault.NewMutationFailureEngine(system, storagefault.MutationUpdate, errSystemStorage, 2, auth.WithStoreTransaction)
+	exec := NewStorageExecutor(faults)
 	_, err = exec.Execute(ctx, "GRANT IMMUTABLE EXECUTE PROCEDURE db.a, db.b ON DBMS TO viewer", nil)
 	require.ErrorIs(t, err, errSystemStorage)
 	after, err := grants.List(ctx)

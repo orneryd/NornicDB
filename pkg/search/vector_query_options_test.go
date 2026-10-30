@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
 	"testing"
@@ -27,7 +28,7 @@ func (g *efRecordingGen) SearchCandidates(ctx context.Context, _ []float32, _ in
 
 func newOptionsTestService(t *testing.T, dims int, nodes ...*storage.Node) *Service {
 	t.Helper()
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	svc := NewService(engine, dims, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	for _, node := range nodes {

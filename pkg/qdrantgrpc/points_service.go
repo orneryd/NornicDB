@@ -869,25 +869,54 @@ func (s *PointsService) SearchBatch(ctx context.Context, req *qpb.SearchBatchPoi
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("search_points"), grpcresponse.QdrantSourceFallback)
 	}
 
-	results := make([]*qpb.BatchResult, 0, len(req.SearchPoints))
-	for _, sp := range req.SearchPoints {
-		if sp == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		// Ensure child request uses parent collection name (SDKs typically set it).
-		sp.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.SearchPoints, req.CollectionName, batchNilAsEmpty, func(sp *qpb.SearchPoints) *string { return &sp.CollectionName }, func(ctx context.Context, sp *qpb.SearchPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Search(ctx, sp)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.SearchBatchResponse{
 		Result: results,
 		Time:   time.Since(start).Seconds(),
 	}, nil
+}
+
+// batchEachChild is the batch workflow SearchBatch and RecommendBatch share:
+// a present child is pointed at the parent's collection name (SDKs typically
+// set it, but the parent is authoritative) through the child's collection-name
+// field, which only this owner writes; a nil child contributes an empty result
+// under batchNilAsEmpty. QueryBatch dispatches nil to its original validator.
+// The first child error ends the batch without a
+// partial result. Only the per-child operation differs.
+type batchNilChildPolicy uint8
+
+const (
+	batchNilAsEmpty batchNilChildPolicy = iota
+	batchDispatchNil
+)
+
+func batchEachChild[T any](ctx context.Context, children []*T, collectionName string, nilPolicy batchNilChildPolicy, named func(*T) *string, operation func(context.Context, *T) (*qpb.BatchResult, error)) ([]*qpb.BatchResult, error) {
+	results := make([]*qpb.BatchResult, 0, len(children))
+	for _, child := range children {
+		if child == nil && nilPolicy == batchNilAsEmpty {
+			results = append(results, &qpb.BatchResult{Result: nil})
+			continue
+		}
+		if child != nil {
+			*named(child) = collectionName
+		}
+		result, err := operation(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
 }
 
 func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints) (*qpb.RecommendResponse, error) {
@@ -949,18 +978,15 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.RecommendPoints))
-	for _, r := range req.RecommendPoints {
-		if r == nil {
-			results = append(results, &qpb.BatchResult{Result: nil})
-			continue
-		}
-		r.CollectionName = req.CollectionName
+	results, err := batchEachChild(ctx, req.RecommendPoints, req.CollectionName, batchNilAsEmpty, func(r *qpb.RecommendPoints) *string { return &r.CollectionName }, func(ctx context.Context, r *qpb.RecommendPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Recommend(ctx, r)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.RecommendBatchResponse{
@@ -1053,37 +1079,31 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 }
 
 func (s *PointsService) CreateFieldIndex(ctx context.Context, req *qpb.CreateFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
-	start := time.Now()
-
-	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
-		return nil, err
-	}
-	if req.FieldName == "" {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
-	}
-
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
-		return nil, err
-	}
-	// NornicDB schema indexes are managed internally; treat as a no-op.
-
-	return &qpb.PointsOperationResponse{
-		Result: &qpb.UpdateResult{Status: qpb.UpdateStatus_Completed},
-		Time:   time.Since(start).Seconds(),
-	}, nil
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
 }
 
 func (s *PointsService) DeleteFieldIndex(ctx context.Context, req *qpb.DeleteFieldIndexCollection) (*qpb.PointsOperationResponse, error) {
+	return s.fieldIndexOperation(ctx, req.GetCollectionName(), func() string { return req.FieldName })
+}
+
+// fieldIndexOperation is the shared workflow of the field-index endpoints. They
+// differ only in the operation being completed: both admit the collection for
+// write, require a field name, and open the collection, but NornicDB manages
+// schema indexes internally, so neither has anything left to do.
+func (s *PointsService) fieldIndexOperation(ctx context.Context, collectionName string, requestFieldName func() string) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
 
-	if err := s.admitCollection(ctx, req.GetCollectionName(), pointCollectionWrite); err != nil {
+	if err := s.admitCollection(ctx, collectionName, pointCollectionWrite); err != nil {
 		return nil, err
 	}
-	if req.FieldName == "" {
+	// Read request fields after admission, preserving the original nil-request
+	// ordering even when authorization rejects the request.
+	fieldName := requestFieldName()
+	if fieldName == "" {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("field_name"), grpcresponse.QdrantSourceFallback)
 	}
 
-	if _, _, err := s.openCollection(ctx, req.CollectionName); err != nil {
+	if _, _, err := s.openCollection(ctx, collectionName); err != nil {
 		return nil, err
 	}
 
@@ -1166,16 +1186,15 @@ func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoint
 	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
-	results := make([]*qpb.BatchResult, 0, len(req.GetQueryPoints()))
-	for _, q := range req.GetQueryPoints() {
-		if q != nil {
-			q.CollectionName = req.GetCollectionName()
-		}
+	results, err := batchEachChild(ctx, req.GetQueryPoints(), req.GetCollectionName(), batchDispatchNil, func(q *qpb.QueryPoints) *string { return &q.CollectionName }, func(ctx context.Context, q *qpb.QueryPoints) (*qpb.BatchResult, error) {
 		resp, err := s.Query(ctx, q)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, &qpb.BatchResult{Result: resp.Result})
+		return &qpb.BatchResult{Result: resp.Result}, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &qpb.QueryBatchResponse{

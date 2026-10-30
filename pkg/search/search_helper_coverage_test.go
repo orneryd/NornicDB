@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"path/filepath"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 )
 
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
@@ -33,7 +35,7 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 }
 
 func TestPropertyVectorHelpers(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewService(engine, 4, nil)
@@ -88,7 +90,7 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
 
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 	svc = NewService(engine, 2, nil)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")

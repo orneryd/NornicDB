@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,7 @@ import (
 // TestSetIndexFlags — defaults are (true, true); SetIndexFlags reports change
 // when at least one value differs from the previous.
 func TestSetIndexFlags(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 	require.True(t, svc.BM25Enabled())
 	require.True(t, svc.VectorEnabled())
 
@@ -87,7 +88,7 @@ func TestBuildIndexes_FlagCombinations(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewService(newTestMemoryEngine(t), 4, nil)
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 			svc.SetIndexFlags(tc.bm25, tc.vector)
 
 			require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -99,7 +100,7 @@ func TestBuildIndexes_FlagCombinations(t *testing.T) {
 
 // TestIndexNode_BothDisabled — IndexNode is a no-op when both flags are off.
 func TestIndexNode_BothDisabled(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 	svc.SetIndexFlags(false, false)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
@@ -145,7 +146,7 @@ func TestVectorQueryNodes_PassiveWhenLiveIndexEmpty(t *testing.T) {
 func TestEnsureWarm(t *testing.T) {
 	// when not lazy, EnsureWarm returns nil without firing the trigger.
 	t.Run("no-op when not lazy", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 
 		var triggers atomic.Int32
 		svc.SetLazyWarming(false, WarmFunc(func() {
@@ -159,7 +160,7 @@ func TestEnsureWarm(t *testing.T) {
 	// when lazy, the trigger fires exactly once across concurrent
 	// first-readers and all readers block until the build completes.
 	t.Run("triggers once and waiters block", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 
 		var triggers atomic.Int32
 		startBuild := make(chan struct{})
@@ -216,7 +217,7 @@ func TestEnsureWarm(t *testing.T) {
 // ctx.Err(), but a subsequent reader finds the service warm because the
 // build runs in the owner's long-lived ctx.
 func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 
 	buildStarted := make(chan struct{})
 	buildFinished := make(chan struct{})
@@ -257,7 +258,7 @@ func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
 // TestMarkReadyDisabled — explicit short-circuit for the boot-orchestrator
 // "both disabled" path.
 func TestMarkReadyDisabled(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 4, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 	svc.SetIndexFlags(false, false)
 	svc.MarkReadyDisabled()
 

@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"testing"
 	"time"
 
@@ -18,14 +20,13 @@ func newMutationTestAuthenticator(t *testing.T, system storage.Engine) *Authenti
 	config.BcryptCost = 4
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	config.DefaultAdminUsername = ""
-	users, err := NewAuthenticator(config, system)
-	require.NoError(t, err)
-	return users
+	return mustNewAuthenticator(t, config, system)
 }
 
-func combinedUserFixture(t *testing.T) (*Authenticator, *mutationFault) {
+func combinedUserFixture(t *testing.T) (*Authenticator, *storagefault.MutationFailureEngine) {
 	t.Helper()
-	fault := &mutationFault{Engine: newSystemTestEngine(t)}
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	fault := storagefault.NewMutationFailureEngine(storage.NewNamespacedEngine(base, "system"), "", errRoleMutation, 0, WithStoreTransaction)
 	users := newMutationTestAuthenticator(t, fault)
 	_, err := users.CreateUser("worker", "password123", []Role{RoleViewer})
 	require.NoError(t, err)
@@ -38,7 +39,7 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 			users, fault := combinedUserFixture(t)
 			disabled := kind != "enable"
 			if kind == "enable" {
-				require.NoError(t, users.DisableUser("worker"))
+				require.NoError(t, users.ChangeUserState("worker", UserDisable))
 			}
 			before := cloneStoredUser(users.users["worker"])
 			beforeNode, err := fault.Engine.GetNode("user:worker")
@@ -51,9 +52,9 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			} else if kind == "roles" {
-				fault.rejectUpdate = func(*storage.Node) bool { return true }
+				fault.RejectUpdate = func(*storage.Node) bool { return true }
 			} else {
-				fault.rejectUpdate = func(node *storage.Node) bool { return node.Properties["disabled"] == disabled }
+				fault.RejectUpdate = func(node *storage.Node) bool { return node.Properties["disabled"] == disabled }
 			}
 			err = users.UpdateRolesAndStatus(ctx, "worker", []Role{RoleAdmin}, &disabled)
 			if kind == "commit" {
@@ -77,13 +78,11 @@ func TestCombinedUserChangePublishesAfterCommit(t *testing.T) {
 	user.LockedUntil = time.Now().Add(time.Hour)
 	require.NoError(t, users.saveUser(user, nil))
 	var events []AuditEvent
-	users.auditLog = func(event AuditEvent) {
-		node, err := fault.Engine.GetNode("user:worker")
-		require.NoError(t, err)
+	observeStoredUserAudit(t, users, fault.Engine, func(event AuditEvent, node *storage.Node) {
 		require.Equal(t, `["admin"]`, node.Properties["roles"])
 		require.Equal(t, false, node.Properties["disabled"])
 		events = append(events, event)
-	}
+	})
 	disabled := false
 	require.NoError(t, users.UpdateRolesAndStatus(context.Background(), "worker", []Role{RoleAdmin}, &disabled))
 	require.Equal(t, []Role{RoleAdmin}, users.users["worker"].Roles)
@@ -103,4 +102,15 @@ func TestCombinedUserChangeOptionalFields(t *testing.T) {
 	require.NoError(t, users.UpdateRolesAndStatus(ctx, "worker", nil, &disabled))
 	require.Equal(t, []Role{RoleEditor}, users.users["worker"].Roles)
 	require.True(t, users.users["worker"].Disabled)
+}
+
+// observeStoredUserAudit owns the committed-record read performed by success
+// audit proofs. Each case retains its original seed, transition and assertions.
+func observeStoredUserAudit(t *testing.T, users *Authenticator, engine storage.Engine, observe func(AuditEvent, *storage.Node)) {
+	t.Helper()
+	users.auditLog = func(event AuditEvent) {
+		node, err := engine.GetNode("user:worker")
+		require.NoError(t, err, "audit observes a durably committed record")
+		observe(event, node)
+	}
 }

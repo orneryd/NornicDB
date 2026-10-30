@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"sync"
 	"testing"
@@ -25,7 +26,7 @@ import (
 
 func newContinuationCatalogService(t *testing.T) (*Service, storage.Engine) {
 	t.Helper()
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	return service, engine

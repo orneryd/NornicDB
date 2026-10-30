@@ -12,7 +12,9 @@ import (
 
 func currentRolesAuthenticator(t testing.TB) (*Authenticator, *RoleStore) {
 	t.Helper()
-	engine := newSystemTestEngine(t)
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = base.Close() })
+	engine := storage.NewNamespacedEngine(base, "system")
 	config := DefaultAuthConfig()
 	config.DefaultAdminUsername = ""
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
@@ -121,7 +123,7 @@ func TestTokenOfRemovedAccountAuthorizesNothing(t *testing.T) {
 			case "deleted":
 				require.NoError(t, authenticator.DeleteUser("carol"))
 			case "disabled":
-				require.NoError(t, authenticator.DisableUser("carol"))
+				require.NoError(t, authenticator.ChangeUserState("carol", UserDisable))
 			case "deleted and recreated":
 				require.NoError(t, authenticator.DeleteUser("carol"))
 				_, err = authenticator.CreateUser("carol", "password123", []Role{RoleAdmin})

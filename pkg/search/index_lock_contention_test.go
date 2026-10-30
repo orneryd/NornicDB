@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestIndexNode_DoesNotBlockSearchStateReads(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 4, nil)
 
 	tmpDir := t.TempDir()

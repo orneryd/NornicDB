@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,7 +52,7 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

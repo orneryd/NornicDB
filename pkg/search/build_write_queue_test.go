@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
 	"path/filepath"
@@ -33,7 +34,7 @@ type nodeSnapshotGateEngine struct {
 
 func newNodeSnapshotGateEngine(t *testing.T) *nodeSnapshotGateEngine {
 	t.Helper()
-	e := &nodeSnapshotGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
+	e := &nodeSnapshotGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
 	return e
 }
@@ -256,7 +257,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := newTestMemoryEngine(t)
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 			require.NoError(t, err)

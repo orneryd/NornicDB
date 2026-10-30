@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go account state changes use `ChangeUserState(username, UserEnable | UserDisable | UserUnlock)` in place of separate enable/disable/unlock methods. User edits share one durable publication and audit boundary; see the [account mutation guide](docs/development/account-state-api.md).
+
 - Go node runtime provenance and flags use `RuntimeMetadata` / `SetRuntimeMetadata`
   and immutable shared records. Stored and replication wire formats stay unchanged;
   see the [Go migration guide](docs/development/node-runtime-metadata.md).

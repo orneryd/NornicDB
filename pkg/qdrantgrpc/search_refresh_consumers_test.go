@@ -57,20 +57,10 @@ func (c *consumerBarrierCollections) wait(t *testing.T) {
 // An upsert's late index call must not resurrect a point deleted after its
 // storage write.
 func TestQdrantUpsertIndexCannotResurrectDelete(t *testing.T) {
-	ctx := context.Background()
-	points, barrier, svc, store := setupConsumerPoints(t)
-	pid := &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 73}}
-	_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{1, 0, 0, 0}))
-	require.NoError(t, err)
-	require.Positive(t, svc.EmbeddingCount())
-	barrier.barrier.Armed.Store(true)
-	done := make(chan error, 1)
-	go func() {
-		_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 1, 0, 0}))
-		done <- err
-	}()
-	barrier.wait(t)
-	_, err = points.Delete(ctx, &qpb.DeletePoints{CollectionName: "test_vectors", Points: &qpb.PointsSelector{PointsSelectorOneOf: &qpb.PointsSelector_Points{Points: &qpb.PointsIdsList{Ids: []*qpb.PointId{pid}}}}})
+	ctx, points, barrier, svc, store, pid, done := pauseConsumerUpsert(t, 73, func(_ context.Context, svc *search.Service) {
+		require.Positive(t, svc.EmbeddingCount())
+	})
+	_, err := points.Delete(ctx, &qpb.DeletePoints{CollectionName: "test_vectors", Points: &qpb.PointsSelector{PointsSelectorOneOf: &qpb.PointsSelector_Points{Points: &qpb.PointsIdsList{Ids: []*qpb.PointId{pid}}}}})
 	require.NoError(t, err)
 	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
@@ -81,22 +71,12 @@ func TestQdrantUpsertIndexCannotResurrectDelete(t *testing.T) {
 
 // An upsert's late index call must not replace a newer upsert's vector.
 func TestQdrantUpsertIndexCannotOverwriteNewerUpsert(t *testing.T) {
-	ctx := context.Background()
-	points, barrier, svc, store := setupConsumerPoints(t)
-	pid := &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 74}}
-	_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{1, 0, 0, 0}))
-	require.NoError(t, err)
-	control, err := svc.VectorSearchCandidates(ctx, []float32{1, 0, 0, 0}, search.DefaultSearchOptions())
-	require.NoError(t, err)
-	require.NotEmpty(t, control, "harness: an upserted vector is searchable")
-	barrier.barrier.Armed.Store(true)
-	done := make(chan error, 1)
-	go func() {
-		_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 1, 0, 0}))
-		done <- err
-	}()
-	barrier.wait(t)
-	_, err = points.Upsert(ctx, consumerUpsert(pid, []float32{0, 0, 1, 0}))
+	ctx, points, barrier, svc, store, pid, done := pauseConsumerUpsert(t, 74, func(ctx context.Context, svc *search.Service) {
+		control, err := svc.VectorSearchCandidates(ctx, []float32{1, 0, 0, 0}, search.DefaultSearchOptions())
+		require.NoError(t, err)
+		require.NotEmpty(t, control, "harness: an upserted vector is searchable")
+	})
+	_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 0, 1, 0}))
 	require.NoError(t, err)
 	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
@@ -107,4 +87,26 @@ func TestQdrantUpsertIndexCannotOverwriteNewerUpsert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "the newer stored vector is not in the index: an older upsert replaced it")
 	require.InDelta(t, 1.0, candidates[0].Score, 1e-3, "an older upsert's vector replaced the newer stored vector")
+}
+
+// pauseConsumerUpsert owns the shared seed, arm, worker and wait schedule.
+// The optional control runs before arming so searchability remains a precondition.
+func pauseConsumerUpsert(t *testing.T, id uint64, control func(context.Context, *search.Service)) (context.Context, *PointsService, *consumerBarrierCollections, *search.Service, storage.Engine, *qpb.PointId, <-chan error) {
+	t.Helper()
+	ctx := context.Background()
+	points, barrier, svc, store := setupConsumerPoints(t)
+	pid := &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: id}}
+	_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{1, 0, 0, 0}))
+	require.NoError(t, err)
+	if control != nil {
+		control(ctx, svc)
+	}
+	barrier.barrier.Armed.Store(true)
+	done := make(chan error, 1)
+	go func() {
+		_, err := points.Upsert(ctx, consumerUpsert(pid, []float32{0, 1, 0, 0}))
+		done <- err
+	}()
+	barrier.wait(t)
+	return ctx, points, barrier, svc, store, pid, done
 }

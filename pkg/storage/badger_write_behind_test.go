@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,9 +17,10 @@ type writeBehindTestOptions struct {
 	dataDir string
 	wal     bool
 	// Existing callers keep the background write-behind worker by default.
-	synchronous bool
-	manualDrain bool
-	lowMemory   bool
+	synchronous  bool
+	manualDrain  bool
+	lowMemory    bool
+	memoryPolicy *memory.Policy
 }
 
 func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
@@ -38,6 +40,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		LowMemory:           opts.lowMemory,
 		WriteBehind:         !opts.synchronous,
 		WriteBehindInterval: interval,
+		MemoryPolicy:        opts.memoryPolicy,
 	}))
 	if engine != nil {
 		fixtureowner.OwnChecked(t, engine)
