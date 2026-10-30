@@ -263,8 +263,9 @@ func jsonPublicStorageNodes(payloadBytes int) []*storage.Node {
 			ID: storage.NodeID(fmt.Sprintf("jsonbench:n%03d", i)), Labels: []string{"JSONPublicDoc"}, Properties: properties,
 			CreatedAt: created, UpdatedAt: created.Add(time.Hour),
 			NamedEmbeddings: map[string][]float32{"title": {1, 2}}, ChunkEmbeddings: [][]float32{{3, 4}},
-			EmbedMeta: map[string]any{"chunk_count": int64(1), "has_embedding": true}, VisibilitySuppressed: true,
+			EmbedMeta: map[string]any{"chunk_count": int64(1), "has_embedding": true},
 		}
+		nodes[i].SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
 	}
 	return nodes
 }
