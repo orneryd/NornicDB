@@ -156,7 +156,7 @@ func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properti
 		b.nodeBodyCacheMu.RUnlock()
 		return nil, true
 	}
-	node := shapeNode(entry.node, properties, true, false)
+	node := copyShaped(entry.node, properties, true)
 	b.nodeBodyCacheMu.RUnlock()
 	return node, true
 }

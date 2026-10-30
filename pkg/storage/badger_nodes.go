@@ -444,7 +444,7 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
-	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection)
+	}, func(node *Node) *Node { return copyShaped(node, properties, true) }, nodeReadCacheProjection)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately

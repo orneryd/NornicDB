@@ -2092,7 +2092,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 		if tx.engine != nil && tx.engine.visibilityFiltered() && tx.engine.filterEntityByDecay(visibleRead, &view, DecayScoringTime()) {
 			return nil, ErrNotFound
 		}
-		return projectCachedNodeForRead(image.node, properties, true), nil
+		return copyShaped(image.node, properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok && (tx.engine == nil || !tx.engine.visibilityFiltered()) {
 		sidecar := false
@@ -2101,7 +2101,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 			return nil
 		})
 		if !sidecar {
-			return projectCachedNodeForRead(node, properties, true), nil
+			return copyShaped(node, properties, true), nil
 		}
 	}
 	if tx.readTS.IsZero() {
@@ -2143,7 +2143,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 		}
 	}
 	if err == nil && tx.cacheSnapshotReadNodeLocked(node, nodeItemBodyOnly, properties) {
-		return projectCachedNodeForRead(node, properties, true), nil
+		return copyShaped(node, properties, true), nil
 	}
 	return node, err
 }
@@ -2438,7 +2438,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		if owned {
 			return node
 		}
-		return shapeNode(node, nil, strip, false)
+		return copyShaped(node, nil, strip)
 	}
 	// The engine's images, when nothing here retains them: a node this
 	// transaction deleted or rewrote is skipped before it is delivered.
@@ -2454,7 +2454,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 			if pending, exists := tx.pendingNodes[image.ID]; exists {
 				seen[image.ID] = struct{}{}
 				if pending != nil && slices.Contains(pending.Labels, label) {
-					return invokeVisit(shapeNode(pending, properties, strip, false))
+					return invokeVisit(copyShaped(pending, properties, strip))
 				}
 				return nil
 			}
@@ -2482,7 +2482,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		if pending, exists := tx.pendingNodes[node.ID]; exists {
 			seen[node.ID] = struct{}{}
 			if pending != nil && slices.Contains(pending.Labels, label) {
-				return invokeVisit(shapeNode(pending, properties, strip, false))
+				return invokeVisit(copyShaped(pending, properties, strip))
 			}
 			return nil
 		}
@@ -2703,7 +2703,7 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 				}
 				if opts.StripEmbeddings {
 					// MVCC iteration decodes a private node: reshape it in place.
-					node = shapeNode(node, opts.Projection, true, true)
+					node = shapeOwned(node, opts.Projection, true)
 				}
 				return emit(node)
 			}, opts)
@@ -2770,7 +2770,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 			continue
 		}
 		// Pending nodes are retained by the transaction: one copy, shaped.
-		if err := visit(shapeNode(node, properties, strip, false)); err != nil {
+		if err := visit(copyShaped(node, properties, strip)); err != nil {
 			return err
 		}
 	}

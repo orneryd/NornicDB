@@ -137,7 +137,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 		return nil, ErrNotFound
 	}
 	// The record was decoded for this read: transfer it, no second copy.
-	node := shapeNode(record.Node, properties, true, true)
+	node := shapeOwned(record.Node, properties, true)
 	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -267,7 +267,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 			}
 			if matched {
 				// getNodeAtInTxn returned this read's own node: reshape in place.
-				if err := visit(shapeNode(node, properties, false, true)); err != nil {
+				if err := visit(shapeOwned(node, properties, false)); err != nil {
 					return err
 				}
 			}

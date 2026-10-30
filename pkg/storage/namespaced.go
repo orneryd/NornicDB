@@ -226,7 +226,7 @@ func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*No
 			return node, err
 		}
 		// GetNode returned a caller-owned node: select in place.
-		return shapeNode(node, properties, false, true), nil
+		return shapeOwned(node, properties, false), nil
 	}
 
 	return materializedRead(func() (*Node, error) { return projected.GetNodeProjected(n.PrefixNodeID(id), properties) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)

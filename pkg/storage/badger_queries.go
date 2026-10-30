@@ -522,28 +522,13 @@ func mergeWriteBehindEntities[I any, K comparable](committed, overlay []I, touch
 	return out
 }
 
-func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool) *Node {
-	return shapeNode(node, properties, stripEmbeddings, false)
-}
-
-// shapeNode is the single owner of a delivered node's shape: the selected user
-// properties (all for nil) and, when stripped, no vector payloads. Labels and
-// embedding metadata stay part of every shape. A retained node is copied once,
-// straight into that shape, so omitted properties and vectors are never
-// copied; an owned node (already a caller copy) is reshaped in place instead
-// of being copied again (NOR-160).
-func shapeNode(node *Node, properties []string, stripEmbeddings, owned bool) *Node {
+// copyShaped makes a retained node's one structural copy, straight into its
+// delivered shape: the selected user properties (all for nil) and, when
+// stripped, no vector payloads. Labels and embedding metadata are part of
+// every shape. Omitted properties and vectors are never copied (NOR-160).
+func copyShaped(node *Node, properties []string, stripEmbeddings bool) *Node {
 	if node == nil {
 		return nil
-	}
-	if owned {
-		if stripEmbeddings {
-			node.ChunkEmbeddings, node.NamedEmbeddings = nil, nil
-		}
-		if properties != nil {
-			node.Properties = selectProperties(node.Properties, properties, false)
-		}
-		return node
 	}
 	if properties == nil {
 		if stripEmbeddings {
@@ -561,6 +546,29 @@ func shapeNode(node *Node, properties []string, stripEmbeddings, owned bool) *No
 	}
 	shaped.Properties = selectProperties(node.Properties, properties, true)
 	return shaped
+}
+
+// shapeOwned reshapes a node the read decoded for its caller, in place: the
+// same shape as copyShaped, without a copy (NOR-160).
+func shapeOwned(node *Node, properties []string, stripEmbeddings bool) *Node {
+	if node == nil {
+		return nil
+	}
+	if stripEmbeddings {
+		node.ChunkEmbeddings, node.NamedEmbeddings = nil, nil
+	}
+	if properties != nil {
+		node.Properties = selectProperties(node.Properties, properties, false)
+	}
+	return node
+}
+
+// shapeNode delivers a nodeImage until the image types are removed.
+func shapeNode(node *Node, properties []string, stripEmbeddings, owned bool) *Node {
+	if owned {
+		return shapeOwned(node, properties, stripEmbeddings)
+	}
+	return copyShaped(node, properties, stripEmbeddings)
 }
 
 // selectProperties keeps the requested keys; copied values come from the
@@ -1012,7 +1020,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 	// this read is already the caller's and is only reshaped.
 	for id, node := range result {
 		if decoded[id] {
-			result[id] = shapeNode(node, nil, !embeddings, true)
+			result[id] = shapeOwned(node, nil, !embeddings)
 			continue
 		}
 		result[id] = copyForRead(node)

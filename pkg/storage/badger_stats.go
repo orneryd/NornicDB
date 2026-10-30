@@ -908,7 +908,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		}
 		if opts.StripEmbeddings {
 			// The decoded or cache-copied node is already the caller's.
-			node = shapeNode(node, nil, true, true)
+			node = shapeOwned(node, nil, true)
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
