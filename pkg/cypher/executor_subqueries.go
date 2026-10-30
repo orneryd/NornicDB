@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -6,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
@@ -423,8 +425,29 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 
 // parseCallSubquery is the compatibility adapter for body/plan consumers. The
 // shared grammar owns the body boundary and the complete transactional spec.
-func (e *StorageExecutor) parseCallSubquery(ctx context.Context, cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
-	call, err := readCallClause(ctx, cypher)
+func (e *StorageExecutor) parseCallSubquery(ctx context.Context, clause pipelineClause) (queryBody, string, bool, *transactionBatchSpec) {
+	if ctx.Err() != nil {
+		return queryBody{}, "", false, nil
+	}
+	call := readCallClause(clause)
+	body := readQueryBody(clause.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody))
+	if stripped, finishes := stripUnionBranchFinishes(ctx, body.executionText); finishes && strings.TrimSpace(stripped) != "" {
+		body.executionText = stripped
+		for i := range body.branches {
+			branch := &body.branches[i]
+			if text, removed := stripUnionBranchFinishes(ctx, branch.executionText); removed {
+				branch.executionText = text
+			}
+			branch.finished = false
+		}
+	}
+	return body, call.After, call.Batch != nil, call.Batch
+}
+
+// parseCallSubqueryText preserves independent native/source admission. Retained
+// statement consumers pass their pipelineClause to parseCallSubquery above.
+func (e *StorageExecutor) parseCallSubqueryText(ctx context.Context, cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
+	call, err := readCallClauseText(ctx, cypher)
 	if err != nil {
 		return "", "", false, nil
 	}
@@ -441,13 +464,13 @@ func (e *StorageExecutor) parseCallSubquery(ctx context.Context, cypher string) 
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
 func callSubqueryHasScopeClause(ctx context.Context, cypher string) bool {
-	return readCallSubqueryScope(ctx, cypher).scoped
+	return readCallSubqueryScopeText(ctx, cypher).scoped
 }
 
 // parseCallSubqueryImportVariables is the legacy names-only view. Scope and
 // result-schema consumers use StatementFacts, which preserves syntax errors.
 func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]string, error) {
-	scope := readCallSubqueryScope(ctx, cypher)
+	scope := readCallSubqueryScopeText(ctx, cypher)
 	if scope.invalid {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
@@ -458,7 +481,7 @@ func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]str
 // UNION / UNION ALL body: every branch of a CALL subquery imports the same
 // outer variables.
 func prefixUnionBranches(ctx context.Context, prefix, body string) string {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, body)
+	branches, unionAll, mixed, ok := parseTopLevelUnionTextBranches(ctx, body)
 	if !ok || mixed || len(branches) < 2 {
 		return prefix + " " + body
 	}
@@ -700,8 +723,7 @@ func isLeadingWithFollower(word string) bool {
 // (callSubqueryHasScopeClause).
 //
 // names is filled only when collectNames.
-func unscopedCallImports(ctx context.Context, source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	body := readQueryBody(ctx, source, 0, len(source))
+func unscopedCallImports(ctx context.Context, body queryBody, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
 	for _, branch := range body.branches {
 		next, imports, failure := branchSyntaxImports(branch, outer, collectNames)
 		if failure != nil {
@@ -715,8 +737,7 @@ func unscopedCallImports(ctx context.Context, source string, outer func(string) 
 	return names, importing, nil
 }
 
-func branchLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
-	body := readQueryBody(ctx, source, 0, len(source))
+func branchLeadingWithImport(ctx context.Context, body queryBody, outer func(string) bool, collectNames bool) ([]string, bool, error) {
 	if len(body.branches) == 0 {
 		return nil, false, nil
 	}
@@ -755,7 +776,7 @@ func branchSyntaxImports(branch queryBodyBranch, outer func(string) bool, collec
 // of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
 // import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(ctx context.Context, branch string, names []string) []string {
+func unscopedBranchLocals(ctx context.Context, branch queryBody, names []string) []string {
 	var locals []string
 	for _, name := range names {
 		if branchDeclaresVariable(ctx, branch, name) {
@@ -771,8 +792,8 @@ func unscopedBranchLocals(ctx context.Context, branch string, names []string) []
 // (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(ctx, strings.TrimSpace(branch))
+func branchDeclaresVariable(ctx context.Context, branch queryBody, variable string) bool {
+	clauses, ok := splitPipelineClauses(ctx, branch)
 	if !ok {
 		return false
 	}
@@ -1078,19 +1099,31 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 // parseTopLevelUnionBranches preserves whether a composition mixes UNION and
 // UNION ALL so callers can report the Cypher semantic error rather than
 // treating the statement as an unsplittable query.
-func parseTopLevelUnionBranches(ctx context.Context, query string) (branches []string, unionAllMode, mixed, ok bool) {
-	body := readQueryBody(ctx, query, 0, len(query))
+func parseTopLevelUnionBranches(ctx context.Context, body queryBody) (branches []queryBody, unionAllMode, mixed, ok bool) {
 	if body.status == queryBodyDeclined || len(body.branches) < 2 {
 		return nil, false, false, false
 	}
 	unionAllMode = true
 	for i, branch := range body.branches {
-		branches = append(branches, query[branch.start:branch.end])
+		branches = append(branches, body.branch(i))
 		if i > 0 && !branch.unionAll {
 			unionAllMode = false
 		}
 	}
 	return branches, unionAllMode, body.status == queryBodyMixedUnion, true
+}
+
+// parseTopLevelUnionTextBranches is the explicit source admission boundary.
+func parseTopLevelUnionTextBranches(ctx context.Context, query string) (branches []string, unionAllMode, mixed, ok bool) {
+	body := readQueryBodyText(ctx, query, 0, len(query))
+	_, unionAllMode, mixed, ok = parseTopLevelUnionBranches(ctx, body)
+	if !ok {
+		return nil, unionAllMode, mixed, false
+	}
+	for _, branch := range body.branches {
+		branches = append(branches, query[branch.start:branch.end])
+	}
+	return branches, unionAllMode, mixed, true
 }
 func (e *StorageExecutor) refreshCallSeedNodeValues(ctx context.Context, seedRow []interface{}, colMap map[string]int, importVars []string, stats *QueryStats) ([]interface{}, error) {
 	if !queryStatsMayContainNodeMutation(stats) {
@@ -1961,3 +1994,8 @@ var (
 	// callPropertyAccessPattern is a variable.property reference in a CALL.
 	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
 )
+
+// Text adapters admit genuinely independent input at the existing parser owner.
+func branchTextLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collect bool) ([]string, bool, error) {
+	return branchLeadingWithImport(ctx, readQueryBodyText(ctx, source, 0, len(source)), outer, collect)
+}

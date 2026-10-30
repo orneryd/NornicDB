@@ -132,7 +132,7 @@ func pipelineWriteStretchConflicts(ctx context.Context, stretch, after []pipelin
 // analyzeStretchClause is the write-stretch consumer of the shared effect
 // owner. It has no clause or expression scanner of its own.
 func analyzeStretchClause(ctx context.Context, clause pipelineClause, reads, writes *stretchTokens) {
-	effects, err := pipelineClauseEffectsFor(ctx, clause.text)
+	effects, err := executionClauseEffects(ctx, clause)
 	if err != nil {
 		reads.everything = true
 		writes.everything = true

@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -24,9 +25,9 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 	require.True(t, patternHasRelationship("(a)-->(b)"))
 
 	// Admitted source without a complete AS definition has no alias offset.
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "AS x", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "x AS", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "n.alias", projectionAdmitted).as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "AS x").as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "x AS").as)
+	require.Equal(t, -1, projectionItemForTest(t.Context(), "n.alias").as)
 
 	// findSubqueryExpressions stops at an unterminated backtick.
 	require.Empty(t, findSubqueryExpressions("`abc COUNT { (a) }"))

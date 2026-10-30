@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -69,7 +70,7 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 	if !strings.Contains(upperQuery, "UNION") {
 		return false, false
 	}
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	branches, unionAll, mixed, ok := parseTopLevelUnionTextBranches(ctx, cypher)
 	if !ok {
 		return false, false
 	}
@@ -370,16 +371,16 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	}
 
 	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
-	items := body
-	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
-		items = strings.TrimSpace(items[:cut])
+	// The statement's own retained RETURN occurrence supplies every item and
+	// the plan; no item or body is reframed as RETURN text (Claude R17 agent).
+	returned, found := returnClauseAt(ctx, cypher, returnIdx)
+	var parts []string
+	if found {
+		for _, item := range projectionItemsFromSyntax(returned.syntax) {
+			parts = append(parts, item.expression)
+		}
 	}
-	items, _ = cutDistinct(items)
-	parts := splitTopLevelComma(items)
-	for index, part := range parts {
-		// Same alias parsing as every projection (readProjectionItemSource).
-		part = readProjectionItemSource(ctx, strings.TrimSpace(part), projectionAdmitted).expression
-		parts[index] = part
+	for _, part := range parts {
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
@@ -399,8 +400,10 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, "RETURN "+body); ok {
-		return result, nil
+	if found {
+		if result, ok := e.pipelineApplyReturnPlan(ctx, []pipelineRow{row}, projectionPlanOf(ctx, returned.syntax), pipelineRowsSource([]pipelineRow{row}), false); ok {
+			return result, nil
+		}
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure

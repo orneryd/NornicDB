@@ -403,7 +403,7 @@ func TestCoverageLiftUnwindAndRelationshipBatchEdgeBranches(t *testing.T) {
 	restQuery := `MATCH (source:Service {key: row.source_key})
 MERGE (source)-[rel:PUBLISHES {uuid: row.uuid}]->(target)
 RETURN row.uuid AS uuid`
-	_, handled, err := exec.executeUnwindRelationshipMergeBatch(ctx, "row", batchRows, restQuery)
+	_, handled, err := exec.executeUnwindRelationshipMergeBatch(ctx, "row", batchRows, queryBodyForTest(t.Context(), restQuery))
 	assert.False(t, handled)
 	require.NoError(t, err)
 }

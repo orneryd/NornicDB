@@ -1,3 +1,4 @@
+// Author of retained presentation inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -32,7 +33,7 @@ func preserveStatementPresentation(ctx context.Context, source, canonical string
 		}
 		return prior.Text, prior
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return source, nil
 	}

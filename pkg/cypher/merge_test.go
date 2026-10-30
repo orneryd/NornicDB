@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Tests for MERGE clause functionality, including relationship error handling
 // and idempotent operations.
 // Based on Neo4j's MERGE semantics: if MATCH finds results → use those, else CREATE
@@ -627,12 +628,12 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 	ctx := context.Background()
 
 	row := []pipelineRow{e.mergeBindingRow(ctx, nodeCtx, relCtx)}
-	result, err := e.projectMergeReturn(ctx, row, "RETURN *")
+	result, err := e.projectMergeReturnForTest(ctx, row, "RETURN *")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b", "r"}, result.Columns)
 	require.Len(t, result.Rows, 1)
 
-	result, err = e.projectMergeReturn(ctx, row, "RETURN a.name AS name, id(a) AS aid")
+	result, err = e.projectMergeReturnForTest(ctx, row, "RETURN a.name AS name, id(a) AS aid")
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "aid"}, result.Columns)
 	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)
@@ -1033,7 +1034,7 @@ func TestExecuteMergeRelSegment_ErrorBranches(t *testing.T) {
 
 func pipelineClauseTextsForTest(t *testing.T, query string) []string {
 	t.Helper()
-	clauses, ok := splitPipelineClauses(t.Context(), strings.TrimSpace(query))
+	clauses, ok := splitPipelineTextClauses(t.Context(), strings.TrimSpace(query))
 	require.True(t, ok)
 	texts := make([]string, len(clauses))
 	for index, clause := range clauses {
@@ -1043,7 +1044,7 @@ func pipelineClauseTextsForTest(t *testing.T, query string) []string {
 }
 
 func TestMergeSharedClauseBoundariesAndLeadingNoiseRejection(t *testing.T) {
-	clauses, ok := splitPipelineClauses(t.Context(), "   ")
+	clauses, ok := splitPipelineTextClauses(t.Context(), "   ")
 	require.False(t, ok)
 	require.Empty(t, clauses)
 	texts := pipelineClauseTextsForTest(t, "MATCH (n) OPTIONAL MATCH (m) FOREACH (x IN [1] | SET m.v = x) RETURN m")

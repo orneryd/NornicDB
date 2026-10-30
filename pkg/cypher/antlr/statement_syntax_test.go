@@ -1,3 +1,4 @@
+// Author of private inspection entry migration: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -165,16 +166,21 @@ func TestStatementSyntaxScopeSelectionWindows(t *testing.T) {
 }
 func TestStatementSyntaxWholeSourceIdentityAcrossAdapters(t *testing.T) {
 	source := "WITH 1 AS uniqueCanonicalIdentity CALL { WITH uniqueCanonicalIdentity RETURN uniqueCanonicalIdentity AS value } RETURN value"
-	fragment, err := ParseSyntax(context.Background(), source, FragmentEntry, false, RawSource)
+	fragment, err := ParseSyntax(context.Background(), source, fragmentEntry, false, RawSource)
 	require.NoError(t, err)
 	statement, err := ParseSyntax(context.Background(), source, StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_script, fragment.Root().Rule())
-	require.Same(t, fragment.data, statement.data, "a fragment adapter must retain the whole statement's node identities")
+	require.Equal(t, CypherParserRULE_script, statement.Root().Rule())
+	require.Same(t, fragment.data, statement.data, "inspection and admission share the canonical statement product")
+	require.Equal(t, fragment.Origin(), statement.Origin())
+	promoted, err := ParseSyntax(context.Background(), source, fragmentEntry, false, RawSource)
+	require.NoError(t, err)
+	require.Same(t, statement.data, promoted.data, "a validated Script becomes the shared product for its source")
 	prior, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", ClauseEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_subqueryBody, prior.Root().Rule())
-	full, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", FragmentEntry, false, RawSource)
+	full, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", StatementEntry, false, RawSource)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_script, full.Root().Rule(), "a scope-independent adapter cannot replace a statement with a different entry's tree")
 }

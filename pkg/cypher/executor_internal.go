@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -177,7 +178,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
 		return nil, err
 	}
-	if err := e.validateDuplicateReturnColumnName(ctx, cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
+	if err := e.validateDuplicateReturnColumnName(ctx, readQueryBodyText(ctx, cypher, 0, len(cypher)), quotedVariableNamesFor(ctx, cypher)); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
@@ -223,7 +224,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	// Only parse parameterized arithmetic when an operand's actual type can
 	// be rejected; ordinary numeric hot paths keep their single cheap scan.
 	if len(params) > 0 && parameterMayMismatchOperator(cypher, params) {
-		if clauses, ok := splitPipelineClauses(ctx, cypher); ok {
+		if clauses, ok := splitPipelineTextClauses(ctx, cypher); ok {
 			for _, clause := range clauses {
 				if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{cypher25: cypherVersionFromContext(ctx) == "25"}, nil, params); err != nil {
 					return err

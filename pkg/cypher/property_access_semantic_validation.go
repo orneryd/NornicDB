@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -45,7 +46,7 @@ func validatePropertyAccessTypes(ctx context.Context, cypher string, params map[
 // outer map is never modified. Declaration validity belongs to the shared
 // semantic scope walk; this visitor only tracks property receiver types.
 func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map[string]string, params map[string]interface{}) error {
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	clauses, ok := splitPipelineTextClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -85,8 +86,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			next := types
 			if clause.kind == pipelineClauseWith {
 				next = map[string]string{}
-				for _, raw := range splitTopLevelComma(body) {
-					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+				for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 					expression, alias := itemSource.expression, itemSource.alias
 					if expression == "*" {
 						for variable, typeName := range types {
@@ -121,7 +121,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			}
 			types = next
 		case pipelineClauseUnwind:
-			expression, alias, ok := parsePipelineIteration(text)
+			expression, alias, ok := parsePipelineIteration(clause)
 			if !ok {
 				continue
 			}

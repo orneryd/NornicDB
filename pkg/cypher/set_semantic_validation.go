@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -21,11 +22,15 @@ func (e *StorageExecutor) validateSetSemanticScopes(ctx context.Context, cypher 
 		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	return e.validateSetSemanticBody(ctx, readQueryBodyText(ctx, cypher, 0, len(cypher)), newSemanticBindingScope(), imports...)
+}
+
+func (e *StorageExecutor) validateSetSemanticBody(ctx context.Context, body queryBody, scope *semanticBindingScope, imports ...string) error {
+	clauses, ok := splitPipelineClauses(ctx, body)
 	if !ok {
 		return nil
 	}
-	return e.validateMutationClauseScopes(ctx, clauses, newSemanticBindingScope(), imports...)
+	return e.validateMutationClauseScopes(ctx, clauses, scope, imports...)
 }
 
 func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
@@ -40,12 +45,12 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 			}
 			// Path variables (p = (…)), with the pipeline's own binder.
 			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(ctx, e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
+			addPipelinePatternBindings(patternBindings, clause)
 			for name := range patternBindings {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause)
 			for _, name := range imports {
 				scope.bind(name)
 			}
@@ -54,7 +59,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseSet:
@@ -62,7 +67,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseForeach:
-			body := queryBodyFromSyntax(clause.syntax)
+			body := readQueryBody(clause.syntax)
 			if body.status != queryBodyRead || body.foreach == nil {
 				return invalidForeachError()
 			}

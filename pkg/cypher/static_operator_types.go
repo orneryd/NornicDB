@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -1473,8 +1474,8 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 		rest := text[len(keyword)+len(projection):]
 		projection, _ = cutDistinct(projection)
 		if mayNeedStaticTypeCheck(projection) {
-			for _, item := range splitTopLevelComma(projection) {
-				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
+			for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
+				expression := itemSource.expression
 				if mayNeedStaticTypeCheck(expression) {
 					if err := visit(expression, false); err != nil {
 						return err
@@ -1483,7 +1484,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 			}
 		}
 		if mayNeedStaticTypeCheck(rest) {
-			return forEachProjectedTailExpression(ctx, projection, rest, func(expression string) error {
+			return forEachProjectedTailExpression(ctx, clause, rest, func(expression string) error {
 				if !mayNeedStaticTypeCheck(expression) {
 					return nil
 				}
@@ -1516,7 +1517,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 			}
 		}
 	case pipelineClauseUnwind:
-		return visit(unwindSourceExpression(text), false)
+		return visit(unwindSourceExpression(clause), false)
 	}
 	return nil
 }
@@ -1529,7 +1530,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 // and is left out; the item itself is checked with the incoming scope
 // (RETURN size(s) AS s ORDER BY size(s)). projection is the item list, with
 // or without its RETURN / WITH [DISTINCT] keyword.
-func forEachProjectedTailExpression(ctx context.Context, projection, rest string, visit func(expression string) error) error {
+func forEachProjectedTailExpression(ctx context.Context, projection pipelineClause, rest string, visit func(expression string) error) error {
 	if where := topLevelKeywordIndex(rest, "WHERE"); where >= 0 {
 		if err := visit(clauseTextUntil(rest, where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")); err != nil {
 			return err
@@ -1539,17 +1540,9 @@ func forEachProjectedTailExpression(ctx context.Context, projection, rest string
 	if order < 0 {
 		return nil
 	}
-	projection = strings.TrimSpace(projection)
-	for _, keyword := range [...]string{"RETURN", "WITH"} {
-		if startsWithKeywordFold(projection, keyword) {
-			projection = projection[len(keyword):]
-			break
-		}
-	}
-	projection, _ = cutDistinct(strings.TrimSpace(projection))
-	items := splitTopLevelComma(projection)
+	items := projectionItemsFromSyntax(projection.syntax)
 	item := func(index int) (string, string) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(items[index]), projectionAdmitted)
+		itemSource := items[index]
 		return itemSource.expression, itemSource.alias
 	}
 	for _, term := range parseOrderByClause(clauseTextUntil(rest, order+len("ORDER BY"), "SKIP", "LIMIT", "WHERE")) {
@@ -1580,23 +1573,13 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		if projectedScope != nil {
 			predicateScope = projectedScope()
 		}
-		checker := staticOperatorChecker{scope: predicateScope, params: params}
-		operand, err := checker.check(predicate)
-		if err != nil {
-			return err
-		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := validateStaticPredicateOperatorTypes(predicate, predicateScope, params); err != nil {
 			return err
 		}
 	}
 	if clause.kind == pipelineClauseFilter {
 		predicate := pipelineFilterExpression(clause.text)
-		checker := staticOperatorChecker{scope: scope, params: params}
-		operand, err := checker.check(predicate)
-		if err != nil {
-			return err
-		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := validateStaticPredicateOperatorTypes(predicate, scope, params); err != nil {
 			return err
 		}
 	}
@@ -1612,6 +1595,18 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		_, err := checker.check(expression)
 		return err
 	})
+}
+
+// validateStaticPredicateOperatorTypes owns boolean predicate checking for
+// grammar clauses and native command tails alike. Native SHOW does not invent
+// a WITH clause to ask the expression owner to check its actual predicate.
+func validateStaticPredicateOperatorTypes(predicate string, scope staticTypeScope, params map[string]interface{}) error {
+	checker := staticOperatorChecker{scope: scope, params: params}
+	operand, err := checker.check(predicate)
+	if err != nil {
+		return err
+	}
+	return requireBooleanOperand(operand)
 }
 
 // parameterMayMismatchOperator reports whether a $parameter next to an

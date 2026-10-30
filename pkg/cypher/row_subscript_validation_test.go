@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -96,9 +97,9 @@ func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
 	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}
 
-	err := exec.validatePipelineSizeArguments(t.Context(), rows, "RETURN size(p)", "RETURN")
+	err := exec.validatePipelineSizeArguments(t.Context(), rows, retainedClauseForTest(t.Context(), "RETURN size(p)"), "RETURN")
 	require.Error(t, err)
-	err = exec.validatePipelineSizeArguments(t.Context(), nil, "RETURN size((a)-->(b))", "RETURN")
+	err = exec.validatePipelineSizeArguments(t.Context(), nil, retainedClauseForTest(t.Context(), "RETURN size((a)-->(b))"), "RETURN")
 	require.Error(t, err)
 }
 

@@ -1,3 +1,4 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -29,8 +30,7 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		writes := startsWithKeywordFold(body, "CREATE")
 		return statementExecutionContract{writes: writes, transaction: writes}, nil
 	}
-	cypher25 := cypherVersionFromContext(ctx) == "25"
-	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
+	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return statementExecutionContract{}, err
 	}

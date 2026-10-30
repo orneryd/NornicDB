@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -100,7 +101,7 @@ func visitedQueryBodyContainers(t *testing.T, containers []string, queries []str
 	t.Helper()
 	visited := map[string]bool{}
 	for _, query := range queries {
-		require.NoError(t, forEachQueryBody(t.Context(), query, containers, func(container string, _, _ int) error {
+		require.NoError(t, forEachQueryBodyText(t.Context(), query, containers, func(container string, _, _ int) error {
 			visited[container] = true
 			return nil
 		}))
@@ -160,10 +161,10 @@ func TestQueryBodyContainersMatchGrammar(t *testing.T) {
 			require.True(t, known, "rule %s names unknown witness %q", rule, witness)
 			bad := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b }")
 			good := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b } RETURN 1 AS c")
-			err := validateQueryBodyComposition(t.Context(), bad)
+			err := validateQueryBodyTextComposition(t.Context(), bad)
 			require.Error(t, err, "%s (%s): %s", rule, witness, bad)
 			require.Contains(t, err.Error(), "Query cannot conclude with CALL", bad)
-			require.NoError(t, validateQueryBodyComposition(t.Context(), good), "%s (%s): %s", rule, witness, good)
+			require.NoError(t, validateQueryBodyTextComposition(t.Context(), good), "%s (%s): %s", rule, witness, good)
 		}
 	})
 }

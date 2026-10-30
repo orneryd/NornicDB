@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- Author of the retained Cypher syntax entry: Codex R17 implementation agent. -->
+
 All notable changes to NornicDB will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -137,6 +139,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the database manager. Enforce constituent access modes before remote
   dispatch, including dynamic graph selections and execution without a grant
   resolver; preserve read-only alias reads and writable-alias writes.
+
+- Reuse retained statement syntax for nested CALL, clause, scope and operand
+  inspection instead of parsing overlapping query fragments again. Keep the
+  original and current statement products scoped to their execution, and retain
+  full-context syntax diagnostics when fast prediction needs a retry. Avoid
+  unnecessary dotted-name prediction while preserving USE-prefix results and
+  diagnostics.
 
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;

@@ -44,7 +44,7 @@ func TestTransactionalReviewCommitBoundaries(t *testing.T) {
 
 func TestTransactionalReviewBareCreateEffects(t *testing.T) {
 	for _, query := range []string{"CREATE (a)", "CREATE (a)-[:R]->(b)"} {
-		effects, err := pipelineClauseEffectsFor(context.Background(), query)
+		effects, err := clauseEffectsForTest(context.Background(), query)
 		require.NoError(t, err)
 		if query == "CREATE (a)" {
 			require.True(t, effects.chainWrites.anyNode, "a standalone bare CREATE creates a node")

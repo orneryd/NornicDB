@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -155,7 +156,7 @@ func TestPipelineQuantifierAcrossRepeatedHorizons(t *testing.T) {
 		switch clause.kind {
 		case pipelineClauseWith:
 			var handled bool
-			rows, handled = exec.pipelineApplyWith(ctx, rows, clause.text, nil, false)
+			rows, handled = exec.pipelineApplyWithTextForTest(ctx, rows, clause.text, nil, false)
 			require.True(t, handled, "WITH clause %d: %s", index, clause.text)
 		case pipelineClauseUnwind:
 			var handled bool

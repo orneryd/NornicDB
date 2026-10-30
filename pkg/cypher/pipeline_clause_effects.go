@@ -1,3 +1,4 @@
+// Author of retained effect-inspection consumption: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -23,26 +24,21 @@ type pipelineClauseEffects struct {
 
 var pipelineClauseEffectCache = newBoundedCache[string, pipelineClauseEffects](4096, boundedCacheStringShardIndex)
 
-func pipelineClauseEffectsFor(ctx context.Context, text string) (pipelineClauseEffects, error) {
-	return pipelineSyntaxEffects(ctx, text, false)
-}
-
+// pipelineStatementEffectsFor reads a statement's effects through the query
+// owner; the former clause-entry text path is gone (Claude R17 agent).
 func pipelineStatementEffectsFor(ctx context.Context, text string) (pipelineClauseEffects, error) {
-	return pipelineSyntaxEffects(ctx, text, true)
+	return pipelineSyntaxEffects(ctx, text)
 }
 
 // pipelineSyntaxEffects is an effect-only compatibility consumer. The bound
 // statement compiler composes its own binding observer with this same observer;
 // an effect-cache hit can never stand in for scope completeness.
-func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pipelineClauseEffects, error) {
-	entry, key := cypherantlr.ClauseEntry, text
-	if statement {
-		entry, key = cypherantlr.StatementEntry, "\x00"+text
-	}
+func pipelineSyntaxEffects(ctx context.Context, text string) (pipelineClauseEffects, error) {
+	key := "\x00" + text
 	if effects, found := pipelineClauseEffectCache.get(key); found {
 		return effects, ctx.Err()
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, text, entry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	syntax, err := cypherantlr.QuerySyntax(ctx, text, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return pipelineClauseEffects{}, err
 	}

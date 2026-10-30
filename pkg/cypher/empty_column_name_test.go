@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -53,6 +54,10 @@ func TestColumnNamesOnEveryRoute(t *testing.T) {
 	require.Empty(t, result.Rows)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 
-	_, ok := callTailWithProjectionColumns(t.Context(), "WITH a,,b")
+	// An empty WITH item is not an admitted clause; no column list exists.
+	clause, ok := fixtureClauseForTest(t.Context(), "WITH a,,b")
+	if ok {
+		_, ok = callTailWithProjectionColumns(t.Context(), clause)
+	}
 	require.False(t, ok)
 }

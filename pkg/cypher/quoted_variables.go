@@ -287,7 +287,9 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // scanQuotedTokens classifies quoted names and non-plain variable identities
 // in a quoted query using the same retained syntax walk.
 func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	// Author: Codex R17 implementer. Names consume the existing inspection
+	// product; statement admission retains its own error contract.
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	} // Syntax admission owns this statement's error.

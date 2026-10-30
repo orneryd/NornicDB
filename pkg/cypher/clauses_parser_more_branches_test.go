@@ -37,12 +37,12 @@ func TestParseUnwindNodePatternClauseInternal_MoreBranches(t *testing.T) {
 }
 
 func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
-	_, ok := parseUnwindWithClause(t.Context(), "WITH")
+	_, ok := parseUnwindWithClause(t.Context(), "WITH", "WITH")
 	require.False(t, ok)
-	_, ok = parseUnwindWithClause(t.Context(), "WITH n AS")
+	_, ok = parseUnwindWithClause(t.Context(), "WITH n AS", "WITH n AS")
 	require.False(t, ok)
 
-	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.k AS k, score AS s")
+	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.k AS k, score AS s", "WITH n, row.k AS k, score AS s")
 	require.True(t, ok)
 	require.Len(t, withPlan.assignments, 2)
 	require.Equal(t, "k", withPlan.assignments[0].alias)
@@ -55,12 +55,12 @@ func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "n.k = row.k", wherePlan.clause)
 
-	alias, ok := parseUnwindBatchCountReturn(t.Context(), "RETURN count(*) AS total")
+	alias, ok := parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(*) AS total"))
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
-	_, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN sum(x) AS total")
+	_, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN sum(x) AS total"))
 	require.False(t, ok)
-	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*)")
+	alias, ok = parseUnwindBatchCountReturn(countReturnPlanForTest(t.Context(), "RETURN count(*)"))
 	require.True(t, ok)
 	require.Equal(t, "count(*)", alias)
 

@@ -1,3 +1,4 @@
+// Author of retained query compilation: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -69,7 +70,11 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		statement := resultmetadata.Statement{Start: 0, End: len(compiler.source), Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(command.columns()), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: 0, End: len(compiler.source), Before: projectionScope(incoming), After: scope}}}
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25, cypherantlr.AcceptedSource)
+	syntax := compiler.syntax
+	var err error
+	if !syntax.Valid() {
+		syntax, err = cypherantlr.QuerySyntax(ctx, compiler.source, compiler.cypher25, cypherantlr.AcceptedSource)
+	}
 	if ctx.Err() != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
 	}
@@ -100,8 +105,8 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
-	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
-	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)
+	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, columns: map[int]resultmetadata.Columns{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
+	body := compilation.prepareBody(ctx, readQueryBody(query), query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
 	input := projectedNameMap(incoming)
@@ -196,6 +201,7 @@ func (compilation *boundCompilation) prepareBody(ctx context.Context, shape quer
 		compilation.event(last).leave = append(compilation.event(last).leave, func() {
 			branch.statement.After = projectionScope(projectedMapNames(branch.scope))
 			branch.statement.Columns = branch.columns
+			compilation.product.columns[branchShape.syntax.ID()] = branch.columns
 			compilation.current, compilation.clause = previousBranch, previousClause
 		})
 		if branchShape.useSyntax.Valid() {
@@ -240,7 +246,7 @@ func (compilation *boundCompilation) prepareUse(ctx context.Context, branch *bou
 		for name, id := range branch.body.graph.outerIDs {
 			ids[name] = id
 		}
-		compilation.clause = &boundClause{branch: branch, source: queryBodyClause{syntax: node}, before: input, after: input, beforeIDs: ids, afterIDs: ids}
+		compilation.clause = &boundClause{branch: branch, source: queryBodyClauseFromSyntax(node), before: input, after: input, beforeIDs: ids, afterIDs: ids}
 		scope := projectionScope(projectedMapNames(branch.scope))
 		branch.statement.Clauses = append(branch.statement.Clauses, resultmetadata.Clause{Kind: resultmetadata.ClauseUse, Start: start, End: end, Before: scope, After: scope})
 	})
@@ -277,11 +283,11 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 	})
 	if source.kind == pipelineClauseCallSubquery {
 		node := source.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
-		start, end, _ := callClauseBody(ctx, source)
-		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(node), node, start, end)
+		start, end := node.Span()
+		clause.body = compilation.prepareBody(ctx, readQueryBody(node), node, start, end)
 	}
 	if source.kind == pipelineClauseForeach {
-		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(source.syntax), source.syntax, source.start, source.end)
+		clause.body = compilation.prepareBody(ctx, readQueryBody(source.syntax), source.syntax, source.start, source.end)
 	}
 	// Expression subqueries have an isolated projected scope. Their names do
 	// not leak out of the expression, but every input read must still bind.
@@ -478,6 +484,7 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 			clause.branch.columns = resultmetadata.KnownColumnAlternatives(proc.Spec.ResultSchemas())
 		}
 	}
+	compilation.product.columns[clause.source.syntax.ID()] = clause.branch.columns
 	clause.branch.ids = clause.afterIDs
 }
 

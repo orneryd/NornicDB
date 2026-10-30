@@ -987,6 +987,8 @@ useGraphPrefix
     : {p.useGraphKeyword()}? ID
     | {!p.useGraphKeyword()}?
     ;
+// Author of the R17 first-follower correction: Codex, 27 October 2026.
+// A complete reference cannot end before DOT; later follower tokens stay opaque.
 useReferencePrefix
-    : useClause .* EOF
+    : useClause (~DOT .*)? EOF
     ;

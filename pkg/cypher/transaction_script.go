@@ -9,7 +9,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-var txCaseRollbackPattern = regexp.MustCompile(`(?is)^CASE\s+WHEN\s+(.+?)\s+THEN\s+ROLLBACK\s+ELSE\s+RETURN\s+(.+?)\s+COMMIT\s*$`)
+var txCaseRollbackPattern = regexp.MustCompile(`(?is)^CASE\s+WHEN\s+(.+?)\s+THEN\s+ROLLBACK\s+ELSE\s+(RETURN\s+.+?)\s+COMMIT\s*$`)
 
 // transactionScriptShape reports whether query is one of the one-statement
 // transaction script forms — BEGIN … COMMIT / ROLLBACK, including the
@@ -137,7 +137,8 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return nil, localizedError(localization.CypherTransactionsCaseSyntaxInvalid(), nil)
 	}
 	conditionExpr := strings.TrimSpace(matches[1])
-	returnExpr := strings.TrimSpace(matches[2])
+	// matches[2] is the script's own RETURN … occurrence (Claude R17 agent).
+	returnStatement := matches[2]
 
 	if _, err := e.handleBegin(); err != nil {
 		return nil, err
@@ -165,7 +166,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return e.handleRollback()
 	}
 
-	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
+	projected, err := e.projectTransactionReturn(ctx, callResult, returnStatement)
 	if err != nil {
 		return nil, e.abortTransaction(ctx, err)
 	}
@@ -176,15 +177,12 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	return projected, nil
 }
 
-func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnStatement string) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(input.Rows))
 	for _, row := range input.Rows {
 		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
 	}
-	if strings.TrimSpace(returnExpr) == "" {
-		returnExpr = "*"
-	}
-	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnExpr)
+	projected, err := e.projectMergeReturn(ctx, rows, returnStatement, 0)
 	if err != nil {
 		return nil, err
 	}

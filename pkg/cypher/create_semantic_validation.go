@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -41,7 +42,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isMetadataCommand(cypher, metadataCreateAdmission) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
+	clauses, ok := splitPipelineTextClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -57,13 +58,13 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
@@ -82,11 +83,9 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	return nil
 }
 
-func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause pipelineClause) *semanticBindingScope {
 	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expr, alias := itemSource.expression, itemSource.alias
 		if expr == "*" {
 			for name := range input.names {
@@ -106,25 +105,20 @@ func projectedBindingScope(ctx context.Context, input *semanticBindingScope, cla
 // validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
 // variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
 // and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(clause string) error {
-	_, alias, ok := parsePipelineIteration(clause)
-	if !ok {
+// The grammar admits the trailing WHERE; its retained node is the rejection.
+func validateUnwindAlias(clause pipelineClause) error {
+	if _, _, ok := parsePipelineIteration(clause); !ok {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
 	}
-	next, identifier := cyphertext.ScanIdentifier(alias, 0)
-	if !identifier {
-		return nil
-	}
-	if rest := strings.TrimSpace(alias[next.End:]); rest != "" {
-		token := strings.Fields(rest)[0]
+	if keyword, trailing := unwindTrailingWhere(clause); trailing {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(token))
+			localization.CypherCoreInvalidInput(keyword))
 	}
 	return nil
 }
 
-// unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
-func unwindBindingName(clause string) string {
+// unwindBindingName is the variable an UNWIND clause binds (parsePipelineIteration).
+func unwindBindingName(clause pipelineClause) string {
 	if _, alias, ok := parsePipelineIteration(clause); ok {
 		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
 			return normalizeProjectionColumnName(name)

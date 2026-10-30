@@ -1,3 +1,4 @@
+// Author of retained CALL inspection: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -36,12 +37,11 @@ type CallClause struct {
 // DescribeCall on the retained node instead of parsing a second CALL fragment.
 // For example, ReadCallClause(ctx, clientQuery, RawSource) retains client spelling.
 func ReadCallClause(ctx context.Context, query string, stage SourceStage) (CallClause, error) {
-	syntax, err := ParseSyntax(ctx, query, FragmentEntry, false, stage)
+	call, err := LeadingCallSyntax(ctx, query, false, stage)
 	if err != nil {
 		return CallClause{}, err
 	}
-	call, found := syntax.LeadingCall()
-	if !found || call.Rule() != CypherParserRULE_callSubquery {
+	if !call.Valid() || call.Rule() != CypherParserRULE_callSubquery {
 		message := localization.CypherANTLRParseSyntaxError("expected a CALL subquery")
 		return CallClause{}, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
@@ -124,8 +124,8 @@ func DescribeCall(call SyntaxNode) CallClause {
 	bodyEnd, _ := close.Span()
 	_, end := call.Span()
 	result := CallClause{
-		Body:  strings.TrimSpace(call.data.view.Original[bodyStart:bodyEnd]),
-		After: strings.TrimSpace(call.data.view.Original[end:]),
+		Body:  strings.TrimSpace(call.Source()[bodyStart:bodyEnd]),
+		After: strings.TrimSpace(call.Source()[end:]),
 	}
 	batch := call.ChildRule(CypherParserRULE_transactionBatch)
 	if !batch.Valid() {

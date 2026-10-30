@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -56,9 +57,9 @@ type nodeBatchMatchKey struct {
 }
 
 func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
-	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
+	ctx context.Context, unwindVar string, items []interface{}, body queryBody,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := parseUnwindRelationshipMergeBatchPlan(ctx, restQuery, unwindVar)
+	plan, ok := parseUnwindRelationshipMergeBatchPlan(ctx, body, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -82,30 +83,29 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		return nil, false, nil
 	}
 	ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
-	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, body)
 	if handled && err == nil {
 		e.markUnwindRelationshipMergeBatchUsed()
 	}
 	return result, handled, err
 }
 
-func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
+func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, source queryBody, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
 	plan := unwindRelationshipMergeBatchPlan{}
-	trimmed := strings.TrimSpace(restQuery)
+	trimmed := strings.TrimSpace(source.executionText)
 	if trimmed == "" || !startsWithKeywordFold(trimmed, "MATCH") {
 		return plan, false
 	}
 
-	returnIdx := findKeywordIndexInContext(trimmed, "RETURN")
-	if returnIdx < 0 {
+	body, returned, hasReturn := source.mutationReturnSources()
+	if !hasReturn {
 		return plan, false
 	}
-	returns, ok := parseRelationshipBatchReturn(ctx, strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]), unwindVar)
+	returns, ok := parseRelationshipBatchReturn(projectionPlanOf(ctx, returned.syntax), unwindVar)
 	if !ok {
 		return plan, false
 	}
 
-	body := strings.TrimSpace(trimmed[:returnIdx])
 	withIdx := findKeywordIndexInContext(body, "WITH")
 	if withIdx < 0 {
 		return plan, false
@@ -335,8 +335,9 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 	return setters, true
 }
 
-func parseRelationshipBatchReturn(ctx context.Context, returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
-	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
+// parseRelationshipBatchReturn reads row-field RETURN items from the retained
+// RETURN plan.
+func parseRelationshipBatchReturn(plan *returnProjectionPlan, unwindVar string) ([]rowFieldReturnSpec, bool) {
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" {
 		return nil, false
 	}

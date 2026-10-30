@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -97,7 +98,7 @@ func TestResultStreamChecksReturnArguments(t *testing.T) {
 // statement before any row was handed on, and fails it after.
 func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	split := parsePipelineClauses(t.Context(), "RETURN x")
+	split := parsePipelineClauses(t.Context(), queryBodyForTest(t.Context(), "RETURN x"))
 	clauses, valid := split.clauses, split.ok
 	require.True(t, valid)
 	declineAfter := func(rows int) pipelineRowSource {

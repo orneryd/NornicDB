@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -421,7 +422,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		return
 	}
 	e.replaceDeletedEntityViews(rows, deleted)
-	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
+	projected, err := e.projectMergeReturn(ctx, rows, cypher, returnIdx)
 	if err != nil {
 		return
 	}
@@ -807,17 +808,20 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	return splitTopLevelComma(returnPart)
 }
 
-func (e *StorageExecutor) parseReturnItems(ctx context.Context, returnPart string) []returnItem {
-	if strings.TrimSpace(returnPart) == "" {
-		returnPart = "*"
-	}
-	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
+// parseReturnItems reads the items of the RETURN or WITH occurrence at offset
+// at of statement (projectionPlanAt); at is that clause's keyword or any byte
+// of its projection. Author of the occurrence form: Claude R17 implementation agent.
+func (e *StorageExecutor) parseReturnItems(ctx context.Context, statement string, at int) []returnItem {
+	return returnItemsOfPlan(projectionPlanAt(ctx, statement, at))
+}
+
+// returnItemsOfPlan lists a projection plan's items in order; a star plan
+// leads with "*" followed by its explicit items.
+func returnItemsOfPlan(plan *returnProjectionPlan) []returnItem {
 	if plan.star {
 		items := []returnItem{{expr: "*", alias: "*"}}
-		for _, item := range plan.starItems {
-			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
-			expr, alias := itemSource.expression, itemSource.alias
-			items = append(items, returnItem{expr: expr, alias: alias})
+		for _, item := range plan.starProjections {
+			items = append(items, returnItem{expr: item.expr, alias: item.alias})
 		}
 		return items
 	}

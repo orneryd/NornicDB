@@ -1,3 +1,4 @@
+// Author of retained scope-admission consumption: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -33,7 +34,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isMetadataCommand(source, metadataCatalogExecution) {
 		return boundScopeAdmission{command: true}, nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	syntax, err := cypherantlr.QuerySyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return boundScopeAdmission{}, err
 	}
@@ -48,7 +49,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 	if !query.Valid() {
 		return boundScopeAdmission{command: true}, nil
 	}
-	if !query.ChildRule(cypherantlr.CypherParserRULE_regularQuery).Valid() && !query.ChildRule(cypherantlr.CypherParserRULE_standaloneCall).Valid() {
+	if query.Rule() == cypherantlr.CypherParserRULE_query && !query.ChildRule(cypherantlr.CypherParserRULE_regularQuery).Valid() && !query.ChildRule(cypherantlr.CypherParserRULE_standaloneCall).Valid() {
 		return boundScopeAdmission{command: true}, nil
 	}
 	incoming := make([]string, 0, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))

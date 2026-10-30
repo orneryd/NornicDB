@@ -1,13 +1,16 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
+// Rewritten for the retained item reader: Claude R17 implementation agent, 30 October 2026.
 package cypher
 
 import (
 	"context"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
-// The pre-rewrite reader preserves its loose source-spelling contract;
+// The pre-rewrite splitter preserves its loose source-spelling contract;
 // admitted projection syntax exposes the retained AS and decoded identity.
 func TestProjectionSourceStagePopulation(t *testing.T) {
 	for _, tc := range []struct {
@@ -33,33 +36,31 @@ func TestProjectionSourceStagePopulation(t *testing.T) {
 		{"count { MATCH (n) } AS c", [2]string{"count { MATCH (n) }", "c"}, [2]string{"count { MATCH (n) }", "c"}, 20},
 	} {
 		t.Run(tc.item, func(t *testing.T) {
-			itemSource := readProjectionItemSource(context.Background(), tc.item, projectionBeforeRewrite)
-			expression, alias := itemSource.expression, itemSource.alias
+			expression, alias := rewriteStageProjectionItem(tc.item)
 			require.Equal(t, tc.rewrite, [2]string{expression, alias})
-			itemSource = readProjectionItemSource(t.Context(), tc.item, projectionAdmitted)
-			expression, alias = itemSource.expression, itemSource.alias
-			require.Equal(t, tc.admitted, [2]string{expression, alias})
-			require.Equal(t, tc.as, readProjectionItemSource(t.Context(), tc.item, projectionAdmitted).as)
+			itemSource := projectionItemForTest(t.Context(), tc.item)
+			require.Equal(t, tc.admitted, [2]string{itemSource.expression, itemSource.alias})
+			require.Equal(t, tc.as, itemSource.as)
 		})
 	}
 }
 
 func TestProjectionSourceRawAndDecodedViews(t *testing.T) {
 	const item = " \tn AS /* c */ `a b` "
-	admitted := readProjectionItemSource(t.Context(), item, projectionAdmitted)
-	require.Equal(t, 4, admitted.as)
+	// The retained occurrence starts at its expression: AS is at offset 2 of
+	// the item, and the alias spelling is its symbol's.
+	admitted := projectionItemForTest(t.Context(), item)
+	require.Equal(t, 2, admitted.as)
 	require.Equal(t, "n", admitted.rawExpression)
-	require.Equal(t, "/* c */ `a b`", admitted.rawAlias)
+	require.Equal(t, "`a b`", admitted.rawAlias)
 	require.Equal(t, "n", admitted.expression)
 	require.Equal(t, "a b", admitted.alias)
-	before := readProjectionItemSource(t.Context(), item, projectionBeforeRewrite)
-	require.Equal(t, admitted.as, before.as)
-	require.Equal(t, admitted.rawExpression, before.expression)
-	require.Equal(t, admitted.rawAlias, before.alias)
-	// Multiple source items retain the first AS offset, while the single-item
-	// semantic view remains absent, as both previous admitted consumers required.
-	multiple := readProjectionItemSource(t.Context(), "n AS x, m AS y", projectionAdmitted)
-	require.Equal(t, 2, multiple.as)
+	expression, alias := rewriteStageProjectionItem(item)
+	require.Equal(t, "n", expression)
+	require.Equal(t, "/* c */ `a b`", alias)
+	// Several items are not one item occurrence.
+	multiple := projectionItemForTest(t.Context(), "n AS x, m AS y")
+	require.Equal(t, -1, multiple.as)
 	require.Empty(t, multiple.expression)
 	require.Empty(t, multiple.alias)
 }
@@ -67,15 +68,15 @@ func TestProjectionSourceRawAndDecodedViews(t *testing.T) {
 func TestProjectionSourceCanceledAdmittedReadRetainsStageContract(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	source := readProjectionItemSource(ctx, "n AS x", projectionAdmitted)
+	source := projectionItemForTest(ctx, "n AS x")
 	require.Equal(t, -1, source.as)
 	require.Empty(t, source.expression)
 	require.Empty(t, source.alias)
-	// Pre-rewrite inspection was context-free; its lexical view remains so.
-	source = readProjectionItemSource(ctx, "n AS x", projectionBeforeRewrite)
-	require.Equal(t, "n", source.expression)
-	require.Equal(t, "x", source.alias)
-	source = readProjectionItemSource(t.Context(), "n AS x", projectionAdmitted)
+	// Pre-rewrite splitting is context-free; its lexical view remains so.
+	expression, alias := rewriteStageProjectionItem("n AS x")
+	require.Equal(t, "n", expression)
+	require.Equal(t, "x", alias)
+	source = projectionItemForTest(t.Context(), "n AS x")
 	require.Equal(t, 2, source.as)
 	require.Equal(t, "x", source.alias)
 }

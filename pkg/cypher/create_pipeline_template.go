@@ -53,11 +53,15 @@ var pipelineCreateTemplates = newBoundedCache[string, *pipelineCreateTemplate](5
 // definitions, parameter maps, dynamic labels/types, multiple types) makes
 // the template unusable and the general route stays authoritative.
 func (e *StorageExecutor) pipelineCreateTemplateFor(clause string) *pipelineCreateTemplate {
-	if template, ok := pipelineCreateTemplates.get(clause); ok {
+	return e.pipelineCreateTemplateForPattern(pipelineClauseBody(clause, "CREATE"))
+}
+
+func (e *StorageExecutor) pipelineCreateTemplateForPattern(pattern string) *pipelineCreateTemplate {
+	if template, ok := pipelineCreateTemplates.get(pattern); ok {
 		return template
 	}
-	template := e.buildPipelineCreateTemplate(pipelineClauseBody(clause, "CREATE"))
-	pipelineCreateTemplates.put(clause, template)
+	template := e.buildPipelineCreateTemplate(pattern)
+	pipelineCreateTemplates.put(pattern, template)
 	return template
 }
 

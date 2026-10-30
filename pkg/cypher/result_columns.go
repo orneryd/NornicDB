@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -113,10 +114,10 @@ func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string,
 // clause readers. Ordinary UNION execution does not compile a scope program.
 func (e *StorageExecutor) statementProducesColumns(ctx context.Context, query string) bool {
 	start, end, _, ok := queryStatementWindow(ctx, query)
-	return ok && queryBodyProducesColumns(ctx, query, readQueryBody(ctx, query, start, end), false)
+	return ok && queryBodyProducesColumns(ctx, readQueryBodyText(ctx, query, start, end), false)
 }
 
-func queryBodyProducesColumns(ctx context.Context, source string, body queryBody, directReturnsOnly bool) bool {
+func queryBodyProducesColumns(ctx context.Context, body queryBody, directReturnsOnly bool) bool {
 	for _, branch := range body.branches {
 		if branch.declined || branch.finished || len(branch.clauses) == 0 {
 			continue
@@ -130,7 +131,7 @@ func queryBodyProducesColumns(ctx context.Context, source string, body queryBody
 				continue
 			}
 			produced := false
-			projectedProcedureNames(ctx, last.text).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
+			projectedProcedureNodeNames(last.syntax).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
 			if produced {
 				return true
 			}
@@ -138,8 +139,8 @@ func queryBodyProducesColumns(ctx context.Context, source string, body queryBody
 			if directReturnsOnly {
 				continue
 			}
-			start, end, ok := callClauseBody(ctx, last)
-			if ok && queryBodyProducesColumns(ctx, source, readQueryBody(ctx, source, start, end), false) {
+			nested, ok := callClauseBody(last)
+			if ok && queryBodyProducesColumns(ctx, nested, false) {
 				return true
 			}
 		}

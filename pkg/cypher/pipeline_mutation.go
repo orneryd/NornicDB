@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 // Pipeline mutation owns row-scoped DELETE, SET, CREATE, MERGE and FOREACH writes.
@@ -413,7 +414,7 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 			addQueryStats(result.Stats, stats)
 			continue
 		}
-		projected, err := e.projectMergeReturn(ctx, rows, originalClauses[index].text)
+		projected, err := e.projectMergeReturnPlan(ctx, rows, originalClauses[index].text, projectionPlanOf(ctx, originalClauses[index].syntax), pipelineRowsSource(rows))
 		if err != nil {
 			return nil, true, err
 		}
@@ -446,9 +447,18 @@ func (e *StorageExecutor) pipelineApplyCreateClauses(ctx context.Context, rows [
 }
 
 func (e *StorageExecutor) pipelineCreateRow(ctx context.Context, row pipelineRow, clauses []pipelineClause, created *ExecuteResult) (pipelineRow, error) {
+	return e.pipelineCreateInputsRow(ctx, row, createInputsFromClauses(clauses), created)
+}
+
+// A cancelled statement creates nothing: every create row, including MERGE's
+// physical creation input, stops at its context (Claude R17 implementation agent).
+func (e *StorageExecutor) pipelineCreateInputsRow(ctx context.Context, row pipelineRow, inputs []pipelineCreateInput, created *ExecuteResult) (pipelineRow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	plan := acquireCreatePlan()
 	defer plan.release()
-	newRow, err := e.pipelinePlanCreateRow(ctx, row, clauses, plan)
+	newRow, err := e.pipelinePlanCreateInputsRow(ctx, row, inputs, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +469,10 @@ func (e *StorageExecutor) pipelineCreateRow(ctx context.Context, row pipelineRow
 }
 
 func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelineRow, clauses []pipelineClause, plan *createPlan) (pipelineRow, error) {
+	return e.pipelinePlanCreateInputsRow(ctx, row, createInputsFromClauses(clauses), plan)
+}
+
+func (e *StorageExecutor) pipelinePlanCreateInputsRow(ctx context.Context, row pipelineRow, inputs []pipelineCreateInput, plan *createPlan) (pipelineRow, error) {
 	nodes, edges := plan.bindings()
 	newRow := make(pipelineRow, len(row))
 	for name, value := range row {
@@ -474,9 +488,9 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			}
 		}
 	}
-	for _, clause := range clauses {
+	for _, input := range inputs {
 		rowCtx := withValueBindings(ctx, newRow)
-		pattern := pipelineClauseBody(clause.text, "CREATE")
+		pattern := input.pattern()
 		dynamic := hasDynamicToken(pattern)
 		if dynamic {
 			// Labels and types whose values depend on the row.
@@ -494,7 +508,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			// template is parsed from the clause text, so a clause with
 			// row-dependent dynamic labels or types keeps the general route,
 			// which plans the resolved pattern instead.
-			if template := e.pipelineCreateTemplateFor(clause.text); template != nil && template.usable {
+			if template := e.pipelineCreateTemplateForPattern(pattern); template != nil && template.usable {
 				var err error
 				paths, planned, err = template.plan(ctx, e, newRow, nodes, edges, plan)
 				if err != nil {
@@ -531,7 +545,11 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // pipelineApplyMerge executes one MERGE per input row while retaining the row
 // bindings for subsequent clauses. This preserves Cypher's row-at-a-time
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
-func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
+func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, source pipelineClause) ([]pipelineRow, *QueryStats, error) {
+	return e.pipelineApplyMergeInput(ctx, rows, source, source.text)
+}
+
+func (e *StorageExecutor) pipelineApplyMergeInput(ctx context.Context, rows []pipelineRow, source pipelineClause, clause string) ([]pipelineRow, *QueryStats, error) {
 	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
 		if actions := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil); hasDynamicToken(actions.pattern) {
 			pattern := actions.pattern
@@ -544,7 +562,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if err != nil {
 					return nil, nil, err
 				}
-				produced, rowStats, err := e.pipelineApplyMerge(ctx, []pipelineRow{row}, clause[:at]+resolved+clause[at+len(pattern):])
+				produced, rowStats, err := e.pipelineApplyMergeInput(ctx, []pipelineRow{row}, source, clause[:at]+resolved+clause[at+len(pattern):])
 				if err != nil {
 					return nil, nil, err
 				}
@@ -638,7 +656,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			// two matching paths are two rows); one with both endpoints
 			// bound keeps the relationship route below.
 			mergeWholePath := func() error {
-				produced, pathStats, created, err := e.pipelineMergePath(ctx, row, mergePattern, nodeContext, relContext)
+				produced, pathStats, created, err := e.pipelineMergePath(ctx, row, source.syntax, mergePattern, nodeContext, relContext)
 				if err != nil {
 					return err
 				}
@@ -899,7 +917,7 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	body := queryBodyFromSyntax(clause.syntax)
+	body := readQueryBody(clause.syntax)
 	if body.status != queryBodyRead || body.foreach == nil {
 		return nil, invalidForeachError()
 	}

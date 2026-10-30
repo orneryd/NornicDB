@@ -1,3 +1,4 @@
+// Author of retained CALL inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -21,32 +22,26 @@ type callSubqueryScopeClause struct {
 // list means all outer variables, and a non-nil empty list means CALL ().
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
-func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+func readCallSubqueryScope(clause pipelineClause) callSubqueryScopeClause {
+	if clause.kind != pipelineClauseCallSubquery {
+		return scopeClauseFromSyntax(cypherantlr.SyntaxNode{})
+	}
+	return scopeClauseFromSyntax(clause.syntax.Window().Root())
+}
+
+// readCallSubqueryScopeText is the explicit native/invalid source boundary;
+// retained CALL consumers cannot substitute source text for their clause node.
+func readCallSubqueryScopeText(ctx context.Context, source string) callSubqueryScopeClause {
+	first, err := cypherantlr.LeadingCallSyntax(ctx, source, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	invalidScope := err != nil
 	if invalidScope && ctx.Err() == nil {
 		// Refine only an existing grammar rejection. Procedure arguments and
 		// a later syntax error do not constitute a malformed import scope.
 		invalidScope = malformedCallScopeError(ctx, source) != nil
 	}
-	if !syntax.Valid() {
-		return callSubqueryScopeClause{invalid: invalidScope}
-	}
-	first, _ := syntax.LeadingCall()
-	if !first.Valid() {
-		return callSubqueryScopeClause{invalid: invalidScope}
-	}
-	if first.Rule() == cypherantlr.CypherParserRULE_callSubquery {
-		scope := scopeClauseFromSyntax(first)
-		scope.invalid = invalidScope
-		return scope
-	}
-	name := first.ChildRule(cypherantlr.CypherParserRULE_invocationName)
-	if name.Valid() {
-		start, _ := name.Span()
-		return callSubqueryScopeClause{bodyOffset: start, invalid: invalidScope}
-	}
-	return callSubqueryScopeClause{invalid: invalidScope}
+	scope := scopeClauseFromSyntax(first)
+	scope.invalid = invalidScope
+	return scope
 }
 
 // malformedCallScopeError refines a grammar rejection using CALL's canonical

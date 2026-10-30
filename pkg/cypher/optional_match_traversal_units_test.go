@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 // Unit and behavior tests for the traversal-seeded OPTIONAL MATCH pipeline
@@ -138,7 +139,7 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	t.Run("unaliased aggregate", func(t *testing.T) {
 		executor, ctx := newUnitExecutor(t)
 		items := []returnItem{{expr: "count(*)", alias: "count(*)"}}
-		plan := returnProjectionPlanFor(ctx, "RETURN count(*)")
+		plan := returnPlanForTest(ctx, "RETURN count(*)")
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)
 		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
@@ -817,8 +818,8 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 				rows = append(rows, row)
 				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
 			}
-			items := executor.parseReturnItems(t.Context(), test.expr+" AS value")
-			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
+			items := returnItemsForTest(t.Context(), "RETURN "+test.expr+" AS value")
+			shared, err := executor.projectMergeReturnForTest(ctx, bindings, "RETURN "+test.expr+" AS value")
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)
 			legacy, err := executor.aggregateTraversalOptionalRows(ctx, rows, items)

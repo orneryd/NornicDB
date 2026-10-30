@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // Package cypher provides query pattern detection for optimization routing.
 //
 // This file identifies query patterns that can be executed more efficiently
@@ -363,13 +364,13 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	if returnIdx < 0 {
 		return false
 	}
-	returnItems := exec.parseReturnItems(ctx, strings.TrimSpace(query[returnIdx+len("RETURN"):]))
+	returnItems := exec.parseReturnItems(ctx, query, returnIdx)
 	if len(returnItems) < 2 {
 		return false
 	}
 
 	for _, item := range returnItems[1:] {
-		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
+		expr := item.expr
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		aggFunc, inner, ok := splitEdgeAggregationCall(u)
 		if !ok {

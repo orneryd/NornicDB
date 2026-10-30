@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -93,9 +94,9 @@ func TestProcedureParameterAcceptsStaticType(t *testing.T) {
 
 func TestProjectUnwoundValues(t *testing.T) {
 	unwound := map[string]struct{}{"v": {}, "u": {}}
-	require.Nil(t, projectUnwoundValues(t.Context(), nil, "WITH v AS w"))
-	require.Equal(t, map[string]struct{}{"w": {}}, projectUnwoundValues(t.Context(), unwound, "WITH v AS w, 1 AS x"))
-	require.Equal(t, map[string]struct{}{"v": {}}, projectUnwoundValues(t.Context(), unwound, "WITH v"))
-	require.Equal(t, unwound, projectUnwoundValues(t.Context(), unwound, "WITH *"))
-	require.Nil(t, projectUnwoundValues(t.Context(), unwound, "WITH 1.5 AS v"))
+	require.Nil(t, projectUnwoundValues(t.Context(), nil, retainedClauseForTest(t.Context(), "WITH v AS w")))
+	require.Equal(t, map[string]struct{}{"w": {}}, projectUnwoundValues(t.Context(), unwound, retainedClauseForTest(t.Context(), "WITH v AS w, 1 AS x")))
+	require.Equal(t, map[string]struct{}{"v": {}}, projectUnwoundValues(t.Context(), unwound, retainedClauseForTest(t.Context(), "WITH v")))
+	require.Equal(t, unwound, projectUnwoundValues(t.Context(), unwound, retainedClauseForTest(t.Context(), "WITH *")))
+	require.Nil(t, projectUnwoundValues(t.Context(), unwound, retainedClauseForTest(t.Context(), "WITH 1.5 AS v")))
 }

@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -13,17 +14,24 @@ import (
 func TestProjectionExpressions(t *testing.T) {
 	for _, tc := range []struct {
 		clause, keyword string
+		admitted        bool
 		want            []string
 	}{
-		{"RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", []string{"a.x", "count(b)"}},
-		{"WITH n, m WHERE n.v > 1", "WITH", []string{"n", "m"}},
-		{"WITH *", "WITH", nil},
-		{"UNWIND range(1, 3) AS i", "UNWIND", []string{"range(1, 3)"}},
-		{"UNWIND $list", "UNWIND", nil},
-		{"WITH n", "RETURN", nil},
-		{"RET", "RETURN", nil},
+		{"RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", true, []string{"a.x", "count(b)"}},
+		{"WITH n, m WHERE n.v > 1", "WITH", true, []string{"n", "m"}},
+		{"WITH *", "WITH", true, nil},
+		{"UNWIND range(1, 3) AS i", "UNWIND", true, []string{"range(1, 3)"}},
+		{"UNWIND $list", "UNWIND", false, nil},
+		{"WITH n", "RETURN", true, nil},
+		{"RET", "RETURN", false, nil},
 	} {
-		require.Equal(t, tc.want, projectionExpressions(t.Context(), tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
+		var expressions []string
+		clause, admitted := fixtureClauseForTest(t.Context(), tc.clause)
+		require.Equal(t, tc.admitted, admitted, tc.clause)
+		if admitted {
+			expressions = projectionExpressions(t.Context(), clause, tc.keyword)
+		}
+		require.Equal(t, tc.want, expressions, "%s / %s", tc.keyword, tc.clause)
 	}
 }
 

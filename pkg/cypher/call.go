@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // CALL procedure implementations for NornicDB.
 // This file contains all CALL procedures for Neo4j compatibility and NornicDB extensions.
 //
@@ -77,16 +78,16 @@ type callSplit struct {
 	tail     string
 }
 
-func splitCallAndTail(ctx context.Context, source string) callSplit {
-	clause, ok := canonicalQueryClause(ctx, source)
+// splitCallAndTail splits source at the end of its leading retained CALL
+// occurrence. ok is false when source has no leading CALL occurrence; no
+// split is fabricated for it (Claude R17 implementation agent).
+func splitCallAndTail(ctx context.Context, source string) (callSplit, bool) {
+	clause, ok := retainedClauseAt(ctx, source, queryGapEnd(source, 0), cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall, cypherantlr.CypherParserRULE_callSubquery)
 	if !ok {
-		return callSplit{callOnly: source}
-	}
-	if clause.Rule() != cypherantlr.CypherParserRULE_queryCallSt && clause.Rule() != cypherantlr.CypherParserRULE_standaloneCall && clause.Rule() != cypherantlr.CypherParserRULE_callSubquery {
-		return callSplit{callOnly: source}
+		return callSplit{}, false
 	}
 	start, end := clause.Span()
-	return callSplit{callOnly: source[start:end], tail: strings.TrimSpace(source[end:])}
+	return callSplit{callOnly: source[start:end], tail: strings.TrimSpace(source[end:])}, true
 }
 func buildCallTailPredicateInjection(tail string, predicates []string) string {
 	if len(predicates) == 0 {
@@ -148,7 +149,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if _, all, _, union := parseTopLevelUnionBranches(ctx, tail); union {
+	if _, all, _, union := parseTopLevelUnionTextBranches(ctx, tail); union {
 		first := true
 		return e.executeUnion(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
 			if first {
@@ -241,7 +242,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 // (runPipelineClauses) whose input rows are the procedure's yielded rows. It
 // declines (ok false) when a tail clause isn't a pipeline clause.
 func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	clauses, ok := pipelineClausesFor(ctx, tail)
+	clauses, ok := pipelineTextClausesFor(ctx, tail)
 	if !ok || len(clauses) == 0 {
 		return nil, false, nil
 	}
@@ -278,17 +279,21 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	projected, ok := e.pipelineApplyWith(ctx, rows, prefix, nil, false)
+	with, ok := withClauseAt(ctx, tail, queryGapEnd(tail, 0))
 	if !ok {
 		return nil, false, nil
 	}
-	prefixColumns, ok := callTailWithProjectionColumns(ctx, prefix)
+	projected, ok := e.pipelineApplyWithPlan(ctx, rows, with, projectionPlanOf(ctx, with.syntax), nil, false)
+	if !ok {
+		return nil, false, nil
+	}
+	prefixColumns, ok := callTailWithProjectionColumns(ctx, with)
 	if !ok {
 		return nil, false, nil
 	}
 
-	callParts := splitChainedProcedureCall(ctx, strings.TrimSpace(tail[callIndex:]))
-	if strings.TrimSpace(callParts.tail) == "" {
+	callParts, split := splitChainedProcedureCall(ctx, strings.TrimSpace(tail[callIndex:]))
+	if !split || strings.TrimSpace(callParts.tail) == "" {
 		return nil, false, nil
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
@@ -315,13 +320,13 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	return result, true, err
 }
 
-func splitChainedProcedureCall(ctx context.Context, source string) callSplit {
+func splitChainedProcedureCall(ctx context.Context, source string) (callSplit, bool) {
 	return splitCallAndTail(ctx, source)
 }
 func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 
-	node, valid := canonicalQueryClause(ctx, tail)
-	if !valid || node.Rule() != cypherantlr.CypherParserRULE_returnSt {
+	node, valid := retainedClauseAt(ctx, tail, queryGapEnd(tail, 0), cypherantlr.CypherParserRULE_returnSt)
+	if !valid {
 		return nil, false, nil
 	}
 	_, end := node.Span()
@@ -515,8 +520,12 @@ func isPotentialWriteTail(tail string) bool {
 type callTailProjectionPlan struct {
 	// relationship is the optional MATCH admission that precedes WITH.
 	relationship *callTailRelationshipMatchPlan
-	withClause   string
-	returnClause string
+	// statement is the tail's own WITH … RETURN … query; its WITH starts at
+	// offset 0 and its RETURN at returnAt. Both clauses are read from that
+	// statement's retained occurrences when the plan runs, so the cached plan
+	// holds no syntax and no composed clause text.
+	statement string
+	returnAt  int
 	// limitToken / skipToken are the RETURN's LIMIT / SKIP, a literal or a
 	// parameter, checked per execution (the parameter's value can change).
 	limitToken string
@@ -601,12 +610,20 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
 	} else {
 		var ok bool
-		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause, nil, false)
+		with, found := withClauseAt(ctx, plan.statement, 0)
+		if !found {
+			return nil, false
+		}
+		projected, ok = e.pipelineApplyWithPlan(ctx, rows, with, projectionPlanOf(ctx, with.syntax), nil, false)
 		if !ok {
 			return nil, false
 		}
 	}
-	result, ok := e.pipelineApplyReturn(ctx, projected, plan.returnClause)
+	returned, found := returnClauseAt(ctx, plan.statement, plan.returnAt)
+	if !found {
+		return nil, false
+	}
+	result, ok := e.pipelineApplyReturnPlan(ctx, projected, projectionPlanOf(ctx, returned.syntax), pipelineRowsSource(projected), false)
 	if !ok {
 		return nil, false
 	}
@@ -965,16 +982,16 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
 		return nil
 	}
-	withItems := e.parseReturnItems(ctx, withProjection)
-	returnItems := e.parseReturnItems(ctx, returnProjection)
+	withItems := e.parseReturnItems(ctx, trimmed, 0)
+	returnItems := e.parseReturnItems(ctx, trimmed, returnIdx)
 	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
 		return nil
 	}
 	plan := &callTailProjectionPlan{
-		withClause:   "WITH " + beforeReturn,
-		returnClause: "RETURN " + returnAndModifiers,
-		limitToken:   limitToken,
-		skipToken:    skipToken,
+		statement:  trimmed,
+		returnAt:   returnIdx,
+		limitToken: limitToken,
+		skipToken:  skipToken,
 	}
 	plan.passThroughWith = true
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
@@ -1193,18 +1210,9 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	}
 	rows = e.filterPipelineRows(ctx, rows, yield.where)
 	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
-		var with strings.Builder
-		with.WriteString("WITH *")
-		if yield.orderBy != "" {
-			with.WriteString(" ORDER BY " + yield.orderBy)
-		}
-		if yield.skip != "" {
-			with.WriteString(" SKIP " + yield.skip)
-		}
-		if yield.limit != "" {
-			with.WriteString(" LIMIT " + yield.limit)
-		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String(), nil, false)
+		// YIELD's own retained modifiers use the WITH * appliers directly; no
+		// WITH clause text is composed for them (Claude R17 implementation agent).
+		ordered, ok := e.applyYieldModifiers(ctx, rows, yield)
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
@@ -1224,6 +1232,32 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	return result, nil
 }
 
+// applyYieldModifiers orders and pages yielded rows as WITH * ORDER BY … SKIP
+// … LIMIT … does, from the YIELD clause's own modifier views. ok is false when
+// SKIP or LIMIT doesn't evaluate to a non-negative integer.
+// Author: Claude R17 implementation agent, 30 October 2026.
+func (e *StorageExecutor) applyYieldModifiers(ctx context.Context, rows []pipelineRow, yield *yieldClause) ([]pipelineRow, bool) {
+	skip, limit := 0, -1
+	if yield.skip != "" {
+		value, ok := e.evaluatePipelinePagination(ctx, yield.skip, rows)
+		if !ok {
+			return nil, false
+		}
+		skip = value
+	}
+	if yield.limit != "" {
+		value, ok := e.evaluatePipelinePagination(ctx, yield.limit, rows)
+		if !ok {
+			return nil, false
+		}
+		limit = value
+	}
+	if yield.orderBy != "" && !e.orderPipelineRows(ctx, rows, parseOrderByClause(yield.orderBy)) {
+		return nil, false
+	}
+	return applyPipelineWindow(rows, skip, limit), true
+}
+
 func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	return e.executeProcedureCall(ctx, cypher, false)
 }
@@ -1236,9 +1270,12 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
-	parts := splitChainedProcedureCall(ctx, cypher)
-	callCypher := parts.callOnly
-	tailCypher := parts.tail
+	// Without a CALL occurrence the statement itself is the call; the
+	// procedure readers below report its parse failure.
+	callCypher, tailCypher := cypher, ""
+	if parts, split := splitChainedProcedureCall(ctx, cypher); split {
+		callCypher, tailCypher = parts.callOnly, parts.tail
+	}
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(ctx, callCypher)

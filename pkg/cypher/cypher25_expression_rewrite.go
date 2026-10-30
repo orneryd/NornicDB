@@ -96,7 +96,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		// In Cypher 5, a complete binding clause ends WITH's all projection.
 		// Cypher 25 retains its ALL modifier before keyword-shaped subscripts.
 		if !cypher25 && equalFoldASCII(word, "WITH") {
-			if _, clause := splitUnwindBody(query[next:]); clause {
+			if startsUnwindBinding(query[next:]) {
 				return
 			}
 		}

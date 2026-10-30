@@ -139,34 +139,34 @@ func labelTargetTypeError(typeName string) error {
 // (staticDynamicTokenError); and a pattern's dynamic label or type whose
 // value depends on the row (staticPatternTokenError). Everything else is
 // read at run time.
-func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
-	if err := staticPatternTokenError(clause, scope); err != nil {
+func staticWriteTokenError(kind pipelineClauseKind, text string, scope staticTypeScope) error {
+	if err := staticPatternExpressionTokenError(text, kind == pipelineClauseCreate || kind == pipelineClauseMerge, scope); err != nil {
 		return err
 	}
 	// Every item check needs a label item or a dynamic key (: or [), or a
 	// target that isn't an entity: other clauses cost one scan. A Cypher 25
 	// statement's items are also checked for an entity assigned whole.
-	if !scope.cypher25 && !strings.ContainsAny(clause.text, ":[=") && !mentionsNonEntity(clause.text, scope) {
+	if !scope.cypher25 && !strings.ContainsAny(text, ":[=") && !mentionsNonEntity(text, scope) {
 		return nil
 	}
-	switch clause.kind {
+	switch kind {
 	case pipelineClauseSet:
-		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
+		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(text, "SET"))), scope)
 	case pipelineClauseMerge:
-		set := indexASCIIFold(clause.text, " SET ")
+		set := indexASCIIFold(text, " SET ")
 		if set < 0 {
 			return nil // no ON CREATE / ON MATCH SET
 		}
-		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[=") && !mentionsNonEntity(actions, scope) {
+		if actions := text[set:]; !strings.ContainsAny(actions, ":[=") && !mentionsNonEntity(actions, scope) {
 			return nil // the pattern's labels aren't items
 		}
-		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+		actions := splitMergeClauseActions(pipelineClauseBody(text, "MERGE"), nil)
 		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
 			return err
 		}
 		return staticSetItemsTokenError(mergeActionAssignments(actions.onMatch), scope)
 	case pipelineClauseRemove:
-		items, err := parseRemoveItems(pipelineClauseBody(clause.text, "REMOVE"))
+		items, err := parseRemoveItems(pipelineClauseBody(text, "REMOVE"))
 		if err != nil {
 			return err
 		}
@@ -506,8 +506,10 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 // variable bound to a literal by WITH or UNWIND): the MATCH predicates they
 // became (dynamicLabelTestFunction) and the $(e) a CREATE or MERGE pattern
 // keeps until its rows run.
-func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error {
-	text := clause.text
+// staticPatternExpressionTokenError checks an actual expression or pattern
+// view. A quantified predicate has predicate semantics; it is not a synthetic
+// MATCH clause. All dynamic-token checks share this implementation.
+func staticPatternExpressionTokenError(text string, writes bool, scope staticTypeScope) error {
 	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) && !strings.Contains(text, dynamicLabelPredicateFunction) {
 		return nil
 	}
@@ -516,7 +518,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, c) - 1
 		case '$':
-			if (clause.kind != pipelineClauseCreate && clause.kind != pipelineClauseMerge) || !dynamicLabelStartsAt(text, i) {
+			if !writes || !dynamicLabelStartsAt(text, i) {
 				continue
 			}
 			open := i + strings.IndexByte(text[i:], '(')

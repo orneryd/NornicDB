@@ -18,7 +18,7 @@ type resultRestoration struct {
 // restore owns result copying, metadata and EXPLAIN row presentation for both
 // policies. Ordinary rows remain data; quoted RETURN columns use the projection
 // owner, and each error policy keeps its original classification and cause.
-func (restoration resultRestoration) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
+func (restoration resultRestoration) restore(result *ExecuteResult, err error, parseItems func(statement string, at int) []returnItem) (*ExecuteResult, error) {
 	if restoration.source == nil && restoration.names == nil {
 		return result, err
 	}

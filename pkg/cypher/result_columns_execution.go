@@ -1,7 +1,9 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 import (
 	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 )
@@ -19,11 +21,8 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 	if len(clauses) == 0 {
 		return ctx, nil
 	}
-	if !clauses[0].syntax.Valid() {
-		return ctx, unresolvedStatementError()
-	}
 	source := clauses[0].syntax.Source()
-	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == source {
+	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == source && program.syntax.Origin() == clauses[0].syntax.Origin() {
 		return ctx, nil
 	}
 	var retained []string
@@ -36,7 +35,7 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 			names = append(names, name)
 		}
 	}
-	program := e.projectedStatementScope(ctx, source, resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
+	program := e.projectionFactsForSyntax(ctx, clauses[0].syntax.Statement(), resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
 	if !program.complete {
 		if program.err != nil {
 			return ctx, program.err
@@ -47,19 +46,41 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 }
 
 func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelineClauseEffects, error) {
-	if clause.syntax.Valid() {
-		if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() {
-			effects, found := program.effects[clause.syntax.ID()]
-			if !found {
-				return pipelineClauseEffects{}, unresolvedStatementError()
-			}
-			return effects, ctx.Err()
+	if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() && program.syntax.Origin() == clause.syntax.Origin() {
+		effects, found := program.effects[clause.syntax.ID()]
+		if !found {
+			return pipelineClauseEffects{}, unresolvedStatementError()
 		}
-		// Effect-only callers need no resolved scope. They observe this retained
-		// syntax node; row execution has a separate mandatory binding admission.
-		var effects pipelineClauseEffects
-		clause.syntax.Walk(pipelineEffectVisitor(&effects))
 		return effects, ctx.Err()
 	}
-	return pipelineClauseEffectsFor(ctx, clause.text)
+	// Effect-only callers use the same observer on their admitted occurrence.
+	// They do not need a resolved scope or another parse of its source text.
+	var effects pipelineClauseEffects
+	clause.syntax.Walk(pipelineEffectVisitor(&effects))
+	return effects, ctx.Err()
+}
+
+// retainedClauseColumns observes the bound compiler's output facts for this
+// occurrence. No source-based header inference or second schema owner is used.
+func (e *StorageExecutor) retainedClauseColumns(ctx context.Context, clause pipelineClause, incoming map[string]struct{}) ([]string, error) {
+	bound, err := e.bindPipelineProgram(ctx, []pipelineClause{clause}, incoming)
+	if err != nil {
+		return nil, err
+	}
+	return retainedNodeColumns(bound, clause.syntax)
+}
+
+func retainedNodeColumns(ctx context.Context, node cypherantlr.SyntaxNode) ([]string, error) {
+	program, _ := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
+	if program == nil || !node.Valid() || program.syntax.Source() != node.Source() || program.syntax.Origin() != node.Origin() {
+		return nil, unresolvedStatementError()
+	}
+	facts, ok := program.columns[node.ID()]
+	if !ok {
+		return nil, unresolvedStatementError()
+	}
+	var columns []string
+	var failure error
+	facts.Visit(func(names []string) { columns = names }, func() { failure = unresolvedStatementError() })
+	return columns, failure
 }

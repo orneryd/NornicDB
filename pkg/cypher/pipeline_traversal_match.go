@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -275,7 +276,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 				end = index
 			}
 		}
-		if _, local := parsePipelineRowWith(ctx, clause[:end]); !local {
+		if _, local := compilePipelineRowWith(ctx, remaining[0], true); !local {
 			return hint
 		}
 		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
@@ -287,11 +288,12 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		return hint
 	}
 	var terminalReturn string
+	var terminal pipelineClause
 	for index, clause := range remaining {
 		if clause.kind != pipelineClauseReturn || index != len(remaining)-1 {
 			return hint
 		}
-		terminalReturn = clause.text
+		terminalReturn, terminal = clause.text, clause
 	}
 	if terminalReturn == "" {
 		return hint
@@ -300,7 +302,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItems(ctx, body) {
+	for _, item := range returnItemsOfPlan(projectionPlanOf(ctx, terminal.syntax)) {
 		if pipelineExpressionContainsAggregate(item.expr) {
 			return hint
 		}

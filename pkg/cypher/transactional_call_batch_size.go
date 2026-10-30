@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -37,7 +38,13 @@ func readTransactionalStatement(ctx context.Context, query string) ([]cypherantl
 	return calls, err
 }
 
-func readCallClause(ctx context.Context, clause string) (cypherantlr.CallClause, error) {
+func readCallClause(clause pipelineClause) cypherantlr.CallClause {
+	return cypherantlr.DescribeCall(clause.syntax.Window().Root())
+}
+
+// readCallClauseText is the independent native/source admission boundary.
+// Admitted clause readers consume readCallClause's retained node directly.
+func readCallClauseText(ctx context.Context, clause string) (cypherantlr.CallClause, error) {
 	if call, ok := callClauseReads.get(clause); ok {
 		return call, ctx.Err()
 	}

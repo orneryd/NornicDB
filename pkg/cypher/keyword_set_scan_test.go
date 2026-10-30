@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -58,22 +59,22 @@ func TestParseLeadingWithImportsKeywordAtStart(t *testing.T) {
 // whichever split is asked for first.
 func TestCachedPipelineClausesVariants(t *testing.T) {
 	const withCall = "CALL db.labels() YIELD label RETURN label /* variants */"
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), withCall)
+	clauses, ok := splitPipelineTextClausesAllowingProcedureCalls(t.Context(), withCall)
 	require.True(t, ok)
 	require.Len(t, clauses, 2)
-	_, ok = splitPipelineClauses(t.Context(), withCall)
+	_, ok = splitPipelineTextClauses(t.Context(), withCall)
 	require.False(t, ok)
 
 	const withCallFirst = "CALL db.labels() YIELD label RETURN label /* variants, other order */"
-	_, ok = splitPipelineClauses(t.Context(), withCallFirst)
+	_, ok = splitPipelineTextClauses(t.Context(), withCallFirst)
 	require.False(t, ok)
-	_, ok = splitPipelineClausesAllowingProcedureCalls(t.Context(), withCallFirst)
+	_, ok = splitPipelineTextClausesAllowingProcedureCalls(t.Context(), withCallFirst)
 	require.True(t, ok)
 
 	const plain = "MATCH (n) WITH n RETURN n /* variants */"
-	first, ok := splitPipelineClauses(t.Context(), plain)
+	first, ok := splitPipelineTextClauses(t.Context(), plain)
 	require.True(t, ok)
-	second, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), plain)
+	second, ok := splitPipelineTextClausesAllowingProcedureCalls(t.Context(), plain)
 	require.True(t, ok)
 	require.Equal(t, first, second)
 }
@@ -83,10 +84,10 @@ func TestCachedPipelineClausesVariants(t *testing.T) {
 func TestFindKeywordIndexInContextNonASCII(t *testing.T) {
 	text := "['ıı', 'ß'] AS x"
 	require.Equal(t, len("['ıı', 'ß'] "), findKeywordIndexInContext(text, "AS"))
-	product, ok := splitUnwindBody("UNWIND " + text)
+	expression, variable, ok := parsePipelineIteration(retainedClauseForTest(t.Context(), "UNWIND "+text))
 	require.True(t, ok)
-	require.Equal(t, "['ıı', 'ß']", product.expression)
-	require.Equal(t, "x", product.aliasTail)
+	require.Equal(t, "['ıı', 'ß']", expression)
+	require.Equal(t, "x", variable)
 	require.Equal(t, 2, findKeywordIndexInContext("n as m", "AS"))
 }
 

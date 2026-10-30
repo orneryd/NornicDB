@@ -1,3 +1,4 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -84,15 +85,47 @@ func projectionKey(query string, incoming, retained resultmetadata.Names, cypher
 	return projectionFactsKey{query: query, incoming: inputKey, retained: retainedKey, incomingKnown: inputKnown, retainedKnown: retainedKnown, cypher25: cypher25}
 }
 func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+	return e.projectionFactsWithSyntax(ctx, query, incoming, retained, cypher25, cypherantlr.StatementSyntax{})
+}
+
+// projectionFactsForSyntax carries node-bearing execution through the same
+// scope compiler and cache publication owner, without re-reading its source.
+func (e *StorageExecutor) projectionFactsForSyntax(ctx context.Context, syntax cypherantlr.StatementSyntax, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+	return e.projectionFactsWithSyntax(ctx, syntax.Source(), incoming, retained, cypher25, syntax)
+}
+
+func (e *StorageExecutor) projectionFactsWithSyntax(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, syntax cypherantlr.StatementSyntax) *projectedScopeFacts {
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
 	generation := globalProcedureRegistry.generation.Load()
+	// Column-only readers use the established source/scope cache key without
+	// parsing a cold statement. Node-bearing plans additionally belong to the
+	// exact retained grammar product; a Body-to-Script promotion must rebind
+	// them rather than reuse node IDs from that earlier product.
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
-		return facts
+		if facts.bound == nil {
+			return facts
+		}
+		if !syntax.Valid() {
+			var err error
+			syntax, err = cypherantlr.QuerySyntax(ctx, query, cypher25, cypherantlr.AcceptedSource)
+			if ctx.Err() != nil {
+				return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
+			}
+			if err != nil {
+				return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(ctx, query, AcceptedSource, err))
+			}
+		}
+		if facts.bound.syntax.Origin() == syntax.Origin() {
+			return facts
+		}
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	// On a miss, compilation classifies typed commands before acquiring graph
+	// syntax. Eager syntax here would reject a command before its owner can
+	// provide its schema. A cached node-bearing graph still verifies its origin.
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, syntax)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
@@ -153,14 +186,6 @@ func addProjectedNames(incoming, added resultmetadata.Names) resultmetadata.Name
 
 func mergeProjectedNames(incoming, retained resultmetadata.Names) resultmetadata.Names {
 	return addProjectedNames(incoming, retained)
-}
-
-func projectedProcedureNames(ctx context.Context, source string) resultmetadata.Names {
-	clause, ok := canonicalQueryClause(ctx, source)
-	if !ok {
-		return resultmetadata.Unknown()
-	}
-	return projectedProcedureNodeNames(clause)
 }
 
 func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode) resultmetadata.Names {

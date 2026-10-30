@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -35,14 +36,7 @@ func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
-	body := pipelineClauseBody(clause.text, "RETURN")
-	if clause.kind == pipelineClauseWith {
-		body = pipelineClauseBody(clause.text, "WITH")
-	}
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-		body = body[:where]
-	}
-	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate
+	return projectionPlanFromSyntax(clause.syntax).hasAggregate
 }
 
 func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
@@ -104,7 +98,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		rewritten.WriteString(projection.expr[last:])
 		templates[index].expression = rewritten.String()
 		if !rowsValidated && (needsValidation || strings.ContainsAny(templates[index].expression, "([")) {
-			validationClauses = append(validationClauses, "WITH "+projection.expr)
+			validationClauses = append(validationClauses, projection.expr)
 		}
 	}
 	newGroup := func(row pipelineRow) *pipelineAggregateGroup {
@@ -131,7 +125,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			return false
 		}
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionExpressions(ctx, []pipelineRow{row}, []string{clause}); err != nil {
 				recordExpressionFailure(ctx, err)
 				run.valid = false
 				return false

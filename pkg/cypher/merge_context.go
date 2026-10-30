@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 // MERGE clause implementation for NornicDB.
 // This file contains MERGE execution, compound queries, and context-aware operations.
 
@@ -199,7 +200,7 @@ func splitTopLevelOrTerms(expr string) []string {
 // dynamic label's $any(...), a property map, an element WHERE, a call such as
 // shortestPath(...) and a parenthesized or quantified path are not nodes.
 func (e *StorageExecutor) extractVariableNamesFromPattern(ctx context.Context, pattern string) []string {
-	return canonicalPatternVariables(ctx, pattern)
+	return standalonePatternVariables(ctx, pattern)
 }
 
 // mergeNodeAbsentKey marks a context whose caller has just scanned the
@@ -803,14 +804,23 @@ func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]
 // projectMergeReturn projects a MERGE statement's binding rows through the
 // shared RETURN projection (pipelineApplyReturn), so DISTINCT, aggregation,
 // ORDER BY, SKIP and LIMIT apply over all the statement's rows (#640).
-// returnClause starts with RETURN.
-func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
-	return e.projectMergeReturnSource(ctx, rows, returnClause, pipelineRowsSource(rows))
+// The RETURN is the occurrence of statement at offset at (projectionClauseAt).
+func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, statement string, at int) (*ExecuteResult, error) {
+	return e.projectMergeReturnSource(ctx, rows, statement, at, pipelineRowsSource(rows))
 }
 
-func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
-	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(ctx, returnClause), source, preparedGroups...)
+func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, statement string, at int, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
+	clause, ok := returnClauseAt(ctx, statement, at)
+	if !ok {
+		// No retained RETURN occurrence: the existing parse failure reports
+		// the written clause.
+		written := strings.TrimSpace(statement[min(max(at, 0), len(statement)):])
+		if !startsWithKeywordFold(written, "RETURN") {
+			written = "RETURN"
+		}
+		return e.projectMergeReturnPlan(ctx, rows, written, absentProjectionPlan(), source, preparedGroups...)
+	}
+	return e.projectMergeReturnPlan(ctx, rows, clause.text, projectionPlanOf(ctx, clause.syntax), source, preparedGroups...)
 }
 
 func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {

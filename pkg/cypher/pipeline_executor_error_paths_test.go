@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -36,15 +37,15 @@ func (e *createErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
 }
 
 func TestSplitPipelineClauses_GuardBranches(t *testing.T) {
-	clauses, ok := splitPipelineClauses(t.Context(), "   ")
+	clauses, ok := splitPipelineTextClauses(t.Context(), "   ")
 	require.False(t, ok)
 	require.Nil(t, clauses)
 
-	clauses, ok = splitPipelineClauses(t.Context(), "x MATCH (n) RETURN n")
+	clauses, ok = splitPipelineTextClauses(t.Context(), "x MATCH (n) RETURN n")
 	require.False(t, ok)
 	require.Nil(t, clauses)
 
-	clauses, ok = splitPipelineClauses(t.Context(), "MATCH (n) WHERE n.name STARTS WITH 'a' RETURN n")
+	clauses, ok = splitPipelineTextClauses(t.Context(), "MATCH (n) WHERE n.name STARTS WITH 'a' RETURN n")
 	require.True(t, ok)
 	require.Len(t, clauses, 2)
 	require.Equal(t, pipelineClauseMatch, clauses[0].kind)

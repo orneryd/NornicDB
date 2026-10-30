@@ -1,3 +1,4 @@
+// Author of retained-input changes: Codex R17 implementation agent, 29 October 2026.
 package cypher
 
 import (
@@ -91,7 +92,6 @@ func TestCompoundKeywordOperatorCasePolicy(t *testing.T) {
 }
 
 func TestPipelineCompoundKeywordBodyBindings(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, tc := range []struct{ clause, keyword string }{
 		{"MATCH (n)-[r]->(m)", "MATCH"},
 		{"CREATE (n)-[r]->(m)", "CREATE"},
@@ -101,7 +101,7 @@ func TestPipelineCompoundKeywordBodyBindings(t *testing.T) {
 	} {
 		require.Equal(t, "(n)-[r]->(m)", pipelineClauseBody(tc.clause, tc.keyword), tc.clause)
 		scope := make(map[string]struct{})
-		addPipelinePatternBindings(t.Context(), exec, scope, tc.clause, tc.keyword)
+		addPipelinePatternBindings(scope, retainedClauseForTest(t.Context(), tc.clause))
 		require.Equal(t, map[string]struct{}{"n": {}, "r": {}, "m": {}}, scope, tc.clause)
 	}
 }
