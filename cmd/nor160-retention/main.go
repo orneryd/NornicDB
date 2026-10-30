@@ -155,15 +155,16 @@ type recopy struct {
 }
 
 type report struct {
-	Author        string          `json:"author"`
-	Target        string          `json:"target"`
-	Loader        string          `json:"loader"`
-	Functions     int             `json:"functions_loaded"`
-	Copiers       []string        `json:"copiers"`
-	Exits         []finding       `json:"retention_exits"`
-	Recopies      []recopy        `json:"copies_of_owned_values"`
-	Controls      map[string]bool `json:"controls_detected"`
-	AllControlsOK bool            `json:"all_controls_detected"`
+	Author        string              `json:"author"`
+	Target        string              `json:"target"`
+	Loader        string              `json:"loader"`
+	Functions     int                 `json:"functions_loaded"`
+	Copiers       []string            `json:"copiers"`
+	Exits         []finding           `json:"retention_exits"`
+	Recopies      []recopy            `json:"copies_of_owned_values"`
+	Controls      map[string]bool     `json:"controls_detected"`
+	Debug         map[string][]string `json:"control_trace"`
+	AllControlsOK bool                `json:"all_controls_detected"`
 }
 
 var tree string
@@ -207,6 +208,12 @@ func refBearing(t types.Type, seen map[types.Type]bool) bool {
 		return refBearing(x.Underlying(), seen)
 	case *types.Map, *types.Slice, *types.Pointer, *types.Interface, *types.Chan:
 		return true
+	case *types.Tuple:
+		for i := 0; i < x.Len(); i++ {
+			if refBearing(x.At(i).Type(), seen) {
+				return true
+			}
+		}
 	case *types.Struct:
 		for i := 0; i < x.NumFields(); i++ {
 			if refBearing(x.Field(i).Type(), seen) {
@@ -335,7 +342,13 @@ type analysis struct {
 	summaries map[*ssa.Function]*summary
 	copiers   map[*ssa.Function]bool
 	owned     map[*ssa.Function]bool
+	values    map[*ssa.Function]map[ssa.Value]tags
 }
+
+// ownedTag marks a value a copier or detaching owner produced. It flows like a
+// retained origin but is never reported as one; a copier applied to a value
+// carrying it copies a caller-owned value again.
+const ownedTag = "owned:"
 
 func (a *analysis) sum(fn *ssa.Function) *summary {
 	s := a.summaries[fn]
@@ -652,6 +665,9 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 				case *ssa.Slice:
 					changed = get(x).add(get(x.X)) || changed
 					changed = get(x).add(memGet(x.X)) || changed
+					if local, ok := loadLocal(ins, x.X); ok {
+						changed = get(x).add(local) || changed
+					}
 				case *ssa.Range:
 					changed = get(x).add(get(x.X)) || changed
 				case *ssa.Next:
@@ -678,8 +694,18 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 					}
 					t := get(x.Val)
 					changed = memGet(x.Addr).add(t) || changed
-					if fa, ok := x.Addr.(*ssa.FieldAddr); ok {
-						changed = memGet(fa.X).add(t) || changed
+					for addr := x.Addr; ; {
+						if fa, ok := addr.(*ssa.FieldAddr); ok {
+							changed = memGet(fa.X).add(t) || changed
+							addr = fa.X
+							continue
+						}
+						if ia, ok := addr.(*ssa.IndexAddr); ok {
+							changed = memGet(ia.X).add(t) || changed
+							addr = ia.X
+							continue
+						}
+						break
 					}
 					if fv, ok := x.Addr.(*ssa.FreeVar); ok && len(t) > 0 {
 						a.recordFreeVarStore(fv, t)
@@ -732,6 +758,35 @@ func (a *analysis) flowFunction(fn *ssa.Function) bool {
 			}
 		}
 	}
+	a.values[fn] = val
+	top := fn
+	for top.Parent() != nil {
+		top = top.Parent()
+	}
+	if strings.Contains(top.String(), "NOR160Control") {
+		var lines []string
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				line := fmt.Sprintf("b%d %s", b.Index, ins.String())
+				if v, ok := ins.(ssa.Value); ok {
+					line = fmt.Sprintf("b%d %s = %s tags[%s]", b.Index, v.Name(), ins.String(), keysText(get(v)))
+				}
+				var reach []string
+				for k, t := range at[ins] {
+					if len(t) > 0 {
+						reach = append(reach, fmt.Sprintf("%s.%d:%s", k.alloc.Name(), k.field, keysText(t)))
+					}
+				}
+				sort.Strings(reach)
+				if len(reach) > 0 {
+					line += " reach{" + strings.Join(reach, " ") + "}"
+				}
+				lines = append(lines, line)
+			}
+		}
+		lines = append(lines, "returns["+keysText(s.returns)+"] callback["+keysText(s.callback)+"]")
+		controlTrace[fn.String()] = lines
+	}
 	return len(s.returns)+len(s.callback) != before
 }
 
@@ -756,11 +811,21 @@ func equalState(a, b rdState) bool {
 func fieldOnly(t tags) tags {
 	out := tags{}
 	for k := range t {
-		if !strings.HasPrefix(k, "param:") {
+		if !strings.HasPrefix(k, "param:") && !strings.HasPrefix(k, ownedTag) {
 			out[k] = true
 		}
 	}
 	return out
+}
+
+// inPlaceReshape reports a shapeNode call whose owned argument is the constant
+// true: it reshapes a caller-owned node and copies nothing.
+func inPlaceReshape(callee *ssa.Function, c *ssa.CallCommon) bool {
+	if callee.Name() != "shapeNode" || len(c.Args) != 4 {
+		return false
+	}
+	k, ok := c.Args[3].(*ssa.Const)
+	return ok && k.Value != nil && k.Value.String() == "true"
 }
 
 // callbackOwner returns the function whose parameter a callback value is.
@@ -836,6 +901,20 @@ func (a *analysis) recordFreeVarStore(fv *ssa.FreeVar, t tags) {
 
 var allocStores = map[*ssa.Alloc]tags{}
 
+// controlTrace records, for each planted control, every instruction with its
+// value tags and the reaching local definitions, so a missed control explains
+// itself in the report.
+var controlTrace = map[string][]string{}
+
+func keysText(t tags) string {
+	var out []string
+	for k := range t {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
 // storesChanged makes the outer fixpoint repeat when a closure adds a store
 // its parent must see.
 var storesChanged bool
@@ -896,7 +975,17 @@ func (a *analysis) flowCallee(fn, callee *ssa.Function, c *ssa.CallCommon, get f
 	changed := false
 	o := origin(callee)
 	if a.copiers[o] {
-		return false // the result is a fresh caller-owned value
+		// The result is a fresh caller-owned value. An in-place reshape
+		// (shapeNode with owned=true) returns its argument, not a new copy.
+		if t := get(call); t != nil && !inPlaceReshape(o, c) {
+			return t.add(tags{ownedTag + o.Name(): true})
+		}
+		return false
+	}
+	if a.owned[o] {
+		if t := get(call); t != nil {
+			changed = t.add(tags{ownedTag + o.Name(): true}) || changed
+		}
 	}
 	s := a.summaries[callee]
 	if s == nil {
@@ -1060,122 +1149,8 @@ func (a *analysis) findOwners() {
 
 // --- double copies ------------------------------------------------------------------
 
-func (a *analysis) ownedSource(v ssa.Value, seen map[ssa.Value]bool, depth int) string {
-	if v == nil || seen[v] || depth > 60 {
-		return ""
-	}
-	seen[v] = true
-	next := func(x ssa.Value) string { return a.ownedSource(x, seen, depth+1) }
-	switch x := v.(type) {
-	case *ssa.Call:
-		if c := staticCallee(x.Common()); c != nil && a.copiers[origin(c)] {
-			return "result of " + origin(c).Name()
-		}
-		if c := staticCallee(x.Common()); c != nil && a.owned[origin(c)] {
-			return "result of " + origin(c).Name()
-		}
-	case *ssa.Extract:
-		return next(x.Tuple)
-	case *ssa.Index:
-		return next(x.X)
-	case *ssa.IndexAddr:
-		return next(x.X)
-	case *ssa.Field:
-		return next(x.X)
-	case *ssa.FieldAddr:
-		return next(x.X)
-	case *ssa.Slice:
-		return next(x.X)
-	case *ssa.ChangeType:
-		return next(x.X)
-	case *ssa.MakeInterface:
-		return next(x.X)
-	case *ssa.TypeAssert:
-		return next(x.X)
-	case *ssa.Next:
-		return next(x.Iter)
-	case *ssa.Range:
-		return next(x.X)
-	case *ssa.Phi:
-		for _, e := range x.Edges {
-			if s := next(e); s != "" {
-				return s
-			}
-		}
-	case *ssa.UnOp:
-		if x.Op == token.MUL {
-			// Globals and some other addresses do not track referrers.
-			var uses []ssa.Instruction
-			if refs := x.X.Referrers(); refs != nil {
-				uses = *refs
-			}
-			for _, use := range uses {
-				if st, ok := use.(*ssa.Store); ok && st.Addr == x.X {
-					if s := next(st.Val); s != "" {
-						return s
-					}
-				}
-			}
-			if fv, ok := x.X.(*ssa.FreeVar); ok {
-				var out string
-				freeVarBinding(fv, func(b ssa.Value) bool { out = next(b); return out != "" })
-				if out != "" {
-					return out
-				}
-			}
-			if al, ok := x.X.(*ssa.Alloc); ok {
-				if s := a.closureStoresTo(al, next); s != "" {
-					return s
-				}
-			}
-			return next(x.X)
-		}
-	case *ssa.FreeVar:
-		var out string
-		freeVarBinding(x, func(b ssa.Value) bool { out = next(b); return out != "" })
-		return out
-	case *ssa.Alloc:
-		for _, use := range *x.Referrers() {
-			if st, ok := use.(*ssa.Store); ok && st.Addr == x {
-				if s := next(st.Val); s != "" {
-					return s
-				}
-			}
-		}
-		return a.closureStoresTo(x, next)
-	}
-	return ""
-}
-
-// closureStoresTo follows stores made to al by closures that capture it.
-func (a *analysis) closureStoresTo(al *ssa.Alloc, next func(ssa.Value) string) string {
-	for _, use := range *al.Referrers() {
-		mc, ok := use.(*ssa.MakeClosure)
-		if !ok {
-			continue
-		}
-		inner, ok := mc.Fn.(*ssa.Function)
-		if !ok {
-			continue
-		}
-		for i, b := range mc.Bindings {
-			if b != al || i >= len(inner.FreeVars) {
-				continue
-			}
-			fv := inner.FreeVars[i]
-			for _, r := range *fv.Referrers() {
-				if st, ok := r.(*ssa.Store); ok && st.Addr == fv {
-					if s := next(st.Val); s != "" {
-						return s
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
 func (a *analysis) recopies(fn *ssa.Function, out *[]recopy) {
+	values := a.values[fn]
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
 			call, ok := ins.(ssa.CallInstruction)
@@ -1183,16 +1158,23 @@ func (a *analysis) recopies(fn *ssa.Function, out *[]recopy) {
 				continue
 			}
 			c := staticCallee(call.Common())
-			if c == nil || !a.copiers[origin(c)] {
+			if c == nil || !a.copiers[origin(c)] || inPlaceReshape(origin(c), call.Common()) {
 				continue
 			}
 			for _, arg := range call.Common().Args {
 				if !handedOut(arg.Type()) {
 					continue
 				}
-				if src := a.ownedSource(arg, map[ssa.Value]bool{}, 0); src != "" {
+				var sources []string
+				for k := range values[arg] {
+					if strings.HasPrefix(k, ownedTag) {
+						sources = append(sources, "result of "+strings.TrimPrefix(k, ownedTag))
+					}
+				}
+				if len(sources) > 0 {
+					sort.Strings(sources)
 					file, line := pos(fn, call.Pos())
-					*out = append(*out, recopy{Func: fn.String(), File: file, Line: line, Copier: origin(c).Name(), Source: src})
+					*out = append(*out, recopy{Func: fn.String(), File: file, Line: line, Copier: origin(c).Name(), Source: strings.Join(sources, "; ")})
 				}
 			}
 		}
@@ -1219,7 +1201,7 @@ func exported(fn *ssa.Function) bool {
 func fieldOrigins(t tags) []string {
 	var out []string
 	for k := range t {
-		if !strings.HasPrefix(k, "param:") {
+		if !strings.HasPrefix(k, "param:") && !strings.HasPrefix(k, ownedTag) {
 			out = append(out, k)
 		}
 	}
@@ -1279,7 +1261,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	a := &analysis{prog: p, summaries: map[*ssa.Function]*summary{}, copiers: map[*ssa.Function]bool{}}
+	a := &analysis{prog: p, summaries: map[*ssa.Function]*summary{}, copiers: map[*ssa.Function]bool{}, values: map[*ssa.Function]map[ssa.Value]tags{}}
 	a.findCopiers()
 	a.findOwners()
 	var fns []*ssa.Function
@@ -1339,6 +1321,7 @@ func main() {
 		}
 		return r.Recopies[i].Line < r.Recopies[j].Line
 	})
+	r.Debug = controlTrace
 	r.AllControlsOK = true
 	for _, c := range controls {
 		found := false
