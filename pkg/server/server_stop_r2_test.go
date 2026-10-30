@@ -218,8 +218,7 @@ func stopR2Install(t *testing.T, s *Server, p *stopR2Plugin) {
 	t.Helper()
 	heimdall.ResetSubsystemManagerForTests()
 	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
-	s.shutdown.init()
-	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.workContext}, nil)
+	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.work.Context()}, nil)
 	require.NoError(t, heimdall.GetSubsystemManager().RegisterPlugin(p, "", true))
 }
 func TestServerStopR2PluginLifetime(t *testing.T) {
@@ -289,7 +288,7 @@ func TestServerStopR2SuccessfulComposedLifetime(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- s.Stop(ctx) }()
-	require.Eventually(t, func() bool { return s.closed.Load() }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return s.shutdown.work.Closing() }, time.Second, time.Millisecond)
 	releaseLease.open()
 	stopR2Await(t, tail.entered)
 	require.Eventually(t, controller.completed.Load, time.Second, time.Millisecond, "real storage rollback did not complete after the lease was released")
@@ -389,7 +388,7 @@ func TestServerStopR2EmbedderLifetime(t *testing.T) {
 	stopR2Bounded(t, s)
 	stopR2Live(t, s)
 	gate.open()
-	stopR2Await(t, s.embedderInitDone)
+	stopR2Await(t, s.embedderInit.Done())
 	_ = stopR2Done(t, s)
 }
 

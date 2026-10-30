@@ -15,8 +15,7 @@ func (s *Service) BeginShutdown() {
 	if s == nil {
 		return
 	}
-	s.lifetimeWork.CloseAdmission()
-	s.lifetimeWork.Cancel()
+	s.lifetimeWork.BeginStop(s.closeResources)
 }
 
 // LifetimeContext is immutable and is canceled by BeginShutdown/Close.
@@ -26,9 +25,6 @@ func (s *Service) LifetimeContext() context.Context { return s.lifecycleCtx }
 // owner as its producers. State locks protect publication only; Close signals
 // this context and joins the ticket before disposing native resources.
 func (s *Service) beginRead(ctx context.Context) (context.Context, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

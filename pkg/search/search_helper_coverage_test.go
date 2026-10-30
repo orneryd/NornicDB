@@ -16,14 +16,6 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 	require.Equal(t, 0, svc.FulltextDocCount())
 
-	svc.MarkWarmDone()
-	svc.MarkWarmDone()
-	select {
-	case <-svc.warmDone:
-	default:
-		t.Fatal("MarkWarmDone should close warmDone")
-	}
-
 	svc.setFulltext(nil)
 	require.Equal(t, 0, svc.FulltextDocCount())
 

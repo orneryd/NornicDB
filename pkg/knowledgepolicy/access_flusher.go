@@ -44,7 +44,7 @@ type AccessFlusher struct {
 	store              AccessMetaStore
 	interval           time.Duration
 	mu                 sync.Mutex
-	active             *lifecycle.WorkLifetime // mu; the current run, replaced only after actual completion
+	active             *lifecycle.WorkLifetime // mu; the current run, replaced only after it has stopped
 	outcomes           lifecycle.Outcomes      // native outcomes of every run
 	flushNow           chan struct{}
 	scorerFunc         ScorerFunc
@@ -122,7 +122,7 @@ func (f *AccessFlusher) BufferFullness() float64 {
 // and published under it; a run that loses publication is retired unused.
 func (f *AccessFlusher) Start(ctx context.Context) {
 	f.mu.Lock()
-	skip := !f.accumulator.enabled || f.active != nil
+	skip := !f.accumulator.enabled || f.runLive()
 	f.mu.Unlock()
 	if skip {
 		return
@@ -130,11 +130,10 @@ func (f *AccessFlusher) Start(ctx context.Context) {
 	run := lifecycle.NewWorkLifetime(ctx)
 	_, release, _ := run.Acquire(context.Background())
 	f.mu.Lock()
-	if f.active != nil {
+	if f.runLive() {
 		f.mu.Unlock()
 		release()
-		run.CloseAdmission()
-		run.Cancel()
+		run.BeginStop(nil)
 		return
 	}
 	f.active = run
@@ -142,21 +141,29 @@ func (f *AccessFlusher) Start(ctx context.Context) {
 	go func() { defer release(); f.run(run.Context()) }()
 }
 
-// Stop seals this run before signaling, joins its actual completion and
-// returns every accumulated native outcome. A closing run cannot be replaced.
+// runLive reports whether the current run has not finished its stop; a new
+// run is published only after the previous one stopped. f.mu must be held.
+func (f *AccessFlusher) runLive() bool {
+	if f.active == nil {
+		return false
+	}
+	select {
+	case <-f.active.Stopped():
+		return false
+	default:
+		return true
+	}
+}
+
+// Stop is the current run's one stop: it seals and signals the run, joins its
+// actual completion and returns every accumulated native outcome. Every
+// caller joins the same stop; a stopping run cannot be replaced.
 func (f *AccessFlusher) Stop() error {
 	f.mu.Lock()
 	run := f.active
 	f.mu.Unlock()
 	if run != nil {
-		run.CloseAdmission()
-		run.Cancel()
-		<-run.Quiescent()
-		f.mu.Lock()
-		if f.active == run {
-			f.active = nil
-		}
-		f.mu.Unlock()
+		f.outcomes.Record("", run.Shutdown(context.Background(), nil))
 	}
 	return f.outcomes.Err()
 }

@@ -631,38 +631,34 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the server.
+// Stop gracefully shuts down the server. It is the owner's one stop: the
+// first caller signals the transport; every caller joins actual retirement.
 func (s *Server) Stop() {
 	s.mu.Lock()
 	first := s.work.CloseAdmission()
 	server := s.grpcServer
 	s.mu.Unlock()
-	if !first {
-		<-s.work.Quiescent()
-		return
+	if first {
+		s.work.Cancel()
+		if server != nil {
+			server.GracefulStop()
+		}
 	}
-	s.work.Cancel()
-	if server != nil {
-		server.GracefulStop()
-	}
-	<-s.work.Quiescent()
+	<-s.work.BeginStop(s.retire)
+}
+
+// retire runs once, after Start and the serving goroutine actually returned.
+func (s *Server) retire() error {
 	s.mu.Lock()
 	s.started = false
 	s.mu.Unlock()
 	log.Println("Qdrant gRPC server stopped")
+	return nil
 }
 
 // WaitStopped observes actual transport completion and its serving outcome.
 func (s *Server) WaitStopped(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case <-s.work.Quiescent():
-		return s.work.Err()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return s.work.WaitStopped(ctx)
 }
 
 // Addr returns the server's listen address.

@@ -569,7 +569,6 @@ func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time
 // vector rerank feature flag is turned on.
 func (db *DB) SetSearchReranker(r search.Reranker) {
 	if local, ok := r.(*search.LocalReranker); ok {
-		local.SetLifetime(db.beginProviderUse)
 		if _, accepted := db.OwnProvider("local reranker model", local.UnderlyingScorer()); !accepted {
 			return
 		}

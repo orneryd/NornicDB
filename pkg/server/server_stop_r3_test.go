@@ -143,8 +143,7 @@ func stopR3Install(t *testing.T, s *Server, plugins ...*stopR3Plugin) {
 	heimdall.ResetSubsystemManagerForTests()
 	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
 	m := heimdall.GetSubsystemManager()
-	s.shutdown.init()
-	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.workContext, Config: heimdall.Config{APIURL: "https://user:password@example.invalid", APIKey: "r3-private-key"}, Heimdall: heimdall.NewLiveHeimdallInvoker(m, nil, nil, nil, nil)}, nil)
+	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.work.Context(), Config: heimdall.Config{APIURL: "https://user:password@example.invalid", APIKey: "r3-private-key"}, Heimdall: heimdall.NewLiveHeimdallInvoker(m, nil, nil, nil, nil)}, nil)
 	for _, p := range plugins {
 		require.NoError(t, m.RegisterPlugin(p, "", true))
 	}
@@ -542,7 +541,7 @@ func TestServerStopR3ConstructedModels(t *testing.T) {
 					_, _ = s.db.GetCypherExecutor().Execute(context.Background(), "CALL db.infer({prompt:'r3'}) YIELD text RETURN text", nil)
 				}()
 			} else {
-				reranker := search.NewLocalReranker(model, nil)
+				reranker := search.NewLocalReranker(model, nil, s.db.BeginProviderUse)
 				s.db.SetSearchReranker(reranker)
 				go func() {
 					defer close(useDone)

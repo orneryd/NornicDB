@@ -914,8 +914,6 @@ type Service struct {
 	hnswVectorsChanging atomic.Bool
 	hnswGeneration      atomic.Uint64
 	hnswMaintOnce       sync.Once
-	hnswMaintCancel     context.CancelFunc
-	hnswMaintDone       chan struct{}
 	hnswRebuildInFlight atomic.Bool
 	hnswLastRebuildUnix atomic.Int64
 	// hnswRebuildOverlay records only mutations that race an active rebuild.
@@ -995,20 +993,17 @@ type Service struct {
 	// the eager build for this database; the FIRST read path (Search,
 	// VectorSearchCandidates, db.index.vector.queryNodes, Bolt search,
 	// GraphQL search resolver, gRPC) calls EnsureWarm which fires lazyTrigger
-	// exactly once via warmOnce. Subsequent readers wait on warmDone (which
-	// is closed when the triggered build completes — success or failure).
+	// exactly once through the warm completion; every reader joins that same
+	// completion (success or failure).
 	//
 	// The trigger fires the build in the owner's long-lived context (via
 	// the WarmFunc callback the DB wires at construction time), NOT the
 	// caller's request context. Caller ctx only governs the wait — a
 	// timed-out request returns ctx.Err() but the build continues so the
 	// next request finds the service warm.
-	warmingLazy  atomic.Bool
-	warmOnce     lifecycle.OnceCompletion
-	warmDone     chan struct{}
-	warmDoneOnce sync.Once    // guards every close(s.warmDone) site
-	warmFunc     atomic.Value // WarmFunc; called by EnsureWarm to request a build
-	warmInFlight atomic.Bool
+	warmingLazy atomic.Bool
+	warm        lifecycle.OnceCompletion // the one lazy warm build
+	warmFunc    atomic.Value             // WarmFunc; called by EnsureWarm to request a build
 
 	// Debounced persist: after IndexNode/RemoveNode we schedule a write to disk after an idle delay.
 	persistMu        sync.Mutex
@@ -1071,7 +1066,6 @@ type Service struct {
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc // alias of lifetimeWork.Cancel, not another cancellation source
 	lifetimeWork    lifecycle.WorkLifetime
-	closed          lifecycle.OnceCompletion // one resource close; every caller joins it
 
 	// relationships holds relationship search's indexes when it is enabled
 	// (#1065); nil otherwise.
@@ -1290,6 +1284,7 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 		cacheNamespace:             cacheNamespace,
 	}
 	svc.lifecycleCtx = svc.lifetimeWork.Context()
+	svc.lifetimeWork.OnStop(svc.signalStop)
 	svc.lifecycleCancel = svc.lifetimeWork.Cancel
 	svc.setFulltext(fulltextIndex)
 	svc.completePolicy.Store(defaultCompleteContinuationPolicy())
@@ -1309,7 +1304,6 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 	svc.bm25Enabled.Store(true)
 	svc.vectorEnabled.Store(true)
 	svc.runtimeStrategyTransitions.Store(envutil.GetBoolStrict("NORNICDB_VECTOR_RUNTIME_STRATEGY_TRANSITIONS_ENABLED", false))
-	svc.warmDone = make(chan struct{})
 	return svc
 }
 
@@ -1416,54 +1410,36 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 	if !s.warmingLazy.Load() || s.ready.Load() {
 		return nil
 	}
-	s.warmOnce.Run(func() {
-		// Run the trigger in a goroutine so it doesn't block on the
-		// caller; the build completes regardless of whether the caller
-		// is still waiting.
-		fn, _ := s.warmFunc.Load().(WarmFunc)
-		if fn == nil {
-			// No trigger wired — close immediately so waiters return.
-			// IsReady() is still false but at least we don't deadlock.
-			s.logPrintf("⚠️  Search: lazy trigger requested but WarmFunc is nil — closing warm channel")
-			s.closeWarmDone()
-			return
-		}
-		s.warmInFlight.Store(true)
-		if !s.RunBackgroundTask(func() {
-			defer s.warmInFlight.Store(false)
-			defer s.closeWarmDone()
-			fn()
-		}) {
-			s.warmInFlight.Store(false)
-			s.closeWarmDone()
-		}
-	})
-	if ctx == nil {
-		ctx = context.Background()
+	done := s.warm.Done()
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	// Each first reader enrolls one joiner as service work. The first to run
+	// executes the trigger; the others join that same completion.
+	if !s.RunBackgroundTask(func() { s.warm.Do(s.runWarm) }) {
+		return context.Canceled
 	}
 	select {
-	case <-s.warmDone:
+	case <-done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-// MarkWarmDone signals waiters that the lazy-triggered build has finished.
-// Used by callers that drive the build externally (e.g. the DB owner that
-// wired the WarmFunc) so they can clear the lazy state once the service is
-// ready. Idempotent — safe to interleave with EnsureWarm's goroutine close.
-func (s *Service) MarkWarmDone() {
-	s.closeWarmDone()
-}
-
-// closeWarmDone closes s.warmDone exactly once across all paths
-// (EnsureWarm's goroutine, the nil-WarmFunc fallback, and MarkWarmDone).
-// Without this guard, two paths racing to close would panic.
-func (s *Service) closeWarmDone() {
-	s.warmDoneOnce.Do(func() {
-		close(s.warmDone)
-	})
+// runWarm is the lazy warm build: the DB's WarmFunc in the service's own
+// accepted work, not the caller's request.
+func (s *Service) runWarm() error {
+	fn, _ := s.warmFunc.Load().(WarmFunc)
+	if fn == nil {
+		// No trigger wired: complete so waiters return. IsReady() stays false.
+		s.logPrintf("⚠️  Search: lazy trigger requested but WarmFunc is nil — completing warm")
+		return nil
+	}
+	fn()
+	return nil
 }
 
 // MarkReadyDisabled marks the service ready without doing any build work.
@@ -2279,11 +2255,13 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
-	s.BeginShutdown()
-	return s.closed.DoContext(context.Background(), s.closeResources)
+	return s.lifetimeWork.Shutdown(context.Background(), s.closeResources)
 }
 
-func (s *Service) closeResources() error {
+// signalStop is the service's stop signal, run when its owner is cancelled:
+// it retires construction and stops the producers' timers so accepted work
+// can return.
+func (s *Service) signalStop() error {
 	s.pauseHNSWBuild() // Service shutdown permanently retires construction.
 	s.continuationMu.Lock()
 	continuation, owned := s.continuationRegistry, s.continuationOwned
@@ -2308,8 +2286,12 @@ func (s *Service) closeResources() error {
 	}
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
+	return nil
+}
 
-	<-s.lifetimeWork.Quiescent()
+// closeResources is the owner's dispose: it runs once, after every accepted
+// read, build and timer callback actually returned.
+func (s *Service) closeResources() error {
 	relationshipErr := s.joinRelationshipIndex()
 
 	// Join the exclusive base build without excluding derived operations.

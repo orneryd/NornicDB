@@ -14,14 +14,13 @@ import (
 
 // lifetime is initialized before a start site can run. A configured TLS
 // constructor and its server consume this same admission/completion owner.
+// Its closing state is the server's only closed state.
 func (s *Server) lifetime() *lifecycle.WorkLifetime {
-	s.lifecycleMu.Lock()
-	if s.work == nil {
-		s.work = &lifecycle.WorkLifetime{}
+	if w := s.work.Load(); w != nil {
+		return w
 	}
-	w := s.work
-	s.lifecycleMu.Unlock()
-	return w
+	s.work.CompareAndSwap(nil, &lifecycle.WorkLifetime{})
+	return s.work.Load()
 }
 
 func (s *Server) beginServe() (context.Context, func(), error) {
@@ -31,7 +30,7 @@ func (s *Server) beginServe() (context.Context, func(), error) {
 		return nil, nil, fmt.Errorf("bolt server is closed")
 	}
 	s.lifecycleMu.Lock()
-	if s.closed.Load() || s.serving {
+	if s.lifetime().Closing() || s.serving {
 		s.lifecycleMu.Unlock()
 		release()
 		return nil, nil, fmt.Errorf("bolt server is closed or already serving")
@@ -49,9 +48,6 @@ func (s *Server) beginServe() (context.Context, func(), error) {
 // Every start path enrolls before its worker or listener factory can run.
 // The worker signals failed startup but never joins its own retained frame.
 func (s *Server) runServing(ctx context.Context, listen func(context.Context) (net.Listener, error)) (error, bool) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return err, false
 	}
@@ -95,43 +91,27 @@ func (s *Server) Close() error { return s.Shutdown(context.Background()) }
 // constructors and workers. A supervisor signals all siblings before joining
 // any one of them. The returned channel closes after disposal and publication.
 func (s *Server) BeginShutdown() <-chan struct{} {
-	w := s.lifetime()
-	s.closed.Store(true)
-	w.CloseAdmission()
-	w.Cancel()
-	// The retirement driver runs once and is joined through stopped, not as an
-	// admitted user of the group it must drain. No host lock surrounds foreign code.
-	return s.stopped.Go(func() error {
-		if err := s.closeListener(); !util.ErrorIsOnly(err, net.ErrClosed) {
-			w.RecordError("close Bolt listener", err)
-		}
-		<-w.Quiescent()
-		s.statementCacheIndex.Close()
-		s.executorsMu.Lock()
-		s.executors = nil
-		s.executorsMu.Unlock()
-		s.fallbackStatementCaches().Dispose()
-		return w.Err()
-	})
+	return s.lifetime().BeginStop(s.retire)
 }
 
-// Shutdown bounds only the caller; the driver retains every actual completion.
+// retire runs once, after every accepted connection and serve loop returned.
+func (s *Server) retire() error {
+	s.statementCacheIndex.Close()
+	s.executorsMu.Lock()
+	s.executors = nil
+	s.executorsMu.Unlock()
+	s.fallbackStatementCaches().Dispose()
+	return nil
+}
+
+// Shutdown bounds only the caller; every caller joins the same actual stop.
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.BeginShutdown()
-	return s.WaitStopped(ctx)
+	return s.lifetime().Shutdown(ctx, s.retire)
 }
 
 // WaitStopped observes actual retirement without initiating another shutdown.
 func (s *Server) WaitStopped(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case <-s.stopped.Done():
-		return s.stopped.Err()
-	case <-ctx.Done():
-		return compose.Outcomes(s.lifetime().Err(), ctx.Err())
-	}
+	return s.lifetime().WaitStopped(ctx)
 }
 
 func (s *Server) startConnection(ctx context.Context, conn net.Conn) {
