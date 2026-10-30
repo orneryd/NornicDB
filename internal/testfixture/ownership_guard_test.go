@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -98,8 +99,22 @@ func constructorRegistrationGaps(set *token.FileSet, file *ast.File, localStorag
 }
 
 func TestRepositoryStorageFixtureConstructorOwnership(t *testing.T) {
-	root := filepath.Join("..", "..")
+	gaps, err := moduleConstructorRegistrationGaps(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gap := range gaps {
+		t.Error(gap)
+	}
+}
+
+// Each nested go.mod starts a different module, including verifier worktrees.
+// Keep scanning this module's source (including hidden non-module directories)
+// rather than applying the current module's specimen policy to another module.
+func moduleConstructorRegistrationGaps(root string) ([]string, error) {
+	root = filepath.Clean(root)
 	set := token.NewFileSet()
+	var gaps []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -107,6 +122,15 @@ func TestRepositoryStorageFixtureConstructorOwnership(t *testing.T) {
 		if entry.IsDir() {
 			if entry.Name() == ".git" || entry.Name() == "vendor" || entry.Name() == "node_modules" {
 				return filepath.SkipDir
+			}
+			if path != root {
+				info, err := os.Stat(filepath.Join(path, "go.mod"))
+				if err == nil && info.Mode().IsRegular() {
+					return filepath.SkipDir
+				}
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
 			}
 			return nil
 		}
@@ -129,11 +153,48 @@ func TestRepositoryStorageFixtureConstructorOwnership(t *testing.T) {
 		local := filepath.ToSlash(filepath.Dir(relative)) == "pkg/storage" && file.Name.Name == "storage"
 		process := relative == "pkg/cypher/store_lifecycle_test.go"
 		for _, gap := range constructorRegistrationGaps(set, file, local, process) {
-			t.Errorf("%s: %s must enter the fixture lifetime owner", set.Position(gap.position), gap.factory)
+			gaps = append(gaps, fmt.Sprintf("%s: %s must enter the fixture lifetime owner", set.Position(gap.position), gap.factory))
 		}
 		return nil
 	})
+	return gaps, err
+}
+
+func TestModuleConstructorRegistrationPopulation(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := "package specimen\nimport(\"testing\";storage \"" + storageImport + "\")\nfunc TestLeak(t *testing.T){storage.NewMemoryEngine()}\n"
+	write("go.mod", "module fixture\n")
+	write("pkg/active/leak_test.go", source)
+	write(".verify/plain/leak_test.go", source)
+	write(".verify/worktrees/baseline/go.mod", "module baseline\n")
+	write(".verify/worktrees/baseline/pkg/leak_test.go", source)
+	gaps, err := moduleConstructorRegistrationGaps(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(gaps) != 2 {
+		t.Fatalf("root and hidden non-module leaks must remain visible, nested module excluded: %v", gaps)
+	}
+	for _, relative := range []string{"pkg/active/leak_test.go", ".verify/plain/leak_test.go"} {
+		if !strings.Contains(strings.Join(gaps, "\n"), filepath.Join(root, filepath.FromSlash(relative))) {
+			t.Errorf("active module leak omitted: %s; got %v", relative, gaps)
+		}
+	}
+	write("pkg/active/broken_test.go", "package )")
+	if _, err := moduleConstructorRegistrationGaps(root); err == nil {
+		t.Error("active module syntax errors must propagate")
+	}
+	if _, err := moduleConstructorRegistrationGaps(filepath.Join(root, "missing")); !os.IsNotExist(err) {
+		t.Errorf("missing-root error must propagate: %v", err)
 	}
 }

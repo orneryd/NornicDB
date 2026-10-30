@@ -49,11 +49,15 @@ func (c *CompositeEngine) constituentDatabase(alias string, engine Engine) strin
 }
 
 func nodeFromDatabase(node *Node, database string) *Node {
-	if node == nil || node.Database != "" {
+	if node == nil || node.RuntimeMetadata().Database != "" {
 		return node
 	}
 	copy := *node
-	copy.Database = database
+	{
+		metadata := copy.RuntimeMetadata()
+		metadata.Database = database
+		copy.SetRuntimeMetadata(metadata)
+	}
 	return &copy
 }
 
@@ -67,7 +71,7 @@ func edgeFromDatabase(edge *Edge, database string) *Edge {
 }
 
 func (c *CompositeEngine) sourceNode(alias string, engine Engine, node *Node) *Node {
-	if node == nil || node.Database != "" {
+	if node == nil || node.RuntimeMetadata().Database != "" {
 		return node
 	}
 	return nodeFromDatabase(node, c.constituentDatabase(alias, engine))
@@ -94,7 +98,7 @@ func edgesFromDatabase(edges []*Edge, database string) []*Edge {
 
 func nodesFromDatabase(nodes []*Node, database string) []*Node {
 	for _, node := range nodes {
-		if node != nil && node.Database == "" {
+		if node != nil && node.RuntimeMetadata().Database == "" {
 			copy := append([]*Node(nil), nodes...)
 			for i, value := range copy {
 				copy[i] = nodeFromDatabase(value, database)

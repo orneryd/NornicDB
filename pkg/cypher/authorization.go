@@ -49,7 +49,16 @@ func QueryPermissionRequirements(ctx context.Context, query string, stage Source
 	if source.Err != nil {
 		return PermissionRequirements{Read: true, Write: true, Schema: true, Admin: true}
 	}
-	query = source.Text
+	return permissionRequirementsOfSource(ctx, source)
+}
+
+// permissionRequirementsOfSource classifies an already normalized source view.
+// Only normalization is shared with a caller that holds one retained source; the
+// classification itself (schema and admin commands, the grammar-owned execution
+// contract and the live procedure registry) runs on every request, so accepted
+// text can never inherit another stage's or dialect's verdict.
+func permissionRequirementsOfSource(ctx context.Context, source *cyphertext.Source) PermissionRequirements {
+	query := source.Text
 	query = classificationText(query)
 	requirements := PermissionRequirements{
 		Read:   true,
@@ -70,7 +79,7 @@ func QueryPermissionRequirements(ctx context.Context, query string, stage Source
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
-	for _, procedure := range RegisteredProceduresForCalls(ctx, query, AcceptedSource) {
+	for _, procedure := range registeredProceduresForSource(ctx, source) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -103,8 +112,19 @@ func RegisteredProceduresForCalls(ctx context.Context, query string, stage Sourc
 	if source.Err != nil {
 		return nil
 	}
-	query = source.Text
-	structure, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	return registeredProceduresForSource(ctx, source)
+}
+
+// registeredProceduresForSource resolves the grammar-owned CALL clauses of an
+// already normalized source view against the live registry. Its caller owns the
+// source stage; this reader owns only the grammar read and the procedure
+// lookup, so it never reinterprets accepted text as raw input, never expands a
+// projected escape twice and never consults a second classification of it.
+func registeredProceduresForSource(ctx context.Context, source *cyphertext.Source) []ProcedureSpec {
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	structure, err := cypherantlr.ParseSyntax(ctx, source.Text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	}

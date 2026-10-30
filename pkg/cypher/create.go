@@ -288,8 +288,12 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	}
 	store := e.getStorage(ctx)
 	for _, node := range plan.nodes {
-		if node.Database == "" {
-			node.Database = storage.DatabaseOf(store)
+		if node.RuntimeMetadata().Database == "" {
+			{
+				metadata := node.RuntimeMetadata()
+				metadata.Database = storage.DatabaseOf(store)
+				node.SetRuntimeMetadata(metadata)
+			}
 		}
 	}
 	for _, edge := range plan.edges {

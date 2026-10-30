@@ -116,7 +116,7 @@ func TestNamespacedEngine_GetNodeWithoutEmbeddingsSkipsSeparateVectors(t *testin
 
 	full, err := tenant.GetNode(node.ID)
 	require.NoError(t, err)
-	require.False(t, full.EmbeddingsStoredSeparately)
+	require.False(t, full.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Len(t, full.ChunkEmbeddings, 2)
 	require.Len(t, full.ChunkEmbeddings[0], 10_000)
 }

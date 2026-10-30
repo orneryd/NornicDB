@@ -263,8 +263,8 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 			return wrapper.tx.StartTime.UTC()
 		}
 	}
-	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {
-		return instant
+	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(*time.Time); ok {
+		return *instant
 	}
 	return time.Now().UTC()
 }

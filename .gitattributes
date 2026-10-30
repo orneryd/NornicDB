@@ -22,3 +22,7 @@ docker/Dockerfile* text eol=lf
 # check them out exactly as stored, never with converted line endings.
 *.golden -text
 **/testdata/** -text
+
+# Frozen binary node payloads must never be decoded as textual diffs.
+pkg/storage/testdata/node-runtime-v4/*.bin binary
+pkg/storage/testdata/node-runtime-v4/*.msgpack binary

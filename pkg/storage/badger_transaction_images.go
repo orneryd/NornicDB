@@ -71,9 +71,13 @@ func (tx *BadgerTransaction) codecEdgeImageLocked(edge *Edge) (*Edge, error) {
 // body was encoded for; the codec's persisted embedding metadata stays.
 func keepSourceEmbeddings(image, source *Node) {
 	switch {
-	case image.EmbeddingsStoredSeparately:
+	case image.RuntimeMetadata().EmbeddingsStoredSeparately:
 		image.ChunkEmbeddings = source.ChunkEmbeddings
-		image.EmbeddingsStoredSeparately = false
+		{
+			metadata := image.RuntimeMetadata()
+			metadata.EmbeddingsStoredSeparately = false
+			image.SetRuntimeMetadata(metadata)
+		}
 	case len(image.ChunkEmbeddings) == 0 && image.EmbedMeta == nil:
 		image.ChunkEmbeddings = source.ChunkEmbeddings
 		image.EmbedMeta = source.EmbedMeta
@@ -209,7 +213,7 @@ func writtenNodeSource(node *Node) (*Node, bool) {
 // apart, types anew or hydrates from elsewhere.
 func codecNodeProperties(node *Node) (map[string]any, bool) {
 	if node.NamedEmbeddings != nil || node.ChunkEmbeddings != nil || node.EmbedMeta != nil ||
-		node.EmbeddingsStoredSeparately {
+		node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		return nil, false
 	}
 	return codecImageProperties(node.Properties)

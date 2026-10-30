@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/orneryd/nornicdb/internal/gobcodec"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -162,13 +161,13 @@ func decodeValue(data []byte, value any) error {
 		case serializerIDMsgpack:
 			return util.DecodeMsgpackBytes(payload, value)
 		case serializerIDGob:
-			return gobcodec.Decode(bytes.NewReader(payload), value, gobcodec.AllowTrailing)
+			return decodeStoredGob(payload, value)
 		default:
 			return fmt.Errorf("unsupported storage serializer id: %d", headerSerializer)
 		}
 	}
 	// Legacy fallback: pre-header gob bodies.
-	return gobcodec.Decode(bytes.NewReader(data), value, gobcodec.AllowTrailing)
+	return decodeStoredGob(data, value)
 }
 
 // splitSerializationHeader returns the serializer id from the leading

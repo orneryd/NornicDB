@@ -46,12 +46,12 @@ func TestVisibilitySuppressed_FastPathNode(t *testing.T) {
 	eng := setupVisibilityTestEngine(t)
 
 	node := &Node{
-		ID:                   "nornic:ep1",
-		Labels:               []string{"MemoryEpisode"},
-		Properties:           map[string]interface{}{"name": "test"},
-		CreatedAt:            time.Now().Add(-720 * time.Hour),
-		UpdatedAt:            time.Now().Add(-720 * time.Hour),
-		VisibilitySuppressed: true,
+		runtime:    &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+		ID:         "nornic:ep1",
+		Labels:     []string{"MemoryEpisode"},
+		Properties: map[string]interface{}{"name": "test"},
+		CreatedAt:  time.Now().Add(-720 * time.Hour),
+		UpdatedAt:  time.Now().Add(-720 * time.Hour),
 	}
 
 	nowNanos := DecayScoringTime()
@@ -64,12 +64,12 @@ func TestVisibilitySuppressed_RevealAllBypass(t *testing.T) {
 	eng := setupVisibilityTestEngine(t)
 
 	node := &Node{
-		ID:                   "nornic:ep1",
-		Labels:               []string{"MemoryEpisode"},
-		Properties:           map[string]interface{}{"name": "test"},
-		CreatedAt:            time.Now().Add(-720 * time.Hour),
-		UpdatedAt:            time.Now().Add(-720 * time.Hour),
-		VisibilitySuppressed: true,
+		runtime:    &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+		ID:         "nornic:ep1",
+		Labels:     []string{"MemoryEpisode"},
+		Properties: map[string]interface{}{"name": "test"},
+		CreatedAt:  time.Now().Add(-720 * time.Hour),
+		UpdatedAt:  time.Now().Add(-720 * time.Hour),
 	}
 
 	eng.SetRevealAll(true)
@@ -103,12 +103,11 @@ func TestVisibilitySuppressed_NotSuppressedPassesThrough(t *testing.T) {
 	eng := setupVisibilityTestEngine(t)
 
 	node := &Node{
-		ID:                   "nornic:recent",
-		Labels:               []string{"MemoryEpisode"},
-		Properties:           map[string]interface{}{"name": "test"},
-		CreatedAt:            time.Now().Add(-5 * time.Minute),
-		UpdatedAt:            time.Now().Add(-5 * time.Minute),
-		VisibilitySuppressed: false,
+		ID:         "nornic:recent",
+		Labels:     []string{"MemoryEpisode"},
+		Properties: map[string]interface{}{"name": "test"},
+		CreatedAt:  time.Now().Add(-5 * time.Minute),
+		UpdatedAt:  time.Now().Add(-5 * time.Minute),
 	}
 
 	nowNanos := DecayScoringTime()
@@ -149,12 +148,12 @@ func TestVisibilitySuppressed_ScoringRunsBeforeStaleFlagForReverseFloor(t *testi
 
 	now := time.Now()
 	node := &Node{
-		ID:                   "nornic:reverse-floor",
-		Labels:               []string{"ReverseMemory"},
-		Properties:           map[string]interface{}{"name": "test"},
-		CreatedAt:            now,
-		UpdatedAt:            now,
-		VisibilitySuppressed: true,
+		runtime:    &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+		ID:         "nornic:reverse-floor",
+		Labels:     []string{"ReverseMemory"},
+		Properties: map[string]interface{}{"name": "test"},
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 
 	if eng.filterEntityByDecay(visibleRead, node, now.UnixNano()) {
@@ -191,12 +190,12 @@ func TestStreamNodesByLabelProjected_ScoresBeforeStaleVisibility(t *testing.T) {
 
 	now := time.Now()
 	node := &Node{
-		ID:                   "nornic:reverse-floor-stream",
-		Labels:               []string{"ReverseMemory"},
-		Properties:           map[string]interface{}{"name": "test"},
-		CreatedAt:            now,
-		UpdatedAt:            now,
-		VisibilitySuppressed: true,
+		runtime:    &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}},
+		ID:         "nornic:reverse-floor-stream",
+		Labels:     []string{"ReverseMemory"},
+		Properties: map[string]interface{}{"name": "test"},
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	_, err = eng.CreateNode(node)
 	require.NoError(t, err)
