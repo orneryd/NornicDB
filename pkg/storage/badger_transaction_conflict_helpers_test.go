@@ -86,13 +86,13 @@ func TestBadgerTransaction_GetNodesByLabelLocked_Branches(t *testing.T) {
 	defer tx.Rollback()
 
 	// readTS == zero branch.
-	nodes, err := tx.getNodesByLabelLocked("User")
+	nodes, err := deliveredNodes(tx.getNodesByLabelLocked("User"))
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 
 	// readTS != zero branch.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	nodes, err = tx.getNodesByLabelLocked("User")
+	nodes, err = deliveredNodes(tx.getNodesByLabelLocked("User"))
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes)
 }

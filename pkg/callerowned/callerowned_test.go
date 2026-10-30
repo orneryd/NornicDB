@@ -101,6 +101,31 @@ func TestCopierDispatchPreservesType(t *testing.T) {
 	require.Equal(t, hit.Values, byValue.Values)
 }
 
+// countingCopier counts its CallerCopy calls (a value receiver, as
+// search.SearchResult has).
+type countingCopier struct{ calls *int }
+
+func (c countingCopier) CallerCopy() any {
+	*c.calls++
+	return countingCopier{calls: c.calls}
+}
+
+// The dispatch rule makes one CallerCopy call per value, the pointer to a
+// value-receiver Copier included, wherever the value sits.
+func TestCopierDispatchCallsCopierOnce(t *testing.T) {
+	for name, copy := range map[string]func(*countingCopier) any{
+		"Value": func(c *countingCopier) any { return Value(c) },
+		"Of":    func(c *countingCopier) any { return Of(c) },
+		"row":   func(c *countingCopier) any { return Rows([][]any{{c}})[0][0] },
+		"typed": func(c *countingCopier) any { return Value([]*countingCopier{c}).([]*countingCopier)[0] },
+		"value": func(c *countingCopier) any { return Value(*c) },
+	} {
+		calls := 0
+		copy(&countingCopier{calls: &calls})
+		require.Equal(t, 1, calls, name)
+	}
+}
+
 // Each is the one slice owner: nil stays nil, every element is copied by the
 // element owner, and the result has no spare capacity into the source.
 func TestEachCopiesEveryElement(t *testing.T) {

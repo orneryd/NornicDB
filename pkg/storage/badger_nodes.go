@@ -286,6 +286,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	if node == nil {
 		return nil, ErrNotFound
 	}
+	// Visibility decides on the captured image first (it only reads it), so
+	// a hidden cached or buffered node is never copied (NOR-160).
+	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
+		return nil, ErrNotFound
+	}
 	if !loaded && hitCopy != nil {
 		// Captured cache and overlay versions are immutable. Materialize after
 		// capture so copying does not extend either read lock or its hot frame.
@@ -297,9 +302,6 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		state := node.runtimeState()
 		state.embeddingOwner, state.embeddingOwnerID = b, id
 		node.setRuntimeState(state)
-	}
-	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
-		return nil, ErrNotFound
 	}
 	if loaded {
 		atomic.AddInt64(&b.cacheMisses, 1)
@@ -355,7 +357,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
 // write-behind overlay, the node cache, the stored body) and its embedding
 // metadata, without reading separately stored chunk vectors. In-memory
-// vectors are shared with the returned copy, not copied. The vector-free
+// vectors belong to the caller with the returned copy. The vector-free
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {

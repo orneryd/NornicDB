@@ -486,12 +486,13 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 		return err
 	}
 
-	nodes, err := b.AllNodes()
+	// Delivered one at a time: a yield that stops leaves nothing copied.
+	nodes, err := b.allNodeImages()
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
-		if err := yield(node); err != nil {
+		if err := yield(deliverNode(node, nil, false)); err != nil {
 			return err
 		}
 	}
@@ -503,12 +504,13 @@ func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error 
 		return err
 	}
 
-	edges, err := b.AllEdges()
+	// Delivered one at a time: a yield that stops leaves nothing copied.
+	edges, err := b.allEdgeImages(visibleRead)
 	if err != nil {
 		return err
 	}
 	for _, edge := range edges {
-		if err := yield(edge); err != nil {
+		if err := yield(deliverEdge(edge)); err != nil {
 			return err
 		}
 	}

@@ -14,7 +14,17 @@ const (
 // Worker embedding state is hydrated from the same transaction, independently
 // of the body cache: sidecar writes do not change the node record's version.
 func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
-	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil)
+	return b.readKeptNodeItemInTxn(txn, item, id, hydrate, nil)
+}
+
+// readKeptNodeItemInTxn is readNodeItemInTxn for a scan that filters what it
+// reads: keep decides on the body before it is materialized or hydrated, so a
+// rejected cached body is never copied. A rejected node returns (nil, nil).
+func (b *BadgerEngine) readKeptNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, keep func(*Node) bool) (*Node, error) {
+	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, keep)
+	if hit && node == nil {
+		return nil, nil
+	}
 	if !hit {
 		err := item.Value(func(value []byte) error {
 			var err error
@@ -28,6 +38,9 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 			return nil, ErrNotFound
 		}
 		b.cacheStoreNodeBody(id, item.Version(), node)
+		if keep != nil && !keep(node) {
+			return nil, nil
+		}
 	}
 	switch hydrate {
 	case nodeItemBodyOnly:
@@ -41,11 +54,15 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}) (*Node, error) {
-	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, keep ...func(*Node) bool) (*Node, error) {
+	var keepNode func(*Node) bool
+	if len(keep) > 0 {
+		keepNode = keep[0]
 	}
-	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties); ok {
+	if properties == nil {
+		return b.readKeptNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, keepNode)
+	}
+	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties, keepNode); ok {
 		return cached, nil
 	}
 	var node *Node
@@ -54,5 +71,8 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
 		return err
 	})
+	if err == nil && node != nil && keepNode != nil && !keepNode(node) {
+		return nil, nil
+	}
 	return node, err
 }

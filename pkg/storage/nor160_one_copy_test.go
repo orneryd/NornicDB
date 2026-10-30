@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/internal/testfixture/readownership"
 	"github.com/stretchr/testify/require"
 )
@@ -247,14 +248,59 @@ func TestNOR160OneCopyControlSecondCopy(t *testing.T) {
 	}
 }
 
-// Relationship reads: after the read has warmed its caches, every delivered
-// relationship is copied exactly once per read, whether a cache, the
-// write-behind buffer or a cache fill made that copy; never copied and
+// Relationship reads: each delivered relationship is copied as its source
+// requires and no more: once when a cache, the transaction's snapshot or the
+// write-behind buffer keeps it (a hit, or a fill that admits the decoded body),
+// never when the read decoded it for this caller alone; never copied and
 // dropped, never copied twice.
 type nor160EdgeRoute struct {
 	name  string
-	setup func(*testing.T) (read func(*testing.T) []*Edge, update func(*testing.T))
+	setup func(*testing.T) (read func(*testing.T) []*Edge, update func(*testing.T), want func(EdgeID) int)
 }
+
+// nor160EdgeSourceWant is the source's copy count for a delivered edge, read
+// after the read: 1 if a retention point keeps it, else 0.
+func nor160EdgeSourceWant(engine *BadgerEngine, tx *BadgerTransaction, buffered ...EdgeID) func(EdgeID) int {
+	return func(id EdgeID) int {
+		for _, b := range buffered {
+			if id == b {
+				return 1
+			}
+		}
+		engine.edgeCacheMu.RLock()
+		_, cached := engine.edgeCache[id]
+		engine.edgeCacheMu.RUnlock()
+		if cached {
+			return 1
+		}
+		engine.edgeTypeCacheMu.RLock()
+		for _, edges := range engine.edgeTypeCache {
+			for _, edge := range edges {
+				if edge != nil && edge.ID == id {
+					cached = true
+				}
+			}
+		}
+		engine.edgeTypeCacheMu.RUnlock()
+		if cached {
+			return 1
+		}
+		if tx != nil {
+			tx.mu.Lock()
+			_, cached = tx.snapshotEdgeByID[id]
+			tx.mu.Unlock()
+			if cached {
+				return 1
+			}
+		}
+		return 0
+	}
+}
+
+// nor160EdgeDecoded is the copy count of a read that decodes every
+// relationship it returns from its stored record (point and between reads
+// never answer from the body cache): none.
+func nor160EdgeDecoded(EdgeID) int { return 0 }
 
 func nor160EdgeFixtureEdge(id EdgeID, end NodeID) *Edge {
 	return &Edge{ID: id, StartNode: "test:a", EndNode: end, Type: "T", Properties: nor160OwnershipProperties()}
@@ -279,6 +325,23 @@ func nor160WriteBehindEdges(t *testing.T) *BadgerEngine {
 	bufferedWrite(t, engine, func(writer *BadgerTransaction) error {
 		return writer.CreateEdge(nor160EdgeFixtureEdge("test:e2", "test:c"))
 	})
+	// Keep e1's body cached at its record version, as a read that filled the
+	// cache would: the indexed reader then finds it (the round 5 P1-1 path).
+	var version uint64
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(edgeKey("test:e1"))
+		if err != nil {
+			return err
+		}
+		version = item.Version()
+		return nil
+	}))
+	edge, err := engine.GetEdge("test:e1")
+	require.NoError(t, err)
+	engine.cacheFillEdgeAtVersion(engine.edgeCacheGen.current(), edge, version)
+	// The cached adjacency list merges buffered edges, so it survives e2's
+	// write: drop it, so the next read takes the indexed reader.
+	engine.adjCacheInvalidate("test:a")
 	return engine
 }
 
@@ -310,42 +373,42 @@ func nor160Edges(edges []*Edge, err error) []*Edge {
 }
 
 var nor160EdgeRoutes = []nor160EdgeRoute{
-	{"engine/write-behind/indexed-adjacency", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"engine/write-behind/indexed-adjacency", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160WriteBehindEdges(t)
-		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetOutgoingEdges("test:a")) }, nor160EdgeUpdate(engine)
+		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetOutgoingEdges("test:a")) }, nor160EdgeUpdate(engine), nor160EdgeSourceWant(engine, nil, "test:e2")
 	}},
-	{"transaction/write-behind/outgoing", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"transaction/write-behind/outgoing", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160WriteBehindEdges(t)
 		tx := nor160Tx(t, engine)
 		return func(t *testing.T) []*Edge {
 			return nor160Edges(tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"}))
-		}, nor160EdgeUpdate(engine)
+		}, nor160EdgeUpdate(engine), nor160EdgeSourceWant(engine, tx, "test:e2")
 	}},
-	{"engine/committed/adjacency", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"engine/committed/adjacency", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160CommittedEdges(t)
-		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetOutgoingEdges("test:a")) }, nor160EdgeUpdate(engine)
+		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetOutgoingEdges("test:a")) }, nor160EdgeUpdate(engine), nor160EdgeSourceWant(engine, nil)
 	}},
-	{"engine/committed/between", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"engine/committed/between", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160CommittedEdges(t)
-		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetEdgesBetween("test:a", "test:b")) }, nor160EdgeUpdate(engine)
+		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetEdgesBetween("test:a", "test:b")) }, nor160EdgeUpdate(engine), nor160EdgeDecoded
 	}},
-	{"engine/committed/by-type", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"engine/committed/by-type", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160CommittedEdges(t)
-		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetEdgesByType("T")) }, nor160EdgeUpdate(engine)
+		return func(t *testing.T) []*Edge { return nor160Edges(engine.GetEdgesByType("T")) }, nor160EdgeUpdate(engine), nor160EdgeSourceWant(engine, nil)
 	}},
-	{"engine/committed/point", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"engine/committed/point", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160CommittedEdges(t)
 		return func(t *testing.T) []*Edge {
 			edge, err := engine.GetEdge("test:e1")
 			return nor160Edges([]*Edge{edge}, err)
-		}, nor160EdgeUpdate(engine)
+		}, nor160EdgeUpdate(engine), nor160EdgeDecoded
 	}},
-	{"transaction/committed/outgoing", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T)) {
+	{"transaction/committed/outgoing", func(t *testing.T) (func(*testing.T) []*Edge, func(*testing.T), func(EdgeID) int) {
 		engine := nor160CommittedEdges(t)
 		tx := nor160Tx(t, engine)
 		return func(t *testing.T) []*Edge {
 			return nor160Edges(tx.ReadEdges(TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"}))
-		}, nor160EdgeUpdate(engine)
+		}, nor160EdgeUpdate(engine), nor160EdgeSourceWant(engine, tx)
 	}},
 }
 
@@ -362,14 +425,14 @@ func nor160CountEdges(t *testing.T, read func(*testing.T) []*Edge, consume func(
 
 func nor160EdgeKeep(edge *Edge) *Edge { return edge }
 
-func nor160EdgeCopyViolations(delivered []*Edge, copies map[EdgeID]int) []string {
+func nor160EdgeCopyViolations(delivered []*Edge, copies map[EdgeID]int, want func(EdgeID) int) []string {
 	if len(delivered) == 0 {
 		return []string{"nothing delivered"}
 	}
 	var out []string
 	for _, edge := range delivered {
-		if copies[edge.ID] != 1 {
-			out = append(out, fmt.Sprintf("%s copied %d times, want 1", edge.ID, copies[edge.ID]))
+		if got := copies[edge.ID]; got != want(edge.ID) {
+			out = append(out, fmt.Sprintf("%s copied %d times, want %d", edge.ID, got, want(edge.ID)))
 		}
 	}
 	return out
@@ -378,11 +441,11 @@ func nor160EdgeCopyViolations(delivered []*Edge, copies map[EdgeID]int) []string
 func TestNOR160OneCopyRelationshipReads(t *testing.T) {
 	for _, route := range nor160EdgeRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			read, _ := route.setup(t)
+			read, _, want := route.setup(t)
 			read(t) // warm every cache this read fills
 			for pass := 0; pass < 2; pass++ {
 				delivered, copies := nor160CountEdges(t, read, nor160EdgeKeep)
-				require.Empty(t, nor160EdgeCopyViolations(delivered, copies), "pass %d", pass)
+				require.Empty(t, nor160EdgeCopyViolations(delivered, copies, want), "pass %d", pass)
 				require.Contains(t, delivered[0].Properties, "nested", "the delivery must carry a mutable value")
 				image := readownership.Capture(delivered)
 				readownership.Mutate(delivered)
@@ -396,7 +459,7 @@ func TestNOR160OneCopyRelationshipReads(t *testing.T) {
 func TestNOR160OneCopyRelationshipReadsSourceChanges(t *testing.T) {
 	for _, route := range nor160EdgeRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			read, update := route.setup(t)
+			read, update, _ := route.setup(t)
 			delivered := read(t)
 			require.NotEmpty(t, delivered)
 			image := readownership.Capture(delivered)
@@ -411,7 +474,7 @@ func TestNOR160OneCopyRelationshipReadsSourceChanges(t *testing.T) {
 func TestNOR160OneCopyRelationshipControlSecondCopy(t *testing.T) {
 	for _, route := range nor160EdgeRoutes {
 		t.Run(route.name, func(t *testing.T) {
-			read, _ := route.setup(t)
+			read, _, _ := route.setup(t)
 			read(t)
 			_, baseline := nor160CountEdges(t, read, nor160EdgeKeep)
 			delivered, copies := nor160CountEdges(t, read, copyEdge)

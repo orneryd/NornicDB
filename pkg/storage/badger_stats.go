@@ -775,18 +775,29 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
+	return b.streamNodeImagesWithOptions(ctx, opts, func(image nodeImage) error {
+		return fn(deliverNode(image, opts.Projection, opts.StripEmbeddings))
+	})
+}
+
+// streamNodeImagesWithOptions is StreamNodesWithOptions over images: committed
+// rows decoded (and shaped) for this read, cache and buffered nodes borrowed.
+// It copies nothing; the consumer delivers each node it keeps, once.
+func (b *BadgerEngine) streamNodeImagesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(nodeImage) error) error {
+	if fn == nil {
+		return ErrInvalidData
+	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
-		visit := func(node *Node) error {
+		visit := func(image nodeImage) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			return fn(node)
+			return fn(image)
 		}
-		// The label stream strips vectors in its own delivery shape.
-		err := b.streamNodesByLabelShapedInScope(opts.Prefix, opts.Label, nil, opts.StripEmbeddings, opts.readVisibility(), visit, true)
+		err := b.streamLabelNodeImages(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -794,14 +805,14 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	v := storedRead
 	if opts.ApplyDecayFilter {
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix, shape: true, properties: opts.Projection, strip: opts.StripEmbeddings})
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
@@ -817,7 +828,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if len(touched) > 0 && touched[node.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		err := fn(node)
+		err := fn(decodedNode(node))
 		if err == ErrIterationStopped {
 			stopped = true
 		}
@@ -836,7 +847,6 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if !inScope(node.ID) {
 			continue
 		}
-		// The overlay already delivered node copied into the options' shape.
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
 				return nil
@@ -980,7 +990,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
 	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Edge
+	var overlay []edgeImage
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
@@ -1048,7 +1058,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if err := fn(edge); err != nil {
+		if err := fn(deliverEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

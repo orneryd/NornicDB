@@ -40,3 +40,13 @@ func TestNOR160CopierControlPartialNode(t *testing.T) {
 	partial.Labels = append([]string(nil), node.Labels...)
 	require.Contains(t, readownership.SharedReferences(node, &partial), ".Properties")
 }
+
+// deliveredNodes and deliveredEdges deliver a read's images as its public
+// method does (NOR-160 read delivery owner), for tests of internal readers.
+func deliveredNodes(images []nodeImage, err error) ([]*Node, error) {
+	return deliverNodes(images, nil, false), err
+}
+
+func deliveredEdges(images []edgeImage, err error) ([]*Edge, error) {
+	return deliverEdges(images), err
+}

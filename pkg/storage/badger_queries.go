@@ -196,12 +196,20 @@ func (b *BadgerEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
 }
 
 func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibility) ([]*Node, error) {
+	images, err := b.labelNodeImages(scope, label, v)
+	return deliverNodes(images, nil, false), err
+}
+
+// labelNodeImages selects a label's nodes as images: node-cache hits
+// borrowed, committed rows decoded for this read (the cache admits its own
+// copy), buffered ones borrowed.
+func (b *BadgerEngine) labelNodeImages(scope, label string, v readVisibility) ([]nodeImage, error) {
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	var current bool
-	var nodes []*Node
+	var nodes []nodeImage
 	var loaded []*Node
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
@@ -231,11 +239,10 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 			b.nodeCacheMu.RLock()
 			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
-				// Filter the retained image first: only a delivered node is copied.
 				if b.filterEntityByDecay(v, cached, nowNanos) {
 					continue
 				}
-				nodes = append(nodes, copyNode(cached))
+				nodes = append(nodes, borrowedNode(cached))
 				continue
 			}
 			b.nodeCacheMu.RUnlock()
@@ -251,17 +258,18 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemFullEmbeddings)
+			node, readErr = b.readKeptNodeItemInTxn(txn, item, nodeID, nodeItemFullEmbeddings, func(node *Node) bool {
+				return !b.filterEntityByDecay(v, node, nowNanos)
+			})
 			if readErr != nil {
 				return readErr
 			}
-
-			if b.filterEntityByDecay(v, node, nowNanos) {
+			if node == nil {
 				continue
 			}
 
 			loaded = append(loaded, node)
-			nodes = append(nodes, node)
+			nodes = append(nodes, decodedNode(node))
 		}
 		return it.Err()
 	}, readViewOptions{scope: scope, scopeKind: readPrefixScope, current: &current})
@@ -278,7 +286,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	}
 
 	if len(touched) != 0 {
-		nodes = mergeWriteBehindEntities(nodes, overlay, touched, func(n *Node) NodeID { return n.ID }, func(n *Node) bool {
+		nodes = mergeWriteBehindEntities(nodes, overlay, touched, func(n nodeImage) NodeID { return n.ID }, func(n nodeImage) bool {
 			return nodeIDInScope(n.ID, scope)
 		})
 	}
@@ -313,11 +321,23 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 }
 
 // streamNodesByLabelShapedInScope delivers every node in its final shape
-// (selected properties, vectors stripped when strip is set) at the source
-// that knows whether the node is retained: cache and overlay images are
-// copied once into that shape, decoded nodes are reshaped in place. Visitors
-// receive caller-owned nodes and never copy them again (NOR-160).
+// (selected properties, vectors stripped when strip is set): the stream
+// selects images and each visited node is delivered once into that shape.
+// Visitors receive caller-owned nodes and never copy them again (NOR-160).
 func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, properties []string, strip bool, v readVisibility, visit func(*Node) error, queryNodes bool) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
+	return b.streamLabelNodeImages(scope, label, properties, v, func(image nodeImage) error {
+		return visit(deliverNode(image, properties, strip))
+	}, queryNodes)
+}
+
+// streamLabelNodeImages is the label stream over images: node-cache hits and
+// buffered nodes borrowed, committed rows decoded for this read (projected
+// when properties is set). It copies nothing; a consumer that drops an image
+// (a transaction's own write replaces it) drops no copy.
+func (b *BadgerEngine) streamLabelNodeImages(scope, label string, properties []string, v readVisibility, visit func(nodeImage) error, queryNodes bool) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -329,10 +349,10 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 
 	// Write-behind overlay: acknowledged-but-unflushed writes replace or
 	// shadow committed rows for their IDs and are visited after the scan.
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope, shape: true, properties: properties, strip: strip})
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 
@@ -346,33 +366,28 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 	var covers bool
 	coversDecided := false
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
-		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+		readItem := func(nodeID NodeID, item *badger.Item) (nodeImage, error) {
 			var node *Node
 			var err error
+			visible := func(node *Node) bool { return !b.filterEntityByDecay(v, node, nowNanos) }
 			if queryNodes {
-				node, err = b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
+				node, err = b.readKeptNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, visible)
 			} else {
-				node, err = b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
+				node, err = b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, visible)
 			}
-			// Decoded for this read: reshape in place, no copy.
-			return shapeNode(node, nil, strip, true), err
+			return decodedNode(node), err
 		}
-		cachedNode := func(nodeID NodeID) (*Node, bool) {
+		cachedNode := func(nodeID NodeID) (nodeImage, bool) {
 			b.nodeCacheMu.RLock()
 			cached, ok := b.nodeCache[nodeID]
 			b.nodeCacheMu.RUnlock()
 			if !ok || b.writeBehind != nil {
-				return nil, false
+				return nodeImage{}, false
 			}
-			// Retained by the cache: filter the image first, then one copy
-			// straight into the shape, so no copy is dropped.
-			if b.filterEntityByDecay(v, cached, nowNanos) {
-				return nil, true
-			}
-			return shapeNode(cached, properties, strip, false), true
+			return borrowedNode(cached), true
 		}
-		emit := func(node *Node) error {
-			if node == nil || b.filterEntityByDecay(v, node, nowNanos) {
+		emit := func(node nodeImage) error {
+			if node.Node == nil || b.filterEntityByDecay(v, node.Node, nowNanos) {
 				return nil
 			}
 			if len(touched) > 0 && touched[node.ID] {
@@ -399,7 +414,7 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 		}
 		type pendingNode struct {
 			id   NodeID
-			node *Node
+			node nodeImage
 			err  error
 		}
 		var pending []pendingNode
@@ -478,7 +493,6 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 		if !nodeIDInScope(n.ID, scope) {
 			continue
 		}
-		// The overlay already delivered n copied into this projection.
 		if err := visit(n); err != nil {
 			return err
 		}
@@ -486,10 +500,11 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 	return nil
 }
 
-// mergeWriteBehindEntities folds the write-behind overlay over
-// committed rows: rows whose IDs the buffer touched are dropped and the
-// buffered versions (copied, or projected for the caller) take their place.
-func mergeWriteBehindEntities[T any, K comparable](committed, overlay []*T, touched map[K]bool, id func(*T) K, keep func(*T) bool) []*T {
+// mergeWriteBehindEntities folds the write-behind overlay over committed
+// rows, as images: rows whose IDs the buffer touched are dropped and the
+// buffered images keep chooses take their place. Nothing is copied; the read
+// delivers the merged population once (NOR-160).
+func mergeWriteBehindEntities[I any, K comparable](committed, overlay []I, touched map[K]bool, id func(I) K, keep func(I) bool) []I {
 	if len(touched) == 0 {
 		return committed
 	}
@@ -571,12 +586,18 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
+	images, err := b.allNodeImages()
+	return deliverNodes(images, nil, false), err
+}
+
+// allNodeImages selects every node as images (see labelNodeImages).
+func (b *BadgerEngine) allNodeImages() ([]nodeImage, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
 	var current bool
-	var nodes []*Node
+	var nodes []nodeImage
 	var loaded []*Node
-	var overlay []*Node
+	var overlay []nodeImage
 	var touched map[NodeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		pendingNodes := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedNodes})
@@ -605,28 +626,28 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			b.nodeCacheMu.RLock()
 			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
-				// Filter the retained image first: only a delivered node is copied.
 				if b.filterEntityByDecay(visibleRead, cached, nowNanos) {
 					continue
 				}
-				nodes = append(nodes, copyNode(cached))
+				nodes = append(nodes, borrowedNode(cached))
 				continue
 			}
 			b.nodeCacheMu.RUnlock()
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings)
+			node, readErr = b.readKeptNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings, func(node *Node) bool {
+				return !b.filterEntityByDecay(visibleRead, node, nowNanos)
+			})
 			if readErr != nil {
 				return readErr
 			}
-
-			if b.filterEntityByDecay(visibleRead, node, nowNanos) {
+			if node == nil {
 				continue
 			}
 
 			loaded = append(loaded, node)
-			nodes = append(nodes, node)
+			nodes = append(nodes, decodedNode(node))
 		}
 
 		return nil
@@ -640,8 +661,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			b.cacheFillNode(gen, node, nodeReadCacheFull)
 		}
 	}
-	nodes = append(nodes, overlay...)
-	return nodes, err
+	return append(nodes, overlay...), nil
 }
 
 // AllEdges returns all edges (implements Engine interface).
@@ -650,10 +670,17 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 }
 
 func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
+	images, err := b.allEdgeImages(v)
+	return deliverEdges(images), err
+}
+
+// allEdgeImages selects every edge as images: committed rows decoded for
+// this read, buffered ones borrowed.
+func (b *BadgerEngine) allEdgeImages(v readVisibility) ([]edgeImage, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
-	var edges []*Edge
-	var overlay []*Edge
+	var edges []edgeImage
+	var overlay []edgeImage
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges})
@@ -687,7 +714,7 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 				continue
 			}
 
-			edges = append(edges, edge)
+			edges = append(edges, decodedEdge(edge))
 		}
 
 		return nil
@@ -696,8 +723,7 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	edges = append(edges, overlay...)
-	return edges, err
+	return append(edges, overlay...), nil
 }
 
 // GetEdgesByType returns all edges of a specific type using the edge type index.
@@ -716,11 +742,16 @@ func (b *BadgerEngine) GetStoredEdgesByType(edgeType string) ([]*Edge, error) {
 }
 
 func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edge, error) {
+	images, err := b.edgeTypeImages(edgeType, v)
+	return deliverEdges(images), err
+}
+
+// edgeTypeImages selects the edges of one type as images: type-cache hits
+// borrowed, committed rows decoded for this read (the cache admits its own
+// copy), buffered ones borrowed.
+func (b *BadgerEngine) edgeTypeImages(edgeType string, v readVisibility) ([]edgeImage, error) {
 	if edgeType == "" {
-		if v == storedRead {
-			return b.allEdges(storedRead)
-		}
-		return b.AllEdges() // No type filter = all edges
+		return b.allEdgeImages(v) // No type filter = all edges
 	}
 
 	// With write-behind active, buffered edges are not in the whole-type
@@ -732,11 +763,11 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 		cached, ok := b.edgeTypeCache[edgeType]
 		b.edgeTypeCacheMu.RUnlock()
 		if ok {
-			return callerowned.Each(cached, copyEdge), nil
+			return borrowedEdges(cached), nil
 		}
 	}
 
-	var overlay []*Edge
+	var overlay []edgeImage
 	var touched map[EdgeID]bool
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
@@ -804,14 +835,13 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 	}
 
 	if b.writeBehind != nil {
-		edges = mergeWriteBehindEntities(edges, overlay, touched, func(e *Edge) EdgeID { return e.ID }, nil)
-		return edges, nil
+		return mergeWriteBehindEntities(decodedEdges(edges), overlay, touched, func(e edgeImage) EdgeID { return e.ID }, nil), nil
 	}
 
 	if useCache {
 		b.edgeTypeCacheFill(gen, edgeType, edges)
 	}
-	return edges, nil
+	return decodedEdges(edges), nil
 }
 
 // edgeTypeCacheFill caches the edges of edgeType a read captured gen before
@@ -1075,11 +1105,11 @@ func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error)
 // revisit a small set of edges thousands of times per request) into
 // memory-bound work after the first encounter. edgeGen is the edge cache's
 // generation captured before txn was opened (cacheGeneration).
-func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility) ([]*Edge, []EdgeID, error) {
+func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte, nowNanos int64, edgeGen uint64, v readVisibility) ([]edgeImage, []EdgeID, error) {
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 
-	var edges []*Edge
+	var edges []edgeImage
 	var ids []EdgeID
 	for it.Rewind(); it.Valid(); it.Next() {
 		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
@@ -1096,7 +1126,7 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		if err != nil {
 			return nil, nil, err
 		}
-		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
+		if edge.Edge == nil || b.filterEntityByDecay(v, edge.Edge, nowNanos) {
 			continue
 		}
 		edges = append(edges, edge)
@@ -1118,6 +1148,12 @@ func (b *BadgerEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error)
 }
 
 func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	images, answered, err := b.edgeHeaderImages(nodeID, outgoing)
+	return deliverEdges(images), answered, err
+}
+
+// edgeHeaderImages selects a node's relationship headers as images.
+func (b *BadgerEngine) edgeHeaderImages(nodeID NodeID, outgoing bool) ([]edgeImage, bool, error) {
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
 		return nil, true, err
 	}
@@ -1132,7 +1168,7 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		// Fold the write-behind overlay into the header list so a node's
 		// unnamed-relationship expansion sees acknowledged-but-unflushed edges
 		// (PR #1043 read-overlay parity; monster retest part 1).
-		var live []*Edge
+		var live []edgeImage
 		var suppressed map[EdgeID]struct{}
 		var nodeDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
@@ -1166,7 +1202,8 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 	return b.edgeHeadersCommitted(nodeID, outgoing)
 }
 
-func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, bool, error) {
+// edgeHeadersCommitted selects header images; edgeHeaders delivers them.
+func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views ...func(func(*badger.Txn) error) error) ([]edgeImage, bool, error) {
 	withView := b.withView
 	if len(views) > 0 {
 		withView = views[0]
@@ -1182,7 +1219,7 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 	if outgoing {
 		prefix = outgoingIndexPrefix(nodeNum)
 	}
-	var edges []*Edge
+	var edges []edgeImage
 	edgeGen := b.edgeCacheGen.current()
 	err := withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -1205,14 +1242,14 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 				return nil
 			})
 			if header != nil {
-				edges = append(edges, header)
+				edges = append(edges, decodedEdge(header))
 				continue
 			}
 			edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
 			if err != nil {
 				return err
 			}
-			if edge != nil {
+			if edge.Edge != nil {
 				edges = append(edges, edge)
 			}
 		}
@@ -1279,20 +1316,21 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 	return headers
 }
 
-// readIndexedEdgeInTxn returns the relationship an adjacency entry names: the
-// cached one, else its stored record, which is then cached unless the edge
-// cache was written since gen, captured before txn was opened. A missing
-// record returns nil; other read or decode errors are returned.
-func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64) (*Edge, error) {
+// readIndexedEdgeInTxn returns the image of the relationship an adjacency
+// entry names: the cached body (borrowed), else its stored record (decoded
+// for this read), which is then admitted to the cache unless the edge cache
+// was written since gen, captured before txn was opened. A missing record
+// returns a nil image; other read or decode errors are returned.
+func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64) (edgeImage, error) {
 	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{}); ok {
 		return cached, nil
 	}
 	item, err := txn.Get(edgeKey(edgeID))
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return nil, nil
+		return edgeImage{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return edgeImage{}, err
 	}
 	version := item.Version()
 	if cached, ok := b.cacheLoadEdge(edgeID, edgeCacheRead{version: &version}); ok {
@@ -1304,10 +1342,10 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 		return decodeErr
 	}); err != nil {
-		return nil, err
+		return edgeImage{}, err
 	}
 	b.cacheFillEdgeAtVersion(gen, edge, item.Version())
-	return edge, nil
+	return decodedEdge(edge), nil
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.
@@ -1324,6 +1362,13 @@ func (b *BadgerEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 
 // GetEdgesBetween returns all edges between two nodes.
 func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+	images, err := b.edgesBetweenImages(startID, endID)
+	return deliverEdges(images), err
+}
+
+// edgesBetweenImages selects the edges between two nodes as images: committed
+// rows decoded for this read, buffered live edges borrowed (NOR-160).
+func (b *BadgerEngine) edgesBetweenImages(startID, endID NodeID) ([]edgeImage, error) {
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
 		return nil, err
 	}
@@ -1336,13 +1381,13 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
-	var result []*Edge
+	var result []edgeImage
 	if b.writeBehind != nil {
 		// A buffered endpoint delete hides all committed between rows; a
 		// buffered delete of a between edge hides that row; buffered live
 		// edges between the pair are appended (PR #1043 read-overlay
 		// parity, MERGE identity reads).
-		var live []*Edge
+		var live []edgeImage
 		var suppressed map[EdgeID]struct{}
 		var sourceDeleted, targetDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
@@ -1360,20 +1405,16 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(suppressed) > 0 {
-			for _, e := range committed {
-				if _, dead := suppressed[e.ID]; dead {
-					continue
-				}
-				result = append(result, e)
+		for _, e := range committed {
+			if _, dead := suppressed[e.ID]; dead {
+				continue
 			}
-		} else {
-			result = committed
+			result = append(result, decodedEdge(e))
 		}
-		result = append(result, live...)
-		return result, nil
+		return append(result, live...), nil
 	}
-	return b.committedEdgesBetween(startID, endID, "")
+	committed, err := b.committedEdgesBetween(startID, endID, "")
+	return decodedEdges(committed), err
 }
 
 // committedEdgesBetween is the committed between-index read, set index first
@@ -1420,7 +1461,7 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	}
 	// A buffered endpoint delete hides the committed row; a buffered delete
 	// of the edge hides it; a buffered live edge of the type wins.
-	var live []*Edge
+	var live []edgeImage
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
@@ -1444,7 +1485,7 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 		if edgeType != "" && e.Type != edgeType {
 			continue
 		}
-		return e
+		return deliverEdge(e)
 	}
 	return nil
 }

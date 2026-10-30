@@ -9,6 +9,7 @@
 package callerowned
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"time"
@@ -152,25 +153,33 @@ func Each[T any](items []T, copyElement func(T) T) []T {
 
 var copierType = reflect.TypeFor[Copier]()
 
-// copierCopy is the one Copier dispatch rule. A Copier whose CallerCopy
-// returns its own type is copied by it; a non-nil pointer to a value-receiver
-// Copier is copied through its element and pointed at the copy. Either way the
-// result has the input's type. Anything else is walked structurally.
+// copierCopy is the one Copier dispatch rule, and it invokes at most one
+// CallerCopy. A non-nil pointer whose element is a Copier (a value receiver)
+// is copied through its element and pointed at the copy; any other Copier is
+// copied by its own CallerCopy. A result of another type is never produced:
+// the receiver is chosen before the call, so no copy is made and discarded.
+// Anything else is walked structurally.
 func copierCopy(value reflect.Value) (reflect.Value, bool) {
 	if !value.CanInterface() || value.Kind() == reflect.Interface || (value.Kind() == reflect.Pointer && value.IsNil()) {
 		return value, false
 	}
-	if value.Type().Implements(copierType) {
-		if copied := reflect.ValueOf(value.Interface().(Copier).CallerCopy()); copied.IsValid() && copied.Type() == value.Type() {
-			return copied, true
-		}
-	}
 	if value.Kind() == reflect.Pointer && value.Elem().Type().Implements(copierType) && value.Elem().CanInterface() {
-		if copied := reflect.ValueOf(value.Elem().Interface().(Copier).CallerCopy()); copied.IsValid() && copied.Type() == value.Elem().Type() {
-			out := reflect.New(copied.Type())
-			out.Elem().Set(copied)
-			return out, true
+		result := value.Elem().Interface().(Copier).CallerCopy()
+		copied := reflect.ValueOf(result)
+		if !copied.IsValid() || copied.Type() != value.Elem().Type() {
+			panic(fmt.Sprintf("callerowned: CallerCopy of %s returned %T", value.Elem().Type(), result))
 		}
+		out := reflect.New(copied.Type())
+		out.Elem().Set(copied)
+		return out, true
+	}
+	if value.Type().Implements(copierType) {
+		result := value.Interface().(Copier).CallerCopy()
+		copied := reflect.ValueOf(result)
+		if !copied.IsValid() || copied.Type() != value.Type() {
+			panic(fmt.Sprintf("callerowned: CallerCopy of %s returned %T", value.Type(), result))
+		}
+		return copied, true
 	}
 	return value, false
 }

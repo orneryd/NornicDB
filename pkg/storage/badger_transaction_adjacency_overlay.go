@@ -1,7 +1,5 @@
 package storage
 
-import "github.com/orneryd/nornicdb/pkg/callerowned"
-
 // pendingAdjacencyLocked indexes the transaction's incident edges on first
 // adjacency use. Writes maintain it thereafter; unrelated edges never enter a
 // node's read/DELETE working set. All access is under tx.mu.
@@ -60,16 +58,20 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+// mergePendingAdjacentEdgesLocked resolves the transaction's own writes over
+// the committed adjacency images before anything is delivered, then delivers
+// the chosen result once: superseded committed edges are never copied
+// (NOR-160).
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []edgeImage, id NodeID, include func(*Edge) bool) []*Edge {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
-		return committed
+		return deliverEdges(committed)
 	}
 	pending := tx.pendingAdjacencyLocked(id)
-	// Committed adjacency is caller-owned. A rewrite shadows its former
-	// endpoints even when its new endpoints aren't in this node's index.
+	// A rewrite shadows its former endpoints even when its new endpoints
+	// aren't in this node's index.
 	result := committed[:0]
 	for _, edge := range committed {
-		if edge == nil {
+		if edge.Edge == nil {
 			continue
 		}
 		if _, gone := tx.deletedEdges[edge.ID]; gone {
@@ -78,16 +80,15 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, 
 		if _, rewritten := tx.pendingEdges[edge.ID]; rewritten {
 			continue
 		}
-		if include(edge) {
+		if include(edge.Edge) {
 			result = append(result, edge)
 		}
 	}
-	var selected []*Edge
 	for _, edge := range pending {
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
-			selected = append(selected, edge)
+			// Retained by the transaction: delivered (copied) once.
+			result = append(result, borrowedEdge(edge))
 		}
 	}
-	// Pending edges are retained by the transaction: one copy each.
-	return append(result, callerowned.Each(selected, copyEdge)...)
+	return deliverEdges(result)
 }

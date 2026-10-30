@@ -71,7 +71,26 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 		// Write-behind reads are read-committed: the engine's latest
 		// (overlaid) stream includes flushes that landed after the pinned
 		// snapshot.
-		err = tx.engine.streamEdgesByTypeInScope(ctx, scope, edgeType, v, emitCommitted)
+		// The engine's images: an edge this transaction deleted or rewrote
+		// is replaced before anything is delivered (NOR-160).
+		err = tx.engine.streamEdgeImagesByTypeInScope(ctx, scope, edgeType, v, func(image edgeImage) error {
+			if image.Edge == nil {
+				return nil
+			}
+			if hasPending {
+				if _, deleted := tx.deletedEdges[image.ID]; deleted {
+					return nil
+				}
+				if pending, exists := tx.pendingEdges[image.ID]; exists {
+					seen[image.ID] = struct{}{}
+					if matches(pending) {
+						return invokeVisit(copyEdge(pending))
+					}
+					return nil
+				}
+			}
+			return invokeVisit(deliverEdge(image))
+		}, nil)
 	} else {
 		err = tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, v, emitCommitted)
 	}

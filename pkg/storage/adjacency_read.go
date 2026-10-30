@@ -73,7 +73,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 				if reader.view != nil {
 					defer reader.view.Close()
 				}
-				err = consume(reader.read)
+				err = consume(reader.deliver)
 				// End physical ownership before any namespace copying/projection.
 				if reader.view != nil {
 					reader.view.Close()
