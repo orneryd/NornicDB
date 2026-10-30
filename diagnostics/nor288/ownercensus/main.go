@@ -692,14 +692,17 @@ func main() {
 			}
 		}
 	}
-	reachesWrite := func(f *ssa.Function, depth int) bool {
+	// Minimum non-fallback hop distance from f to a write site; -1 if none.
+	// Unbounded (Nornic2's soundness condition): the earlier 3-hop bound is
+	// reported as a difference only.
+	reachesWrite := func(f *ssa.Function) int {
 		seen := map[*ssa.Function]bool{}
 		frontier := []*ssa.Function{f}
-		for d := 0; d <= depth && len(frontier) > 0; d++ {
+		for d := 0; len(frontier) > 0; d++ {
 			var next []*ssa.Function
 			for _, g := range frontier {
 				if writeSites[g] {
-					return true
+					return d
 				}
 				if seen[g] {
 					continue
@@ -714,8 +717,9 @@ func main() {
 			}
 			frontier = next
 		}
-		return false
+		return -1
 	}
+	gateDepth := map[*types.Func]int{}
 	gatesWrite := func(obj *types.Func) bool {
 		if obj == nil {
 			return false
@@ -724,18 +728,17 @@ func main() {
 		if f == nil {
 			return false
 		}
-		if reachesWrite(f, 3) {
-			return true
-		}
-		// A decider returning the phase: its callers gate on it.
+		best := reachesWrite(f)
+		// A decider returning the phase: its callers gate on it (one more hop).
 		if r := f.Signature.Results(); r.Len() == 1 && types.Identical(r.At(0).Type(), types.Typ[types.Bool]) {
 			for _, e := range graph.in[f] {
-				if !graph.fallback[e.site] && reachesWrite(e.caller, 3) {
-					return true
+				if d := reachesWrite(e.caller); !graph.fallback[e.site] && d >= 0 && (best < 0 || d+1 < best) {
+					best = d + 1
 				}
 			}
 		}
-		return false
+		gateDepth[obj] = best
+		return best >= 0
 	}
 	rel := func(file string) string {
 		r, err := filepath.Rel(root, file)
@@ -907,7 +910,10 @@ func main() {
 						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider && fnObj != ownerClose && gatesWrite(fnObj) {
 							if recv, ok := sel.X.(*ast.SelectorExpr); ok {
 								if rs := info.Selections[recv]; rs != nil && rs.Obj() == types.Object(engineWork) {
-									record("F", path, fn, "decides on the engine owner's sealed phase instead of the write decider")
+									record("F", path, fn, "gates a write admission on the engine owner's sealed phase; write site at "+strconv.Itoa(gateDepth[fnObj])+" non-fallback hops")
+									if gateDepth[fnObj] > 3 {
+										findings[len(findings)-1].Shape += " (beyond the earlier 3-hop bound)"
+									}
 									findings[len(findings)-1].Added = onAdded(sel.Pos())
 									findings[len(findings)-1].Line = fset.Position(sel.Pos()).Line
 									reported = true
@@ -1271,6 +1277,12 @@ func main() {
 		verdicts[c.class+":"+c.marker] = fmt.Sprintf("expected reported=%v found=%v pass=%v", c.report, found, ok)
 	}
 	beyond := map[string][]finding{"A": {}, "B": {}, "C": {}, "D": {}, "E": {}, "F": {}, "G": {}}
+	var boundDiff []finding
+	for _, f := range findings {
+		if f.Class == "F" && strings.Contains(f.Shape, "beyond the earlier 3-hop bound") {
+			boundDiff = append(boundDiff, f)
+		}
+	}
 	for _, f := range findings {
 		if !strings.Contains(f.Func, "nor288Planted") {
 			beyond[f.Class] = append(beyond[f.Class], f)
@@ -1294,6 +1306,7 @@ func main() {
 		"beyond_owner_count":        counts,
 		"beyond_owner":              beyond,
 		"receipt_waits":             receiptWaits,
+		"F_bound_difference":        boundDiff,
 		"scope_FG":                  "unit scope of reassessment §7 (packages storage, replication, multidb, qdrantgrpc, cypher; unit-owner roots), every line; added_line marks this diff; G-classified and G-closed are computed",
 		"findings":                  findings,
 		"probe_candidates_A":        candidatesA,
