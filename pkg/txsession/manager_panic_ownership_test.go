@@ -36,7 +36,7 @@ func TestManagerPanicReleasesOperationMutex(t *testing.T) {
 			executor := cypher.NewStorageExecutor(engine)
 			session, err := mgr.OpenWithExecutorForOwner(context.Background(), "nornic", executor, "")
 			require.NoError(t, err)
-			deadline := session.Expiration()
+			deadline := session.ExpiresAt()
 			t.Cleanup(func() {
 				if executor.HasActiveTransaction() {
 					_, rollbackErr := executor.Execute(context.Background(), "ROLLBACK", nil)
@@ -45,9 +45,9 @@ func TestManagerPanicReleasesOperationMutex(t *testing.T) {
 				if engine.started != nil && engine.started.IsActive() {
 					require.NoError(t, engine.started.Rollback())
 				}
-				if session.idleTimer != nil {
-					session.idleTimer.Stop()
-				}
+				session.mu.Lock()
+				mgr.stopExpiryTimerLocked(session)
+				session.mu.Unlock()
 			})
 			if operation == "statement" {
 				require.NoError(t, cypher.RegisterUserProcedure(cypher.ProcedureSpec{Name: "sessionpanic.fail", Mode: cypher.ProcedureModeRead}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
@@ -61,13 +61,19 @@ func TestManagerPanicReleasesOperationMutex(t *testing.T) {
 			unlocked := session.mu.TryLock()
 			// On the broken implementation this test owns the sole completed operation;
 			// repair its lock so even fail-first fixture cleanup remains bounded.
+			armed := session.expiryTimer != nil
 			session.mu.Unlock()
+			released := session.requestMu.TryLock()
+			if released {
+				session.requestMu.Unlock()
+			}
 			if operation == "statement" {
-				require.Equal(t, deadline, session.Expiration(), "panic preserves the existing idle deadline")
-				require.True(t, session.idleTimer.Stop(), "panic resumes the paused idle timer")
+				require.Equal(t, deadline, session.ExpiresAt(), "panic preserves the existing idle deadline")
+				require.True(t, armed, "panic leaves the idle timer armed at that deadline")
 				require.NoError(t, mgr.RollbackAndDelete(context.Background(), session))
 			}
 			require.True(t, unlocked, "panic must release the completed operation's mutex")
+			require.True(t, released, "panic must release the request lease")
 		})
 	}
 }
