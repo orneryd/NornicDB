@@ -67,10 +67,10 @@ type NOR160ControlCache struct {
 }
 
 // K0: a struct that directly wraps one retained node, handed out uncopied.
-type NOR160ControlWrap struct{ Node *Node }
+type NOR160ControlNodeHolder struct{ Node *Node }
 
-func (c *NOR160ControlCache) GetWrapShared(id NodeID) NOR160ControlWrap {
-	return NOR160ControlWrap{Node: c.nodes[id]}
+func (c *NOR160ControlCache) GetWrapShared(id NodeID) NOR160ControlNodeHolder {
+	return NOR160ControlNodeHolder{Node: c.nodes[id]}
 }
 
 // Clean for K0: a service handle that holds a node cache only transitively.
