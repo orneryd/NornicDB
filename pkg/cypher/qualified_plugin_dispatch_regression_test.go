@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"fmt"
@@ -38,7 +40,7 @@ func TestCompatDottedPluginFailureUsesItsOwnHandler(t *testing.T) {
 			return nil, ownError("apoc.path.shortestPath")
 		},
 	}
-	PluginFunctionLookup = func(name string) (interface{}, bool) { handler, ok := handlers[name]; return handler, ok }
+	PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) { handler, ok := handlers[name]; return handler, ok })
 	for _, test := range []struct{ query, name string }{
 		{"RETURN apoc.bitwise.and(5,3)", "apoc.bitwise.and"},
 		{"RETURN apoc.search.range('Person','age',18,65)", "apoc.search.range"},
@@ -59,13 +61,13 @@ func TestCompatDottedPluginFailureUsesItsOwnHandler(t *testing.T) {
 func TestQualifiedPluginNamesKeepTheirHandler(t *testing.T) {
 	previous := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = previous })
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 		switch name {
 		case "custom.range", "custom.truncate", "custom.shortestPath":
 			return func(value string) string { return "plugin:" + value }, true
 		}
 		return nil, false
-	}
+	})
 	for _, name := range []string{"custom.range", "custom.truncate", "custom.shortestPath"} {
 		t.Run(name, func(t *testing.T) {
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "qualified_plugin"))

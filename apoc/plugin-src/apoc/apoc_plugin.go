@@ -7,12 +7,13 @@ package main
 
 import (
 	"github.com/orneryd/nornicdb/apoc"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
 // PluginFunction matches the struct expected by the plugin loader
 type PluginFunction struct {
-	Handler     interface{}
+	Handler     *registry.Callable
 	Description string
 	Examples    []string
 }
@@ -24,9 +25,12 @@ func (p APOCPlugin) Name() string    { return "apoc" }
 func (p APOCPlugin) Version() string { return "1.0.0" }
 func (p APOCPlugin) Type() string    { return "function" }
 
-func (p APOCPlugin) Functions() map[string]PluginFunction {
+// Author: Codex NOR-184 lane. Failed admission prevents plugin publication.
+func (p APOCPlugin) Functions() (map[string]PluginFunction, error) {
 	// Initialize APOC with nil storage (functions don't need storage)
-	apoc.Initialize(storage.NewInMemoryStorage(), nil)
+	if err := apoc.Initialize(storage.NewInMemoryStorage(), nil); err != nil {
+		return nil, err
+	}
 
 	// The registered functions, without APOC's procedures and without the
 	// functions the query engine has built in (apoc.PluginFunctionNames).
@@ -48,7 +52,7 @@ func (p APOCPlugin) Functions() map[string]PluginFunction {
 		}
 	}
 
-	return functions
+	return functions, nil
 }
 
 // Plugin is the exported symbol that NornicDB will load

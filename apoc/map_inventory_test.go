@@ -1,5 +1,7 @@
 package apoc
 
+// Author: Codex NOR-184 lane: inspect callable metadata without erasing the ABI.
+
 import (
 	"reflect"
 	"sort"
@@ -22,7 +24,7 @@ func TestAPOCMapReturnInventory(t *testing.T) {
 	sort.Strings(names)
 	for _, name := range names {
 		info, _ := GetInfo(name)
-		typ := reflect.TypeOf(info.Handler)
+		typ := info.Handler.Signature()
 		if typ.Kind() == reflect.Func && typ.NumOut() > 0 && typ.Out(0).Kind() == reflect.Map {
 			t.Logf("MAP INVENTORY %s builtin=%v plugin=%v procedure=%v handler=%s", name, IsBuiltInFunction(name), exported[name], isProcedureName(name), typ)
 		}

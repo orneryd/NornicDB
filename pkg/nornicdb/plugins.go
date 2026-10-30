@@ -8,6 +8,7 @@ package nornicdb
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"os"
 	"path/filepath"
 	"plugin"
@@ -33,7 +34,7 @@ const (
 // PluginFunction represents a Cypher function provided by a plugin.
 type PluginFunction struct {
 	Name        string
-	Handler     interface{}
+	Handler     *registry.Callable
 	Description string
 	Category    string
 }
@@ -394,13 +395,21 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 		return nil, fmt.Errorf("no Functions() method")
 	}
 
-	result := funcsMethod.Call(nil)
-	if len(result) != 1 {
-		return nil, fmt.Errorf("Functions() invalid return")
+	// Author: Codex NOR-184 lane. Admission errors and Functions() errors must
+	// survive plugin loading, just like errors from each published handler.
+	provider, err := registry.Compile(funcsMethod.Interface())
+	if err != nil {
+		return nil, fmt.Errorf("Functions() invalid return: %w", err)
 	}
-
+	result, err := provider.Call(nil)
+	if err != nil {
+		return nil, fmt.Errorf("Functions(): %w", err)
+	}
 	var functions []PluginFunction
-	mapVal := result[0]
+	mapVal := reflect.ValueOf(result)
+	if !mapVal.IsValid() {
+		return functions, nil
+	}
 	if mapVal.Kind() != reflect.Map {
 		return functions, nil
 	}
@@ -408,8 +417,13 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 	for _, key := range mapVal.MapKeys() {
 		funcName := key.String()
 		funcVal := mapVal.MapIndex(key)
+		for funcVal.Kind() == reflect.Interface && !funcVal.IsNil() {
+			funcVal = funcVal.Elem()
+		}
 
-		var handler interface{}
+		// Both direct functions and descriptor structs are supported plugin
+		// transports. Their result protocol is admitted below before publication.
+		handler := funcVal.Interface()
 		var desc string
 
 		if funcVal.Kind() == reflect.Struct {
@@ -427,9 +441,13 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 			fullName = fmt.Sprintf("apoc.%s.%s", pluginName, funcName)
 		}
 
+		checked, err := registry.Compile(handler)
+		if err != nil {
+			return nil, fmt.Errorf("function %s: %w", fullName, err)
+		}
 		functions = append(functions, PluginFunction{
 			Name:        fullName,
-			Handler:     handler,
+			Handler:     checked,
 			Description: desc,
 			Category:    pluginName,
 		})
@@ -662,8 +680,8 @@ func pluginFunctionInfos() []cypher.PluginFunctionInfo {
 // pluginFunctionSignature is a plugin function's signature in Neo4j's form,
 // name(arg1 :: T1, …) :: R, from its handler's Go type; a variadic last
 // parameter is a list.
-func pluginFunctionSignature(name string, handler interface{}) string {
-	t := reflect.TypeOf(handler)
+func pluginFunctionSignature(name string, handler *registry.Callable) string {
+	t := handler.Signature()
 	if t == nil || t.Kind() != reflect.Func {
 		return name + "() :: ANY"
 	}

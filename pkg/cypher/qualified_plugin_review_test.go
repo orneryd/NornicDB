@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"strings"
@@ -32,13 +34,13 @@ func registerQualifiedReviewHandlers(t *testing.T) {
 	t.Helper()
 	previous := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = previous })
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = checkedTestLookup(func(name string) (interface{}, bool) {
 		switch name {
 		case "custom.range", "custom.truncate", "custom.shortestPath", "custom.allShortestPaths", "custom.and", "custom.or", "custom.xor":
 			return func(v interface{}) interface{} { return v }, true
 		}
 		return nil, false
-	}
+	})
 }
 
 func TestQualifiedPluginReviewStreamsAndTransactions(t *testing.T) {
