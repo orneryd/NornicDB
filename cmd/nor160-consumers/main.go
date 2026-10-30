@@ -260,6 +260,62 @@ func (c *NOR160ControlCache) GetCopiedSelected(id NodeID, hidden func(*Node) boo
 	}
 	return n
 }
+
+// Captured-variable flow: a read whose results a closure sets from a bound
+// method value, and a population built by a closure that appends to a
+// captured variable. Selection after the copy must be reported (K1), through
+// an array of populations and after a same-package read; building the whole
+// population must not.
+type nor160ControlReader struct{ c *NOR160ControlCache }
+
+func (r *nor160ControlReader) deliver(first bool) []*Node { return r.c.nor160CopyAll() }
+
+func nor160ControlReadBoth(c *NOR160ControlCache) (first, second []*Node) {
+	r := nor160ControlReader{c: c}
+	consume := func(read func(bool) []*Node) {
+		first = read(true)
+		second = read(false)
+	}
+	consume(r.deliver)
+	return first, second
+}
+
+func (c *NOR160ControlCache) GetCapturedSelected(skip map[NodeID]bool) []*Node {
+	var out []*Node
+	include := func(n *Node) { out = append(out, n) }
+	first, second := nor160ControlReadBoth(c)
+	for _, part := range [...][]*Node{first, second} {
+		for _, n := range part {
+			if !skip[n.ID] {
+				include(n)
+			}
+		}
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetCapturedAll() []*Node {
+	var out []*Node
+	include := func(n *Node) { out = append(out, n) }
+	first, second := nor160ControlReadBoth(c)
+	for _, part := range [...][]*Node{first, second} {
+		for _, n := range part {
+			include(n)
+		}
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetCapturedLabelled(label string) []*Node {
+	var out []*Node
+	for _, n := range c.GetCapturedAll() {
+		if len(n.Labels) == 0 || n.Labels[0] != label {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
 `
 
 const cypherControlFile = `package cypher
@@ -303,6 +359,9 @@ var controls = []control{
 	{"K7", "(*" + storagePkg + ".NOR160ControlRecHits).GetFrozenShared", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCopiedSelected", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlReceiver", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedSelected", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLabelled", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedAll", true},
 }
 
 var tree string
@@ -341,6 +400,10 @@ type summary struct {
 	Escapes []bool
 	Copies  []bool
 	Partial map[int][]string // parameter -> fields a copy of it keeps shared
+	// FreeStores: what a closure stores into each captured variable, in terms
+	// of its own parameters; the enclosing function's memory receives it at
+	// every call of the closure.
+	FreeStores []org
 }
 
 type memKey struct {
@@ -354,6 +417,7 @@ type fnState struct {
 	src   map[ssa.Value]org  // copies of a known source: the origin of what each copies
 	intro map[ssa.Value]bool // calls and allocations that introduce a copy here
 	res   map[*ssa.Call][]org
+	free  map[*ssa.FreeVar]org // captured variables: what the enclosing function holds there
 }
 
 func (s *fnState) val(v ssa.Value) org {
@@ -663,18 +727,102 @@ func (a *analysis) calleesOf(call ssa.CallInstruction) []*ssa.Function {
 	return a.callees[call]
 }
 
+// freeEnv: what the enclosing function holds in captured variable i of the
+// closure fn, over every place it makes the closure. Before the enclosing
+// function has a state the environment is empty; summaries grow to the
+// fixpoint from there. A function with no enclosing function (a synthetic
+// wrapper) has no known environment.
+func (a *analysis) freeEnv(fn *ssa.Function, i int) (org, bool) {
+	parent := fn.Parent()
+	if parent == nil {
+		return org{}, false
+	}
+	ps := a.states[parent]
+	if ps == nil {
+		return org{}, true
+	}
+	var env org
+	for _, b := range parent.Blocks {
+		for _, ins := range b.Instrs {
+			mc, ok := ins.(*ssa.MakeClosure)
+			if !ok || mc.Fn != fn || i >= len(mc.Bindings) {
+				continue
+			}
+			if al, ok := mc.Bindings[i].(*ssa.Alloc); ok {
+				env = env.or(a.loadOrigin(ps, al))
+			} else {
+				env = env.or(ps.val(mc.Bindings[i]))
+			}
+		}
+	}
+	return env, true
+}
+
+// closureWrites: the captured variables of fn that a call of a closure made
+// in fn writes, and what it writes there.
+func (a *analysis) closureWrites(fn *ssa.Function, s *fnState, call ssa.CallInstruction) map[memKey]org {
+	c := call.Common()
+	mc, ok := c.Value.(*ssa.MakeClosure)
+	if !ok {
+		return nil
+	}
+	g, _ := mc.Fn.(*ssa.Function)
+	sg := a.sums[g]
+	if sg == nil {
+		return nil
+	}
+	var out map[memKey]org
+	for i, b := range mc.Bindings {
+		al, ok := b.(*ssa.Alloc)
+		if !ok || i >= len(sg.FreeStores) || sg.FreeStores[i].empty() {
+			continue
+		}
+		if out == nil {
+			out = map[memKey]org{}
+		}
+		k := memKey{al, -1}
+		out[k] = out[k].or(a.subst(fn, s, sg.FreeStores[i], c.Args))
+	}
+	return out
+}
+
+// unwrapped: a synthetic wrapper (a bound method value, an interface thunk)
+// stands for the method it calls.
+func (a *analysis) unwrapped(g *ssa.Function) *ssa.Function {
+	if a.sums[g] != nil || g.Synthetic == "" {
+		return g
+	}
+	for _, b := range g.Blocks {
+		for _, ins := range b.Instrs {
+			if call, ok := ins.(*ssa.Call); ok {
+				if f := call.Common().StaticCallee(); f != nil && a.sums[f] != nil {
+					return f
+				}
+			}
+		}
+	}
+	return g
+}
+
 // ---------------------------------------------------------------- per-function origins
 
 func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
-	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}}
+	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}, free: map[*ssa.FreeVar]org{}}
 	for i, p := range fn.Params {
 		if _, isFunc := p.Type().Underlying().(*types.Signature); isFunc || family(p.Type()) {
 			s.o[p] = org{Params: bit(i)}
 		}
 	}
-	for _, fv := range fn.FreeVars {
+	for i, fv := range fn.FreeVars {
 		if family(fv.Type()) || pointee(fv.Type()) != nil && family(pointee(fv.Type())) {
-			s.o[fv] = org{Unknown: true}
+			env, known := a.freeEnv(fn, i)
+			if !known {
+				env = org{Unknown: true}
+			}
+			s.o[fv] = env
+			if pointee(fv.Type()) != nil {
+				s.free[fv] = env
+			}
 		}
 	}
 	for iter := 0; iter < 16; iter++ {
@@ -697,6 +845,15 @@ func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
 							s.mem[k], changed = n, true
 						}
 					}
+				case ssa.CallInstruction:
+					// A closure called here writes the variables it captured.
+					for k, n := range a.closureWrites(fn, s, x) {
+						if m := s.mem[k].or(n); m != s.mem[k] {
+							s.mem[k], changed = m, true
+						}
+					}
+				}
+				switch x := ins.(type) {
 				case *ssa.Call:
 					// copy(dst, src) moves elements into dst.
 					if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "copy" && len(x.Call.Args) == 2 {
@@ -867,6 +1024,9 @@ func (a *analysis) loadOrigin(s *fnState, addr ssa.Value) org {
 		}
 		return org{}
 	case *ssa.FreeVar:
+		if env, ok := s.free[ad]; ok {
+			return env
+		}
 		if t := pointee(ad.Type()); t != nil && family(t) {
 			return org{Unknown: true}
 		}
@@ -1057,6 +1217,7 @@ func (a *analysis) funcValueResult(fn *ssa.Function, s *fnState, v ssa.Value, ar
 	if g == nil {
 		return org{Unknown: true}
 	}
+	g = a.unwrapped(g)
 	sg := a.sums[g]
 	if sg == nil || len(sg.Ret) == 0 {
 		return org{Unknown: true}
@@ -1076,7 +1237,18 @@ func (a *analysis) funcValueResult(fn *ssa.Function, s *fnState, v ssa.Value, ar
 // ---------------------------------------------------------------- summaries
 
 func (a *analysis) summarize(fn *ssa.Function, s *fnState) *summary {
-	sum := &summary{Ret: make([]org, fn.Signature.Results().Len()), Escapes: make([]bool, len(fn.Params)), Copies: make([]bool, len(fn.Params))}
+	sum := &summary{Ret: make([]org, fn.Signature.Results().Len()), Escapes: make([]bool, len(fn.Params)), Copies: make([]bool, len(fn.Params)), FreeStores: make([]org, len(fn.FreeVars))}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if st, ok := ins.(*ssa.Store); ok {
+				for i, fv := range fn.FreeVars {
+					if st.Addr == fv {
+						sum.FreeStores[i] = sum.FreeStores[i].or(s.val(st.Val))
+					}
+				}
+			}
+		}
+	}
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
 			if ret, ok := ins.(*ssa.Return); ok {
@@ -1143,6 +1315,14 @@ func (a *analysis) equalSummary(x, y *summary) bool {
 	}
 	for i := range x.Escapes {
 		if x.Escapes[i] != y.Escapes[i] || x.Copies[i] != y.Copies[i] {
+			return false
+		}
+	}
+	if len(x.FreeStores) != len(y.FreeStores) {
+		return false
+	}
+	for i := range x.FreeStores {
+		if x.FreeStores[i] != y.FreeStores[i] {
 			return false
 		}
 	}
@@ -1353,6 +1533,23 @@ func (a *analysis) derived(fn *ssa.Function, s *fnState, roots []ssa.Value, elem
 							}
 						}
 						continue
+					}
+					// A closure that stores its argument into a captured
+					// variable puts the root into that variable.
+					if mc, ok := c.Value.(*ssa.MakeClosure); ok {
+						if g, _ := mc.Fn.(*ssa.Function); g != nil && a.sums[g] != nil {
+							for i, b := range mc.Bindings {
+								al, ok := b.(*ssa.Alloc)
+								if !ok || i >= len(a.sums[g].FreeStores) {
+									continue
+								}
+								for j, arg := range c.Args {
+									if in(arg) && a.sums[g].FreeStores[i].Params&bit(j) != 0 {
+										add(al)
+									}
+								}
+							}
+						}
 					}
 					args := callArgs(c)
 					for _, g := range a.calleesOf(x) {
@@ -1659,6 +1856,29 @@ func elementsOf(fn *ssa.Function, d map[ssa.Value]bool) []ssa.Value {
 	return out
 }
 
+// leafElements: the entity elements of a population, through populations of
+// populations (an array of slices ranged in turn).
+func (a *analysis) leafElements(fn *ssa.Function, s *fnState, d map[ssa.Value]bool) []ssa.Value {
+	var out []ssa.Value
+	seen := map[ssa.Value]bool{}
+	var walk func(d map[ssa.Value]bool, depth int)
+	walk = func(d map[ssa.Value]bool, depth int) {
+		for _, e := range elementsOf(fn, d) {
+			if seen[e] {
+				continue
+			}
+			seen[e] = true
+			if container(e.Type()) && depth < 4 {
+				walk(a.derived(fn, s, []ssa.Value{e}, false), depth+1)
+				continue
+			}
+			out = append(out, e)
+		}
+	}
+	walk(d, 0)
+	return out
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -1945,7 +2165,7 @@ func main() {
 							}
 						}
 					}
-					for _, e := range elementsOf(fn, d) {
+					for _, e := range a.leafElements(fn, s, d) {
 						ei, _ := e.(ssa.Instruction)
 						if ei == nil {
 							continue
