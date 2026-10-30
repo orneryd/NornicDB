@@ -2174,10 +2174,14 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 			}
 		}
 	}
-	if err == nil && tx.cacheSnapshotReadNodeLocked(node, nodeItemBodyOnly, properties) {
-		return copyShaped(node, properties, true), nil
+	if err != nil {
+		return node, err
 	}
-	return node, err
+	// The cache keeps its own copy of the decoded body; the caller receives
+	// the decoded node itself, in the projected shape every other branch
+	// delivers: no vectors (NOR-160).
+	tx.cacheSnapshotReadNodeLocked(node, nodeItemBodyOnly, properties, true)
+	return shapeOwned(node, properties, true), nil
 }
 
 // getNodeFromBadgerSnapshotProjectedLocked reads and decodes a node from the
@@ -2466,14 +2470,11 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	// source (the engine strips there) and is handed over as is (NOR-160).
 	retainsEngineNodes := !engineOverlaid
 	strip := opts.StripEmbeddings
+	// The one owner decides: an owned node already has its shape from its
+	// source and is handed over; a retained one is copied once into it.
 	deliver := func(node *Node, owned bool) *Node {
-		if owned {
-			return node
-		}
-		return copyShaped(node, nil, strip)
+		return shapeNode(node, nil, strip && !owned, owned)
 	}
-	// The engine's images, when nothing here retains them: a node this
-	// transaction deleted or rewrote is skipped before it is delivered.
 	// The engine's nodes: a node this transaction deleted or rewrote is
 	// decided before the engine copies anything; a rewrite is delivered from
 	// the transaction's own pending node instead (NOR-160).
@@ -3195,7 +3196,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			return nil
 		})
 		if !sidecar {
-			tx.cacheSnapshotReadNodeLocked(node, nodeItemFullEmbeddings, nil)
+			tx.cacheSnapshotReadNodeLocked(node, nodeItemFullEmbeddings, nil, false)
 			return copyNode(node), nil
 		}
 	}
@@ -3261,8 +3262,8 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	if node != nil && err == nil && len(node.Labels) > 0 {
 		tx.cacheCommittedNodeLabelsLocked(node)
 	}
-	if err == nil && tx.cacheSnapshotReadNodeLocked(node, hydration, nil) {
-		return copyNode(node), nil
+	if err == nil {
+		tx.cacheSnapshotReadNodeLocked(node, hydration, nil, true)
 	}
 	return node, err
 }

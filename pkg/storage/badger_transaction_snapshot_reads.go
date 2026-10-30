@@ -181,7 +181,7 @@ func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, 
 // Its hydration/projection travels with the image in the existing cache; this
 // does not fill or publish an engine cache. The caller retains the immutable
 // decoded image here and returns its own copy after admission.
-func (tx *BadgerTransaction) cacheSnapshotReadNodeLocked(node *Node, hydration nodeItemHydration, properties []string) bool {
+func (tx *BadgerTransaction) cacheSnapshotReadNodeLocked(node *Node, hydration nodeItemHydration, properties []string, decoded bool) bool {
 	if tx.snapshotDeregister == nil || node == nil {
 		return false
 	}
@@ -228,6 +228,11 @@ func (tx *BadgerTransaction) cacheSnapshotReadNodeLocked(node *Node, hydration n
 	}
 	if properties != nil {
 		image.properties = slices.Clone(properties)
+	}
+	if decoded {
+		// The reader hands its decoded node to its caller; the cache keeps
+		// its own copy, made only once admission has decided (NOR-160).
+		image.node = copyNode(node)
 	}
 	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(image, nodeBytes)
 	return true
