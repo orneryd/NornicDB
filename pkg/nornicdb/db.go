@@ -1940,22 +1940,21 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry != nil && entry.svc == svc && entry.buildDone != nil {
-		ranInitial := false
-		var initialErr error
-		entry.buildOnce.Run(func() {
-			ranInitial = true
-			initialErr = db.runInitialSearchIndexBuild(entry, ctx)
-		})
-		if ranInitial {
-			return initialErr
-		}
+	if entry != nil && entry.svc == svc {
 		select {
-		case <-entry.buildDone:
-		case <-svc.LifetimeContext().Done():
-			return svc.LifetimeContext().Err()
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-entry.build.Done():
+			// The initial build finished earlier: this call rebuilds below.
+		default:
+			// This call starts or joins the initial build and reports it.
+			db.startSearchIndexBuild(entry, ctx)
+			select {
+			case <-entry.build.Done():
+				return entry.build.Err()
+			case <-svc.LifetimeContext().Done():
+				return svc.LifetimeContext().Err()
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	return svc.BuildIndexes(ctx)

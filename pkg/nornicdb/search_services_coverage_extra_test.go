@@ -42,11 +42,11 @@ func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant-build")
 	svc := search.NewService(engine, 3, nil)
-	entry := &dbSearchService{dbName: "tenant-build", svc: svc, buildDone: make(chan struct{})}
+	entry := &dbSearchService{dbName: "tenant-build", svc: svc}
 
 	db.startSearchIndexBuild(entry, nil)
 	select {
-	case <-entry.buildDone:
+	case <-entry.build.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected build to complete")
 	}

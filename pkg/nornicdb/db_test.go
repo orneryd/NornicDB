@@ -1669,10 +1669,9 @@ func TestSearchAndHybridSearch_RetryWhileIndexBuilding(t *testing.T) {
 		buildCtx:          context.Background(),
 	}
 	db.searchServices["nornic"] = &dbSearchService{
-		dbName:    "nornic",
-		engine:    ns,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "nornic",
+		engine: ns,
+		svc:    svc,
 	}
 
 	results, err := db.Search(ctx, "missing", nil, 10)
@@ -1697,12 +1696,11 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 	}))
 
 	entry := &dbSearchService{
-		dbName:    "nornic",
-		engine:    ns,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "nornic",
+		engine: ns,
+		svc:    svc,
 	}
-	entry.buildOnce.Run(func() {})
+	finishBuild := holdInitialBuild(entry)
 
 	db := &DB{
 		config:            DefaultConfig(),
@@ -1723,7 +1721,7 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 	case <-time.After(25 * time.Millisecond):
 	}
 
-	close(entry.buildDone)
+	finishBuild()
 	require.NoError(t, <-errCh)
 	require.Equal(t, 0, svc.EmbeddingCount())
 }

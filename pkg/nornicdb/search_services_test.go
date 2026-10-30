@@ -203,10 +203,9 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		entry := &dbSearchService{
 			dbName:            "nornic",
 			svc:               svc,
-			buildDone:         make(chan struct{}),
 			pendingFlushDelay: 20 * time.Millisecond,
 		}
-		close(entry.buildDone)
+		entry.build.Do(func() error { return nil }) // the initial build has completed
 
 		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		require.NoError(t, err)
@@ -882,12 +881,11 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
-		dbName:    "tenant_timeout",
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "tenant_timeout",
+		svc:    svc,
 	}
-	// Pre-consume buildOnce so startSearchIndexBuild does not launch a goroutine.
-	entry.buildOnce.Run(func() {})
+	// A held initial build keeps the wait open until the caller's deadline.
+	t.Cleanup(holdInitialBuild(entry))
 	db.searchServices["tenant_timeout"] = entry
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -942,9 +940,8 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		const dbName = "tenant_modes"
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dbName)
 		entry := &dbSearchService{
-			dbName:    dbName,
-			svc:       search.NewService(engine, 3, nil),
-			buildDone: make(chan struct{}),
+			dbName: dbName,
+			svc:    search.NewService(engine, 3, nil),
 		}
 		db.searchServices[dbName] = entry
 		return db, entry, dbName
@@ -952,9 +949,9 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("start returns without waiting for the build", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		// A pre-consumed Once keeps the build from running, so the buildDone
-		// signal stays open: only a mode that does not wait can return.
-		entry.buildOnce.Run(func() {})
+		// A held initial build stays open: only a mode that does not wait
+		// can return.
+		t.Cleanup(holdInitialBuild(entry))
 		svc, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
 		require.NoError(t, err)
 		require.Same(t, entry.svc, svc)
@@ -973,21 +970,13 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		require.Same(t, entry.svc, svc)
 		require.True(t, svc.GetBuildProgress().Ready)
 
-		entry.buildErrMu.RLock()
-		buildErr := entry.buildErr
-		entry.buildErrMu.RUnlock()
-		require.NoError(t, buildErr)
+		require.NoError(t, entry.build.Err())
 	})
 
 	t.Run("wait reports the failed build's error", func(t *testing.T) {
 		db, entry, dbName := start(t)
 		buildErr := errors.New("index build failed")
-		entry.buildOnce.Run(func() {
-			entry.buildErrMu.Lock()
-			entry.buildErr = buildErr
-			entry.buildErrMu.Unlock()
-			entry.closeBuildDone()
-		})
+		entry.build.Do(func() error { return buildErr })
 
 		svc, err := db.EnsureSearchIndexes(context.Background(), dbName, nil, SearchIndexBuildWait)
 		require.ErrorIs(t, err, buildErr)
@@ -996,7 +985,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("wait returns the caller context error while the build runs", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		entry.buildOnce.Run(func() {})
+		t.Cleanup(holdInitialBuild(entry))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		svc, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait)

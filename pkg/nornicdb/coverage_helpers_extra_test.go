@@ -147,11 +147,6 @@ func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
 	require.Nil(t, nodes)
 	require.Nil(t, edges)
 
-	entry.buildDone = make(chan struct{})
-	entry.closeBuildDone()
-	entry.closeBuildDone()
-	(*dbSearchService)(nil).closeBuildDone()
-
 	db := &DB{}
 	require.False(t, db.shouldIgnoreSearchIndexingError(nil))
 	require.True(t, db.shouldIgnoreSearchIndexingError(context.Canceled))

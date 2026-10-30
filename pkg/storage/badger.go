@@ -364,14 +364,14 @@ type BadgerEngine struct {
 
 	edgeBetweenIndexBackfillMu     sync.Mutex
 	edgeBetweenIndexBackfillCancel context.CancelFunc
-	edgeBetweenIndexBackfillDone   chan struct{}
+	edgeBetweenIndexBackfillDone   *lifecycle.OnceCompletion // the running backfill, engine work
 
 	// labelIndexBackfill* mirrors the edge-between backfill state for
 	// the (label, nodeNumID) index rebuild. See
 	// badger_label_index_backfill.go for the rebuild contract.
 	labelIndexBackfillMu     sync.Mutex
 	labelIndexBackfillCancel context.CancelFunc
-	labelIndexBackfillDone   chan struct{}
+	labelIndexBackfillDone   *lifecycle.OnceCompletion // the running backfill, engine work
 
 	// idDict assigns compact 8-byte numeric IDs to string node/edge IDs
 	// so secondary indexes (edge-between, outgoing/incoming, edge-type,
