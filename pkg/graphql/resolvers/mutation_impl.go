@@ -346,11 +346,10 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 
 	// Clear and regenerate if requested
 	if regen {
-		origin, admitted := storage.VectorWorkOrigin(ctx)
-		if !admitted {
+		if _, admitted := storage.VectorWorkOrigin(ctx); !admitted {
 			return nil, storage.ErrVectorWorkNotAdmitted
 		}
-		_, _ = r.DB.ClearAllEmbeddings(origin)
+		_, _ = r.DB.ClearAllEmbeddingsContext(ctx)
 		_ = r.DB.ResetEmbedWorker()
 	}
 

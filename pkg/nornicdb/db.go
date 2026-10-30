@@ -2292,11 +2292,15 @@ func (db *DB) ResetEmbedWorker() error {
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // This is useful for re-embedding with a new model or fixing corrupted embeddings.
 // It clears both the node embeddings in storage AND the search index.
-func (db *DB) ClearAllEmbeddings(origins ...uint64) (int, error) {
-	origin := storage.CaptureVectorWorkOrigin()
-	if len(origins) > 0 {
-		origin = origins[0]
-	}
+func (db *DB) ClearAllEmbeddings() (int, error) {
+	return db.ClearAllEmbeddingsContext(context.Background())
+}
+
+// ClearAllEmbeddingsContext is ClearAllEmbeddings for a request: the
+// re-embedding it queues carries the request's vector-work admission, or is
+// admitted here when ctx carries none.
+func (db *DB) ClearAllEmbeddingsContext(ctx context.Context) (int, error) {
+	_, origin := storage.AdmitVectorWork(ctx)
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
 	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {

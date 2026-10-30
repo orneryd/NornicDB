@@ -79,9 +79,25 @@ func TestVectorWorkRequestRootsDB(t *testing.T) {
 	requireNoFallbackAdmission(t, root+"AnonymizeUserData", func(t *testing.T) {
 		require.NoError(t, db.AnonymizeUserData(ctx, "user-1"))
 	})
+	// Every Cypher write shape, on the DB's own storage stack.
 	requireNoFallbackAdmission(t, root+"ExecuteCypher", func(t *testing.T) {
-		_, err := db.ExecuteCypher(ctx, "CREATE (:Doc {content: 'cypher', embedding: $v})", map[string]interface{}{"v": vector})
-		require.NoError(t, err)
+		for _, query := range []string{
+			"CREATE (a:Doc {content: 'cypher', embedding: $v})-[:R {w: 1}]->(b:Doc {content: 'b'})",
+			"MATCH (n:Doc {content: 'cypher'}) SET n.title = 'x', n.embedding = $v",
+			"MATCH (a:Doc {content: 'cypher'}) MERGE (c:Doc {content: 'c'}) MERGE (a)-[:M]->(c)",
+			"MATCH (:Doc {content: 'cypher'})-[r:R]->() SET r.w = 2",
+			"UNWIND range(1, 3) AS i CREATE (:Bulk {i: i})",
+			"MATCH (n:Bulk) DELETE n",
+			"CREATE (:Pipe {i: 1})-[:PR]->(:Pipe {i: 2})",
+			"MATCH ()-[r:PR]->() WITH r DELETE r",
+			"MATCH (n:Pipe) WITH n DELETE n",
+			"MATCH (n:Doc {content: 'b'}) CALL kp.suppress(n)",
+			"MATCH (:Doc {content: 'cypher'})-[r:R]->() CALL kp.suppress(r)",
+			"MATCH (n:Doc {content: 'c'}) DETACH DELETE n",
+		} {
+			_, err := db.ExecuteCypher(ctx, query, map[string]interface{}{"v": vector})
+			require.NoError(t, err, query)
+		}
 	})
 	requireNoFallbackAdmission(t, root+"DeleteNode", func(t *testing.T) {
 		require.NoError(t, db.DeleteNode(ctx, second.ID))

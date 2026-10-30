@@ -142,13 +142,13 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 
 	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	events.reset()
-	cleared, err := engine.ClearAllEmbeddings()
+	cleared, err := engine.ClearAllEmbeddings(CaptureVectorWorkOrigin())
 	require.NoError(t, err)
 	require.Positive(t, cleared)
 	requirePublished(t, events, "node updated test:a", "ClearAllEmbeddings")
 	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	events.reset()
-	_, err = engine.ClearAllEmbeddingsForPrefix("test:")
+	_, err = engine.ClearAllEmbeddingsForPrefix("test:", CaptureVectorWorkOrigin())
 	require.NoError(t, err)
 	requirePublished(t, events, "node updated test:a", "ClearAllEmbeddingsForPrefix")
 

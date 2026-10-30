@@ -132,7 +132,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 
 		// Clear all embeddings
-		cleared, err := engine.ClearAllEmbeddings()
+		cleared, err := engine.ClearAllEmbeddings(CaptureVectorWorkOrigin())
 		require.NoError(t, err)
 		assert.Equal(t, 3, cleared)
 
@@ -623,7 +623,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		cleared, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:", CaptureVectorWorkOrigin())
 		require.NoError(t, err)
 		assert.Equal(t, 1, cleared)
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
@@ -652,7 +652,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, int64(0), lsm)
 		assert.Equal(t, int64(0), vlog)
 
-		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:", CaptureVectorWorkOrigin())
 		require.Error(t, err)
 
 		err = engine.StreamNodeChunks(context.Background(), 2, func(nodes []*Node) error { return nil })

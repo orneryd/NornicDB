@@ -1122,19 +1122,16 @@ func hasPrefix(s, prefix []byte) bool {
 
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // Returns the number of nodes that had their embeddings cleared.
-func (b *BadgerEngine) ClearAllEmbeddings(origins ...uint64) (int, error) {
-	return b.ClearAllEmbeddingsForPrefix("", origins...)
+func (b *BadgerEngine) ClearAllEmbeddings(origin uint64) (int, error) {
+	return b.ClearAllEmbeddingsForPrefix("", origin)
 }
 
 // ClearAllEmbeddingsForPrefix removes embeddings from nodes whose IDs start with the given prefix.
 // This is used to clear embeddings for a single logical database namespace (e.g., "nornic:").
 //
 // If idPrefix is empty, clears embeddings for all nodes.
-func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string, origins ...uint64) (int, error) {
-	origin := CaptureVectorWorkOrigin()
-	if len(origins) > 0 {
-		origin = origins[0]
-	}
+// The re-embedding it queues carries origin, the caller's vector-work admission.
+func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string, origin uint64) (int, error) {
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}

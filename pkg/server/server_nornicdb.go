@@ -80,6 +80,12 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The background clearing carries this request's vector-work admission.
+		if _, admitted := storage.VectorWorkOrigin(r.Context()); !admitted {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", storage.ErrVectorWorkNotAdmitted)
+			return
+		}
+		admitted := context.WithoutCancel(r.Context())
 		// Return 202 Accepted immediately - clearing happens in background
 		response := map[string]interface{}{
 			"accepted":   true,
@@ -89,11 +95,6 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
-		origin, admitted := storage.VectorWorkOrigin(r.Context())
-		if !admitted {
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", storage.ErrVectorWorkNotAdmitted)
-			return
-		}
 		go func() {
 			defer func() {
 				if rec := recover(); rec != nil {
@@ -111,7 +112,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Now clear all embeddings
-			cleared, err := s.db.ClearAllEmbeddings(origin)
+			cleared, err := s.db.ClearAllEmbeddingsContext(admitted)
 			if err != nil {
 				if errors.Is(err, nornicdb.ErrClosed) || strings.Contains(strings.ToLower(err.Error()), "closed") {
 					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedRegenerationSkippedDBClosingEvent())
@@ -300,12 +301,11 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	origin, admitted := storage.VectorWorkOrigin(r.Context())
-	if !admitted {
+	if _, admitted := storage.VectorWorkOrigin(r.Context()); !admitted {
 		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", storage.ErrVectorWorkNotAdmitted)
 		return
 	}
-	cleared, err := s.db.ClearAllEmbeddings(origin)
+	cleared, err := s.db.ClearAllEmbeddingsContext(r.Context())
 	if err != nil {
 		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 		return
