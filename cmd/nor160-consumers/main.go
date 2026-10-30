@@ -962,6 +962,23 @@ func (c *NOR160ControlCache) GetFreshOrSame(n *Node) *Node {
 	}
 	return copyNode(c.nodes[n.ID])
 }
+
+// An ownership decision read through a retention lookup: the dispatcher asks
+// whether the node is the one the cache holds, and copies only then. K4, must
+// report.
+func (c *NOR160ControlCache) nor160Held(n *Node) bool {
+	held, ok := c.nodes[n.ID]
+	return ok && held == n
+}
+
+func (c *NOR160ControlCache) nor160DeliverByLookup(n *Node) *Node {
+	if !c.nor160Held(n) {
+		return n
+	}
+	return copyNode(n)
+}
+
+func (c *NOR160ControlCache) GetByLookup(id NodeID) *Node { return c.nor160DeliverByLookup(c.nodes[id]) }
 `
 
 const cypherControlFile = `package cypher
@@ -1084,6 +1101,7 @@ var controls = []control{
 	{"K4", storagePkg + ".nor160ControlPrepare", true},
 	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
 	{"K4", storagePkg + ".nor160ControlTransform", true},
+	{"K4", "(*" + storagePkg + ".NOR160ControlCache).nor160DeliverByLookup", false},
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
@@ -1219,24 +1237,25 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
-	narrowed      []string // K1/K1e reports the entity-typed-result rule removed, with their facts
-	filterSeen    map[ssa.Value]bool
-	filterKept    map[string]int                       // instruction kinds whose origin the old type filter discarded, now kept
-	filterDropped map[string]int                       // the same, still discarded: basic types only
-	crossOff      bool                                 // facts computed without cross-package callback callees
-	receipts      []string                             // exemptions: callback-delivered, proven caller-owned
-	reach         map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
-	scope         *readScope
-	candidates    []string                // every function found deciding between a value and its copy
-	owners        map[*ssa.Function]owner // the single owner of each entity type
-	slots         map[*ssa.Function]map[*ssa.Alloc]bool
-	cellRoot      bool // mayDrop is following callback-filled variables
-	p             *workcensus.Program
-	fns           []*ssa.Function
-	sums          map[*ssa.Function]*summary
-	states        map[*ssa.Function]*fnState
-	callees       map[ssa.CallInstruction][]*ssa.Function
-	callers       map[*ssa.Function][]*ssa.Function
+	retentionTests map[*ssa.Function]bool // bool results computed from retention state
+	narrowed       []string               // K1/K1e reports the entity-typed-result rule removed, with their facts
+	filterSeen     map[ssa.Value]bool
+	filterKept     map[string]int                       // instruction kinds whose origin the old type filter discarded, now kept
+	filterDropped  map[string]int                       // the same, still discarded: basic types only
+	crossOff       bool                                 // facts computed without cross-package callback callees
+	receipts       []string                             // exemptions: callback-delivered, proven caller-owned
+	reach          map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
+	scope          *readScope
+	candidates     []string                // every function found deciding between a value and its copy
+	owners         map[*ssa.Function]owner // the single owner of each entity type
+	slots          map[*ssa.Function]map[*ssa.Alloc]bool
+	cellRoot       bool // mayDrop is following callback-filled variables
+	p              *workcensus.Program
+	fns            []*ssa.Function
+	sums           map[*ssa.Function]*summary
+	states         map[*ssa.Function]*fnState
+	callees        map[ssa.CallInstruction][]*ssa.Function
+	callers        map[*ssa.Function][]*ssa.Function
 }
 
 // ---------------------------------------------------------------- types
@@ -4500,15 +4519,93 @@ func (a *analysis) ownershipGated(fn *ssa.Function, x, y ssa.Value, phi *ssa.Phi
 		if !((x0 && !y0 && y1 && !x1) || (x1 && !y1 && y0 && !x0)) {
 			continue
 		}
-		g, ok := gateOf(fn, iff.Cond, false, 0)
-		if !ok {
-			continue
+		if g, ok := gateOf(fn, iff.Cond, false, 0); ok && ownershipInput(fn, g) {
+			return true
 		}
-		if ownershipInput(fn, g) {
+		if a.readsRetention(fn, iff.Cond, 0) {
 			return true
 		}
 	}
 	return false
+}
+
+// readsRetention: the value is computed from retention state: a retained
+// value or container, a comma-ok or lookup into one, or a retention test.
+func (a *analysis) readsRetention(fn *ssa.Function, v ssa.Value, depth int) bool {
+	s := a.states[fn]
+	if s == nil || depth > 10 {
+		return false
+	}
+	retained := func(x ssa.Value) bool { return s.val(x).Retained }
+	switch x := v.(type) {
+	case *ssa.UnOp:
+		if x.Op == token.MUL {
+			if fa, ok := x.X.(*ssa.FieldAddr); ok && retained(fa.X) {
+				return true
+			}
+		}
+		return a.readsRetention(fn, x.X, depth+1)
+	case *ssa.BinOp:
+		if retained(x.X) || retained(x.Y) {
+			return true // compared with a retained value
+		}
+		return a.readsRetention(fn, x.X, depth+1) || a.readsRetention(fn, x.Y, depth+1)
+	case *ssa.Extract:
+		return a.readsRetention(fn, x.Tuple, depth+1)
+	case *ssa.Lookup:
+		return retained(x.X) || a.readsRetention(fn, x.X, depth+1)
+	case *ssa.TypeAssert:
+		return retained(x.X)
+	case *ssa.Phi:
+		for _, e := range x.Edges {
+			if a.readsRetention(fn, e, depth+1) {
+				return true
+			}
+		}
+	case *ssa.Call:
+		for _, g := range a.calleesOf(x) {
+			if a.retentionTests[originFn(g)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// computeRetentionTests: functions whose bool result is computed from
+// retention state, callee-first to a fixpoint.
+func (a *analysis) computeRetentionTests() {
+	a.retentionTests = map[*ssa.Function]bool{}
+	for round := 0; round < 10; round++ {
+		changed := false
+		for _, fn := range a.postOrder() {
+			if a.retentionTests[originFn(fn)] {
+				continue
+			}
+			res := fn.Signature.Results()
+			if res.Len() == 0 {
+				continue
+			}
+			b, ok := res.At(0).Type().Underlying().(*types.Basic)
+			if !ok || b.Kind() != types.Bool {
+				continue
+			}
+			for _, bb := range fn.Blocks {
+				ret, ok := bb.Instrs[len(bb.Instrs)-1].(*ssa.Return)
+				if !ok || len(ret.Results) == 0 {
+					continue
+				}
+				if a.readsRetention(fn, ret.Results[0], 0) {
+					a.retentionTests[originFn(fn)] = true
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			return
+		}
+	}
 }
 
 // ownershipInput: the gate is a bool parameter, or a bool field of a
@@ -4814,6 +4911,7 @@ func main() {
 		return 40, false
 	}
 	rounds1, converged1 := fixpoint()
+	a.computeRetentionTests()
 	a.owners = a.findOwners()
 	for ofn, o := range a.owners {
 		r.Owners = append(r.Owners, fmt.Sprintf("%s owns %s (parameter %d)", strings.TrimPrefix(fullName(ofn), module+"/"), o.entity.Obj().Name(), o.value))
@@ -4826,6 +4924,7 @@ func main() {
 		a.states = map[*ssa.Function]*fnState{}
 		rounds2, converged2 = fixpoint()
 	}
+	a.computeRetentionTests()
 	r.SummaryRounds = rounds1 + rounds2
 	r.Converged = converged1 && converged2
 
