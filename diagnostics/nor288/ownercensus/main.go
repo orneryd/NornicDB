@@ -592,7 +592,31 @@ func (b *BadgerEngine) nor288PlantedFReadHop() int {
 	// receipt wait on Background.
 	{"pkg/storage/zz_nor288_g_flow.go", "nor288PlantedG", "G", `package storage
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
+
+var nor288PlantedSetHook, nor288PlantedUnsetHook atomic.Pointer[func(context.Context, *nor288PlantedHookTag)]
+
+func nor288PlantedInstallSetHook() {
+	f := nor288PlantedStoredHookTarget
+	nor288PlantedSetHook.Store(&f)
+}
+func nor288PlantedInstallUnsetHook() {
+	f := nor288PlantedUnstoredHookTarget
+	nor288PlantedUnsetHook.Store(&f)
+}
+func nor288PlantedGSetHook() {
+	if h := nor288PlantedSetHook.Load(); h != nil {
+		(*h)(context.Background(), nil)
+	}
+}
+func nor288PlantedGUnsetHook() {
+	if h := nor288PlantedUnsetHook.Load(); h != nil {
+		(*h)(context.Background(), nil)
+	}
+}
 
 type nor288PlantedHookTag struct{}
 
@@ -680,6 +704,9 @@ func (b *BadgerEngine) nor288PlantedGFlow() bool {
 		nor288PlantedGReturnedBlocking()
 		nor288PlantedGReturnedQuiet()
 		nor288PlantedGReceiptWait(nil)
+		nor288PlantedInstallSetHook()
+		nor288PlantedGSetHook()
+		nor288PlantedGUnsetHook()
 	})
 }
 `, false},
@@ -824,6 +851,7 @@ func main() {
 	funcs := sourceFunctions(prog)
 	cg := vta.CallGraph(funcs, cha.CallGraph(prog))
 	graph := buildGraph(cg, funcs, storedFields(prog))
+	closeWriterless(prog, graph)
 
 	byPath := map[string]*packages.Package{}
 	packages.Visit(pkgs, nil, func(p *packages.Package) { byPath[p.PkgPath] = p })
@@ -1096,10 +1124,15 @@ func main() {
 				})
 			}
 			// E: reads of lifecycle state kept beside the owner, on added lines.
+			// The engine's one decider (ensureOpen, ensureOpenLocked) is the
+			// owner's own read point and is not a second decider.
 			if p.PkgPath != nornic+"pkg/lifecycle" {
 				for _, decl := range file.Decls {
 					fn, ok := decl.(*ast.FuncDecl)
 					if !ok || fn.Body == nil {
+						continue
+					}
+					if fo, _ := info.Defs[fn.Name].(*types.Func); fo != nil && (fo == writeDecider || (writeDeciderLocked != nil && fo == writeDeciderLocked)) {
 						continue
 					}
 					reported := false
@@ -1836,6 +1869,7 @@ func main() {
 		{"nor288PlantedGFieldBlocking", "G"}, {"nor288PlantedGFieldQuiet", "G-classified"},
 		{"nor288PlantedBlockingBg", "G"}, {"nor288PlantedQuietBg", "G-classified"},
 		{"nor288PlantedGReceiptWait", "G"},
+		{"nor288PlantedGSetHook", "G"}, {"nor288PlantedGUnsetHook", "G-classified"},
 	}
 	for _, cc := range classControls {
 		found := false
@@ -1882,6 +1916,7 @@ func main() {
 		"call_sites":                len(graph.sites),
 		"sites_via_signature":       graph.fallbackSites,
 		"sites_closed_unassigned":   graph.closedSites,
+		"sites_closed_writerless":   graph.writerlessSites,
 		"deleting_functions":        len(deleting),
 		"probe_functions":           len(probe),
 		"controls":                  verdicts,
@@ -1919,6 +1954,8 @@ type graphIndex struct {
 	// never assigns (only tests set it): it calls nothing in production.
 	closed      map[ssa.CallInstruction]bool
 	closedSites int
+	// writerlessSites: closed by closeWriterless (every writer unreachable).
+	writerlessSites int
 }
 
 // buildGraph indexes the VTA call graph by function. A dynamic call (through
@@ -2534,10 +2571,36 @@ type flowWalker struct {
 	budget int
 	hook   func(*flowWalker, flowItem, ssa.Instruction) bool
 	stop   string
+	// Provenance: each tracked value's first predecessor, so a reported use
+	// names the functions its value passed through.
+	parent map[ssa.Value]ssa.Value
+	cur    ssa.Value
+}
+
+// trail names the functions the current value passed through, newest first.
+func (w *flowWalker) trail() string {
+	var names []string
+	for v, n := w.cur, 0; v != nil && n < 64; v, n = w.parent[v], n+1 {
+		name := ""
+		if i, ok := v.(ssa.Instruction); ok && i.Parent() != nil {
+			name = i.Parent().String()
+		} else if p, ok := v.(*ssa.Parameter); ok {
+			name = p.Parent().String()
+		} else if f, ok := v.(*ssa.FreeVar); ok {
+			name = f.Parent().String()
+		}
+		if name != "" && (len(names) == 0 || names[len(names)-1] != name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) > 16 {
+		names = append(names[:16], "...")
+	}
+	return strings.Join(names, " <- ")
 }
 
 func newFlowWalker(env *flowEnv, budget int, hook func(*flowWalker, flowItem, ssa.Instruction) bool) *flowWalker {
-	return &flowWalker{env: env, seen: map[string]bool{}, fields: map[string]bool{}, budget: budget, hook: hook}
+	return &flowWalker{env: env, seen: map[string]bool{}, fields: map[string]bool{}, budget: budget, hook: hook, parent: map[ssa.Value]ssa.Value{}}
 }
 
 func (w *flowWalker) push(v ssa.Value, kind string, idx int, stack []*ssa.Call) {
@@ -2551,6 +2614,9 @@ func (w *flowWalker) push(v ssa.Value, kind string, idx int, stack []*ssa.Call) 
 	}
 	if k := b.String(); !w.seen[k] {
 		w.seen[k] = true
+		if _, known := w.parent[v]; !known && v != w.cur {
+			w.parent[v] = w.cur
+		}
 		w.queue = append(w.queue, flowItem{v, kind, idx, stack})
 	}
 }
@@ -2560,6 +2626,9 @@ func (w *flowWalker) fail(reason string, at ssa.Instruction) {
 		w.stop = reason
 		if at != nil {
 			w.stop += w.env.where(at)
+		}
+		if t := w.trail(); t != "" {
+			w.stop += "; value path: " + t
 		}
 	}
 }
@@ -2583,6 +2652,7 @@ func (w *flowWalker) run() string {
 		}
 		it := w.queue[0]
 		w.queue = w.queue[1:]
+		w.cur = it.v
 		refs := it.v.Referrers()
 		if refs == nil {
 			continue
@@ -2905,4 +2975,153 @@ func shortFunc(fn *ssa.Function) string {
 		s = fn.RelString(fn.Pkg.Pkg)
 	}
 	return strings.ReplaceAll(s, "(*", "(")
+}
+
+// closeWriterless (decision 3, second rule, after the 483d census) closes a
+// call resolved only by signature whose function value is read from a
+// container (a struct field, a global, or a sync/atomic value held in one)
+// when no writer of that container is reachable: no function storing into it
+// (directly, by a whole-struct store, by a sync/atomic store/swap, or through
+// a pointer of its type the census cannot attribute) has a caller through a
+// resolved call, and none is a program entry (main, init). Such a container is
+// set only by tests, as the unique-lock wait hook. Stated assumption: VTA
+// resolves every call that can reach a writer; exported functions nothing in
+// the module calls are not invoked in production.
+func closeWriterless(prog *ssa.Program, g *graphIndex) {
+	type container struct {
+		f  *types.Var
+		gl *ssa.Global
+	}
+	writers := map[container][]*ssa.Function{}
+	typeWriters := map[string][]*ssa.Function{}
+	addr := func(a ssa.Value) (container, bool) {
+		switch x := a.(type) {
+		case *ssa.FieldAddr:
+			if v := fieldVar(x.X, x.Field); v != nil {
+				return container{f: v}, true
+			}
+		case *ssa.Global:
+			return container{gl: x}, true
+		}
+		return container{}, false
+	}
+	elem := func(a ssa.Value) string {
+		if p, ok := a.Type().Underlying().(*types.Pointer); ok {
+			return types.TypeString(p.Elem(), nil)
+		}
+		return types.TypeString(a.Type(), nil)
+	}
+	var markStruct func(t types.Type, fn *ssa.Function, depth int)
+	markStruct = func(t types.Type, fn *ssa.Function, depth int) {
+		st, ok := t.Underlying().(*types.Struct)
+		if !ok || depth > 8 {
+			return
+		}
+		for i := 0; i < st.NumFields(); i++ {
+			k := container{f: st.Field(i).Origin()}
+			writers[k] = append(writers[k], fn)
+			markStruct(st.Field(i).Type(), fn, depth+1)
+		}
+	}
+	write := func(a ssa.Value, fn *ssa.Function) {
+		if k, ok := addr(a); ok {
+			writers[k] = append(writers[k], fn)
+			return
+		}
+		typeWriters[elem(a)] = append(typeWriters[elem(a)], fn)
+	}
+	for fn := range ssautil.AllFunctions(prog) {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				switch x := instr.(type) {
+				case *ssa.Store:
+					write(x.Addr, fn)
+					markStruct(x.Val.Type(), fn, 0)
+				case *ssa.MapUpdate:
+					markStruct(x.Value.Type(), fn, 0)
+				case *ssa.Send:
+					markStruct(x.X.Type(), fn, 0)
+				case ssa.CallInstruction:
+					cc := x.Common()
+					if c := cc.StaticCallee(); c != nil && pkgPathOf(c) == "sync/atomic" && len(cc.Args) > 1 {
+						if n := c.Name(); strings.HasPrefix(n, "Store") || strings.HasPrefix(n, "Swap") || strings.HasPrefix(n, "CompareAndSwap") {
+							write(cc.Args[0], fn)
+						}
+					}
+				}
+			}
+		}
+	}
+	reachable := func(fn *ssa.Function) bool {
+		if n := fn.Name(); n == "main" || n == "init" || strings.HasPrefix(n, "init#") {
+			return true
+		}
+		for _, e := range g.in[fn] {
+			if !g.fallback[e.site] {
+				return true
+			}
+		}
+		return false
+	}
+	source := func(v ssa.Value) (container, string, bool) {
+		if f, ok := v.(*ssa.Field); ok {
+			if fv := fieldVar(f.X, f.Field); fv != nil {
+				return container{f: fv}, types.TypeString(f.Type(), nil), true
+			}
+		}
+		u, ok := v.(*ssa.UnOp)
+		if !ok || u.Op != token.MUL {
+			return container{}, "", false
+		}
+		switch x := u.X.(type) {
+		case *ssa.FieldAddr, *ssa.Global:
+			k, ok := addr(x)
+			return k, elem(x), ok
+		case *ssa.Call:
+			if c := x.Call.StaticCallee(); c != nil && pkgPathOf(c) == "sync/atomic" && strings.HasPrefix(c.Name(), "Load") && len(x.Call.Args) > 0 {
+				k, ok := addr(x.Call.Args[0])
+				return k, elem(x.Call.Args[0]), ok
+			}
+		}
+		return container{}, "", false
+	}
+	closing := map[ssa.CallInstruction]bool{}
+	for site := range g.fallback {
+		k, t, ok := source(site.Common().Value)
+		if !ok {
+			continue
+		}
+		open := false
+		for _, w := range append(append([]*ssa.Function{}, writers[k]...), typeWriters[t]...) {
+			open = open || reachable(w)
+		}
+		if !open {
+			closing[site] = true
+		}
+	}
+	if len(closing) == 0 {
+		return
+	}
+	keep := func(edges []edge) []edge {
+		out := edges[:0:0]
+		for _, e := range edges {
+			if !closing[e.site] {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	for f := range g.out {
+		g.out[f] = keep(g.out[f])
+	}
+	for f := range g.in {
+		g.in[f] = keep(g.in[f])
+	}
+	for site := range closing {
+		delete(g.fallback, site)
+		delete(g.sites, site)
+		g.closed[site] = true
+		g.writerlessSites++
+		g.fallbackSites--
+	}
 }
