@@ -469,6 +469,34 @@ func (c *NOR160ControlCache) GetCallbackFirst(small bool) []*Node {
 	return first
 }
 
+// A population copied through a mapper before a loop whose callback can stop
+// it must be reported (K3); visiting each copy as it is made, not.
+func nor160ControlMap(xs []*Node, f func(*Node) *Node) []*Node {
+	out := make([]*Node, len(xs))
+	for i, x := range xs {
+		out[i] = f(x)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) StreamMappedTail(tail []*Node, visit func(*Node) error) error {
+	for _, n := range nor160ControlMap(tail, copyNode) {
+		if err := visit(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *NOR160ControlCache) StreamEachCopied(tail []*Node, visit func(*Node) error) error {
+	for _, n := range tail {
+		if err := visit(copyNode(n)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *NOR160ControlCache) GetCallbackAll() []*Node {
 	var first []*Node
 	c.nor160Each(func(n *Node) { first = append(first, copyNode(n)) })
@@ -534,6 +562,8 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCountedWhole", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackFirst", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAll", true},
+	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamMappedTail", false},
+	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamEachCopied", true},
 }
 
 var tree string
@@ -1343,6 +1373,11 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 		for i := 0; i < len(out) && i < len(sg.Ret); i++ {
 			out[i] = out[i].or(a.subst(fn, s, sg.Ret[i], args))
 			if sg.Ret[i].Copy {
+				s.intro[call] = true
+			}
+			// A mapper copies through the function it is given here
+			// (callerowned.Each(xs, copyEdge)): the call introduces the copy.
+			if fr := sg.Ret[i].FuncRes; fr != 0 && a.subst(fn, s, org{FuncRes: fr}, args).Copy {
 				s.intro[call] = true
 			}
 		}
