@@ -760,7 +760,35 @@ func (c *NOR160ControlCache) GetSlottedCopied(id NodeID, early bool) (*Node, err
 // same shape returned from an exported read (K4, must report); write staging
 // that drops its copy on an error (clean); a copy dropped inside a method that
 // reaches a read exit only through an interface (K1, must report).
-func nor160ControlPrepare(n *Node) *Node {
+func nor160ControlPrepare(n *Node, owned bool) *Node {
+	if owned {
+		return n
+	}
+	c := copyNode(n)
+	c.Labels = nil
+	return c
+}
+
+func nor160ControlEncode(n *Node) []byte { return []byte(nor160ControlPrepare(n, false).ID) }
+
+// An ownership dispatcher that copies BECAUSE the node is not owned and then
+// modifies the copy: still K4, whatever happens to the copy.
+func nor160ControlPrepareRead(n *Node, owned bool) *Node {
+	if owned {
+		return n
+	}
+	c := copyNode(n)
+	c.Labels = nil
+	return c
+}
+
+func (c *NOR160ControlCache) GetPrepared(id NodeID) *Node {
+	return nor160ControlPrepareRead(c.nodes[id], false)
+}
+
+// A copy-on-write transform: the copy exists because the content needs
+// changing; the result has the input's ownership. Not K4 (clean).
+func nor160ControlTransform(n *Node) *Node {
 	if len(n.Labels) == 0 {
 		return n
 	}
@@ -769,18 +797,9 @@ func nor160ControlPrepare(n *Node) *Node {
 	return c
 }
 
-func nor160ControlEncode(n *Node) []byte { return []byte(nor160ControlPrepare(n).ID) }
-
-func nor160ControlPrepareRead(n *Node) *Node {
-	if len(n.Labels) == 0 {
-		return n
-	}
-	c := copyNode(n)
-	c.Labels = nil
-	return c
+func (c *NOR160ControlCache) GetTransformed(id NodeID) *Node {
+	return nor160ControlTransform(copyNode(c.nodes[id]))
 }
-
-func (c *NOR160ControlCache) GetPrepared(id NodeID) *Node { return nor160ControlPrepareRead(c.nodes[id]) }
 
 func (c *NOR160ControlCache) nor160Stage(n *Node) error {
 	staged := copyNode(n)
@@ -1064,6 +1083,7 @@ var controls = []control{
 	{"K1", module + "/pkg/cypher.NOR160ControlDropsFresh", true},
 	{"K4", storagePkg + ".nor160ControlPrepare", true},
 	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
+	{"K4", storagePkg + ".nor160ControlTransform", true},
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
@@ -3521,8 +3541,8 @@ func (a *analysis) findOwners() map[*ssa.Function]owner {
 			continue
 		}
 		j, n, x, y, ok := a.mergeOf(fn, s)
-		if !ok {
-			continue
+		if !ok || !a.ownershipGated(fn, x, y, nil) {
+			continue // not a merge, or a copy-on-write transform
 		}
 		// Planted control code takes no part in owner candidacy for a product
 		// type: the census's own plants must not decide whether the product
@@ -4420,6 +4440,98 @@ func positionOf(fn *ssa.Function, p token.Pos) string {
 	return fmt.Sprintf("%s:%d", file, line)
 }
 
+// exitBlocks: the blocks where v leaves fn: the predecessor of each phi edge
+// that is v, or each return (or result-slot store) of v.
+func (a *analysis) exitBlocks(fn *ssa.Function, v ssa.Value, phi *ssa.Phi) map[*ssa.BasicBlock]bool {
+	out := map[*ssa.BasicBlock]bool{}
+	if phi != nil {
+		for i, e := range phi.Edges {
+			if e == v && i < len(phi.Block().Preds) {
+				out[phi.Block().Preds[i]] = true
+			}
+		}
+		return out
+	}
+	slots := a.resultSlots(fn)
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			switch x := ins.(type) {
+			case *ssa.Return:
+				for _, r := range x.Results {
+					if r == v {
+						out[b] = true
+					}
+				}
+			case *ssa.Store:
+				if al, ok := x.Addr.(*ssa.Alloc); ok && slots[al] && x.Val == v {
+					out[b] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ownershipGated: the branch separating the unchanged value x from the copy y
+// reads an ownership input (a bool parameter, or a bool field of a non-entity
+// parameter such as an image wrapper), not the value's own content.
+func (a *analysis) ownershipGated(fn *ssa.Function, x, y ssa.Value, phi *ssa.Phi) bool {
+	xs, ys := a.exitBlocks(fn, x, phi), a.exitBlocks(fn, y, phi)
+	if len(xs) == 0 || len(ys) == 0 {
+		return false
+	}
+	reaches := func(from *ssa.BasicBlock, set map[*ssa.BasicBlock]bool) bool {
+		seen := reach(from)
+		seen[from] = true
+		for b := range set {
+			if seen[b] {
+				return true
+			}
+		}
+		return false
+	}
+	for _, b := range fn.Blocks {
+		iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		x0, y0 := reaches(b.Succs[0], xs), reaches(b.Succs[0], ys)
+		x1, y1 := reaches(b.Succs[1], xs), reaches(b.Succs[1], ys)
+		if !((x0 && !y0 && y1 && !x1) || (x1 && !y1 && y0 && !x0)) {
+			continue
+		}
+		g, ok := gateOf(fn, iff.Cond, false, 0)
+		if !ok {
+			continue
+		}
+		if ownershipInput(fn, g) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownershipInput: the gate is a bool parameter, or a bool field of a
+// parameter whose type is not an entity (the entity's own fields are content).
+func ownershipInput(fn *ssa.Function, g gate) bool {
+	if !g.known || g.param < 0 || g.param >= len(fn.Params) {
+		return false
+	}
+	if g.field < 0 {
+		b, ok := fn.Params[g.param].Type().Underlying().(*types.Basic)
+		return ok && b.Kind() == types.Bool
+	}
+	n, st := structOf(derefType(fn.Params[g.param].Type()))
+	if st == nil || g.field >= st.NumFields() {
+		return false
+	}
+	if n != nil && entityType(n) {
+		return false
+	}
+	b, ok := st.Field(g.field).Type().Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Bool
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -4997,7 +5109,7 @@ func main() {
 		}
 
 		// K4: one value merging an uncopied value and a copy of it.
-		checkMerge := func(p token.Pos, inputs []ssa.Value) {
+		checkMerge := func(p token.Pos, inputs []ssa.Value, phi *ssa.Phi) {
 			for _, x := range inputs {
 				ox := s.val(x)
 				if ox.empty() || ox.Copy || !family(x.Type()) {
@@ -5008,8 +5120,8 @@ func main() {
 					if !ok {
 						continue
 					}
-					if src.overlaps(ox) {
-						add("K4", fn, p, "chooses between a value and a copy of it")
+					if src.overlaps(ox) && a.ownershipGated(fn, x, y, phi) {
+						add("K4", fn, p, "chooses between a value and a copy of it on an ownership input")
 						return
 					}
 				}
@@ -5020,7 +5132,7 @@ func main() {
 			for _, ins := range b.Instrs {
 				switch x := ins.(type) {
 				case *ssa.Phi:
-					checkMerge(x.Pos(), x.Edges)
+					checkMerge(x.Pos(), x.Edges, x)
 				case *ssa.Return:
 					if !retPos.IsValid() {
 						retPos = x.Pos()
@@ -5029,7 +5141,7 @@ func main() {
 			}
 		}
 		for _, in := range a.returnInputs(fn) {
-			checkMerge(retPos, in)
+			checkMerge(retPos, in, nil)
 		}
 
 		// K4b: Copier dispatch sites, and a second CallerCopy after a first.
