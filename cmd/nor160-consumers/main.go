@@ -908,6 +908,30 @@ func (c *NOR160ControlCache) GetDecodedRange(ids []NodeID) []*Node {
 	}
 	return out
 }
+
+// Scope ruling plants. An evaluator returning an interface that holds a node it
+// copied, narrowed by its caller, is not a copy root (clean). A read exit
+// whose entity-typed copy its caller drops still is (K1, must report).
+// GetSharedViaAny (a lend through an interface) stays K0.
+func nor160ControlEval(c *NOR160ControlCache, id NodeID) any { return copyNode(c.nodes[id]) }
+
+func (c *NOR160ControlCache) GetEvalKeyed(id NodeID) map[string]*Node {
+	out := map[string]*Node{}
+	if s, ok := nor160ControlEval(c, id).(string); ok {
+		out[s] = nil
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetCopyFor(id NodeID) *Node { return copyNode(c.nodes[id]) }
+
+func (c *NOR160ControlCache) GetCopyIfKept(id NodeID, keep bool) *Node {
+	n := c.GetCopyFor(id)
+	if !keep {
+		return nil
+	}
+	return n
+}
 `
 
 const cypherControlFile = `package cypher
@@ -1028,6 +1052,8 @@ var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSharedOk", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSharedViaAny", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedRange", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetEvalKeyed", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCopyIfKept", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -1128,12 +1154,13 @@ type memKey struct {
 }
 
 type fnState struct {
-	o     map[ssa.Value]org
-	mem   map[memKey]org
-	src   map[ssa.Value]org  // copies of a known source: the origin of what each copies
-	intro map[ssa.Value]bool // calls and allocations that introduce a copy here
-	res   map[*ssa.Call][]org
-	free  map[*ssa.FreeVar]org // captured variables: what the enclosing function holds there
+	o        map[ssa.Value]org
+	mem      map[memKey]org
+	src      map[ssa.Value]org  // copies of a known source: the origin of what each copies
+	intro    map[ssa.Value]bool // copies introduced here that reach their result through an entity-typed result (K1/K1e roots)
+	introAll map[ssa.Value]bool // every copy introduced here, whatever carries it (K2/K3 roots)
+	res      map[*ssa.Call][]org
+	free     map[*ssa.FreeVar]org // captured variables: what the enclosing function holds there
 }
 
 func (s *fnState) val(v ssa.Value) org {
@@ -1150,6 +1177,7 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
+	narrowed      []string // K1/K1e reports the entity-typed-result rule removed, with their facts
 	filterSeen    map[ssa.Value]bool
 	filterKept    map[string]int                       // instruction kinds whose origin the old type filter discarded, now kept
 	filterDropped map[string]int                       // the same, still discarded: basic types only
@@ -1553,7 +1581,7 @@ func (a *analysis) unwrapped(g *ssa.Function) *ssa.Function {
 // ---------------------------------------------------------------- per-function origins
 
 func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
-	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}, free: map[*ssa.FreeVar]org{}}
+	s := &fnState{o: map[ssa.Value]org{}, mem: map[memKey]org{}, src: map[ssa.Value]org{}, intro: map[ssa.Value]bool{}, introAll: map[ssa.Value]bool{}, res: map[*ssa.Call][]org{}, free: map[*ssa.FreeVar]org{}}
 	for i, p := range fn.Params {
 		if _, isFunc := p.Type().Underlying().(*types.Signature); isFunc || family(p.Type()) {
 			s.o[p] = org{Params: bit(i)}
@@ -1645,6 +1673,7 @@ func (a *analysis) origin(fn *ssa.Function, s *fnState, v ssa.Value) org {
 			}
 			s.src[x] = src
 			s.intro[x] = true
+			s.introAll[x] = true
 			return org{Copy: true}
 		}
 		all := s.mem[memKey{x, -1}]
@@ -1961,13 +1990,17 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 				ret.Delivered |= bit(own.value)
 			}
 			out[i] = out[i].or(a.subst(fn, s, ret, args))
-			if sg.Ret[i].Copy {
-				s.intro[call] = true
-			}
 			// A mapper copies through the function it is given here
 			// (callerowned.Each(xs, copyEdge)): the call introduces the copy.
+			copies := sg.Ret[i].Copy
 			if fr := sg.Ret[i].FuncRes; fr != 0 && a.subst(fn, s, org{FuncRes: fr}, args).Copy {
-				s.intro[call] = true
+				copies = true
+			}
+			if copies {
+				s.introAll[call] = true
+				if i < len(rts) && family(rts[i]) {
+					s.intro[call] = true // reaches the result through an entity-typed result
+				}
 			}
 		}
 		for j, cp := range sg.Copies {
@@ -1979,6 +2012,7 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 	if introduces && src.receivedOnly() && !a.copiesOwnState(callees) {
 		// A copy of a received value: the receiver's own handling.
 		delete(s.intro, call)
+		delete(s.introAll, call)
 		for i := range out {
 			if out[i].Copy {
 				out[i].Copy = false
@@ -4326,6 +4360,12 @@ func crossCallback(fn *ssa.Function, call ssa.CallInstruction, g *ssa.Function) 
 	return pkgPathOf(g) != "" && pkgPathOf(g) != pkgPathOf(fn)
 }
 
+// positionOf: file:line of a position in fn, for recorded facts.
+func positionOf(fn *ssa.Function, p token.Pos) string {
+	file, line := pos(fn, p)
+	return fmt.Sprintf("%s:%d", file, line)
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -4349,6 +4389,7 @@ type report struct {
 	Converged        bool              `json:"summaries_converged"`
 	Owners           []string          `json:"owners"`
 	OutOfScope       map[string]int    `json:"out_of_read_scope"`
+	Narrowed         []string          `json:"narrowed_copy_roots"`
 	OriginFilter     map[string]string `json:"origin_type_filter"`
 	CallbackReceipts []string          `json:"received_by_callback"`
 	OwnerCandidates  []string          `json:"owner_candidates"`
@@ -4691,13 +4732,24 @@ func main() {
 						continue
 					}
 				}
-				if !s.intro[v] {
+				if !s.introAll[v] {
 					continue
 				}
 				if call, ok := v.(*ssa.Call); ok && a.receivedAcross(fn, call) {
 					continue // the caller of a public read received it
 				}
 				d := a.derived(fn, s, []ssa.Value{v}, true)
+				// K1/K1e count only copies that reach the result through an
+				// entity-typed result; a copy carried only by an interface box
+				// (an evaluator's `any`) is the caller's own evaluation cost.
+				entityRoot := s.intro[v]
+				addRoot := func(class string, p token.Pos, detail string) {
+					if (class == "K1" || class == "K1e") && !entityRoot {
+						a.narrowed = append(a.narrowed, fmt.Sprintf("%s %s %s: copy %s reaches its result only through %s, not an entity-typed result", class, fullName(fn), positionOf(fn, p), copyLabel(v), v.Type().String()))
+						return
+					}
+					add(class, fn, p, detail)
+				}
 
 				// K1 on a copy handed to a callee that selects it out. A proven
 				// caller-owned copy delivered to another package's callback is
@@ -4707,7 +4759,7 @@ func main() {
 					if _, _, own := a.droppingCallIn(fn, d, dropsOwn); owned && !own {
 						a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: proven caller-owned copy %s is selected out only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
 					} else {
-						add("K1", fn, ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+						addRoot("K1", ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
 					}
 				}
 
@@ -4727,7 +4779,7 @@ func main() {
 										a.receipts = append(a.receipts, fmt.Sprintf("K1 %s: fields of proven caller-owned copy %s are overwritten only inside another package's callback %s", fullName(fn), copyLabel(v), strings.TrimPrefix(fullName(g), module+"/")))
 										continue
 									}
-									add("K1", fn, ins.Pos(), "fields of copy "+copyLabel(v)+" are overwritten inside "+strings.TrimPrefix(fullName(g), module+"/"))
+									addRoot("K1", ins.Pos(), "fields of copy "+copyLabel(v)+" are overwritten inside "+strings.TrimPrefix(fullName(g), module+"/"))
 								}
 							}
 						}
@@ -4744,7 +4796,7 @@ func main() {
 					if stored && kind == dropPlain {
 						class = "K2"
 					}
-					add(class, fn, ins.Pos(), "copy "+copyLabel(v)+" can be left undelivered")
+					addRoot(class, ins.Pos(), "copy "+copyLabel(v)+" can be left undelivered")
 				}
 
 				// Elements of a copied population.
@@ -4758,7 +4810,7 @@ func main() {
 						ed := a.derived(fn, s, []ssa.Value{e}, true)
 						if a.receivesAny(fn, ed) {
 							if k, _ := a.mayDrop(fn, s, ei, ed, d); k == dropPlain {
-								add("K1", fn, ei.Pos(), "element of copied population "+copyLabel(v)+" is selected out after the copy")
+								addRoot("K1", ei.Pos(), "element of copied population "+copyLabel(v)+" is selected out after the copy")
 							}
 						}
 						// K3: the loop over the population can be left early by a call's result.
@@ -5066,6 +5118,8 @@ func main() {
 		r.Controls[c.class+" "+c.fn] = state
 	}
 	r.OutOfScope = outOfScope
+	sort.Strings(a.narrowed)
+	r.Narrowed = a.narrowed
 	r.OriginFilter = map[string]string{}
 	for k, n := range a.filterKept {
 		r.OriginFilter[k] = fmt.Sprintf("kept %d", n)
