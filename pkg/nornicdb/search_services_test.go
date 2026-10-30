@@ -1073,12 +1073,17 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.Zero(t, bytes)
 }
 
-func TestSearchServices_CloseBuildDone_IsIdempotent(t *testing.T) {
-	entry := &dbSearchService{buildDone: make(chan struct{})}
-	entry.closeBuildDone()
-	require.NotPanics(t, func() {
-		entry.closeBuildDone()
-	})
+// The initial build has one completion: it runs once, and every later
+// dispatch joins its first outcome.
+func TestSearchServices_InitialBuildCompletesOnce(t *testing.T) {
+	entry := &dbSearchService{}
+	first := errors.New("first build outcome")
+	require.ErrorIs(t, entry.build.Do(func() error { return first }), first)
+	require.ErrorIs(t, entry.build.Do(func() error {
+		t.Fatal("a completed build ran again")
+		return nil
+	}), first)
+	<-entry.build.Done()
 }
 
 func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
