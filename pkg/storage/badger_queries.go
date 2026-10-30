@@ -351,18 +351,26 @@ func (b *BadgerEngine) streamNodesByLabelShapedInScope(scope, label string, prop
 	if visit == nil {
 		return ErrInvalidData
 	}
-	return b.streamLabelNodeImages(scope, label, properties, v, func(image nodeImage) error {
-		return visit(deliverNode(image, properties, strip))
-	}, queryNodes)
+	return b.streamLabelNodes(scope, label, properties, strip, v, nil, visit, queryNodes)
 }
 
-// streamLabelNodeImages is the label stream over images: node-cache hits and
-// buffered nodes borrowed, committed rows decoded for this read (projected
-// when properties is set). It copies nothing; a consumer that drops an image
-// (a transaction's own write replaces it) drops no copy.
-func (b *BadgerEngine) streamLabelNodeImages(scope, label string, properties []string, v readVisibility, visit func(nodeImage) error, queryNodes bool) error {
-	if visit == nil {
+// streamLabelNodes is the label stream: node-cache hits and buffered nodes
+// are read in place, committed rows decoded for this read (projected when
+// properties is set). The consumer's decide runs first, on that node; it may
+// deliver a replacement itself (a transaction's own write). Only a node it
+// keeps is copied, once, into the delivered shape (NOR-160).
+func (b *BadgerEngine) streamLabelNodes(scope, label string, properties []string, strip bool, v readVisibility, decide func(*Node) (bool, error), out func(*Node) error, queryNodes bool) error {
+	if out == nil {
 		return ErrInvalidData
+	}
+	visit := func(image nodeImage) error {
+		if decide != nil {
+			keep, err := decide(image.Node)
+			if err != nil || !keep {
+				return err
+			}
+		}
+		return out(deliverNode(image, properties, strip))
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)

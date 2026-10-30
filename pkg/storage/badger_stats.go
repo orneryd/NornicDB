@@ -776,29 +776,37 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
-	return b.streamNodeImagesWithOptions(ctx, opts, func(image nodeImage) error {
-		return fn(deliverNode(image, opts.Projection, opts.StripEmbeddings))
-	})
+	return b.streamNodesOwned(ctx, opts, nil, fn)
 }
 
-// streamNodeImagesWithOptions is StreamNodesWithOptions over images: committed
-// rows decoded (and shaped) for this read, cache and buffered nodes borrowed.
-// It copies nothing; the consumer delivers each node it keeps, once.
-func (b *BadgerEngine) streamNodeImagesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(nodeImage) error) error {
-	if fn == nil {
+// streamNodesOwned is StreamNodesWithOptions with the consumer's decision:
+// committed rows are decoded (and shaped) for this read, buffered nodes read in
+// place. decide runs on that node first and may deliver a replacement itself;
+// only a node it keeps is copied, once, into the delivered shape (NOR-160).
+func (b *BadgerEngine) streamNodesOwned(ctx context.Context, opts StreamNodesOptions, decide func(*Node) (bool, error), out func(*Node) error) error {
+	if out == nil {
 		return ErrInvalidData
+	}
+	fn := func(image nodeImage) error {
+		if decide != nil {
+			keep, err := decide(image.Node)
+			if err != nil || !keep {
+				return err
+			}
+		}
+		return out(deliverNode(image, opts.Projection, opts.StripEmbeddings))
 	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
-		visit := func(image nodeImage) error {
+		visit := func(node *Node) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			return fn(image)
+			return out(node)
 		}
-		err := b.streamLabelNodeImages(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamLabelNodes(opts.Prefix, opts.Label, nil, opts.StripEmbeddings, opts.readVisibility(), decide, visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
