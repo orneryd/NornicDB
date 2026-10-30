@@ -367,6 +367,40 @@ func (c *NOR160ControlCache) GetFirstUsed(ids []NodeID) []*Node {
 	}
 	return first
 }
+
+// Copied fields discarded after the copy: a copy whose vectors a callee clears,
+// directly or as the callback of a stream that hands it copies, must be
+// reported (K1); clearing a node decoded for this read, or a callback that
+// keeps the copy whole, must not.
+func nor160ControlStrip(n *Node) *Node {
+	n.ChunkEmbeddings, n.NamedEmbeddings = nil, nil
+	return n
+}
+
+func (c *NOR160ControlCache) nor160StreamCopies(visit func(*Node) error) error {
+	for _, n := range c.nodes {
+		if err := visit(copyNode(n)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *NOR160ControlCache) GetStripped(id NodeID) *Node {
+	return nor160ControlStrip(copyNode(c.nodes[id]))
+}
+
+func (c *NOR160ControlCache) GetDecodedStripped(id NodeID) *Node {
+	return nor160ControlStrip(&Node{ID: id, ChunkEmbeddings: [][]float32{{1}}})
+}
+
+func (c *NOR160ControlCache) StreamStripped(visit func(*Node) error) error {
+	return c.nor160StreamCopies(func(n *Node) error { return visit(nor160ControlStrip(n)) })
+}
+
+func (c *NOR160ControlCache) StreamWhole(visit func(*Node) error) error {
+	return c.nor160StreamCopies(func(n *Node) error { return visit(n) })
+}
 `
 
 const cypherControlFile = `package cypher
@@ -417,6 +451,10 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetKeptInCallee", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFirstUnused", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFirstUsed", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetStripped", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedStripped", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).StreamStripped", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).StreamWhole", true},
 }
 
 var tree string
@@ -2079,6 +2117,128 @@ func (a *analysis) leafElements(fn *ssa.Function, s *fnState, d map[ssa.Value]bo
 	return out
 }
 
+// overwrites: for each function, the entity parameters whose reference fields
+// (labels, properties, vectors, metadata) it overwrites, itself or through a
+// callee. Overwriting a field of a copy discards what the copy copied there.
+func (a *analysis) overwrites() map[*ssa.Function][]bool {
+	out := map[*ssa.Function][]bool{}
+	for _, fn := range a.postOrder() {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		w := make([]bool, len(fn.Params))
+		for j, p := range fn.Params {
+			n, _ := structOf(pointee(p.Type()))
+			if n == nil || !entityType(n) {
+				continue
+			}
+			d := a.derived(fn, s, []ssa.Value{p}, false)
+			for _, b := range fn.Blocks {
+				for _, ins := range b.Instrs {
+					switch x := ins.(type) {
+					case *ssa.Store:
+						fa, ok := x.Addr.(*ssa.FieldAddr)
+						if !ok || !d[fa.X] {
+							continue
+						}
+						_, st := structOf(pointee(fa.X.Type()))
+						// Replacing a pointer to a record no function writes
+						// after construction (the shared runtime record)
+						// discards nothing the copy copied.
+						if st == nil {
+							continue
+						}
+						if ft := st.Field(fa.Field).Type(); !reference(ft) || immutableReferent(ft) {
+							continue
+						}
+						w[j] = true
+					case ssa.CallInstruction:
+						args := callArgs(x.Common())
+						for _, g := range a.calleesOf(x) {
+							for m, arg := range args {
+								if m < len(out[g]) && out[g][m] && d[arg] {
+									w[j] = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		out[fn] = w
+	}
+	return out
+}
+
+// copiesToCallback: for each function, the function-valued parameters it
+// calls with a copy, itself or by handing the parameter to a callee that does.
+func (a *analysis) copiesToCallback() map[*ssa.Function][]bool {
+	out := map[*ssa.Function][]bool{}
+	for _, fn := range a.postOrder() {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		cb := make([]bool, len(fn.Params))
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				c := call.Common()
+				if pv, ok := c.Value.(*ssa.Parameter); ok {
+					if k := paramIndex(fn, pv); k >= 0 {
+						for _, arg := range c.Args {
+							if family(arg.Type()) && s.val(arg).Copy {
+								cb[k] = true
+							}
+						}
+					}
+				}
+				args := callArgs(c)
+				for _, g := range a.calleesOf(call) {
+					for m, arg := range args {
+						if m >= len(out[g]) || !out[g][m] {
+							continue
+						}
+						if k := paramIndex(fn, arg); k >= 0 {
+							cb[k] = true
+						}
+					}
+				}
+			}
+		}
+		out[fn] = cb
+	}
+	return out
+}
+
+// funcOf: the function a function value denotes, when it is known here.
+func (a *analysis) funcOf(v ssa.Value) *ssa.Function {
+	switch x := v.(type) {
+	case *ssa.Function:
+		return a.unwrapped(x)
+	case *ssa.MakeClosure:
+		if g, ok := x.Fn.(*ssa.Function); ok {
+			return a.unwrapped(g)
+		}
+	case *ssa.ChangeType:
+		return a.funcOf(x.X)
+	}
+	return nil
+}
+
+func anyTrue(xs []bool) bool {
+	for _, x := range xs {
+		if x {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -2282,6 +2442,8 @@ func main() {
 	}
 
 	drops := a.paramDrops()
+	overwrite := a.overwrites()
+	callbackCopy := a.copiesToCallback()
 	seenHit := map[string]bool{}
 	add := func(class string, fn *ssa.Function, p token.Pos, detail string) {
 		file, line := pos(fn, p)
@@ -2323,6 +2485,27 @@ func main() {
 			}
 		}
 
+		// K1: a callback that overwrites fields, given to a function that hands it copies.
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				args := callArgs(call.Common())
+				for _, t := range a.calleesOf(call) {
+					for k, arg := range args {
+						if k >= len(callbackCopy[t]) || !callbackCopy[t][k] {
+							continue
+						}
+						if g := a.funcOf(arg); g != nil && anyTrue(overwrite[g]) {
+							add("K1", fn, call.Pos(), strings.TrimPrefix(fullName(t), module+"/")+" hands copies to "+strings.TrimPrefix(fullName(g), module+"/")+", which overwrites their fields")
+						}
+					}
+				}
+			}
+		}
+
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
 				v, isValue := ins.(ssa.Value)
@@ -2345,6 +2528,24 @@ func main() {
 				// K1 on a copy handed to a callee that selects it out.
 				if g, j, ok := a.droppingCallIn(fn, d, drops); ok {
 					add("K1", fn, ins.Pos(), "copy "+copyLabel(v)+" is selected out inside "+strings.TrimPrefix(fullName(g), module+"/")+" (parameter "+fmt.Sprint(j)+")")
+				}
+
+				// K1 on a copy whose fields a callee overwrites.
+				for _, bb := range fn.Blocks {
+					for _, ii := range bb.Instrs {
+						call, ok := ii.(ssa.CallInstruction)
+						if !ok {
+							continue
+						}
+						args := callArgs(call.Common())
+						for _, g := range a.calleesOf(call) {
+							for m, arg := range args {
+								if m < len(overwrite[g]) && overwrite[g][m] && d[arg] {
+									add("K1", fn, ins.Pos(), "fields of copy "+copyLabel(v)+" are overwritten inside "+strings.TrimPrefix(fullName(g), module+"/"))
+								}
+							}
+						}
+					}
 				}
 
 				// K1 / K1e / K2 on the copy itself.
