@@ -66,7 +66,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	} else {
 		native, isNative := engine.(*BadgerEngine)
 		if isNative && kind != adjacencyBetween {
-			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility)
+			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility, nil)
 			if captureErr != nil {
 				err = captureErr
 			} else {

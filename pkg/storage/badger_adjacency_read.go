@@ -10,6 +10,9 @@ type nativeAdjacencyReader struct {
 	out, in             adjacencyDirection
 	cachedOut, cachedIn []edgeImage
 	view                *badgerReadView
+	// keep is the caller's own selection (nil for none), decided with the
+	// reader's before any cached body is copied (NOR-160).
+	keep func(*Edge) bool
 }
 type adjacencyDirection struct {
 	ids        []EdgeID
@@ -21,11 +24,13 @@ type adjacencyDirection struct {
 
 // captureAdjacencyReader selects both native directions at one cache/overlay
 // boundary. A nil view means the captured cache result is already complete.
-func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
+// keep, when set, is the caller's selection (a transaction's own writes
+// superseding committed edges), decided before any cached body is copied.
+func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility, keep func(*Edge) bool) (reader nativeAdjacencyReader, err error) {
 	if nodeID == "" {
 		return reader, ErrInvalidID
 	}
-	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
+	reader.engine, reader.nodeID, reader.visibility, reader.keep = b, nodeID, v, keep
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
 	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
 		if wantOut {
@@ -44,7 +49,7 @@ func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn boo
 		}
 	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
 		var complete bool
-		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
+		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v, keep)
 		return complete, nil
 	}})
 	return reader, err
@@ -79,7 +84,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []edgeImage, err erro
 		if _, hidden := d.suppressed[edge.ID]; hidden {
 			return false
 		}
-		return attachedAt(edge, nodeID, outgoing) && !b.filterEntityByDecay(v, edge, now)
+		return attachedAt(edge, nodeID, outgoing) && (r.keep == nil || r.keep(edge)) && !b.filterEntityByDecay(v, edge, now)
 	}
 	err = recoverBadgerClosedPanic(func() error {
 		if d.deleted {
@@ -141,7 +146,7 @@ func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
 // images: cached bodies through cacheLoadEdge, pending ones through
 // readBufferedEntities. Nothing is copied here, so abandoning an incomplete
 // attempt for the physical read drops no copy; the reader delivers once.
-func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]edgeImage, []edgeImage, bool) {
+func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility, keep func(*Edge) bool) ([]edgeImage, []edgeImage, bool) {
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
@@ -165,7 +170,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	}
 	list := func(ids []EdgeID, outgoing bool) edgeCacheList {
 		return edgeCacheList{ids: ids, skip: buffered, read: edgeCacheRead{bufferExcluded: true, match: func(edge *Edge) bool {
-			return attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now)
+			return attachedAt(edge, id, outgoing) && (keep == nil || keep(edge)) && !b.filterEntityByDecay(v, edge, now)
 		}}}
 	}
 	var lists []edgeCacheList
