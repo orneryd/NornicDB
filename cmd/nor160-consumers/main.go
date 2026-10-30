@@ -2736,8 +2736,10 @@ func (a *analysis) closureWritesTo(call *ssa.Call, has func(ssa.Value) bool) []*
 // value on only reads it, and its caller still holds it. Computed after the
 // summaries converge, callees first, so a parameter passed on to a callee that
 // drops it is dropped here too.
-func (a *analysis) paramDrops() map[*ssa.Function][]bool {
-	out := map[*ssa.Function][]bool{}
+func (a *analysis) paramDrops() map[*ssa.Function][]bool { return fixFacts(a.paramDropsFrom) }
+
+func (a *analysis) paramDropsFrom(prev map[*ssa.Function][]bool) map[*ssa.Function][]bool {
+	out := cloneFacts(prev)
 	for _, fn := range a.postOrder() {
 		s := a.states[fn]
 		if s == nil {
@@ -2944,8 +2946,10 @@ func (a *analysis) leafElements(fn *ssa.Function, s *fnState, d map[ssa.Value]bo
 // overwrites: for each function, the entity parameters whose reference fields
 // (labels, properties, vectors, metadata) it overwrites, itself or through a
 // callee. Overwriting a field of a copy discards what the copy copied there.
-func (a *analysis) overwrites() map[*ssa.Function][]bool {
-	out := map[*ssa.Function][]bool{}
+func (a *analysis) overwrites() map[*ssa.Function][]bool { return fixFacts(a.overwritesFrom) }
+
+func (a *analysis) overwritesFrom(prev map[*ssa.Function][]bool) map[*ssa.Function][]bool {
+	out := cloneFacts(prev)
 	for _, fn := range a.postOrder() {
 		s := a.states[fn]
 		if s == nil {
@@ -3001,7 +3005,11 @@ func (a *analysis) overwrites() map[*ssa.Function][]bool {
 // copiesToCallback: for each function, the function-valued parameters it
 // calls with a copy, itself or by handing the parameter to a callee that does.
 func (a *analysis) copiesToCallback() map[*ssa.Function][]bool {
-	out := map[*ssa.Function][]bool{}
+	return fixFacts(a.copiesToCallbackFrom)
+}
+
+func (a *analysis) copiesToCallbackFrom(prev map[*ssa.Function][]bool) map[*ssa.Function][]bool {
+	out := cloneFacts(prev)
 	for _, fn := range a.postOrder() {
 		s := a.states[fn]
 		if s == nil {
@@ -4497,7 +4505,70 @@ func allFunctions(p *workcensus.Program) []*ssa.Function {
 	for _, fn := range p.Functions {
 		add(fn)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	sort.SliceStable(out, func(i, j int) bool { return fnLess(out[i], out[j]) })
+	return out
+}
+
+// fnLess orders functions by name, then by source position.
+func fnLess(x, y *ssa.Function) bool {
+	if xs, ys := x.String(), y.String(); xs != ys {
+		return xs < ys
+	}
+	return x.Pos() < y.Pos()
+}
+
+// sortedUniqueFns: the functions in a stable order, without duplicates.
+func sortedUniqueFns(fs []*ssa.Function) []*ssa.Function {
+	seen := map[*ssa.Function]bool{}
+	out := make([]*ssa.Function, 0, len(fs))
+	for _, f := range fs {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return fnLess(out[i], out[j]) })
+	return out
+}
+
+// fixFacts runs a callee-first fact to a fixpoint: each round starts from the
+// previous round's facts, so a fact inside a call cycle does not depend on the
+// order the cycle is visited in.
+func fixFacts(step func(prev map[*ssa.Function][]bool) map[*ssa.Function][]bool) map[*ssa.Function][]bool {
+	prev := map[*ssa.Function][]bool{}
+	for round := 0; round < 30; round++ {
+		next := step(prev)
+		if equalFacts(prev, next) {
+			return next
+		}
+		prev = next
+	}
+	return prev
+}
+
+func equalFacts(x, y map[*ssa.Function][]bool) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for fn, xs := range x {
+		ys, ok := y[fn]
+		if !ok || len(xs) != len(ys) {
+			return false
+		}
+		for i := range xs {
+			if xs[i] != ys[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func cloneFacts(m map[*ssa.Function][]bool) map[*ssa.Function][]bool {
+	out := make(map[*ssa.Function][]bool, len(m))
+	for fn, v := range m {
+		out[fn] = append([]bool(nil), v...)
+	}
 	return out
 }
 
@@ -4571,6 +4642,14 @@ func main() {
 			}
 			a.callers[g] = append(a.callers[g], fn)
 		}
+	}
+	// The call graph is built from maps: order every list so no result depends
+	// on iteration order.
+	for site, gs := range a.callees {
+		a.callees[site] = sortedUniqueFns(gs)
+	}
+	for g, fs := range a.callers {
+		a.callers[g] = sortedUniqueFns(fs)
 	}
 	r := report{Author: "NOR-160 lane (Claude), 30 October 2026", Target: spec, Loader: "maintained internal/workcensus.LoadProgram", Functions: len(p.Functions), Analyzed: len(a.fns), Counts: map[string]int{}, Controls: map[string]string{}}
 
@@ -5149,6 +5228,23 @@ func main() {
 	}
 	sort.Strings(a.receipts)
 	r.CallbackReceipts = a.receipts
+	// Report order is not evidence: emit hits in a fixed order.
+	sort.SliceStable(r.Hits, func(i, j int) bool {
+		x, y := r.Hits[i], r.Hits[j]
+		if x.Class != y.Class {
+			return x.Class < y.Class
+		}
+		if x.File != y.File {
+			return x.File < y.File
+		}
+		if x.Line != y.Line {
+			return x.Line < y.Line
+		}
+		if x.Function != y.Function {
+			return x.Function < y.Function
+		}
+		return x.Detail < y.Detail
+	})
 	data, err := json.MarshalIndent(r, "", " ")
 	if err != nil {
 		panic(err)
