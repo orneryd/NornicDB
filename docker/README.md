@@ -475,11 +475,12 @@ All Docker images include the pre-built APOC plugin at `/app/plugins/`:
 
 ### Using Plugins
 
+<!-- Author: Codex implementation lane for NOR-207 (capitalize example), 2026-10-26. -->
 Plugins are automatically loaded at startup. Use them in Cypher queries:
 
 ```cypher
 RETURN apoc.coll.sum([1, 2, 3, 4, 5])  // 15
-RETURN apoc.text.capitalize('hello world')  // "Hello World"
+RETURN apoc.text.capitalize('hello world')  // "Hello world"
 RETURN apoc.math.round(3.14159, 2)  // 3.14
 RETURN apoc.create.uuid()  // UUID string
 ```
