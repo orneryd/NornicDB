@@ -64,12 +64,8 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	var node *Node
-	if vectors {
-		node = copyNode(record.Node)
-	} else {
-		node = copyNodeForCaller(record.Node)
-	}
+	// The record was decoded for this read: transfer it, no second copy.
+	node := record.Node
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -140,7 +136,8 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := projectCachedNodeForRead(record.Node, properties, true)
+	// The record was decoded for this read: transfer it, no second copy.
+	node := shapeNode(record.Node, properties, true, true)
 	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -269,7 +266,8 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false, queryNodes)); err != nil {
+				// getNodeAtInTxn returned this read's own node: reshape in place.
+				if err := visit(shapeNode(node, properties, false, true)); err != nil {
 					return err
 				}
 			}

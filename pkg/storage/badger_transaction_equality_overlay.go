@@ -1,6 +1,10 @@
 package storage
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/orneryd/nornicdb/pkg/callerowned"
+)
 
 // TransactionEqualityLookup exposes complete candidates from a transaction's
 // pinned label population. False asks the caller to use its normal scan (for
@@ -87,7 +91,8 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 				}
 			}
 			if !tx.committedNodeSupersededLocked(node.ID) && matches(node) {
-				first = append(first, copyNode(node))
+				// Decoded for this read; copied only while the population retains it.
+				first = append(first, shapeNode(node, nil, false, !cacheable))
 			}
 			return nil
 		})
@@ -99,12 +104,13 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		}
 		tx.snapshotEquality[key] = population
 		if !cacheable {
+			var pending []*Node
 			for id, node := range tx.pendingNodes {
 				if _, deleted := tx.deletedNodes[id]; !deleted && matches(node) {
-					first = append(first, copyNode(node))
+					pending = append(pending, node)
 				}
 			}
-			return first, true, nil
+			return append(first, callerowned.Each(pending, copyNode)...), true, nil
 		}
 		population.index = newPendingNodeIndex()
 		for _, node := range population.nodes {
@@ -136,19 +142,19 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 	if !found {
 		return nil, false, nil
 	}
-	result := make([]*Node, 0, len(committed)+len(pending))
+	// The population and pending images are retained: one copy each.
+	selected := make([]*Node, 0, len(committed)+len(pending))
 	for _, id := range committed {
-		if tx.committedNodeSupersededLocked(id) {
-			continue
+		if !tx.committedNodeSupersededLocked(id) {
+			selected = append(selected, population.nodes[id])
 		}
-		result = append(result, copyNode(population.nodes[id]))
 	}
 	for _, id := range pending {
 		if _, deleted := tx.deletedNodes[id]; !deleted {
-			result = append(result, copyNode(tx.pendingNodes[id]))
+			selected = append(selected, tx.pendingNodes[id])
 		}
 	}
-	return result, true, nil
+	return callerowned.Each(selected, copyNode), true, nil
 }
 
 // transactionEqualityKey limits pruning to scalar keys whose equality agrees

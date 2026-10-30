@@ -784,12 +784,10 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if opts.StripEmbeddings {
-				node = copyNodeWithoutEmbeddings(node)
-			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		// The label stream strips vectors in its own delivery shape.
+		err := b.streamNodesByLabelShapedInScope(opts.Prefix, opts.Label, nil, opts.StripEmbeddings, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -804,7 +802,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix, shape: true, properties: opts.Projection, strip: opts.StripEmbeddings})
 		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
@@ -839,8 +837,8 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if !inScope(node.ID) {
 			continue
 		}
-		projected := opts.copyResidentNode(node)
-		if err := fn(projected); err != nil {
+		// The overlay already delivered node copied into the options' shape.
+		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -900,7 +898,8 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 			return nil
 		}
 		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
+			// The decoded or cache-copied node is already the caller's.
+			node = shapeNode(node, nil, true, true)
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -1050,7 +1049,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if err := fn(copyEdge(edge)); err != nil {
+		if err := fn(edge); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -1074,7 +1073,8 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 			return nil
 		}
 		err := fn(chunk)
-		chunk = chunk[:0]
+		// A delivered chunk is the caller's; start the next one in new memory.
+		chunk = make([]*Node, 0, chunkSize)
 		stopped = err == ErrIterationStopped
 		return err
 	})

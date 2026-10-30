@@ -67,6 +67,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -613,11 +614,10 @@ func copyStringSlice(s []string) []string {
 }
 
 func copyMetadata(m map[string]interface{}) map[string]interface{} {
-	copy := make(map[string]interface{}, len(m))
-	for k, v := range m {
-		copy[k] = v
+	if m == nil {
+		return make(map[string]interface{})
 	}
-	return copy
+	return callerowned.Map(m)
 }
 
 // EvidenceBufferOption configures an EvidenceBuffer.

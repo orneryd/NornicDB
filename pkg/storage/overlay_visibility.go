@@ -1,5 +1,7 @@
 package storage
 
+import "github.com/orneryd/nornicdb/pkg/callerowned"
+
 // The write-behind overlay serves acknowledged bodies until the flush lands
 // them, so every read that merges it with storage must leave out what the
 // visibility layer hides from that read, exactly as its storage path does.
@@ -45,6 +47,11 @@ type bufferedEntityRead struct {
 	valueKey                          any
 	source, target                    NodeID
 	outgoing                          bool
+	// shape, when set, makes the overlay deliver nodes copied once straight
+	// into the reader's shape (selected properties, stripped vectors).
+	shape      bool
+	properties []string
+	strip      bool
 }
 type bufferedEntityReadKind uint8
 
@@ -71,6 +78,8 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
+// It is also the overlay's only copy owner: the visible images it returns are
+// caller-owned, so no consumer copies them again (NOR-160).
 func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
 	switch request.kind {
 	case bufferedNodes:
@@ -91,9 +100,13 @@ func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibili
 		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
 	}
 	if request.kind <= bufferedKey {
-		result.nodes = visibleBufferedEntities(b, v, result.nodes)
+		copyNodeImage := copyNode
+		if request.shape {
+			copyNodeImage = func(node *Node) *Node { return shapeNode(node, request.properties, request.strip, false) }
+		}
+		result.nodes = callerowned.Each(visibleBufferedEntities(b, v, result.nodes), copyNodeImage)
 	} else {
-		result.edges = visibleBufferedEntities(b, v, result.edges)
+		result.edges = callerowned.Each(visibleBufferedEntities(b, v, result.edges), copyEdge)
 	}
 	return result
 }

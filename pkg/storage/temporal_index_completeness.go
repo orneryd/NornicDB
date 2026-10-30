@@ -242,7 +242,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	})
 	for _, n := range overlay {
 		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
-			nodes = append(nodes, copyNode(n))
+			nodes = append(nodes, n)
 		}
 	}
 	return nodes, true, err

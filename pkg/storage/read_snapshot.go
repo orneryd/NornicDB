@@ -104,6 +104,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	if err != nil || stopped {
 		return err
 	}
+	// The snapshot retains its overlay for every iteration: hand out copies.
 	for _, node := range s.overlayNodes {
 		if !fn(copyNode(node)) {
 			return nil

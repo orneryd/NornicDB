@@ -1,3 +1,4 @@
+// Caller-ownership correction author: Codex, NOR-160, 29 October 2026.
 // Package storage provides the storage engine interface and implementations for NornicDB.
 //
 // The storage layer is designed for Neo4j compatibility while adding NornicDB-specific
@@ -564,8 +565,8 @@ type NodeWithoutEmbeddingsReader interface {
 // row carries: GetNode's visibility, labels, properties and the node's
 // settled embedding metadata (the worker sidecar's included, so
 // Node.HasChunkEmbeddings answers as on a full read), without reading
-// separately stored chunk vectors. Vectors already in memory may be present,
-// shared rather than copied; a caller that needs the vectors reads with
+// separately stored chunk vectors. Vectors already in memory may be present
+// and belong to the caller; a caller that needs all vectors reads with
 // GetNode. Unlike NodeWithoutEmbeddingsReader, whose read leaves the sidecar
 // out, the metadata is the full read's.
 type QueryNodeReader interface {

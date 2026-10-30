@@ -48,15 +48,6 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	}
 }
 
-// cacheLoadEdgeAtVersion is the version-checked form of the edge body's hot
-// cache. A later body can never replace the record in a pinned transaction.
-func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge, bool) {
-	b.edgeCacheMu.RLock()
-	defer b.edgeCacheMu.RUnlock()
-	edge, found := b.edgeCache[id]
-	return edge, found && edge != nil && b.edgeCacheVersions[id] == version
-}
-
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
 func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {

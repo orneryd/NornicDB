@@ -51,6 +51,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	cypherpkg "github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 )
@@ -809,8 +810,8 @@ func (p *WatcherPlugin) RecentEvents(limit int) []heimdall.SubsystemEvent {
 		start = 0
 	}
 
-	result := make([]heimdall.SubsystemEvent, limit)
-	copy(result, p.events[start:])
+	// Events keep their Data maps; callers get their own copies.
+	result := callerowned.Each(p.events[start:start+limit], callerowned.Of[heimdall.SubsystemEvent])
 	return result
 }
 

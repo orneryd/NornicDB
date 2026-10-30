@@ -144,7 +144,7 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	engine.nodeCacheMu.RUnlock()
 	require.NotNil(t, cachedNode)
 	assert.True(t, cachedNode.RuntimeMetadata().VisibilitySuppressed)
-	cachedEdge, ok := engine.cacheLoadEdge("test:e")
+	cachedEdge, ok := engine.cacheLoadEdge("test:e", edgeCacheRead{})
 	require.True(t, ok)
 	assert.True(t, cachedEdge.VisibilitySuppressed)
 }
