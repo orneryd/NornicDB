@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -807,6 +808,13 @@ func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
 // finish marks ts written (or abandoned) and advances published as far as
 // every lower timestamp is finished.
 func (o *commitOracle) finish(ts uint64) {
+	if hook := NOR148DiagCommitHook; hook != nil {
+		o.mu.Lock()
+		neutral := o.inflight[ts]
+		o.mu.Unlock()
+		buf := make([]byte, 16384)
+		hook(ts, neutral, string(buf[:runtime.Stack(buf, false)]))
+	}
 	o.mu.Lock()
 	if !o.inflight[ts] {
 		if ts > o.readerLatest {

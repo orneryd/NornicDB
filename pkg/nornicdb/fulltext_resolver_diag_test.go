@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -70,7 +71,39 @@ func TestNOR148DiagResolverDecision(t *testing.T) {
 	node, err := store.GetNode("n004")
 	require.NoError(t, err)
 	node.Properties["text"] = "newunique hotel"
+	var commits []string
+	var commitsMu sync.Mutex
+	storage.NOR148DiagCommitHook = func(ts uint64, neutral bool, stack string) {
+		commitsMu.Lock()
+		commits = append(commits, fmt.Sprintf("ts=%d neutral=%v %s", ts, neutral, stack))
+		commitsMu.Unlock()
+	}
 	require.NoError(t, store.UpdateNode(node))
+	waitEventsDelivered(t, store)
+	storage.NOR148DiagCommitHook = nil
+	commitsMu.Lock()
+	for i, c := range commits {
+		t.Logf("COMMIT %d of %d (manager path UpdateNode): %s", i+1, len(commits), c)
+	}
+	commitsMu.Unlock()
+	// Control: the DB's own namespaced view, without the manager.
+	var direct []string
+	storage.NOR148DiagCommitHook = func(ts uint64, neutral bool, stack string) {
+		commitsMu.Lock()
+		direct = append(direct, fmt.Sprintf("ts=%d neutral=%v %s", ts, neutral, stack))
+		commitsMu.Unlock()
+	}
+	other, err := db.storage.GetNode("n008")
+	require.NoError(t, err)
+	other.Properties["text"] = "routine direct"
+	require.NoError(t, db.storage.UpdateNode(other))
+	waitEventsDelivered(t, db.storage)
+	storage.NOR148DiagCommitHook = nil
+	commitsMu.Lock()
+	for i, c := range direct {
+		t.Logf("DIRECT COMMIT %d of %d (db.storage UpdateNode): %s", i+1, len(direct), c)
+	}
+	commitsMu.Unlock()
 	waitEventsDelivered(t, store)
 	afterTs, afterGraph := revision("after-update")
 	settleQueuedRefreshes()
