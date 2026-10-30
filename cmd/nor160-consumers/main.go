@@ -66,6 +66,22 @@ type NOR160ControlCache struct {
 	max   int
 }
 
+// K0: a struct that directly wraps one retained node, handed out uncopied.
+type NOR160ControlWrap struct{ Node *Node }
+
+func (c *NOR160ControlCache) GetWrapShared(id NodeID) NOR160ControlWrap {
+	return NOR160ControlWrap{Node: c.nodes[id]}
+}
+
+// Clean for K0: a service handle that holds a node cache only transitively.
+type NOR160ControlService struct{ cache *NOR160ControlCache }
+
+type NOR160ControlRegistry struct{ services map[string]*NOR160ControlService }
+
+func (r *NOR160ControlRegistry) GetService(name string) *NOR160ControlService {
+	return r.services[name]
+}
+
 // K0: a retained node handed out without a copy.
 func (c *NOR160ControlCache) GetShared(id NodeID) *Node { return c.nodes[id] }
 
@@ -875,6 +891,8 @@ type control struct {
 
 var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetShared", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetWrapShared", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlRegistry).GetService", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetSelected", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetLoaded", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetUnskipped", false},
@@ -4325,15 +4343,18 @@ func main() {
 	for _, fn := range a.fns {
 		s := a.states[fn]
 
-		// K0: exported functions returning or visiting retained values. A
-		// result slot counts each stored value once, at its own return.
+		// K0: exported functions returning or visiting retained entity values
+		// (the read-exit definition: an entity, a pointer, slice, map, channel
+		// or iterator of entities, or a struct holding one directly). A handle
+		// that reaches entities only transitively is not one. A result slot
+		// counts each stored value once, at its own return.
 		if exported(fn) {
 			slots := a.resultSlots(fn)
 			for _, b := range fn.Blocks {
 				for _, ins := range b.Instrs {
 					switch x := ins.(type) {
 					case *ssa.Store:
-						if al, ok := x.Addr.(*ssa.Alloc); ok && slots[al] && family(x.Val.Type()) && s.val(x.Val).Retained {
+						if al, ok := x.Addr.(*ssa.Alloc); ok && slots[al] && entityValue(x.Val.Type(), 0) && s.val(x.Val).Retained {
 							add("K0", fn, returnPos(x), "returns a retained "+x.Val.Type().String())
 						}
 					case *ssa.Return:
@@ -4343,7 +4364,7 @@ func main() {
 									continue
 								}
 							}
-							if family(v.Type()) && s.val(v).Retained {
+							if entityValue(v.Type(), 0) && s.val(v).Retained {
 								add("K0", fn, x.Pos(), "returns a retained "+v.Type().String())
 							}
 						}
@@ -4351,7 +4372,7 @@ func main() {
 						c := x.Common()
 						if pv, ok := c.Value.(*ssa.Parameter); ok && paramIndex(fn, pv) >= 0 && !isBoolResult(c.Signature()) {
 							for _, arg := range c.Args {
-								if family(arg.Type()) && s.val(arg).Retained {
+								if entityValue(arg.Type(), 0) && s.val(arg).Retained {
 									add("K0", fn, x.Pos(), "visits a retained "+arg.Type().String())
 								}
 							}
