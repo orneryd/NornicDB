@@ -89,7 +89,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WriteJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
-		go func() {
+		s.runBackground(r.Context(), func(ctx context.Context) {
 			defer func() {
 				if rec := recover(); rec != nil {
 					// Background regeneration can race with DB shutdown in tests/teardown.
@@ -118,13 +118,12 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedClearedEvent(cleared))
 
 			// Trigger embedding worker to regenerate (worker was already restarted by Reset)
-			ctx := context.Background()
 			if _, err := s.db.EmbedExisting(ctx); err != nil {
 				s.logEvent(ctx, slog.LevelError, localization.ServerEmbedWorkerTriggerFailedEvent(err))
 				return
 			}
 			s.logEvent(ctx, slog.LevelInfo, localization.ServerEmbedWorkerTriggeredEvent())
-		}()
+		})
 		return
 	}
 
@@ -169,9 +168,11 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	// aggregate count to avoid false zeros.
 	readIntWithTimeout := func(timeout time.Duration, fallback int, fn func() int) int {
 		done := make(chan int, 1)
-		go func() {
+		if !s.runBackground(r.Context(), func(context.Context) {
 			done <- fn()
-		}()
+		}) {
+			return fallback
+		}
 		select {
 		case v := <-done:
 			return v
