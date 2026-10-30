@@ -19,6 +19,17 @@ import (
 
 func walHTTPFixture(t *testing.T) (*Server, *walterminal.Engine, func(string, string, string) (int, TransactionResponse)) {
 	t.Helper()
+	s, engine, request := walHTTPServer(t)
+	return s, engine, func(method, path, body string) (int, TransactionResponse) {
+		t.Helper()
+		return request(t, method, path, body)
+	}
+}
+
+// walHTTPServer builds the server, its outer store and its login once; each
+// request is made by, and fails, the test that sends it (Claude, 30 Oct 2026).
+func walHTTPServer(t *testing.T) (*Server, *walterminal.Engine, func(testing.TB, string, string, string) (int, TransactionResponse)) {
+	t.Helper()
 	s, auth := setupTestServer(t)
 	engine := walterminal.New(t)
 	newExec := func(string) (*cypher.StorageExecutor, error) {
@@ -33,7 +44,7 @@ func walHTTPFixture(t *testing.T) (*Server, *walterminal.Engine, func(string, st
 	host := httptest.NewServer(s.buildRouter())
 	t.Cleanup(host.Close)
 	token := getAuthToken(t, auth, "admin")
-	request := func(method, path, body string) (int, TransactionResponse) {
+	request := func(t testing.TB, method, path, body string) (int, TransactionResponse) {
 		t.Helper()
 		if !strings.HasPrefix(path, "http") {
 			path = host.URL + path
