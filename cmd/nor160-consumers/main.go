@@ -145,16 +145,25 @@ func (c *NOR160ControlCache) StreamCopied(ids []NodeID, visit func(*Node) error)
 	return nil
 }
 
-// K4: a second ownership dispatcher.
-func nor160ControlDeliver(n *Node, owned bool) *Node {
+// K4: ownership dispatchers. The plant hit type has two, so neither is its
+// owner: a retained hit passed through one keeps its origin (K0), even on the
+// copying branch (condition 1).
+func nor160ControlDeliver(h *NOR160ControlHit, owned bool) *NOR160ControlHit {
 	if owned {
-		return n
+		return h
 	}
-	return copyNode(n)
+	return nor160ControlCloneHitComplete(h)
 }
 
-func (c *NOR160ControlCache) GetDispatched(id NodeID, owned bool) *Node {
-	return nor160ControlDeliver(c.nodes[id], owned)
+func nor160ControlDeliverAgain(h *NOR160ControlHit, owned bool) *NOR160ControlHit {
+	if owned {
+		return h
+	}
+	return nor160ControlCloneHitComplete(h)
+}
+
+func (s *NOR160ControlHits) GetDispatched(k string) *NOR160ControlHit {
+	return nor160ControlDeliver(s.hits[k], false)
 }
 
 // K6: a copy of a node decoded for this read, and a copy of a copy.
@@ -593,11 +602,104 @@ func (c *NOR160ControlCache) GetCallbackAllErr() ([]*Node, error) {
 	}
 	return first, nil
 }
+
+// The owner's decision (condition 2). NOR160ControlRecHit has one owner, gated
+// on an image field; NOR160ControlTag has one, gated on a bool parameter. A
+// retained value labelled or passed for the unchanged branch must be reported
+// (K0); one labelled or passed for the copy, not.
+type nor160ControlRecImage struct {
+	hit  *NOR160ControlRecHit
+	kept bool
+}
+
+func nor160ControlCopyRec(h *NOR160ControlRecHit) *NOR160ControlRecHit {
+	c := *h
+	c.Node = copyNode(h.Node)
+	c.Meta = &NOR160ControlMeta{Count: h.Meta.Count}
+	return &c
+}
+
+func nor160ControlDeliverRec(img nor160ControlRecImage) *NOR160ControlRecHit {
+	if !img.kept {
+		return img.hit
+	}
+	return nor160ControlCopyRec(img.hit)
+}
+
+func (s *NOR160ControlRecHits) GetRecMislabelled(k string) *NOR160ControlRecHit {
+	return nor160ControlDeliverRec(nor160ControlRecImage{hit: s.hits[k]})
+}
+
+func (s *NOR160ControlRecHits) GetRecLabelled(k string) *NOR160ControlRecHit {
+	return nor160ControlDeliverRec(nor160ControlRecImage{hit: s.hits[k], kept: true})
+}
+
+type NOR160ControlTag struct {
+	Node *Node
+	Tags []string
+}
+
+// CallerCopy makes the planted tag a copyable entity.
+func (t *NOR160ControlTag) CallerCopy() any { return nor160ControlCopyTag(t) }
+
+func nor160ControlCopyTag(t *NOR160ControlTag) *NOR160ControlTag {
+	c := *t
+	c.Node = copyNode(t.Node)
+	c.Tags = append([]string(nil), t.Tags...)
+	return &c
+}
+
+func nor160ControlDeliverTag(t *NOR160ControlTag, owned bool) *NOR160ControlTag {
+	if owned {
+		return t
+	}
+	return nor160ControlCopyTag(t)
+}
+
+type NOR160ControlTags struct{ tags map[string]*NOR160ControlTag }
+
+func (s *NOR160ControlTags) GetTagAsOwned(k string) *NOR160ControlTag {
+	return nor160ControlDeliverTag(s.tags[k], true)
+}
+
+func (s *NOR160ControlTags) GetTagCopied(k string) *NOR160ControlTag {
+	return nor160ControlDeliverTag(s.tags[k], false)
+}
+
+// Result slots (condition 3): a function with a defer returns a retained node
+// on one return only; it must be reported there, once. Copying on every
+// return must not be reported.
+func (c *NOR160ControlCache) GetSlotted(id NodeID, early bool) (n *Node, err error) {
+	defer func() {}()
+	if early {
+		return nil, nil
+	}
+	return c.nodes[id], nil
+}
+
+func (c *NOR160ControlCache) GetSlottedCopied(id NodeID, early bool) (*Node, error) {
+	defer func() {}()
+	if early {
+		return copyNode(c.nodes[id]), nil
+	}
+	return copyNode(c.nodes[id]), nil
+}
 `
 
 const cypherControlFile = `package cypher
 
 import "github.com/orneryd/nornicdb/pkg/storage"
+
+// NOR160ControlCrossCopy copies its own argument through another package's
+// exported copier and drops the copy on one path: a copy it made, not a
+// receipt (K1, must be reported).
+func NOR160ControlCrossCopy(n *storage.Node, keep bool) *storage.Node {
+	c := storage.CopyNode(n)
+	if !keep {
+		return nil
+	}
+	return c
+}
 
 // NOR160ControlReceiver drops a node that storage's public read delivered to
 // it. The census must prove the receipt and not report it.
@@ -624,6 +726,15 @@ var controls = []control{
 	{"K2", "(*" + storagePkg + ".NOR160ControlCache).nor160Admit", false},
 	{"K3", "(*" + storagePkg + ".NOR160ControlCache).StreamCopied", false},
 	{"K4", storagePkg + ".nor160ControlDeliver", false},
+	{"K4", storagePkg + ".nor160ControlDeliverAgain", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlHits).GetDispatched", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlRecHits).GetRecMislabelled", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlRecHits).GetRecLabelled", true},
+	{"K0", "(*" + storagePkg + ".NOR160ControlTags).GetTagAsOwned", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlTags).GetTagCopied", true},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlotted", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlottedCopied", true},
+	{"K1", module + "/pkg/cypher.NOR160ControlCrossCopy", false},
 	{"K5", "(*" + storagePkg + ".NOR160ControlCache).nor160CopyAll", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedCopy", false},
 	{"K6", "(*" + storagePkg + ".NOR160ControlCache).GetCopyOfCopy", false},
@@ -670,21 +781,24 @@ var tree string
 type org struct {
 	Copy, Retained, Decoded, Unknown bool
 	Params, FuncRes                  uint64
+	// Delivered: parameters handed back through the owner's decision. On
+	// substitution a retained argument becomes the owner's copy.
+	Delivered uint64
 }
 
 func (o org) or(p org) org {
-	return org{o.Copy || p.Copy, o.Retained || p.Retained, o.Decoded || p.Decoded, o.Unknown || p.Unknown, o.Params | p.Params, o.FuncRes | p.FuncRes}
+	return org{o.Copy || p.Copy, o.Retained || p.Retained, o.Decoded || p.Decoded, o.Unknown || p.Unknown, o.Params | p.Params, o.FuncRes | p.FuncRes, o.Delivered | p.Delivered}
 }
 
 func (o org) empty() bool { return o == (org{}) }
 
 // private: only values made for this read (decoded or copied here).
 func (o org) private() bool {
-	return !o.empty() && !o.Retained && !o.Unknown && o.Params == 0 && o.FuncRes == 0
+	return !o.empty() && !o.Retained && !o.Unknown && o.Params == 0 && o.FuncRes == 0 && o.Delivered == 0
 }
 
 func (o org) overlaps(p org) bool {
-	return o.Params&p.Params != 0 || (o.Retained && p.Retained) || (o.Decoded && p.Decoded) || (o.Unknown && p.Unknown) || o.FuncRes&p.FuncRes != 0
+	return o.Params&p.Params != 0 || (o.Retained && p.Retained) || (o.Decoded && p.Decoded) || (o.Unknown && p.Unknown) || o.FuncRes&p.FuncRes != 0 || o.Delivered&p.Delivered != 0
 }
 
 func bit(i int) uint64 {
@@ -733,6 +847,8 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
+	owners   map[*ssa.Function]owner // the single owner of each entity type
+	slots    map[*ssa.Function]map[*ssa.Alloc]bool
 	cellRoot bool // mayDrop is following callback-filled variables
 	p        *workcensus.Program
 	fns      []*ssa.Function
@@ -1014,7 +1130,22 @@ func (a *analysis) receivedAcross(fn *ssa.Function, call ssa.CallInstruction) bo
 	if len(callees) == 0 {
 		return false
 	}
+	args := callArgs(c)
 	for _, g := range callees {
+		if sg := a.sums[g]; sg != nil {
+			// A copy of the caller's own argument is made for the caller,
+			// not received from the callee's state.
+			for j, cp := range sg.Copies {
+				if cp && j < len(args) && family(args[j].Type()) {
+					return false
+				}
+			}
+			for _, r := range sg.Ret {
+				if r.Params|r.FuncRes|r.Delivered != 0 {
+					return false
+				}
+			}
+		}
 		g = originFn(g)
 		if !exported(g) || g.Pkg == here {
 			return false
@@ -1473,7 +1604,13 @@ func (a *analysis) callResults(fn *ssa.Function, s *fnState, call *ssa.Call) []o
 			continue
 		}
 		for i := 0; i < len(out) && i < len(sg.Ret); i++ {
-			out[i] = out[i].or(a.subst(fn, s, sg.Ret[i], args))
+			ret := sg.Ret[i]
+			if own, ok := a.owners[originFn(g)]; ok && ret.Params&bit(own.value) != 0 {
+				// The owner decides: what it hands back is delivered.
+				ret.Params &^= bit(own.value)
+				ret.Delivered |= bit(own.value)
+			}
+			out[i] = out[i].or(a.subst(fn, s, ret, args))
 			if sg.Ret[i].Copy {
 				s.intro[call] = true
 			}
@@ -1508,6 +1645,14 @@ func (a *analysis) subst(fn *ssa.Function, s *fnState, o org, args []ssa.Value) 
 		if o.FuncRes&bit(j) != 0 {
 			if j < len(args) {
 				r = r.or(a.funcValueResult(fn, s, args[j], args))
+			} else {
+				r.Unknown = true
+			}
+		}
+		if o.Delivered&bit(j) != 0 {
+			if j < len(args) {
+				v := s.val(args[j])
+				r = r.or(org{Copy: v.Copy || v.Retained, Decoded: v.Decoded, Unknown: v.Unknown || v.FuncRes != 0, Delivered: v.Params | v.Delivered})
 			} else {
 				r.Unknown = true
 			}
@@ -1603,7 +1748,7 @@ func (a *analysis) summarize(fn *ssa.Function, s *fnState) *summary {
 	}
 	for j := range sum.Escapes {
 		for i := range sum.Ret {
-			if sum.Ret[i].Params&bit(j) != 0 {
+			if (sum.Ret[i].Params|sum.Ret[i].Delivered)&bit(j) != 0 {
 				sum.Escapes[j] = true
 			}
 		}
@@ -1661,6 +1806,9 @@ func (a *analysis) deliversWith(fn *ssa.Function, ins ssa.Instruction, has func(
 			}
 		}
 	case *ssa.Store:
+		if al, ok := x.Addr.(*ssa.Alloc); ok && a.resultSlots(fn)[al] {
+			return has(x.Val) // returned at this return
+		}
 		return has(x.Val) && !local(storeBase(x.Addr))
 	case *ssa.MapUpdate:
 		return has(x.Value) && localBase(x.Map) == nil
@@ -1822,6 +1970,9 @@ func (a *analysis) derived(fn *ssa.Function, s *fnState, roots []ssa.Value, elem
 						}
 					}
 				case *ssa.Store:
+					if al, ok := x.Addr.(*ssa.Alloc); ok && a.resultSlots(fn)[al] {
+						continue // a result slot is the return, not a holder
+					}
 					if in(x.Val) {
 						if b := localBase(storeBase(x.Addr)); b != nil {
 							add(b)
@@ -2574,6 +2725,520 @@ func closureOf(v ssa.Value) *ssa.MakeClosure {
 	return nil
 }
 
+// resultSlots: the allocations a function returns through (named results, or
+// the results of a function with a defer): stored at each return statement and
+// loaded only by its returns.
+func (a *analysis) resultSlots(fn *ssa.Function) map[*ssa.Alloc]bool {
+	if m, ok := a.slots[fn]; ok {
+		return m
+	}
+	m := map[*ssa.Alloc]bool{}
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			al, ok := ins.(*ssa.Alloc)
+			if !ok || al.Heap || al.Referrers() == nil {
+				continue
+			}
+			slot, returned := true, false
+			for _, r := range *al.Referrers() {
+				switch x := r.(type) {
+				case *ssa.Store:
+					if x.Addr != al {
+						slot = false
+					}
+				case *ssa.UnOp:
+					if x.Op != token.MUL || x.Referrers() == nil {
+						slot = false
+						continue
+					}
+					for _, u := range *x.Referrers() {
+						if _, ok := u.(*ssa.Return); ok {
+							returned = true
+						} else {
+							slot = false
+						}
+					}
+				default:
+					slot = false
+				}
+			}
+			if slot && returned {
+				m[al] = true
+			}
+		}
+	}
+	if a.slots == nil {
+		a.slots = map[*ssa.Function]map[*ssa.Alloc]bool{}
+	}
+	a.slots[fn] = m
+	return m
+}
+
+// returnPos: the position of the return statement a result-slot store belongs
+// to (the return that ends its block), else the store's own.
+func returnPos(st *ssa.Store) token.Pos {
+	if last, ok := st.Block().Instrs[len(st.Block().Instrs)-1].(*ssa.Return); ok && last.Pos().IsValid() {
+		return last.Pos()
+	}
+	if st.Pos().IsValid() {
+		return st.Pos()
+	}
+	return st.Val.Pos()
+}
+
+// returnInputs: what each result of fn can be, looking through result slots.
+func (a *analysis) returnInputs(fn *ssa.Function) [][]ssa.Value {
+	slots := a.resultSlots(fn)
+	var rets [][]ssa.Value
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			ret, ok := ins.(*ssa.Return)
+			if !ok {
+				continue
+			}
+			for i, res := range ret.Results {
+				for len(rets) <= i {
+					rets = append(rets, nil)
+				}
+				if ld, ok := res.(*ssa.UnOp); ok && ld.Op == token.MUL {
+					if al, ok := ld.X.(*ssa.Alloc); ok && slots[al] {
+						for _, r := range *al.Referrers() {
+							if st, ok := r.(*ssa.Store); ok {
+								rets[i] = append(rets[i], st.Val)
+							}
+						}
+						continue
+					}
+				}
+				rets[i] = append(rets[i], res)
+			}
+		}
+	}
+	return rets
+}
+
+// owner: the single function that decides, for one entity type, whether a
+// value is handed back unchanged or copied; value is the parameter it decides
+// on, gate how it decides.
+type owner struct {
+	entity *types.Named
+	value  int
+	gate   gate
+}
+
+// gate: the condition under which the owner hands its value back unchanged:
+// a bool parameter (field < 0) or a bool field of a struct parameter, equal to
+// unchanged.
+type gate struct {
+	param, field int
+	unchanged    bool
+	known        bool
+}
+
+// gateSpec: a struct type whose field gateField decides the owner's branch for
+// the value in field valueField, unchanged when equal to unchanged.
+type gateSpec struct {
+	strct                 *types.Named
+	gateField, valueField int
+	unchanged             bool
+	owner                 *ssa.Function
+}
+
+// mergeOf: the parameter whose value fn returns either unchanged or copied,
+// and the entity type returned; ok when fn is such a function.
+func (a *analysis) mergeOf(fn *ssa.Function, s *fnState) (int, *types.Named, ssa.Value, ssa.Value, bool) {
+	for _, in := range a.returnInputs(fn) {
+		for _, x := range in {
+			ox := s.val(x)
+			if ox.empty() || ox.Copy || !family(x.Type()) || ox.Params == 0 {
+				continue
+			}
+			for _, y := range in {
+				src, ok := s.src[y]
+				if !ok || !src.overlaps(ox) {
+					continue
+				}
+				n, _ := structOf(pointee(x.Type()))
+				if n == nil || !entityType(n) {
+					continue
+				}
+				for j := range fn.Params {
+					if ox.Params&bit(j) != 0 {
+						return j, n, x, y, true
+					}
+				}
+			}
+		}
+	}
+	return 0, nil, nil, nil, false
+}
+
+// gateOf: the parameter (and field) a condition reads, and whether it is negated.
+func gateOf(fn *ssa.Function, v ssa.Value, neg bool, depth int) (gate, bool) {
+	if depth > 4 {
+		return gate{}, false
+	}
+	switch x := v.(type) {
+	case *ssa.Parameter:
+		if i := paramIndex(fn, x); i >= 0 {
+			return gate{param: i, field: -1, unchanged: !neg, known: true}, true
+		}
+	case *ssa.UnOp:
+		switch x.Op {
+		case token.NOT:
+			return gateOf(fn, x.X, !neg, depth+1)
+		case token.MUL:
+			if fa, ok := x.X.(*ssa.FieldAddr); ok {
+				if i := paramIndex(fn, fa.X); i >= 0 {
+					return gate{param: i, field: fa.Field, unchanged: !neg, known: true}, true
+				}
+			}
+		}
+	case *ssa.Field:
+		if i := paramIndex(fn, x.X); i >= 0 {
+			return gate{param: i, field: x.Field, unchanged: !neg, known: true}, true
+		}
+	}
+	return gate{}, false
+}
+
+// ownerGate: the branch in the owner that leads only to the unchanged return
+// on one side and only to the copy on the other.
+func (a *analysis) ownerGate(fn *ssa.Function, unchanged, copied ssa.Value) gate {
+	returnsOf := func(b *ssa.BasicBlock) (bool, bool) {
+		seen := reach(b)
+		seen[b] = true
+		u, c := false, false
+		for bb := range seen {
+			ret, ok := bb.Instrs[len(bb.Instrs)-1].(*ssa.Return)
+			if !ok {
+				continue
+			}
+			for _, r := range ret.Results {
+				if r == unchanged {
+					u = true
+				}
+				if r == copied {
+					c = true
+				}
+			}
+		}
+		return u, c
+	}
+	for _, b := range fn.Blocks {
+		iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		u0, c0 := returnsOf(b.Succs[0])
+		u1, c1 := returnsOf(b.Succs[1])
+		var trueUnchanged bool
+		switch {
+		case u0 && !c0 && c1 && !u1:
+			trueUnchanged = true
+		case u1 && !c1 && c0 && !u0:
+			trueUnchanged = false
+		default:
+			continue
+		}
+		if g, ok := gateOf(fn, iff.Cond, !trueUnchanged, 0); ok {
+			// gateOf reports the value equal to which the gate reads true;
+			// unchanged when that value is read on the unchanged side.
+			return g
+		}
+	}
+	return gate{}
+}
+
+// findOwners: per entity type, the one function that returns a value of it or
+// a copy of that value. A type with two such functions has no owner.
+func (a *analysis) findOwners() map[*ssa.Function]owner {
+	byType := map[*types.Named][]owner{}
+	fnOf := map[*types.Named][]*ssa.Function{}
+	for _, fn := range a.fns {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		j, n, x, y, ok := a.mergeOf(fn, s)
+		if !ok {
+			continue
+		}
+		o := owner{entity: n, value: j, gate: a.ownerGate(fn, x, y)}
+		fn = originFn(fn)
+		dup := false
+		for _, f := range fnOf[n] {
+			if f == fn {
+				dup = true
+			}
+		}
+		if !dup {
+			byType[n] = append(byType[n], o)
+			fnOf[n] = append(fnOf[n], fn)
+		}
+	}
+	out := map[*ssa.Function]owner{}
+	for n, os := range byType {
+		if len(os) == 1 && os[0].gate.known {
+			out[fnOf[n][0]] = os[0]
+		}
+	}
+	return out
+}
+
+// constBool: the value of a boolean constant.
+func constBool(v ssa.Value) (bool, bool) {
+	c, ok := v.(*ssa.Const)
+	if !ok || c.Value == nil {
+		return false, false
+	}
+	switch c.Value.String() {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
+}
+
+// ownerChecks: condition 2. A retained value reaches the owner's unchanged
+// branch: passed with a constant gate set to unchanged, or built into a gate
+// struct whose gate field says unchanged (directly, or through a helper that
+// labels its parameter so). Returns the reports as (function, position, detail).
+func (a *analysis) ownerChecks() []ownerReport {
+	var out []ownerReport
+	var specs []gateSpec
+	// The owner's own field gate, and field gates its callers pass to a bool gate.
+	for ofn, o := range a.owners {
+		if o.gate.field >= 0 {
+			if n, _ := structOf(derefType(ofn.Params[o.gate.param].Type())); n != nil {
+				specs = append(specs, gateSpec{strct: n, gateField: o.gate.field, valueField: a.valueField(ofn, o), unchanged: o.gate.unchanged, owner: ofn})
+			}
+		}
+	}
+	for _, fn := range a.fns {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				args := callArgs(call.Common())
+				for _, g := range a.calleesOf(call) {
+					o, ok := a.owners[originFn(g)]
+					if !ok || o.gate.field >= 0 || o.gate.param >= len(args) || o.value >= len(args) {
+						continue
+					}
+					if v, ok := constBool(args[o.gate.param]); ok {
+						if v == o.gate.unchanged && s.val(args[o.value]).Retained {
+							out = append(out, ownerReport{fn, call.Pos(), "a retained value reaches the unchanged branch of " + strings.TrimPrefix(fullName(g), module+"/")})
+						}
+						continue
+					}
+					// A gate read from a struct field, with the value from the same struct.
+					if gs, ok := structGate(args[o.gate.param], args[o.value], o.gate.unchanged); ok {
+						gs.owner = g
+						specs = append(specs, gs)
+					}
+				}
+			}
+		}
+	}
+	if len(specs) == 0 {
+		return out
+	}
+	// Labels: built structs whose gate field says unchanged around a value.
+	marks := map[*ssa.Function]map[int]bool{}
+	marksIf := map[*ssa.Function][][3]int{} // value param, gate param, unchanged (1/0)
+	for _, fn := range a.postOrder() {
+		s := a.states[fn]
+		if s == nil {
+			continue
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Alloc:
+					n, _ := structOf(pointee(x.Type()))
+					for _, sp := range specs {
+						if n == nil || n != sp.strct {
+							continue
+						}
+						gateVal, valueOrg, gateParam := false, org{}, -1
+						gateKnown := true
+						if x.Referrers() != nil {
+							for _, r := range *x.Referrers() {
+								fa, ok := r.(*ssa.FieldAddr)
+								if !ok || fa.Referrers() == nil {
+									continue
+								}
+								for _, u := range *fa.Referrers() {
+									st, ok := u.(*ssa.Store)
+									if !ok || st.Addr != fa {
+										continue
+									}
+									switch fa.Field {
+									case sp.gateField:
+										if v, ok := constBool(st.Val); ok {
+											gateVal = v
+										} else if k := paramIndex(fn, st.Val); k >= 0 {
+											gateParam = k
+										} else {
+											gateKnown = false
+										}
+									case sp.valueField:
+										valueOrg = valueOrg.or(s.val(st.Val))
+									}
+								}
+							}
+						}
+						if !gateKnown {
+							continue
+						}
+						if gateParam >= 0 {
+							for j := range fn.Params {
+								if valueOrg.Params&bit(j) != 0 {
+									u := 0
+									if sp.unchanged {
+										u = 1
+									}
+									marksIf[fn] = append(marksIf[fn], [3]int{j, gateParam, u})
+								}
+							}
+							continue
+						}
+						if gateVal != sp.unchanged {
+							continue
+						}
+						if valueOrg.Retained {
+							out = append(out, ownerReport{fn, x.Pos(), "a retained value is labelled for the unchanged branch of " + strings.TrimPrefix(fullName(sp.owner), module+"/")})
+						}
+						for j := range fn.Params {
+							if valueOrg.Params&bit(j) != 0 {
+								if marks[fn] == nil {
+									marks[fn] = map[int]bool{}
+								}
+								marks[fn][j] = true
+							}
+						}
+					}
+				case ssa.CallInstruction:
+					args := callArgs(x.Common())
+					for _, g := range a.calleesOf(x) {
+						label := func(j int) {
+							if j >= len(args) {
+								return
+							}
+							v := s.val(args[j])
+							if v.Retained {
+								out = append(out, ownerReport{fn, x.Pos(), "a retained value is labelled for an owner's unchanged branch by " + strings.TrimPrefix(fullName(g), module+"/")})
+							}
+							for k := range fn.Params {
+								if v.Params&bit(k) != 0 {
+									if marks[fn] == nil {
+										marks[fn] = map[int]bool{}
+									}
+									marks[fn][k] = true
+								}
+							}
+						}
+						for j := range marks[g] {
+							label(j)
+						}
+						for _, m := range marksIf[g] {
+							if m[1] >= len(args) {
+								continue
+							}
+							if v, ok := constBool(args[m[1]]); ok {
+								if v == (m[2] == 1) {
+									label(m[0])
+								}
+							} else if k := paramIndex(fn, args[m[1]]); k >= 0 && m[0] < len(args) {
+								for j := range fn.Params {
+									if s.val(args[m[0]]).Params&bit(j) != 0 {
+										marksIf[fn] = append(marksIf[fn], [3]int{j, k, m[2]})
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+type ownerReport struct {
+	fn     *ssa.Function
+	pos    token.Pos
+	detail string
+}
+
+// valueField: the struct field whose value the owner hands back unchanged.
+func (a *analysis) valueField(fn *ssa.Function, o owner) int {
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			switch x := ins.(type) {
+			case *ssa.Field:
+				if paramIndex(fn, x.X) == o.value && family(x.Type()) {
+					return x.Field
+				}
+			case *ssa.FieldAddr:
+				if paramIndex(fn, x.X) == o.value && family(pointee(x.Type())) {
+					return x.Field
+				}
+			}
+		}
+	}
+	return -1
+}
+
+// structGate: a gate argument read from a struct value's field, with the value
+// argument read from another field of the same struct.
+func structGate(gateArg, valueArg ssa.Value, unchanged bool) (gateSpec, bool) {
+	neg := false
+	for {
+		u, ok := gateArg.(*ssa.UnOp)
+		if !ok || u.Op != token.NOT {
+			break
+		}
+		neg, gateArg = !neg, u.X
+	}
+	field := func(v ssa.Value) (ssa.Value, int, bool) {
+		switch x := v.(type) {
+		case *ssa.Field:
+			return x.X, x.Field, true
+		case *ssa.UnOp:
+			if fa, ok := x.X.(*ssa.FieldAddr); ok && x.Op == token.MUL {
+				return fa.X, fa.Field, true
+			}
+		}
+		return nil, 0, false
+	}
+	gx, gf, ok1 := field(gateArg)
+	vx, vf, ok2 := field(valueArg)
+	if !ok1 || !ok2 || gx != vx {
+		return gateSpec{}, false
+	}
+	n, _ := structOf(derefType(gx.Type()))
+	if n == nil {
+		return gateSpec{}, false
+	}
+	return gateSpec{strct: n, gateField: gf, valueField: vf, unchanged: unchanged != neg}, true
+}
+
+func derefType(t types.Type) types.Type {
+	if p := pointee(t); p != nil {
+		return p
+	}
+	return t
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -2594,6 +3259,7 @@ type report struct {
 	Analyzed      int               `json:"functions_analyzed"`
 	SummaryRounds int               `json:"summary_rounds"`
 	Converged     bool              `json:"summaries_converged"`
+	Owners        []string          `json:"owners"`
 	Counts        map[string]int    `json:"counts"`
 	Hits          []hit             `json:"hits"`
 	Mappers       []string          `json:"population_mappers"`
@@ -2755,28 +3421,45 @@ func main() {
 	}
 	r := report{Author: "NOR-160 lane (Claude), 30 October 2026", Target: spec, Loader: "maintained internal/workcensus.LoadProgram", Functions: len(p.Functions), Analyzed: len(a.fns), Counts: map[string]int{}, Controls: map[string]string{}}
 
-	// Summaries to a fixpoint, callees before callers.
+	// Summaries to a fixpoint, callees before callers. Then, with the single
+	// owner of each entity type found, again with its decisions accepted.
 	collectMutatedTypes(a.fns)
 	order := a.postOrder()
-	for round := 1; round <= 40; round++ {
-		r.SummaryRounds = round
-		changed := false
-		for _, fn := range order {
-			s := a.analyzeFn(fn)
-			a.states[fn] = s
-			sum := a.summarize(fn, s)
-			if !a.equalSummary(a.sums[fn], sum) {
-				a.sums[fn] = sum
-				changed = true
+	fixpoint := func() (int, bool) {
+		for round := 1; round <= 40; round++ {
+			changed := false
+			for _, fn := range order {
+				s := a.analyzeFn(fn)
+				a.states[fn] = s
+				sum := a.summarize(fn, s)
+				if !a.equalSummary(a.sums[fn], sum) {
+					a.sums[fn] = sum
+					changed = true
+				}
+			}
+			if !changed {
+				return round, true
 			}
 		}
-		if !changed {
-			r.Converged = true
-			break
-		}
+		return 40, false
 	}
+	rounds1, converged1 := fixpoint()
+	a.owners = a.findOwners()
+	for ofn, o := range a.owners {
+		r.Owners = append(r.Owners, fmt.Sprintf("%s owns %s (parameter %d)", strings.TrimPrefix(fullName(ofn), module+"/"), o.entity.Obj().Name(), o.value))
+	}
+	sort.Strings(r.Owners)
+	rounds2, converged2 := 0, true
+	if len(a.owners) > 0 {
+		a.sums = map[*ssa.Function]*summary{}
+		a.states = map[*ssa.Function]*fnState{}
+		rounds2, converged2 = fixpoint()
+	}
+	r.SummaryRounds = rounds1 + rounds2
+	r.Converged = converged1 && converged2
 
 	drops := a.paramDrops()
+	ownerReports := a.ownerChecks()
 	overwrite := a.overwrites()
 	callbackCopy := a.copiesToCallback()
 	seenHit := map[string]bool{}
@@ -2791,17 +3474,31 @@ func main() {
 		r.Hits = append(r.Hits, hit{Class: class, Function: fullName(fn), File: file, Line: line, Detail: detail, Entries: n, Examples: ex})
 	}
 	mappers := map[string]*ssa.Function{}
+	for _, or := range ownerReports {
+		add("K0", or.fn, or.pos, or.detail)
+	}
 
 	for _, fn := range a.fns {
 		s := a.states[fn]
 
-		// K0: exported functions returning or visiting retained values.
+		// K0: exported functions returning or visiting retained values. A
+		// result slot counts each stored value once, at its own return.
 		if exported(fn) {
+			slots := a.resultSlots(fn)
 			for _, b := range fn.Blocks {
 				for _, ins := range b.Instrs {
 					switch x := ins.(type) {
+					case *ssa.Store:
+						if al, ok := x.Addr.(*ssa.Alloc); ok && slots[al] && family(x.Val.Type()) && s.val(x.Val).Retained {
+							add("K0", fn, returnPos(x), "returns a retained "+x.Val.Type().String())
+						}
 					case *ssa.Return:
 						for _, v := range x.Results {
+							if ld, ok := v.(*ssa.UnOp); ok && ld.Op == token.MUL {
+								if al, ok := ld.X.(*ssa.Alloc); ok && slots[al] {
+									continue
+								}
+							}
 							if family(v.Type()) && s.val(v).Retained {
 								add("K0", fn, x.Pos(), "returns a retained "+v.Type().String())
 							}
@@ -3008,7 +3705,6 @@ func main() {
 				}
 			}
 		}
-		var rets [][]ssa.Value
 		var retPos token.Pos
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
@@ -3016,19 +3712,13 @@ func main() {
 				case *ssa.Phi:
 					checkMerge(x.Pos(), x.Edges)
 				case *ssa.Return:
-					for i, res := range x.Results {
-						for len(rets) <= i {
-							rets = append(rets, nil)
-						}
-						rets[i] = append(rets[i], res)
-					}
 					if !retPos.IsValid() {
 						retPos = x.Pos()
 					}
 				}
 			}
 		}
-		for _, in := range rets {
+		for _, in := range a.returnInputs(fn) {
 			checkMerge(retPos, in)
 		}
 
