@@ -72,6 +72,15 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []edgeImage, err erro
 	if outgoing {
 		d = &r.out
 	}
+	// The whole selection (buffered replacements, direction, visibility) is
+	// decided before a cached body is copied (NOR-160).
+	now := DecayScoringTime()
+	keep := func(edge *Edge) bool {
+		if _, hidden := d.suppressed[edge.ID]; hidden {
+			return false
+		}
+		return attachedAt(edge, nodeID, outgoing) && !b.filterEntityByDecay(v, edge, now)
+	}
 	err = recoverBadgerClosedPanic(func() error {
 		if d.deleted {
 			return nil
@@ -83,7 +92,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []edgeImage, err erro
 			}
 			if prefix != nil {
 				var err error
-				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
+				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, now, edgeGen, v, keep)
 				if err != nil {
 					return err
 				}
@@ -93,37 +102,21 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []edgeImage, err erro
 			} else {
 				b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
 			}
-		}
-		// Read cached IDs from this transaction, never a later body cache.
-		if edges == nil {
+		} else {
+			// Read cached IDs from this transaction, never a later body cache.
 			for _, id := range d.ids {
 				if _, hidden := d.suppressed[id]; hidden {
 					continue
 				}
-				edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen)
+				edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen, keep)
 				if err != nil {
 					return err
 				}
-				if edge.Edge != nil && !b.filterEntityByDecay(v, edge.Edge, DecayScoringTime()) {
+				if edge.Edge != nil {
 					edges = append(edges, edge)
 				}
 			}
-		} else if len(d.suppressed) != 0 {
-			visible := edges[:0]
-			for _, edge := range edges {
-				if _, hidden := d.suppressed[edge.ID]; !hidden {
-					visible = append(visible, edge)
-				}
-			}
-			edges = visible
 		}
-		attached := edges[:0]
-		for _, edge := range edges {
-			if attachedAt(edge.Edge, nodeID, outgoing) {
-				attached = append(attached, edge)
-			}
-		}
-		edges = attached
 		edges = append(edges, d.live...)
 		return nil
 	})
@@ -164,45 +157,46 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 		return nil, nil, true
 	}
 	now := DecayScoringTime()
-	read := func(ids []EdgeID, outgoing bool) ([]edgeImage, bool) {
+	// Every cached body of every requested direction is checked before any is
+	// copied: a miss anywhere falls back to the physical read having copied
+	// nothing (NOR-160).
+	buffered := func(edgeID EdgeID) bool {
+		return w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found
+	}
+	list := func(ids []EdgeID, outgoing bool) edgeCacheList {
+		return edgeCacheList{ids: ids, skip: buffered, read: edgeCacheRead{bufferExcluded: true, match: func(edge *Edge) bool {
+			return attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now)
+		}}}
+	}
+	var lists []edgeCacheList
+	if wantOut {
+		lists = append(lists, list(outIDs, true))
+	}
+	if wantIn {
+		lists = append(lists, list(inIDs, false))
+	}
+	copied, ok := b.cacheLoadEdgeLists(lists)
+	if !ok {
+		return nil, nil, false
+	}
+	withLive := func(edges []*Edge, outgoing bool) []edgeImage {
 		var live []edgeImage
 		if w != nil {
 			live = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing}).edges
 		}
-		if len(ids) == 0 && len(live) == 0 {
-			return nil, true
+		if len(edges) == 0 && len(live) == 0 {
+			return nil
 		}
-		result := make([]edgeImage, 0, len(ids)+len(live))
-		for _, edgeID := range ids {
-			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found {
-				continue
-			}
-			edge, hit := b.cacheLoadEdge(edgeID, edgeCacheRead{bufferExcluded: true, match: func(edge *Edge) bool {
-				return attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now)
-			}})
-			if !hit {
-				return nil, false
-			}
-			if edge.Edge != nil {
-				result = append(result, edge)
-			}
-		}
-		result = append(result, live...)
-		return result, true
+		return append(decodedEdges(edges), live...)
 	}
 	var out, in []edgeImage
-	var ok bool
+	next := 0
 	if wantOut {
-		out, ok = read(outIDs, true)
-		if !ok {
-			return nil, nil, false
-		}
+		out = withLive(copied[next], true)
+		next++
 	}
 	if wantIn {
-		in, ok = read(inIDs, false)
-		if !ok {
-			return nil, nil, false
-		}
+		in = withLive(copied[next], false)
 	}
 	return out, in, true
 }

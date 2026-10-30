@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/callerowned"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -246,20 +247,19 @@ type edgeCacheRead struct {
 	// bufferExcluded: the caller holds the write-behind buffer and has left
 	// out every edge it buffers.
 	bufferExcluded bool
-	// match, when set, inspects the retained image; a hit it rejects returns
-	// a nil image and true.
+	// match, when set, is the read's selection, decided on the retained
+	// body before any copy; a hit it rejects returns nil and true.
 	match func(*Edge) bool
 }
 
-// cacheLoadEdge is the edge body cache's only exit and owns its one hit rule.
-// A hit is a borrowed image of the cached edge: the read copies it only when
-// it delivers it (read_delivery.go), so no adjacency, type, between or point
-// read copies a hit it then drops (NOR-160). Under write-behind the flusher
-// can cache a body newer than a reader's committed view, so an unpinned read
-// is answered only when it has excluded the buffered edges. match, when set,
-// decides on the image first; a hit it rejects returns a nil image and true.
-// Cached bodies are replaced wholesale and never changed in place, so the
-// image may be read after the lock is released.
+// cacheLoadEdge is the edge body cache's exit for one relationship, and owns
+// its one hit rule. The retained body never leaves the cache: the read's
+// selection (match) is decided on it first, and only a selected hit is
+// copied, once, for the read (NOR-160). Under write-behind the flusher can
+// cache a body newer than a reader's committed view, so an unpinned read is
+// answered only when it has excluded the buffered edges. Cached bodies are
+// replaced wholesale and never changed in place, so match and the copy run
+// after the lock is released.
 func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, bool) {
 	if read.version == nil && !read.bufferExcluded && b.writeBehind != nil {
 		return edgeImage{}, false
@@ -276,7 +276,59 @@ func (b *BadgerEngine) cacheLoadEdge(id EdgeID, read edgeCacheRead) (edgeImage, 
 	if read.match != nil && !read.match(cached) {
 		return edgeImage{}, true
 	}
-	return borrowedEdge(cached), true
+	return decodedEdge(copyEdge(cached)), true
+}
+
+// edgeCacheList is one list a read asks of the edge body cache: the IDs in
+// order, the ones the read has already answered elsewhere (skip), and the
+// read's selection.
+type edgeCacheList struct {
+	ids  []EdgeID
+	skip func(EdgeID) bool
+	read edgeCacheRead
+}
+
+// cacheLoadEdgeLists answers several lists all or nothing: every listed body
+// must be cached (and, for a pinned read, at its version) or the whole call
+// misses before any copy. Only then is each list's selection decided on the
+// retained bodies, and the selected ones copied once (NOR-160). A partial hit
+// therefore never copies a body the fallback reads again.
+func (b *BadgerEngine) cacheLoadEdgeLists(lists []edgeCacheList) ([][]*Edge, bool) {
+	for _, list := range lists {
+		if list.read.version == nil && !list.read.bufferExcluded && b.writeBehind != nil {
+			return nil, false
+		}
+	}
+	held := make([][]*Edge, len(lists))
+	b.edgeCacheMu.RLock()
+	for i, list := range lists {
+		for _, id := range list.ids {
+			if list.skip != nil && list.skip(id) {
+				continue
+			}
+			cached, ok := b.edgeCache[id]
+			if ok && list.read.version != nil && b.edgeCacheVersions[id] != *list.read.version {
+				ok = false
+			}
+			if !ok || cached == nil {
+				b.edgeCacheMu.RUnlock()
+				return nil, false
+			}
+			held[i] = append(held[i], cached)
+		}
+	}
+	b.edgeCacheMu.RUnlock()
+	out := make([][]*Edge, len(lists))
+	for i, list := range lists {
+		selected := held[i][:0:0]
+		for _, cached := range held[i] {
+			if list.read.match == nil || list.read.match(cached) {
+				selected = append(selected, cached)
+			}
+		}
+		out[i] = callerowned.Each(selected, copyEdge)
+	}
+	return out, true
 }
 
 // cacheStoreEdge inserts edge into the per-engine edge body cache as written

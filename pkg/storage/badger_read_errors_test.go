@@ -125,7 +125,7 @@ func TestBadgerAdjacencyReadsPropagateTransactionErrors(t *testing.T) {
 		b := newTestEngine(t)
 		require.NoError(t, b.withView(func(txn *badger.Txn) error {
 			txn.Discard()
-			edge, err := b.readIndexedEdgeInTxn(txn, "test:uncached", b.edgeCacheGen.current())
+			edge, err := b.readIndexedEdgeInTxn(txn, "test:uncached", b.edgeCacheGen.current(), nil)
 			require.ErrorIs(t, err, badger.ErrDiscardedTxn)
 			require.Nil(t, edge.Edge)
 			return nil
