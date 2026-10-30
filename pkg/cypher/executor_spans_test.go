@@ -10,30 +10,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
-
-func spanSetup(t *testing.T) (*tracetest.InMemoryExporter, func()) {
-	t.Helper()
-	exp := tracetest.NewInMemoryExporter()
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithSyncer(exp),
-	)
-	cleanup := fixtureowner.InstallTracerProvider(t, provider, propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{},
-	))
-	return exp, cleanup
-}
 
 // spanRecorder runs one statement under a fresh tracer provider and returns
 // the recorded spans. Each test keeps its own assertions on the span it names;
 // this owns only the provider lifecycle the named span tests share.
 func spanRecorder(t *testing.T, query string) []tracetest.SpanStub {
 	t.Helper()
-	exp, _ := spanSetup(t)
+	exp, _ := fixtureowner.RecordSpans(t)
 
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, _ = exec.Execute(context.Background(), query, nil)
@@ -76,7 +61,7 @@ func TestExecuteSpan_PlanSpanEmitted(t *testing.T) {
 }
 
 func TestExecuteSpan_ParseError(t *testing.T) {
-	exp, _ := spanSetup(t)
+	exp, _ := fixtureowner.RecordSpans(t)
 
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, err := exec.Execute(context.Background(), "INVALID GARBAGE QUERY ???", nil)
@@ -104,7 +89,7 @@ func TestExecuteSpan_WriteQuery(t *testing.T) {
 }
 
 func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
-	exp, _ := spanSetup(t)
+	exp, _ := fixtureowner.RecordSpans(t)
 
 	inner := newTestMemoryEngine(t)
 	traced := storage.NewTracedEngine(inner)
@@ -125,7 +110,7 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 }
 
 func TestExecuteSpanConcurrentOptions(t *testing.T) {
-	exporter, _ := spanSetup(t)
+	exporter, _ := fixtureowner.RecordSpans(t)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	_, unrelated := otel.Tracer("background").Start(context.Background(), "unrelated")
 	unrelated.End()

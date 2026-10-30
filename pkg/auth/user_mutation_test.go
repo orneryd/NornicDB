@@ -44,8 +44,7 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 			before := cloneStoredUser(users.users["worker"])
 			beforeNode, err := fault.Engine.GetNode("user:worker")
 			require.NoError(t, err)
-			var events []AuditEvent
-			users.auditLog = func(event AuditEvent) { events = append(events, event) }
+			events := recordAuditEvents(users)
 			ctx := context.Background()
 			if kind == "commit" {
 				var cancel context.CancelFunc
@@ -66,7 +65,7 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 			node, err := fault.Engine.GetNode("user:worker")
 			require.NoError(t, err)
 			require.Equal(t, beforeNode, node)
-			require.Empty(t, events)
+			require.Empty(t, *events)
 		})
 	}
 }

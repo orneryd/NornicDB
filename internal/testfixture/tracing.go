@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // InstallTracerProvider owns the process-global test tracing lifetime. Callers
@@ -35,4 +36,20 @@ func InstallTracerProvider(t testing.TB, provider *sdktrace.TracerProvider, prop
 	}
 	t.Cleanup(cleanup)
 	return cleanup
+}
+
+// RecordSpans installs the shared synchronous, always-sampled test recorder and
+// W3C trace/baggage propagation. The returned cleanup preserves explicit nested
+// scopes; InstallTracerProvider also registers idempotent automatic cleanup.
+func RecordSpans(t testing.TB) (*tracetest.InMemoryExporter, func()) {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSyncer(exporter),
+	)
+	cleanup := InstallTracerProvider(t, provider, propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+	return exporter, cleanup
 }

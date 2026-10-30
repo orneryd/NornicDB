@@ -1,7 +1,7 @@
 package server
 
 import (
-	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,44 +10,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// spanTracerSetup installs an in-memory SpanExporter as the global
-// TracerProvider, plus a W3C propagator, and returns the exporter + a
-// teardown closure. Consumers use exporter.GetSpans() post-request to
-// assert span shape.
-func spanTracerSetup(t *testing.T) (*tracetest.InMemoryExporter, func()) {
-	t.Helper()
-	exp := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithSyncer(exp),
-	)
-	prevTP := otel.GetTracerProvider()
-	prevProp := otel.GetTextMapPropagator()
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-	return exp, func() {
-		_ = tp.Shutdown(context.Background())
-		otel.SetTracerProvider(prevTP)
-		otel.SetTextMapPropagator(prevProp)
-	}
-}
 
 // TestInstrumentedMux_Span_UsesRoutePattern covers TRC-12: the span name
 // must be "nornicdb.http.<route-template>" and carry http.route +
 // http.response.status_code attributes.
 func TestInstrumentedMux_Span_UsesRoutePattern(t *testing.T) {
-	exp, teardown := spanTracerSetup(t)
+	exp, teardown := fixtureowner.RecordSpans(t)
 	defer teardown()
 
 	reg := prometheus.NewRegistry()
@@ -83,7 +54,7 @@ func TestInstrumentedMux_Span_UsesRoutePattern(t *testing.T) {
 // is empty so the span must fall back to the "_NOT_FOUND_" bucket. Same
 // rule as the metric cardinality guard.
 func TestInstrumentedMux_Span_UnmatchedRoute(t *testing.T) {
-	exp, teardown := spanTracerSetup(t)
+	exp, teardown := fixtureowner.RecordSpans(t)
 	defer teardown()
 
 	reg := prometheus.NewRegistry()
@@ -105,7 +76,7 @@ func TestInstrumentedMux_Span_UnmatchedRoute(t *testing.T) {
 // TestInstrumentedMux_Span_PropagatesParent covers TRC-11 + TRC-12: an
 // incoming traceparent header must become the server span's parent.
 func TestInstrumentedMux_Span_PropagatesParent(t *testing.T) {
-	exp, teardown := spanTracerSetup(t)
+	exp, teardown := fixtureowner.RecordSpans(t)
 	defer teardown()
 
 	reg := prometheus.NewRegistry()
@@ -136,7 +107,7 @@ func TestInstrumentedMux_Span_PropagatesParent(t *testing.T) {
 // TestInstrumentedMux_Span_5xxMarksError covers OTel semantic convention:
 // server-error status codes must mark the span as Error.
 func TestInstrumentedMux_Span_5xxMarksError(t *testing.T) {
-	exp, teardown := spanTracerSetup(t)
+	exp, teardown := fixtureowner.RecordSpans(t)
 	defer teardown()
 
 	reg := prometheus.NewRegistry()

@@ -25,6 +25,9 @@ Port required behavior to canonical release owners; rebase updates, never merge.
 - [x] Run focused correctness/race checks and workload-specific paired performance qualification.
 - [x] Fetch current release; base remains15f1a502, no rebase needed.
 - [x] Run final full make test on frozen5bc2a6d6 as the maintainer-approved readiness gate; preserve canceled make verify as incomplete.
+- [x] Publish qualified commit eb0c124c for review; informative hook completed411functions/zero refactor/20reuse.
+- [x] Reconcile all20rows; retire both copied recorder factories into RecordSpans and reuse the canonical audit collector; focused race/count3 passes.
+- [x] Qualify the final recorder/audit fixture convergence: focused race/count3 and full make test on0afde9e9 pass.
 - [x] Prepare the skill-format PR/Linear evidence, explicit PR-branch push target and exact gate-result comment. Publication and review status are recorded on PR #1655 and NOR-61 after push.
 
 Evidence: `/Users/timothysweet/.local/share/nornicdb-pr-readiness/pr1655-current-release`.
