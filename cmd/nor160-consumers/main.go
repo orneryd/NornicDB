@@ -66,6 +66,33 @@ type NOR160ControlCache struct {
 	max   int
 }
 
+// Exits through deeper result shapes: an anonymous struct, and a named
+// result holding a named result holding the node. Each drops a copy on one
+// path (K1) or hands the retained node out (K0).
+func (c *NOR160ControlCache) GetAnonSelected(id NodeID, hidden func(*Node) bool) struct{ N *Node } {
+	n := copyNode(c.nodes[id])
+	if hidden(n) {
+		return struct{ N *Node }{}
+	}
+	return struct{ N *Node }{N: n}
+}
+
+type NOR160ControlInner struct{ Hit NOR160ControlNodeHolder }
+
+type NOR160ControlOuter struct{ Inner NOR160ControlInner }
+
+func (c *NOR160ControlCache) GetOuterSelected(id NodeID, hidden func(*Node) bool) NOR160ControlOuter {
+	n := copyNode(c.nodes[id])
+	if hidden(n) {
+		return NOR160ControlOuter{}
+	}
+	return NOR160ControlOuter{Inner: NOR160ControlInner{Hit: NOR160ControlNodeHolder{Node: n}}}
+}
+
+func (c *NOR160ControlCache) GetOuterShared(id NodeID) NOR160ControlOuter {
+	return NOR160ControlOuter{Inner: NOR160ControlInner{Hit: NOR160ControlNodeHolder{Node: c.nodes[id]}}}
+}
+
 // K0: a struct that directly wraps one retained node, handed out uncopied.
 type NOR160ControlNodeHolder struct{ Node *Node }
 
@@ -892,6 +919,9 @@ type control struct {
 var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetShared", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetWrapShared", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetOuterShared", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetAnonSelected", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetOuterSelected", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlRegistry).GetService", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetSelected", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetLoaded", false},
@@ -3529,46 +3559,53 @@ func flags(m map[*ssa.Function][]bool, fn *ssa.Function, n int) []bool {
 	return m[fn]
 }
 
-// entityValue: an entity (or pointer to one), a slice, array, map or channel
-// of entity values, an iterator yielding them, or a struct holding one of
-// those directly in a field. A struct that holds entities only transitively (a
-// service, a database handle) is not one.
+// entityValue: a value through which a caller can reach an entity: an entity
+// (or pointer to one); a slice, array, map or channel of entity values; an
+// iterator yielding them; or a struct, named or anonymous, with such a value in
+// a field the caller can reach (exported or embedded), at any depth. A handle
+// that keeps entities only in unexported fields (a database, an executor, a
+// search service) hands none out itself: only its own methods reach them, and
+// those are judged as exits in their own right. depth is unused (kept for the
+// callers' signature).
 func entityValue(t types.Type, depth int) bool {
-	if depth > 3 {
+	return entityReach(t, map[types.Type]bool{})
+}
+
+func entityReach(t types.Type, seen map[types.Type]bool) bool {
+	t = types.Unalias(t)
+	if seen[t] {
 		return false
 	}
-	t = types.Unalias(t)
-	if p := pointee(t); p != nil {
-		t = p
-	}
+	seen[t] = true
 	switch u := t.(type) {
+	case *types.Pointer:
+		return entityReach(u.Elem(), seen)
 	case *types.Named:
 		if entityType(u) {
 			return true
 		}
-		if st, ok := u.Underlying().(*types.Struct); ok && depth == 0 {
-			for i := 0; i < st.NumFields(); i++ {
-				if entityValue(st.Field(i).Type(), depth+1) {
-					return true
-				}
+		return entityReach(u.Underlying(), seen)
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			f := u.Field(i)
+			if (f.Exported() || f.Embedded()) && entityReach(f.Type(), seen) {
+				return true
 			}
-			return false
 		}
-		return entityValue(u.Underlying(), depth)
 	case *types.Slice:
-		return entityValue(u.Elem(), depth+1)
+		return entityReach(u.Elem(), seen)
 	case *types.Array:
-		return entityValue(u.Elem(), depth+1)
+		return entityReach(u.Elem(), seen)
 	case *types.Map:
-		return entityValue(u.Elem(), depth+1)
+		return entityReach(u.Elem(), seen)
 	case *types.Chan:
-		return entityValue(u.Elem(), depth+1)
+		return entityReach(u.Elem(), seen)
 	case *types.Signature:
 		// An iterator: func(yield func(..entity..) bool).
 		for i := 0; i < u.Params().Len(); i++ {
 			if y, ok := u.Params().At(i).Type().Underlying().(*types.Signature); ok {
 				for k := 0; k < y.Params().Len(); k++ {
-					if entityValue(y.Params().At(k).Type(), depth+1) {
+					if entityReach(y.Params().At(k).Type(), seen) {
 						return true
 					}
 				}
