@@ -2442,24 +2442,27 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	}
 	// The engine's images, when nothing here retains them: a node this
 	// transaction deleted or rewrote is skipped before it is delivered.
-	visitEngineImage := func(image nodeImage) error {
-		if image.Node == nil {
-			return nil
+	// The engine's nodes: a node this transaction deleted or rewrote is
+	// decided before the engine copies anything; a rewrite is delivered from
+	// the transaction's own pending node instead (NOR-160).
+	decideEngineNode := func(node *Node) (bool, error) {
+		if node == nil {
+			return false, nil
 		}
 		if hasPending {
-			if _, deleted := tx.deletedNodes[image.ID]; deleted {
-				seen[image.ID] = struct{}{}
-				return nil
+			if _, deleted := tx.deletedNodes[node.ID]; deleted {
+				seen[node.ID] = struct{}{}
+				return false, nil
 			}
-			if pending, exists := tx.pendingNodes[image.ID]; exists {
-				seen[image.ID] = struct{}{}
+			if pending, exists := tx.pendingNodes[node.ID]; exists {
+				seen[node.ID] = struct{}{}
 				if pending != nil && slices.Contains(pending.Labels, label) {
-					return invokeVisit(copyShaped(pending, properties, strip))
+					return false, invokeVisit(copyShaped(pending, properties, strip))
 				}
-				return nil
+				return false, nil
 			}
 		}
-		return invokeVisit(deliverNode(image, properties, strip))
+		return true, nil
 	}
 	emitCommitted := func(node *Node, owned bool) error {
 		if node == nil {
@@ -2530,7 +2533,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Nothing here is retained: the transaction resolves its own writes
 		// over the engine's images and delivers each chosen node once.
-		err = tx.engine.streamLabelNodeImages(scope, label, properties, v, visitEngineImage, queryNodes)
+		err = tx.engine.streamLabelNodes(scope, label, properties, strip, v, decideEngineNode, invokeVisit, queryNodes)
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			scope,
@@ -2642,18 +2645,18 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		// snapshot, with early termination for LIMIT pushdown.
 		// The engine's images: a node this transaction deleted or rewrote
 		// is replaced before anything is delivered (NOR-160).
-		err = tx.engine.streamNodeImagesWithOptions(ctx, opts, func(image nodeImage) error {
+		err = tx.engine.streamNodesOwned(ctx, opts, func(node *Node) (bool, error) {
 			if hasPending {
-				if _, deleted := tx.deletedNodes[image.ID]; deleted {
-					return nil
+				if _, deleted := tx.deletedNodes[node.ID]; deleted {
+					return false, nil
 				}
-				if pending, exists := tx.pendingNodes[image.ID]; exists {
-					seen[image.ID] = struct{}{}
-					return invokeVisit(readPending(pending))
+				if pending, exists := tx.pendingNodes[node.ID]; exists {
+					seen[node.ID] = struct{}{}
+					return false, invokeVisit(readPending(pending))
 				}
 			}
-			return invokeVisit(deliverNode(image, opts.Projection, opts.StripEmbeddings))
-		})
+			return true, nil
+		}, invokeVisit)
 	} else if tx.snapshotTx != nil {
 		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
 			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
