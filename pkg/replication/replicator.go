@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -35,6 +36,10 @@ type Replicator interface {
 	// Start initializes and starts the replicator.
 	// This should be called after the storage engine is ready.
 	Start(ctx context.Context) error
+
+	// LifetimeContext is the immutable context canceled by this owner's Shutdown.
+	// It is available before Start; accepted work must not replace its parent.
+	LifetimeContext() context.Context
 
 	// Apply applies a write command to the cluster.
 	// Returns ErrNotLeader if this node cannot accept writes.
@@ -310,7 +315,7 @@ type StandaloneReplicator struct {
 	storage Storage
 	mu      sync.RWMutex
 	started bool
-	closed  bool
+	work    lifecycle.WorkLifetime // stop signal of this replicator
 
 	// metrics is the Plan-04-06 observation seam. Standalone never
 	// publishes per-peer or transition metrics (no peers, no role
@@ -333,12 +338,15 @@ func NewStandaloneReplicator(config *Config, storage Storage) *StandaloneReplica
 	}
 }
 
+// LifetimeContext returns the standalone owner's immutable shutdown context.
+func (r *StandaloneReplicator) LifetimeContext() context.Context { return r.work.Context() }
+
 // Start initializes the standalone replicator (no-op).
 func (r *StandaloneReplicator) Start(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.closed {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -348,8 +356,14 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	// The application is accepted work: Shutdown waits for it to return.
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	if !accepted {
+		return ErrClosed
+	}
+	defer release()
 	r.mu.RLock()
-	if err := checkApplyReadiness(r.closed, r.started); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {
 		r.mu.RUnlock()
 		return err
 	}
@@ -397,7 +411,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 	if r.started {
 		state = "ready"
 	}
-	if r.closed {
+	if r.work.Closing() {
 		state = "closed"
 	}
 
@@ -408,7 +422,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 		IsLeader: true,
 		LeaderID: r.config.NodeID,
 		State:    state,
-		Healthy:  r.started && !r.closed,
+		Healthy:  r.started && !r.work.Closing(),
 	}
 }
 
@@ -419,11 +433,7 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.closed = true
-	return nil
+	return r.work.Shutdown(context.Background(), nil)
 }
 
 // Mode returns the replication mode.

@@ -38,6 +38,7 @@ type badgerReadView struct {
 	longLived bool
 	mu        sync.Mutex
 	closed    bool
+	release   func() // the short view's engine work ticket, returned by Close
 }
 
 // captureReadView owns every committed/overlay boundary. A nil successful view
@@ -78,7 +79,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			}
 		}
 	}
-	db, err := b.beginHelperTxn()
+	db, release, err := b.beginHelperTxn()
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +91,10 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		txn, readTs, err = db.beginTxn(false)
 	}
 	if err != nil {
-		b.txnWG.Done()
+		release()
 		return nil, err
 	}
-	view := &badgerReadView{scope: strings.Clone(opts.scope), scopeKind: opts.scopeKind, txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
+	view := &badgerReadView{scope: strings.Clone(opts.scope), scopeKind: opts.scopeKind, txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived, release: release}
 	if capture != nil {
 		overlay := w
 		if _, idle := w.idleReadEpoch(opts.scope); idle {
@@ -102,7 +103,10 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		capture(overlay)
 	}
 	if opts.longLived {
-		b.txnWG.Done()
+		// A long-lived view holds only its oracle timestamp; each scan is
+		// admitted on its own (withView).
+		view.release = nil
+		release()
 	}
 	return view, nil
 }
@@ -120,7 +124,7 @@ func (v *badgerReadView) Close() {
 	}
 	v.db.endRead(v.readTs)
 	if !v.longLived {
-		v.engine.txnWG.Done()
+		v.release()
 	}
 }
 
@@ -139,11 +143,11 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 		return err
 	}
 
-	db, err := v.engine.beginHelperTxn()
+	db, release, err := v.engine.beginHelperTxn()
 	if err != nil {
 		return err
 	}
-	defer v.engine.txnWG.Done()
+	defer release()
 	if db != v.db {
 		return ErrStorageClosed
 	}

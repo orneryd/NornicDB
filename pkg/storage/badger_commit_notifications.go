@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // A commit reserves its notification position while publishing, then becomes
 // ready after storage locks and the database's quota/accounting lease release.
@@ -16,7 +19,10 @@ type commitNotification struct {
 	pooled   bool
 	ready    bool
 	reserved bool
-	next     *commitNotification
+	// release is the engine work ticket a reservation holds until delivery,
+	// so retirement never releases the state a listener runs against.
+	release func()
+	next    *commitNotification
 }
 
 // A direct event keeps its one-operation backing store with the queue entry.
@@ -134,6 +140,10 @@ func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNot
 	return n
 }
 
+// errNotificationAfterSeal reports a commit notification reserved after the
+// engine sealed admission; its listeners are not run against retiring state.
+var errNotificationAfterSeal = fmt.Errorf("commit notification reserved after engine close sealed admission: %w", ErrStorageClosed)
+
 func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 	if n == nil {
 		return
@@ -143,8 +153,21 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 		b.notificationMu.Unlock()
 		return
 	}
+	// Every reserver is admitted engine work: a durable write holds the
+	// barrier Close takes before sealing, and the other producers are
+	// stopped before the seal. A refusal is therefore a broken invariant,
+	// reported through Close's outcome rather than delivered after retirement.
+	_, release, accepted := b.work.Acquire(b.work.Context())
+	if !accepted {
+		b.notificationMu.Unlock()
+		b.work.RecordError("", errNotificationAfterSeal)
+		if n.consumed != nil {
+			close(n.consumed)
+		}
+		return
+	}
 	n.reserved = true
-	b.notifyWG.Add(1)
+	n.release = release
 	if b.notificationTail == nil {
 		b.notificationHead = n
 	} else {
@@ -246,9 +269,11 @@ func (b *BadgerEngine) drainCommitNotifications() {
 		if b.notificationHead == nil {
 			b.notificationTail = nil
 		}
+		release := n.release
+		n.release = nil
 		b.notificationMu.Unlock()
 		func() {
-			defer b.notifyWG.Done()
+			defer release()
 			if n.consumed != nil {
 				defer close(n.consumed)
 			}

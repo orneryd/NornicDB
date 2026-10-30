@@ -34,7 +34,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -46,7 +45,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -1036,11 +1037,9 @@ func (w *WAL) Close() error {
 	}
 
 	// Final sync
-	if err := w.syncLocked(); err != nil {
-		// Log but continue closing
-	}
-
-	return w.file.Close()
+	syncErr := w.syncLocked()
+	closeErr := w.file.Close()
+	return compose.Outcomes(syncErr, closeErr)
 }
 
 // Stats returns current WAL statistics.
@@ -2314,10 +2313,11 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// A lifetime lease permits delegated CRUD to acquire its own write
 		// barrier; holding that barrier here would risk recursive-read deadlock.
 		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
-			if _, err := b.beginHelperTxn(); err != nil {
+			_, release, err := b.beginHelperTxn()
+			if err != nil {
 				return err
 			}
-			defer b.txnWG.Done()
+			defer release()
 		}
 		if err := markRecoveryPropertyForeign(engine); err != nil {
 			return err

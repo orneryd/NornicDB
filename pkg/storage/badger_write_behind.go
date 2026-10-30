@@ -87,10 +87,11 @@ func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
 // every acknowledged write-behind commit. It is called once, at construction,
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
-	if _, err := b.beginHelperTxn(); err != nil {
+	_, release, err := b.beginHelperTxn()
+	if err != nil {
 		return
 	}
-	defer b.txnWG.Done()
+	defer release()
 	if b.writeBehind != nil {
 		w.bindPropertyDictionary(b.propKeyDict)
 	}
@@ -687,7 +688,7 @@ func (b *BadgerEngine) FlushWriteBehind() error {
 	}
 	b.writeBarrier.RLock()
 	b.mu.RLock()
-	closed := b.closed
+	closed := b.work.Closing()
 	b.mu.RUnlock()
 	if closed {
 		b.writeBarrier.RUnlock()

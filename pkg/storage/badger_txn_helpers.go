@@ -13,7 +13,7 @@ import (
 // ensureOpen rejects a closed engine; write admission also rejects Close in progress.
 func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.closed || (writing && b.closing)
+	closed := b.work.Closing() || (writing && b.closing)
 	b.mu.RUnlock()
 	if closed {
 		return ErrStorageClosed
@@ -93,24 +93,26 @@ func (w orderedWrite) finish() {
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
-	db, err := b.beginHelperTxn()
+	db, release, err := b.beginHelperTxn()
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer release()
 	return recoverBadgerClosedPanic(func() error {
 		return db.View(fn)
 	})
 }
 
-func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
+// beginHelperTxn admits one helper as the engine owner's accepted work. The
+// returned release is the helper's actual return; Close's retirement waits for it.
+func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, func(), error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed {
-		return nil, ErrStorageClosed
+	_, release, accepted := b.work.Acquire(b.work.Context())
+	if !accepted {
+		return nil, nil, ErrStorageClosed
 	}
-	b.txnWG.Add(1)
-	return b.db, nil
+	return b.db, release, nil
 }
 
 // withUpdate runs fn as one atomic engine write, committed through the same
@@ -173,11 +175,11 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 	if option.lifecycle != nil && (option.lifecycle.b != b || !option.lifecycle.suppressions) {
 		return ErrInvalidData
 	}
-	db, err := b.beginHelperTxn()
+	db, release, err := b.beginHelperTxn()
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer release()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
 		var txn *badger.Txn
