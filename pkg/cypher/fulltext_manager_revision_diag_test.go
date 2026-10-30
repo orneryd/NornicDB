@@ -83,3 +83,70 @@ func nor148DiagRevision(t *testing.T, viaManager bool) {
 		settled, after.GraphMutationVersion()-before.GraphMutationVersion(), eventsAfter-eventsBefore,
 		after.SingleReaderCommitAfter(before), after.SameReaderView(before))
 }
+
+// r3: the public test's own window. Revisions are captured around the first
+// ranked query (the population) and around the one UpdateNode, with the
+// executor's maintained corpus in place, so every commit in between shows.
+func TestNOR148DiagManagerPublicWindow(t *testing.T) {
+	for _, viaManager := range []bool{false, true} {
+		name := "bare_namespaced"
+		if viaManager {
+			name = "database_manager"
+		}
+		t.Run(name, func(t *testing.T) { nor148DiagPublicWindow(t, viaManager) })
+	}
+}
+
+func nor148DiagPublicWindow(t *testing.T, viaManager bool) {
+	base := storage.NewMemoryEngine().BadgerEngine
+	t.Cleanup(func() { _ = base.Close() })
+	publisher := &fulltextManagerPublisher{BadgerEngine: base}
+	var store storage.Engine = storage.NewNamespacedEngine(publisher, "diag")
+	if viaManager {
+		manager, err := multidb.NewDatabaseManager(t.Context(), publisher, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = manager.Close() })
+		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "diagdb"}))
+		store, err = manager.GetStorage("diagdb")
+		require.NoError(t, err)
+	}
+	var events atomic.Int64
+	count := func(*storage.Node) { events.Add(1) }
+	require.NoError(t, storage.SubscribeEvents(store, storage.EventHandlers{NodeCreated: count, NodeUpdated: count}))
+	nodes := make([]*storage.Node, 16)
+	for i := range nodes {
+		id := fmt.Sprintf("n%06d", i)
+		nodes[i] = &storage.Node{ID: storage.NodeID(id), Labels: []string{"Source"}, Properties: map[string]any{"id": id, "text": "hotel services"}}
+	}
+	require.NoError(t, store.BulkCreateNodes(nodes))
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE FULLTEXT INDEX source_text FOR (n:Source) ON EACH [n.text]", nil)
+	require.NoError(t, err)
+	query := "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN node.id, score ORDER BY score DESC, node.id"
+	capture := func(label string) storage.SnapshotReadRevision {
+		view, err := storage.OpenReadSnapshot(storage.WithSnapshotReader(context.Background(), storage.SnapshotAllNodes), store)
+		require.NoError(t, err)
+		defer view.Close()
+		rev, ok := view.(storage.QueryReadSnapshot).CapturedRevision()
+		t.Logf("%s: settled=%v capturedOK=%v events=%d scans=%d revision=%+v", label, storage.EventNotificationsSettled(store), ok, events.Load(), publisher.scans.Load(), rev)
+		return rev
+	}
+	capture("before-first-query")
+	_, err = exec.Execute(ctx, query, map[string]any{"query": "hotel"})
+	require.NoError(t, err)
+	populated := capture("after-first-query")
+	time.Sleep(50 * time.Millisecond)
+	idle := capture("after-50ms-idle")
+	node, err := store.GetNode("n000008")
+	require.NoError(t, err)
+	node.Properties["text"] = "newunique hotel services"
+	require.NoError(t, store.UpdateNode(node))
+	updated := capture("after-update")
+	_, err = exec.Execute(ctx, query, map[string]any{"query": "newunique"})
+	require.NoError(t, err)
+	capture("after-second-query")
+	t.Logf("WINDOW idle_vs_populated singleReaderCommitAfter=%v sameReaderView=%v; update_vs_populated graphDelta=%d singleReaderCommitAfter=%v",
+		idle.SingleReaderCommitAfter(populated), idle.SameReaderView(populated),
+		updated.GraphMutationVersion()-populated.GraphMutationVersion(), updated.SingleReaderCommitAfter(populated))
+}
