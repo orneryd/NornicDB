@@ -2,24 +2,24 @@ package fabric
 
 import (
 	"container/list"
-	"strings"
 	"sync"
 )
 
-// PlanCache stores planned Fabric fragments keyed by normalized query + session DB.
+// PlanCache stores immutable planned Fabric fragments for the exact accepted
+// statement and admitted session database. Identity is not normalized here.
 // It uses LRU eviction and is safe for concurrent use.
 type PlanCache struct {
 	mu      sync.RWMutex
 	maxSize int
-	cache   map[string]*cachedPlan
+	cache   map[planCacheIdentity]*cachedPlan
 	lru     *list.List
-	lruMap  map[string]*list.Element
+	lruMap  map[planCacheIdentity]*list.Element
 	hits    int64
 	misses  int64
 }
 
 type cachedPlan struct {
-	key      string
+	key      planCacheIdentity
 	fragment Fragment
 }
 
@@ -30,9 +30,9 @@ func NewPlanCache(maxSize int) *PlanCache {
 	}
 	return &PlanCache{
 		maxSize: maxSize,
-		cache:   make(map[string]*cachedPlan),
+		cache:   make(map[planCacheIdentity]*cachedPlan),
 		lru:     list.New(),
-		lruMap:  make(map[string]*list.Element),
+		lruMap:  make(map[planCacheIdentity]*list.Element),
 	}
 }
 
@@ -92,9 +92,9 @@ func (pc *PlanCache) Put(query, sessionDB string, fragment Fragment) {
 func (pc *PlanCache) Clear() {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	pc.cache = make(map[string]*cachedPlan)
+	pc.cache = make(map[planCacheIdentity]*cachedPlan)
 	pc.lru.Init()
-	pc.lruMap = make(map[string]*list.Element)
+	pc.lruMap = make(map[planCacheIdentity]*list.Element)
 }
 
 // Stats returns cache hit/miss counters and current size.
@@ -104,10 +104,13 @@ func (pc *PlanCache) Stats() (hits, misses int64, size int) {
 	return pc.hits, pc.misses, len(pc.cache)
 }
 
-func planCacheKey(query, sessionDB string) string {
-	return normalizePlanQuery(sessionDB) + "|" + normalizePlanQuery(query)
+// planCacheIdentity keeps the two admitted identities separate, including any
+// separator bytes. Credentials owns database identity semantics; the planner
+// cache consumes that identity without case, whitespace or comment folding.
+type planCacheIdentity struct {
+	query, sessionDB string
 }
 
-func normalizePlanQuery(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+func planCacheKey(query, sessionDB string) planCacheIdentity {
+	return planCacheIdentity{query: query, sessionDB: sessionDB}
 }
