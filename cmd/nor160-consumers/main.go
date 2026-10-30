@@ -401,6 +401,79 @@ func (c *NOR160ControlCache) StreamStripped(visit func(*Node) error) error {
 func (c *NOR160ControlCache) StreamWhole(visit func(*Node) error) error {
 	return c.nor160StreamCopies(func(n *Node) error { return visit(n) })
 }
+
+// Populations delivered only on some paths. Must report (K1): an in-place
+// filter over a copied population (x[:0]); a fast path that returns the copied
+// population whole beside a filtering path; copies a callback writes into a
+// captured variable that one path does not return. Must not: an in-place
+// compaction that keeps every element; a reading loop before returning the
+// population whole; a callback population returned on every path.
+func (c *NOR160ControlCache) GetFilteredInPlace(skip map[NodeID]bool) []*Node {
+	all := c.nor160CopyAll()
+	out := all[:0]
+	for _, n := range all {
+		if skip[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetCompactedInPlace() []*Node {
+	all := c.nor160CopyAll()
+	out := all[:0]
+	for _, n := range all {
+		if n != nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetFastPathOrFiltered(skip map[NodeID]bool) []*Node {
+	all := c.nor160CopyAll()
+	if len(skip) == 0 {
+		return all
+	}
+	var out []*Node
+	for _, n := range all {
+		if skip[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func (c *NOR160ControlCache) GetCountedWhole(seen map[NodeID]int) []*Node {
+	all := c.nor160CopyAll()
+	for _, n := range all {
+		seen[n.ID]++
+	}
+	return all
+}
+
+func (c *NOR160ControlCache) nor160Each(visit func(*Node)) {
+	for _, n := range c.nodes {
+		visit(n)
+	}
+}
+
+func (c *NOR160ControlCache) GetCallbackFirst(small bool) []*Node {
+	var first []*Node
+	c.nor160Each(func(n *Node) { first = append(first, copyNode(n)) })
+	if small {
+		return c.nor160CopyAll()
+	}
+	return first
+}
+
+func (c *NOR160ControlCache) GetCallbackAll() []*Node {
+	var first []*Node
+	c.nor160Each(func(n *Node) { first = append(first, copyNode(n)) })
+	return first
+}
 `
 
 const cypherControlFile = `package cypher
@@ -455,6 +528,12 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetDecodedStripped", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).StreamStripped", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).StreamWhole", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFilteredInPlace", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCompactedInPlace", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetFastPathOrFiltered", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCountedWhole", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackFirst", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAll", true},
 }
 
 var tree string
@@ -939,8 +1018,15 @@ func (a *analysis) analyzeFn(fn *ssa.Function) *fnState {
 						}
 					}
 				case ssa.CallInstruction:
-					// A closure called here writes the variables it captured.
+					// A closure called here writes the variables it captured;
+					// so does one passed here as a callback, with what it is
+					// given unknown here.
 					for k, n := range a.closureWrites(fn, s, x) {
+						if m := s.mem[k].or(n); m != s.mem[k] {
+							s.mem[k], changed = m, true
+						}
+					}
+					for k, n := range a.callbackWrites(x) {
 						if m := s.mem[k].or(n); m != s.mem[k] {
 							s.mem[k], changed = m, true
 						}
@@ -1543,7 +1629,7 @@ func (a *analysis) derived(fn *ssa.Function, s *fnState, roots []ssa.Value, elem
 						add(x)
 					}
 				case *ssa.Slice:
-					if in(x.X) {
+					if in(x.X) && !emptyReslice(x) {
 						add(x)
 					}
 				case *ssa.Extract:
@@ -1735,7 +1821,11 @@ func errorReturn(ret *ssa.Return) bool {
 
 // mayDrop: a path from the root's definition reaches a function exit, or the
 // root's own block again, without delivering anything derived from it.
-func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d map[ssa.Value]bool) (dropKind, bool) {
+func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d map[ssa.Value]bool, whole ...map[ssa.Value]bool) (dropKind, bool) {
+	var population map[ssa.Value]bool
+	if len(whole) > 0 {
+		population = whole[0]
+	}
 	rootCall, _ := root.(*ssa.Call)
 	has := func(v ssa.Value) bool { return d[v] }
 	var start *ssa.BasicBlock
@@ -1796,8 +1886,16 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		return false
 	}
 	// scan: whether the instructions deliver, and whether the root has moved.
-	scan := func(instrs []ssa.Instruction, moved bool) (bool, bool) {
+	// Pending: the element came round its loop unmoved; only delivering the
+	// whole population still covers it.
+	scan := func(instrs []ssa.Instruction, moved, pending bool) (bool, bool) {
 		for _, ins := range instrs {
+			if pending {
+				if a.deliversWith(fn, ins, func(v ssa.Value) bool { return population[v] }) {
+					return true, moved
+				}
+				continue
+			}
 			if a.deliversWith(fn, ins, has) {
 				return true, moved
 			}
@@ -1808,14 +1906,15 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		return false, moved
 	}
 	type state struct {
-		b     *ssa.BasicBlock
-		moved bool
+		b       *ssa.BasicBlock
+		moved   bool
+		pending bool
 	}
 	var first []ssa.Instruction
 	if idx+1 < len(start.Instrs) {
 		first = start.Instrs[idx+1:]
 	}
-	done, moved0 := scan(first, false)
+	done, moved0 := scan(first, false, false)
 	if done {
 		return noDrop, storedRetention
 	}
@@ -1827,28 +1926,35 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 	}
 	seen := map[state]bool{}
 	var stack []state
-	push := func(b *ssa.BasicBlock, moved bool) {
-		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok && !moved {
+	push := func(b *ssa.BasicBlock, moved, pending bool) {
+		if iff, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok && !moved && !pending {
 			if br := presentBranch(iff.Cond, d, rootCall); br >= 0 {
-				stack = append(stack, state{b.Succs[br], moved})
+				stack = append(stack, state{b.Succs[br], moved, pending})
 				return
 			}
 		}
 		for _, succ := range b.Succs {
-			stack = append(stack, state{succ, moved})
+			stack = append(stack, state{succ, moved, pending})
 		}
 	}
-	push(start, moved0)
+	push(start, moved0, false)
 	result := noDrop
 	for len(stack) > 0 {
 		st := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		b := st.b
-		if b == start && root != nil {
+		if b == start && root != nil && !st.pending {
 			// The next iteration redefines the root: unless it moved into a
-			// container, this one is dropped.
-			if !st.moved && result == noDrop {
-				result = dropPlain
+			// container, this one is dropped, or for an element of a
+			// population, covered only if the population is delivered whole.
+			if !st.moved {
+				if population == nil {
+					if result == noDrop {
+						result = dropPlain
+					}
+				} else {
+					stack = append(stack, state{start, false, true})
+				}
 			}
 			continue
 		}
@@ -1856,7 +1962,7 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 			continue
 		}
 		seen[st] = true
-		done, moved := scan(b.Instrs, st.moved)
+		done, moved := scan(b.Instrs, st.moved, st.pending)
 		if done {
 			continue
 		}
@@ -1874,7 +1980,7 @@ func (a *analysis) mayDrop(fn *ssa.Function, s *fnState, root ssa.Instruction, d
 		if _, ok := last.(*ssa.Panic); ok {
 			continue
 		}
-		push(b, moved)
+		push(b, moved, st.pending)
 	}
 	return result, storedRetention
 }
@@ -1930,9 +2036,6 @@ func (a *analysis) paramDrops() map[*ssa.Function][]bool {
 			}
 			if container(p.Type()) {
 				d := a.derived(fn, s, []ssa.Value{p}, false)
-				if a.receivesAny(fn, d) {
-					continue // the population is handed on whole
-				}
 				for _, e := range a.leafElements(fn, s, d) {
 					ei, _ := e.(ssa.Instruction)
 					if ei == nil {
@@ -1942,7 +2045,7 @@ func (a *analysis) paramDrops() map[*ssa.Function][]bool {
 					if !a.receivesAny(fn, ed) {
 						continue
 					}
-					if k, _ := a.mayDrop(fn, s, ei, ed); k == dropPlain {
+					if k, _ := a.mayDrop(fn, s, ei, ed, d); k == dropPlain {
 						drops[j] = true
 					}
 				}
@@ -2239,6 +2342,60 @@ func anyTrue(xs []bool) bool {
 	return false
 }
 
+// emptyReslice: x[:0], an empty buffer over x's storage.
+func emptyReslice(x *ssa.Slice) bool {
+	c, ok := x.High.(*ssa.Const)
+	return ok && c.Value != nil && c.Value.String() == "0"
+}
+
+// callbackWrites: captured variables written by closures passed as arguments
+// to call (callbacks the callee invokes), with what the closure itself puts
+// there; what the callee hands the closure is not known here.
+func (a *analysis) callbackWrites(call ssa.CallInstruction) map[memKey]org {
+	var out map[memKey]org
+	for _, arg := range callArgs(call.Common()) {
+		mc, ok := arg.(*ssa.MakeClosure)
+		if !ok {
+			continue
+		}
+		g, _ := mc.Fn.(*ssa.Function)
+		sg := a.sums[g]
+		if sg == nil {
+			continue
+		}
+		for i, b := range mc.Bindings {
+			al, ok := b.(*ssa.Alloc)
+			if !ok || i >= len(sg.FreeStores) {
+				continue
+			}
+			o := sg.FreeStores[i]
+			o.Params, o.FuncRes = 0, 0
+			if o.empty() {
+				continue
+			}
+			if out == nil {
+				out = map[memKey]org{}
+			}
+			k := memKey{al, -1}
+			out[k] = out[k].or(o)
+		}
+	}
+	return out
+}
+
+// callbackCopyCells: the captured variables a callback passed to call fills
+// with copies it makes.
+func (a *analysis) callbackCopyCells(call ssa.CallInstruction) []ssa.Value {
+	var out []ssa.Value
+	for k, o := range a.callbackWrites(call) {
+		if o.Copy {
+			out = append(out, k.base)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Pos() < out[j].Pos() })
+	return out
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -2485,6 +2642,24 @@ func main() {
 			}
 		}
 
+		// K1: copies a callback writes into captured variables, left undelivered.
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				call, ok := ins.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				cells := a.callbackCopyCells(call)
+				if len(cells) == 0 {
+					continue
+				}
+				d := a.derived(fn, s, cells, true)
+				if k, _ := a.mayDrop(fn, s, call, d); k == dropPlain {
+					add("K1", fn, call.Pos(), "copies a callback writes into captured variables can be left undelivered")
+				}
+			}
+		}
+
 		// K1: a callback that overwrites fields, given to a function that hands it copies.
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
@@ -2564,22 +2739,14 @@ func main() {
 				// Elements of a copied population.
 				if t := v.Type(); container(t) || isTupleWithContainer(t) {
 					d := a.derived(fn, s, []ssa.Value{v}, false)
-					delivered := false
-					for _, bb := range fn.Blocks {
-						for _, ii := range bb.Instrs {
-							if a.deliversWith(fn, ii, func(x ssa.Value) bool { return d[x] }) {
-								delivered = true
-							}
-						}
-					}
 					for _, e := range a.leafElements(fn, s, d) {
 						ei, _ := e.(ssa.Instruction)
 						if ei == nil {
 							continue
 						}
-						if !delivered {
-							ed := a.derived(fn, s, []ssa.Value{e}, true)
-							if k, _ := a.mayDrop(fn, s, ei, ed); k == dropPlain {
+						ed := a.derived(fn, s, []ssa.Value{e}, true)
+						if a.receivesAny(fn, ed) {
+							if k, _ := a.mayDrop(fn, s, ei, ed, d); k == dropPlain {
 								add("K1", fn, ei.Pos(), "element of copied population "+copyLabel(v)+" is selected out after the copy")
 							}
 						}
