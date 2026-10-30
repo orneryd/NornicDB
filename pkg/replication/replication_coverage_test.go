@@ -129,6 +129,7 @@ func (m *coverageReplicator) LeaderAddr() string                         { retur
 func (m *coverageReplicator) LeaderID() string                           { return "leader" }
 func (m *coverageReplicator) Health() *HealthStatus                      { return &HealthStatus{} }
 func (m *coverageReplicator) WaitForLeader(context.Context) error        { return nil }
+func (m *coverageReplicator) LifetimeContext() context.Context           { return context.Background() }
 func (m *coverageReplicator) Shutdown() error                            { return nil }
 func (m *coverageReplicator) Mode() ReplicationMode                      { return ModeStandalone }
 func (m *coverageReplicator) NodeID() string                             { return m.nodeID }
@@ -991,7 +992,7 @@ func TestHAStandbyReplicator_Start_DefaultTransportInitFailure(t *testing.T) {
 
 	err = r.Start(context.Background())
 	require.ErrorContains(t, err, "init transport")
-	assert.True(t, r.started.Load())
+	assert.False(t, r.started.Load(), "failed native construction must not publish readiness")
 }
 
 func TestHAStandbyReplicator_Start_DefaultTransportSuccessPaths(t *testing.T) {
