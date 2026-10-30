@@ -70,6 +70,11 @@ func TestVectorWorkRequestRootsCypher(t *testing.T) {
 		{"MATCH (n:Bulk) DELETE n", nil},
 		{"MATCH (n:Doc {name: 'c'}) DETACH DELETE n", nil},
 		{"MATCH (n:Doc {name: 'b'}) CALL kp.suppress(n)", nil},
+		{"MATCH (:Doc {name: 'a'})-[r:R]->() CALL kp.suppress(r)", nil},
+		{"CREATE (:Pipe {i: 1})-[:PR]->(:Pipe {i: 2})", nil},
+		{"MATCH ()-[r:PR]->() WITH r DELETE r", nil},
+		{"MATCH (n:Pipe) WITH n DELETE n", nil},
+		{"CREATE CONSTRAINT census_req FOR ()-[r:REQ]-() REQUIRE r.p IS NOT NULL", nil},
 		{"CREATE PROCEDURE census.one() MODE READ AS RETURN 1 AS n", nil},
 		{"DROP PROCEDURE census.one", nil},
 		{"CALL apoc.import.json($file) YIELD source, nodes, relationships", map[string]interface{}{"file": importFile}},
@@ -77,11 +82,21 @@ func TestVectorWorkRequestRootsCypher(t *testing.T) {
 		{"CREATE (:InTx {v: 1})", nil},
 		{"COMMIT", nil},
 	}
+	// A relationship the constraint rejects makes CREATE remove the nodes it
+	// already wrote; that cleanup is a write path too.
+	rejected := []string{"CREATE (:ReqEnd)-[:REQ]->(:ReqEnd)"}
 	requireNoFallbackAdmission(t, "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).Execute", func(t *testing.T) {
 		for _, statement := range statements {
 			_, err := exec.Execute(ctx, statement.query, statement.params)
 			require.NoError(t, err, statement.query)
 		}
+		for _, query := range rejected {
+			_, err := exec.Execute(ctx, query, nil)
+			require.Error(t, err, query)
+		}
+		count, err := exec.Execute(ctx, "MATCH (n:ReqEnd) RETURN count(n) AS c", nil)
+		require.NoError(t, err)
+		require.EqualValues(t, 0, count.Rows[0][0])
 	})
 	requireNoFallbackAdmission(t, "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).FunctionStorage", func(t *testing.T) {
 		_, err := exec.FunctionStorage("")
