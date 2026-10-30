@@ -402,7 +402,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 
 	// Update the node
 	node.Properties["age"] = 30
-	err = storageEngine.UpdateNode(node)
+	err = storageEngine.UpdateNode(storage.NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	// Verify subscription received the event

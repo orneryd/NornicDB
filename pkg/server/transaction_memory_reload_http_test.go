@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/require"
 )
@@ -16,10 +17,12 @@ func TestHTTPTransactionMemoryPoolReloadPreservesRunningStatement(t *testing.T) 
 	cypher.ConfigureTransactionMemory(64<<20, cypher.TransactionMemoryLimits{DatabaseTotalMax: 64 << 20})
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var once, release sync.Once
+	barrier, err := registry.Compile(func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 })
+	require.NoError(t, err)
 	previous := cypher.PluginFunctionLookup
-	cypher.PluginFunctionLookup = func(name string) (any, bool) {
+	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {
 		if name == "test.poolReloadBarrier" {
-			return func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 }, true
+			return barrier, true
 		}
 		if previous != nil {
 			return previous(name)

@@ -111,7 +111,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			require.Equal(t, chunks, full.ChunkEmbeddings)
 
 			node.Properties["other"] = int64(1)
-			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 
 			stored, err := b.GetNode(id)
@@ -135,7 +135,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			node, err = tx.GetQueryNode(id)
 			require.NoError(t, err)
 			node.Properties["title"] = "new text"
-			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			stored, err = b.GetNode(id)
 			require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		node, err := read(tx)
 		require.NoError(t, err)
 		node.Properties["seen"] = true
-		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		out.keysAfterUpdate = countQueryReadEmbeddingKeys(t, b, id)
 		b.invalidateCachesAfterRestore()
@@ -300,8 +300,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		chunks := lazyEmbeddingCases()[0].create(t, b, id)
 		full, err := b.GetNode(id) // fills the node cache
 		require.NoError(t, err)
-		node, err := b.GetQueryNode(id)
-		require.NoError(t, err)
+		node := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, chunks, node.ChunkEmbeddings, "a cached node's vectors are shared")
 		require.Equal(t, stripVectors(full), stripVectors(node))
 	})
@@ -311,8 +310,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		full, err := b.GetNode(id)
 		require.NoError(t, err)
-		node, err := b.GetQueryNode(id)
-		require.NoError(t, err)
+		node := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, stripVectors(full), stripVectors(node))
 		require.True(t, node.HasChunkEmbeddings())
 
@@ -343,8 +341,7 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 
 			for read := 0; read < 2; read++ {
 				hits := atomic.LoadInt64(&b.cacheHits)
-				node, err := b.GetQueryNode(id)
-				require.NoError(t, err)
+				node := mustReadNode(t, b.GetQueryNode, id)
 				require.Equal(t, int64(read), atomic.LoadInt64(&b.cacheHits)-hits, "the second read is a cache hit")
 				require.Empty(t, node.ChunkEmbeddings)
 				require.True(t, node.HasChunkEmbeddings())
@@ -357,24 +354,20 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 			require.Equal(t, "t", full.Properties["title"])
 
 			b.invalidateCachesAfterRestore()
-			_, err = b.GetQueryNode(id)
-			require.NoError(t, err)
+			mustReadNode(t, b.GetQueryNode, id)
 			updated := CopyNode(full)
 			updated.Properties["other"] = int64(2)
-			require.NoError(t, b.UpdateNode(updated))
-			node, err := b.GetQueryNode(id)
-			require.NoError(t, err)
+			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: updated}))
+			node := mustReadNode(t, b.GetQueryNode, id)
 			require.Equal(t, int64(2), node.Properties["other"])
 
 			// The writeback reads the node in full; build it first so the
 			// query-node entry is in place when the sidecar is written.
 			writeback := embeddingWriteback(t, b, id, [][]float32{{1, 2}, {3, 4}, {5, 6}}, map[string]any{"has_embedding": true, "chunk_count": 3}, time.Time{})
 			b.invalidateCachesAfterRestore()
-			_, err = b.GetQueryNode(id)
-			require.NoError(t, err)
+			mustReadNode(t, b.GetQueryNode, id)
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(writeback))
-			node, err = b.GetQueryNode(id)
-			require.NoError(t, err)
+			node = mustReadNode(t, b.GetQueryNode, id)
 			require.Equal(t, 3, chunkCountFromMeta(node.EmbedMeta), "a sidecar write is seen")
 
 			require.NoError(t, b.DeleteNode(id))
@@ -420,9 +413,8 @@ func TestEngineGetQueryNodeCacheConcurrentWrites(t *testing.T) {
 		node, err := b.GetNode(id)
 		require.NoError(t, err)
 		node.Properties["v"] = v
-		require.NoError(t, b.UpdateNode(node))
-		got, err := b.GetQueryNode(id)
-		require.NoError(t, err)
+		require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
+		got := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, v, got.Properties["v"])
 	}
 	close(stop)

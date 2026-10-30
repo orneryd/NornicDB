@@ -47,7 +47,7 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 		tx, err := engine.BeginTransaction()
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		if flushFirst {
 			require.NoError(t, engine.FlushWriteBehind())
@@ -81,12 +81,12 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	buffered, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, buffered.SetImplicit(true))
-	require.NoError(t, buffered.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
+	require.NoError(t, buffered.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, buffered.Commit())
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, engine.Close())
 
@@ -130,27 +130,29 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
-	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "acknowledged"}}))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "acknowledged"}}}))
 	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	writes := map[string]func() error{
 		"create node": func() error { _, err := engine.CreateNode(&Node{ID: "test:b"}); return err },
-		"update node": func() error { return engine.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": "direct"}}) },
+		"update node": func() error {
+			return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "direct"}}})
+		},
 		"delete node": func() error { return engine.DeleteNode("test:a") },
 		"create edge": func() error {
 			return engine.CreateEdge(&Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:a", Type: "LINK"})
 		},
 		"update edge": func() error {
-			return engine.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
+			return engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}})
 		},
 		"delete edge": func() error { return engine.DeleteEdge("test:r") },
 		"suppression": func() error { _, err := engine.EnqueueDeindexIfSuppressed("test:a", false); return err },
 		"explicit tx commit": func() error {
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
-			if err := tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, ClientNodeEdits); err != nil {
+			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, Policy: ClientNodeEdits}); err != nil {
 				_ = tx.Rollback()
 				return err
 			}

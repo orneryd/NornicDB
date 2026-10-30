@@ -55,7 +55,7 @@ func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 
 	updated := copyNode(tx.snapshotLabelNodeByID["test:n1"])
 	updated.Properties["x"] = int64(1)
-	require.NoError(t, tx.UpdateGraphNode(updated, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: updated, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.DeleteGraphNode("test:n0", CascadeEdges))
 	require.NoError(t, tx.Commit())
 

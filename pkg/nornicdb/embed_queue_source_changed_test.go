@@ -73,7 +73,7 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 				if route == "UpdateNode with a new UpdatedAt" {
 					node.UpdatedAt = node.UpdatedAt.Add(time.Second)
 				}
-				require.NoError(t, engine.UpdateNode(node))
+				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			}
 			worker := NewEmbedWorker(embedder, engine, &EmbedWorkerConfig{NumWorkers: 1, ScanInterval: 50 * time.Millisecond, BatchDelay: time.Millisecond, MaxRetries: 1, ChunkSize: 512, ChunkOverlap: 50})
 			defer worker.Close()

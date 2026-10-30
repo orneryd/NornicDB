@@ -145,7 +145,7 @@ func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
 			case "deleted":
 				require.NoError(t, authenticator.DeleteUser("bob"))
 			case "disabled":
-				require.NoError(t, authenticator.DisableUser("bob"))
+				require.NoError(t, authenticator.ChangeUserState("bob", auth.UserDisable))
 			case "deleted and recreated":
 				require.NoError(t, authenticator.DeleteUser("bob"))
 				_, err = authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})

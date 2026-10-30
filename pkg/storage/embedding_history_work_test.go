@@ -60,11 +60,11 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 					payload.EmbedMeta = map[string]any{"chunk_count": 1}
 					require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
 				case "update":
-					require.NoError(t, engine.UpdateNode(current))
+					require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: current}))
 				case "transaction":
 					tx, err := engine.BeginTransaction()
 					require.NoError(t, err)
-					require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 					require.NoError(t, tx.Commit())
 				case "delete":
 					require.NoError(t, engine.DeleteNode(body.ID))

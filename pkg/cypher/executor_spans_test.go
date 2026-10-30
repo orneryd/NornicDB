@@ -5,124 +5,91 @@ import (
 	"sync"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-func spanSetup(t *testing.T) (*tracetest.InMemoryExporter, func()) {
+// spanRecorder runs one statement under a fresh tracer provider and returns
+// the recorded spans. Each test keeps its own assertions on the span it names;
+// this owns only the provider lifecycle the named span tests share.
+func spanRecorder(t *testing.T, query string) []tracetest.SpanStub {
 	t.Helper()
-	exp := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithSyncer(exp),
-	)
-	prevTP := otel.GetTracerProvider()
-	prevProp := otel.GetTextMapPropagator()
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-	return exp, func() {
-		_ = tp.Shutdown(context.Background())
-		otel.SetTracerProvider(prevTP)
-		otel.SetTextMapPropagator(prevProp)
+	exp, _ := fixtureowner.RecordSpans(t)
+
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	_, _ = exec.Execute(context.Background(), query, nil)
+	return exp.GetSpans()
+}
+
+// recordedSpan finds the span named name, reporting whether it was emitted.
+func recordedSpan(spans []tracetest.SpanStub, name string) (tracetest.SpanStub, bool) {
+	for _, s := range spans {
+		if s.Name == name {
+			return s, true
+		}
 	}
+	return tracetest.SpanStub{}, false
 }
 
 func TestExecuteSpan_ReadQuery(t *testing.T) {
-	exp, teardown := spanSetup(t)
-	defer teardown()
+	spans := spanRecorder(t, "RETURN 1 AS x")
 
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	_, _ = exec.Execute(context.Background(), "RETURN 1 AS x", nil)
-
-	spans := exp.GetSpans()
-	var found bool
-	for _, s := range spans {
-		if s.Name == "nornicdb.cypher.execute" {
-			found = true
-			attrs := spanAttrs(s)
-			assert.Contains(t, attrs, "cypher.query")
-			assert.Equal(t, "internal", s.SpanKind.String())
-			assert.Equal(t, "read", attrs["cypher.op_type"])
-			break
-		}
+	s, found := recordedSpan(spans, "nornicdb.cypher.execute")
+	if found {
+		attrs := fixtureowner.SpanAttrs(s.Attributes)
+		assert.Contains(t, attrs, "cypher.query")
+		assert.Equal(t, "internal", s.SpanKind.String())
+		assert.Equal(t, "read", attrs["cypher.op_type"])
 	}
 	assert.True(t, found, "TRC-15: nornicdb.cypher.execute span must be emitted")
 }
 
 func TestExecuteSpan_PlanSpanEmitted(t *testing.T) {
-	exp, teardown := spanSetup(t)
-	defer teardown()
+	spans := spanRecorder(t, "MATCH (n) RETURN n")
 
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	_, _ = exec.Execute(context.Background(), "MATCH (n) RETURN n", nil)
-
-	spans := exp.GetSpans()
-	var found bool
-	for _, s := range spans {
-		if s.Name == "nornicdb.cypher.plan" {
-			found = true
-			attrs := spanAttrs(s)
-			assert.Contains(t, attrs, "cypher.op_type")
-			assert.Equal(t, "internal", s.SpanKind.String())
-			break
-		}
+	s, found := recordedSpan(spans, "nornicdb.cypher.plan")
+	if found {
+		attrs := fixtureowner.SpanAttrs(s.Attributes)
+		assert.Contains(t, attrs, "cypher.op_type")
+		assert.Equal(t, "internal", s.SpanKind.String())
 	}
 	assert.True(t, found, "TRC-15: nornicdb.cypher.plan span must be emitted")
 }
 
 func TestExecuteSpan_ParseError(t *testing.T) {
-	exp, teardown := spanSetup(t)
-	defer teardown()
+	exp, _ := fixtureowner.RecordSpans(t)
 
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, err := exec.Execute(context.Background(), "INVALID GARBAGE QUERY ???", nil)
 	require.Error(t, err)
 
 	spans := exp.GetSpans()
-	var found bool
-	for _, s := range spans {
-		if s.Name == "nornicdb.cypher.execute" {
-			found = true
-			attrs := spanAttrs(s)
-			assert.Equal(t, "parse_error", attrs["cypher.op_type"])
-			assert.Equal(t, "Error", s.Status.Code.String())
-			break
-		}
+	s, found := recordedSpan(spans, "nornicdb.cypher.execute")
+	if found {
+		attrs := fixtureowner.SpanAttrs(s.Attributes)
+		assert.Equal(t, "parse_error", attrs["cypher.op_type"])
+		assert.Equal(t, "Error", s.Status.Code.String())
 	}
 	assert.True(t, found, "TRC-15: parse errors must mark span as Error")
 }
 
 func TestExecuteSpan_WriteQuery(t *testing.T) {
-	exp, teardown := spanSetup(t)
-	defer teardown()
+	spans := spanRecorder(t, "CREATE (n:Person {name: 'Alice'})")
 
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	_, _ = exec.Execute(context.Background(), "CREATE (n:Person {name: 'Alice'})", nil)
-
-	spans := exp.GetSpans()
-	var found bool
-	for _, s := range spans {
-		if s.Name == "nornicdb.cypher.execute" {
-			found = true
-			attrs := spanAttrs(s)
-			assert.Equal(t, "write", attrs["cypher.op_type"])
-			break
-		}
+	s, found := recordedSpan(spans, "nornicdb.cypher.execute")
+	if found {
+		attrs := fixtureowner.SpanAttrs(s.Attributes)
+		assert.Equal(t, "write", attrs["cypher.op_type"])
 	}
 	assert.True(t, found, "TRC-15: write queries must have op_type=write")
 }
 
 func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
-	exp, teardown := spanSetup(t)
-	defer teardown()
+	exp, _ := fixtureowner.RecordSpans(t)
 
 	inner := newTestMemoryEngine(t)
 	traced := storage.NewTracedEngine(inner)
@@ -134,7 +101,7 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 	for _, s := range spans {
 		if len(s.Name) > 16 && s.Name[:16] == "nornicdb.storage" {
 			storageSpan = true
-			attrs := spanAttrs(s)
+			attrs := fixtureowner.SpanAttrs(s.Attributes)
 			assert.Contains(t, attrs, "kind", "TRC-17: storage spans must have kind attribute")
 			break
 		}
@@ -143,8 +110,7 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 }
 
 func TestExecuteSpanConcurrentOptions(t *testing.T) {
-	exporter, teardown := spanSetup(t)
-	defer teardown()
+	exporter, _ := fixtureowner.RecordSpans(t)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	_, unrelated := otel.Tracer("background").Start(context.Background(), "unrelated")
 	unrelated.End()
@@ -190,19 +156,11 @@ func TestExecuteSpanConcurrentOptions(t *testing.T) {
 	for _, span := range spans {
 		assert.Equal(t, "internal", span.SpanKind.String())
 		if span.Name == "nornicdb.cypher.execute" {
-			assert.Equal(t, "RETURN <REDACTED>", spanAttrs(span)["cypher.query"])
-			assert.Equal(t, "read", spanAttrs(span)["cypher.op_type"])
+			assert.Equal(t, "RETURN <REDACTED>", fixtureowner.SpanAttrs(span.Attributes)["cypher.query"])
+			assert.Equal(t, "read", fixtureowner.SpanAttrs(span.Attributes)["cypher.op_type"])
 		}
 		if span.Name == "nornicdb.cypher.exec.RETURN" {
-			assert.Equal(t, "1", spanAttrs(span)["rows"])
+			assert.Equal(t, "1", fixtureowner.SpanAttrs(span.Attributes)["rows"])
 		}
 	}
-}
-
-func spanAttrs(s tracetest.SpanStub) map[string]string {
-	m := make(map[string]string, len(s.Attributes))
-	for _, a := range s.Attributes {
-		m[string(a.Key)] = a.Value.Emit()
-	}
-	return m
 }

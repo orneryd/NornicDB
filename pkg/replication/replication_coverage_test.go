@@ -205,16 +205,16 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 
 	_, err := engine.CreateNode(nil)
 	require.ErrorContains(t, err, "nil node")
-	require.ErrorContains(t, engine.UpdateNode(nil), "nil node")
+	require.ErrorContains(t, engine.UpdateNode(storage.NodeUpdateRequest{After: nil}), "nil node")
 	require.ErrorContains(t, engine.CreateEdge(nil), "nil edge")
-	require.ErrorContains(t, engine.UpdateEdge(nil), "nil edge")
+	require.ErrorContains(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: nil}), "nil edge")
 
 	createdID, err := engine.CreateNode(&storage.Node{ID: storage.NodeID("created-1"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	assert.Equal(t, storage.NodeID("created-1"), createdID)
 
 	node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}}
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	require.NoError(t, engine.DeleteNode("n1"))
 	require.Len(t, mock.applied, 3)
 	assert.Equal(t, CmdCreateNode, mock.applied[0].Type)
@@ -224,7 +224,7 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 
 	edge := &storage.Edge{ID: storage.EdgeID("e1"), StartNode: "n1", EndNode: "n2", Type: "KNOWS"}
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.UpdateEdge(edge))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 	require.NoError(t, engine.DeleteEdge("e1"))
 	require.Len(t, mock.applied, 6)
 	assert.Equal(t, CmdCreateEdge, mock.applied[3].Type)

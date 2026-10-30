@@ -64,7 +64,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	for key, value := range big {
 		v2Props[key] = value
 	}
-	require.NoError(t, eng.UpdateNode(&Node{ID: id, Labels: []string{"L", "M"}, Properties: v2Props}))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L", "M"}, Properties: v2Props}}))
 	v2 := nodeHeadVersion(t, eng, id)
 
 	tx, err := eng.BeginTransaction()
@@ -73,7 +73,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	node, err := tx.GetNode(id)
 	require.NoError(t, err)
 	node.Properties = map[string]any{"a": int64(3)}
-	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	v3 := nodeHeadVersion(t, eng, id)
 
@@ -127,7 +127,7 @@ func TestUndoHistoryRebuildsEdgeVersions(t *testing.T) {
 	id := EdgeID("test:e")
 	require.NoError(t, eng.CreateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Confidence: 0.5, Properties: map[string]any{"w": int64(1), "keep": "k"}}))
 	v1 := edgeHeadVersion(t, eng, id)
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Confidence: 0.75, Properties: map[string]any{"w": int64(2), "keep": "k", "extra": true}}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Confidence: 0.75, Properties: map[string]any{"w": int64(2), "keep": "k", "extra": true}}}))
 	v2 := edgeHeadVersion(t, eng, id)
 
 	tx, err := eng.BeginTransaction()
@@ -136,7 +136,7 @@ func TestUndoHistoryRebuildsEdgeVersions(t *testing.T) {
 	edge, err := tx.GetEdge(id)
 	require.NoError(t, err)
 	edge.Properties = map[string]any{"w": int64(3)}
-	require.NoError(t, tx.UpdateEdge(edge))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 	require.NoError(t, tx.Commit())
 
 	require.True(t, isMVCCUndoRecord(rawVersionRecord(t, eng, eng.mvccEdgeVersionKeyStringLookup(id, v1))))
@@ -175,12 +175,12 @@ func TestUndoHistoryUsesTheCommitsFinalState(t *testing.T) {
 		node, err := tx.GetNode("test:twice")
 		require.NoError(t, err)
 		node.Properties = map[string]any{"v": value}
-		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	}
 	gone, err := tx.GetNode("test:gone")
 	require.NoError(t, err)
 	gone.Properties = map[string]any{"v": int64(2)}
-	require.NoError(t, tx.UpdateGraphNode(gone, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: gone, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.DeleteGraphNode("test:gone", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
@@ -199,7 +199,7 @@ func TestUndoHistorySnapshotReader(t *testing.T) {
 	eng := createMVCCBadgerEngine(t)
 	_, err := eng.CreateNode(&Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, eng.UpdateNode(&Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}}))
 
 	reader, err := eng.BeginTransaction()
 	require.NoError(t, err)
@@ -210,7 +210,7 @@ func TestUndoHistorySnapshotReader(t *testing.T) {
 	require.Equal(t, int64(2), seen.Properties["v"])
 
 	for _, value := range []int64{3, 4} {
-		require.NoError(t, eng.UpdateNode(&Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": value}}))
+		require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": value}}}))
 	}
 	reader.snapshotPrefixNodeByID = nil
 	seen, err = reader.GetNode("test:s")
@@ -228,9 +228,9 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	v1 := nodeHeadVersion(t, eng, id)
-	require.NoError(t, eng.UpdateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}}))
 	v2 := nodeHeadVersion(t, eng, id)
-	require.NoError(t, eng.UpdateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(3)}}))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(3)}}}))
 
 	// Pruning to one historical version drops v1 and keeps v2 readable.
 	_, err = eng.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
@@ -285,7 +285,7 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = reader.Rollback() }()
 	require.NoError(t, reader.SetNamespace("test"))
-	require.NoError(t, plain.UpdateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, plain.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}}))
 	require.False(t, isMVCCUndoRecord(rawVersionRecord(t, plain, plain.mvccNodeVersionKeyStringLookup(id, before))))
 }
 
@@ -300,9 +300,9 @@ func TestUndoHistoryEdgeChains(t *testing.T) {
 	id := EdgeID("test:e")
 	require.NoError(t, eng.CreateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(1)}}))
 	v1 := edgeHeadVersion(t, eng, id)
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(2)}}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
 	v2 := edgeHeadVersion(t, eng, id)
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(3)}}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(3)}}}))
 
 	require.NoError(t, eng.withView(func(txn *badger.Txn) error {
 		record, at, err := eng.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, v1)
@@ -365,8 +365,8 @@ func TestUndoHistoryErrorPaths(t *testing.T) {
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(1)}}))
 	v1 := nodeHeadVersion(t, eng, "test:a")
 	e1 := edgeHeadVersion(t, eng, "test:e")
-	require.NoError(t, eng.UpdateNode(&Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}))
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(2)}}))
+	require.NoError(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
 	v2 := nodeHeadVersion(t, eng, "test:a")
 	e2 := edgeHeadVersion(t, eng, "test:e")
 
@@ -421,7 +421,7 @@ func TestUndoHistoryErrorPaths(t *testing.T) {
 
 	// An engine update whose archive can't read the version header fails.
 	set(eng.mvccNodeHeadKeyStringLookup("test:b"), []byte{0xff})
-	require.Error(t, eng.UpdateNode(&Node{ID: "test:b", Labels: []string{"N"}, Properties: map[string]any{"v": int64(3)}}))
+	require.Error(t, eng.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:b", Labels: []string{"N"}, Properties: map[string]any{"v": int64(3)}}}))
 	set(eng.mvccEdgeHeadKeyStringLookup("test:e"), []byte{0xff})
-	require.Error(t, eng.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(3)}}))
+	require.Error(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(3)}}}))
 }

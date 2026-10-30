@@ -37,7 +37,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 
 	// A peer retypes e1 after the snapshot.
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K2", Properties: w}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K2", Properties: w}}))
 
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e5", StartNode: "test:a", EndNode: "test:b", Type: "L"}))
 	require.NoError(t, tx.DeleteEdge("test:e2"))
@@ -83,7 +83,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	tx.snapshotOutgoingAdjacency.clear()
 	readTS := tx.readTS
 	tx.readTS = e4Head.Version
-	require.NoError(t, eng.UpdateEdge(&Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: map[string]any{"w": int64(2)}}))
+	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
 	tx2, err := eng.BeginTransaction()
 	require.NoError(t, err)
 	defer func() { _ = tx2.Rollback() }()

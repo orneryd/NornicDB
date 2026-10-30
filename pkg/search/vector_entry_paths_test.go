@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
 
@@ -60,7 +61,7 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 // forEachNodeVectorEntry stops as soon as its callback does, in every entry
 // kind, and visits entries in kind order.
 func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	for name, node := range map[string]*storage.Node{
 		"named":    {ID: "n", NamedEmbeddings: map[string][]float32{"a": {1, 0}, "b": {0, 1}}},

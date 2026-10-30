@@ -73,7 +73,7 @@ func TestEdgeTypeCounts_UpdateTypeChange(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(edge))
 
 	updated := testEdge("e1", "a", "b", "NEW")
-	require.NoError(t, engine.UpdateEdge(updated))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: updated}))
 
 	count, err := engine.EdgeCountByType("OLD")
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestEdgeTypeCounts_PositionalStartAndEndLabels(t *testing.T) {
 
 	// Relabel t1 from Target to Sink: both remaining FLOWS edges end at t1,
 	// so the end tier moves entirely to Sink.
-	require.NoError(t, engine.UpdateNode(&Node{ID: NodeID(prefixTestID("t1")), Labels: []string{"Sink"}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: NodeID(prefixTestID("t1")), Labels: []string{"Sink"}}}))
 	endCount, err = engine.EdgeCountByEndLabel("Target", "FLOWS")
 	require.NoError(t, err)
 	require.Equal(t, int64(0), endCount)

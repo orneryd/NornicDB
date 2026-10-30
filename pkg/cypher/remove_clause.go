@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -64,6 +64,9 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 // relationship is a TypeError (labelTargetTypeError). A removed property
 // counts in properties_set when the entity had it, a removed label in
 // labels_removed.
+//
+// Each row retains an immutable record header and rollback copies of the
+// properties and labels it can change. Embedding arrays are shared.
 func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
 	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
 	if err != nil {
@@ -87,6 +90,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		if dynamic {
 			rowCtx, nodes, rels = e.pipelineRowWriteContext(ctx, row)
 		}
+		removals := removeObservations{}
 		touched = touched[:0]
 		for _, item := range items {
 			propertiesBefore, labelsBefore := result.Stats.PropertiesSet, result.Stats.LabelsRemoved
@@ -95,11 +99,14 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if entity == nil {
 					continue
 				}
-				if err := e.removeFromNode(rowCtx, store, entity, item, nodes, rels, result.Stats); err != nil {
+				node, state := removals.mutableNode(row, item.variable, entity)
+				if err := e.removeFromNode(rowCtx, store, node, item, nodes, rels, result.Stats); err != nil {
+					restoreSetEntities(removals.states)
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
-					touched = appendTouchedEntity(touched, entity)
+					state.written += result.Stats.PropertiesSet - propertiesBefore
+					touched = appendTouchedEntity(touched, node)
 				}
 			case *storage.Edge:
 				if entity == nil {
@@ -108,23 +115,30 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if len(item.labels) > 0 {
 					return labelTargetTypeError("Relationship")
 				}
-				if err := e.removeProperty(rowCtx, entity.Properties, item, nodes, rels, result.Stats); err != nil {
+				relationship, state := removals.mutableEdge(row, item.variable, entity)
+				if err := e.removeProperty(rowCtx, relationship.Properties, item, nodes, rels, result.Stats); err != nil {
+					restoreSetEntities(removals.states)
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore {
-					touched = appendTouchedEntity(touched, entity)
+					state.written += result.Stats.PropertiesSet - propertiesBefore
+					touched = appendTouchedEntity(touched, relationship)
 				}
 			}
 		}
 		for _, entity := range touched {
 			switch typed := entity.(type) {
 			case *storage.Node:
-				if err := updateMutatedNode(store, typed); err != nil {
+				state := removals.stateOfNode(typed)
+				if err := mutateNodeWithObservation(store, state.before, typed); err != nil {
+					restoreSetEntities(removals.states)
 					return err
 				}
 				e.notifyNodeMutated(string(typed.ID))
 			case *storage.Edge:
-				if err := updateMutatedEdge(store, typed); err != nil {
+				state := removals.stateOfEdge(typed)
+				if err := mutateEdgeWithObservation(store, state.beforeEdge, typed); err != nil {
+					restoreSetEntities(removals.states)
 					return err
 				}
 				e.notifyEdgeMutated(string(typed.ID))
@@ -132,6 +146,64 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		}
 	}
 	return nil
+}
+
+// removeObservations retains one pre-clause image per row entity. Its property
+// map and labels are also the failure rollback fields.
+type removeObservations struct {
+	states []setEntityState
+}
+
+// mutableNode captures the row's existing entity once before REMOVE changes
+// it. Rollback fields also form the immutable observation; embeddings are shared.
+func (removals *removeObservations) mutableNode(row pipelineRow, variable string, entity *storage.Node) (*storage.Node, *setEntityState) {
+	for index := range removals.states {
+		if state := &removals.states[index]; state.node == entity {
+			return entity, state
+		}
+	}
+	before := observeNode(entity)
+	before.Properties = cloneStringAnyMap(entity.Properties)
+	before.Labels = append([]string(nil), entity.Labels...)
+	removals.states = append(removals.states, setEntityState{
+		variable: variable, node: entity, properties: before.Properties,
+		labels: before.Labels, before: before,
+	})
+	return entity, &removals.states[len(removals.states)-1]
+}
+
+// mutableEdge captures only the relationship properties REMOVE can change.
+func (removals *removeObservations) mutableEdge(row pipelineRow, variable string, entity *storage.Edge) (*storage.Edge, *setEntityState) {
+	for index := range removals.states {
+		if state := &removals.states[index]; state.relationship == entity {
+			return entity, state
+		}
+	}
+	before := observeEdge(entity)
+	before.Properties = cloneStringAnyMap(entity.Properties)
+	removals.states = append(removals.states, setEntityState{
+		variable: variable, relationship: entity, properties: before.Properties,
+		beforeEdge: before,
+	})
+	return entity, &removals.states[len(removals.states)-1]
+}
+
+func (removals *removeObservations) stateOfNode(node *storage.Node) *setEntityState {
+	for index := range removals.states {
+		if state := &removals.states[index]; state.node == node {
+			return state
+		}
+	}
+	return &setEntityState{node: node}
+}
+
+func (removals *removeObservations) stateOfEdge(edge *storage.Edge) *setEntityState {
+	for index := range removals.states {
+		if state := &removals.states[index]; state.relationship == edge {
+			return state
+		}
+	}
+	return &setEntityState{relationship: edge}
 }
 
 // appendTouchedEntity appends entity to touched unless it is there already.

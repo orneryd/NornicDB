@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -75,8 +76,9 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 
 	if existingNode != nil {
 		// Update existing consent
+		before := *existingNode
 		existingNode.Properties = props
-		return db.storage.UpdateNode(existingNode)
+		return db.storage.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: existingNode})
 	}
 
 	// Create new consent node
@@ -164,11 +166,13 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 	}
 
 	// Update existing consent to revoked
+	before := *node
+	before.Properties = maps.Clone(node.Properties)
 	node.Properties["given"] = false
 	node.Properties["timestamp"] = time.Now().Format(time.RFC3339)
 	node.Properties["source"] = "revocation"
 
-	return db.storage.UpdateNode(node)
+	return db.storage.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // GetUserConsents returns all consent records for a user.

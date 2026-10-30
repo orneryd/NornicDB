@@ -50,7 +50,7 @@ func (f *cgFixture) node(id string, topic int, text string) *storage.Node {
 // write stores and indexes node (create or update), as a live mutation.
 func (f *cgFixture) write(node *storage.Node) error {
 	if _, err := f.engine.CreateNode(node); err != nil {
-		if err := f.engine.UpdateNode(node); err != nil {
+		if err := f.engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
 			return err
 		}
 	}
@@ -477,7 +477,7 @@ func TestClusterGenerationConcurrentProperty(t *testing.T) {
 				default:
 					if node, err := f.engine.GetNode(storage.NodeID(fmt.Sprintf("n-%04d", 1+rng.Intn(60)))); err == nil {
 						node.Properties["text"] = fmt.Sprintf("retext %d", rng.Intn(5))
-						_ = f.engine.UpdateNode(node)
+						_ = f.engine.UpdateNode(storage.NodeUpdateRequest{After: node})
 						_ = f.svc.IndexNode(node)
 					}
 				}

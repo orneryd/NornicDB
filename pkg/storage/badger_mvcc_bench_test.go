@@ -64,7 +64,7 @@ func seedConcurrentPruneBenchEngine(b *testing.B, nodeCount, initialVersions int
 			b.Fatal(err)
 		}
 		for version := 2; version <= initialVersions; version++ {
-			if err := engine.UpdateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": version, "node": i}}); err != nil {
+			if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": version, "node": i}}}); err != nil {
 				_ = engine.Close()
 				b.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func()
 					return
 				}
 				id := NodeID(prefixTestID(fmt.Sprintf("bench-prune-concurrent-%03d", i)))
-				err := engine.UpdateNode(&Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": counter + 1000, "writer": i}})
+				err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Bench"}, Properties: map[string]any{"version": counter + 1000, "writer": i}}})
 				if err != nil {
 					if err == ErrStorageClosed {
 						return
@@ -118,6 +118,17 @@ func startConcurrentPruneBenchWriter(engine *MemoryEngine, nodeCount int) func()
 	}
 }
 
+// mvccBenchHeadVersion owns the untimed head observation shared by live and
+// tombstone history builders; their mutation schedules remain unchanged.
+func mvccBenchHeadVersion(b *testing.B, engine *MemoryEngine, nodeID NodeID) MVCCVersion {
+	b.Helper()
+	head, err := engine.GetNodeCurrentHead(nodeID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return head.Version
+}
+
 func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 	b.Helper()
 	engine := newMVCCHistoryBenchEngine(b)
@@ -129,21 +140,13 @@ func buildMVCCBenchChain(b *testing.B, chainLength int) mvccBenchChain {
 	if err != nil {
 		b.Fatal(err)
 	}
-	head, err := engine.GetNodeCurrentHead(nodeID)
-	if err != nil {
-		b.Fatal(err)
-	}
-	versions = append(versions, head.Version)
+	versions = append(versions, mvccBenchHeadVersion(b, engine, nodeID))
 
 	for version := 2; version <= chainLength; version++ {
-		if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}); err != nil {
+		if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}}); err != nil {
 			b.Fatal(err)
 		}
-		head, err := engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		versions = append(versions, head.Version)
+		versions = append(versions, mvccBenchHeadVersion(b, engine, nodeID))
 	}
 
 	return mvccBenchChain{engine: engine, nodeID: nodeID, versions: versions}
@@ -178,31 +181,19 @@ func buildMVCCTombstoneBenchChain(b *testing.B, cycles int) mvccTombstoneBenchCh
 	if err != nil {
 		b.Fatal(err)
 	}
-	head, err := engine.GetNodeCurrentHead(nodeID)
-	if err != nil {
-		b.Fatal(err)
-	}
-	liveVersions = append(liveVersions, head.Version)
+	liveVersions = append(liveVersions, mvccBenchHeadVersion(b, engine, nodeID))
 
 	for cycle := 1; cycle < cycles; cycle++ {
 		if err := engine.DeleteNode(nodeID); err != nil {
 			b.Fatal(err)
 		}
-		head, err = engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		tombstoneVersions = append(tombstoneVersions, head.Version)
+		tombstoneVersions = append(tombstoneVersions, mvccBenchHeadVersion(b, engine, nodeID))
 
 		_, err = engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"cycle": cycle, "state": "live"}})
 		if err != nil {
 			b.Fatal(err)
 		}
-		head, err = engine.GetNodeCurrentHead(nodeID)
-		if err != nil {
-			b.Fatal(err)
-		}
-		liveVersions = append(liveVersions, head.Version)
+		liveVersions = append(liveVersions, mvccBenchHeadVersion(b, engine, nodeID))
 	}
 
 	return mvccTombstoneBenchChain{
@@ -321,7 +312,7 @@ func BenchmarkBadgerEngine_UpdateNode_MVCC(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": i}}); err != nil {
+		if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Benchmark"}, Properties: map[string]any{"index": i}}}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -396,7 +387,7 @@ func BenchmarkBadgerEngine_GetNodesByLabelVisibleAt(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := engine.UpdateNode(&Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i, "updated": true}}); err != nil {
+		if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"BenchLabel"}, Properties: map[string]any{"index": i, "updated": true}}}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -457,7 +448,7 @@ func BenchmarkBadgerEngine_PruneMVCCVersions(b *testing.B) {
 					b.Fatal(err)
 				}
 				for version := 2; version <= versionsPerKey; version++ {
-					if err := engine.UpdateNode(&Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}); err != nil {
+					if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Bench"}, Properties: map[string]any{"version": version}}}); err != nil {
 						_ = engine.Close()
 						b.Fatal(err)
 					}

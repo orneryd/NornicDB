@@ -90,11 +90,11 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(&Node{
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 		ID:         "test:skew",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(2)},
-	}, ClientNodeEdits))
+	}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit(), "skewed clock must not cause a phantom conflict")
 
 	got, err := e.GetNode("test:skew")

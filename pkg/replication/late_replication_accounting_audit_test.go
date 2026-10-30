@@ -61,7 +61,7 @@ func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
 	require.NoError(t, err)
 	before, _, _ := manager.GetStorageSize("late_apply")
 	r.delay = true
-	err = view.UpdateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}})
+	err = view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}}})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.False(t, nornicerrors.IsCommitRolledBack(err), "replication timeout cannot certify logical rollback")
 	require.NotNil(t, r.pending)

@@ -39,7 +39,7 @@ func TestEmbedWorkerSaveRetryAfterSameSourceUpdate(t *testing.T) {
 				if update == "bookkeeping" {
 					current.Properties["updatedAt"] = "new bookkeeping value"
 				}
-				require.NoError(t, store.UpdateNode(current))
+				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: current}))
 				current, err = store.GetNode(original.ID)
 				require.NoError(t, err)
 				require.False(t, before.UpdatedAt.Equal(current.UpdatedAt))

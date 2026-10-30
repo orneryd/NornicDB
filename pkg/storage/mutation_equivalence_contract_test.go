@@ -180,10 +180,10 @@ func TestMutationEquivalence_SingleUpdateVsStagedUpdate(t *testing.T) {
 			}
 			flushEquivalenceStack(t, engine)
 
-			require.NoError(t, engine.UpdateNode(&Node{ID: "test:u1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:u1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
 			// The second update is identical but travels through the staged
 			// overlay of the async layer when present.
-			require.NoError(t, engine.UpdateNode(&Node{ID: "test:u2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:u2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
 			flushEquivalenceStack(t, engine)
 
 			u1, err := engine.GetNode("test:u1")

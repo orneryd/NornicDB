@@ -82,7 +82,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 								prior, getErr := tx.GetStoredNode(storage.NodeID(db + ":n"))
 								require.NoError(t, getErr)
 								prior.Properties = map[string]interface{}{"payload": "small"}
-								err = tx.UpdateGraphNode(prior, storage.ClientNodeEdits)
+								err = tx.UpdateGraphNode(storage.NodeUpdateRequest{After: prior, Policy: storage.ClientNodeEdits})
 							}
 						} else if operation == "delete" {
 							err = tx.DeleteEdge(storage.EdgeID(db + ":e"))
@@ -90,7 +90,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 							prior, getErr := tx.GetStoredEdge(storage.EdgeID(db + ":e"))
 							require.NoError(t, getErr)
 							prior.Properties = map[string]interface{}{"payload": "small"}
-							err = tx.UpdateEdge(prior)
+							err = tx.UpdateEdge(storage.EdgeUpdateRequest{After: prior})
 						}
 						require.NoError(t, err)
 						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "update or deletion does not insert the hidden entity")

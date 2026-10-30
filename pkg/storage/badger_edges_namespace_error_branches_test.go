@@ -42,7 +42,7 @@ func TestBadgerEngine_EdgeOperations_UnprefixedIDNamespaceErrorBranches(t *testi
 	seedRawEdgeForNamespaceTests(t, engine, &Edge{ID: "raw-edge", StartNode: "rawA", EndNode: "rawB", Type: "REL"})
 
 	t.Run("UpdateEdge", func(t *testing.T) {
-		err := engine.UpdateEdge(&Edge{ID: "raw-edge", StartNode: "rawA", EndNode: "rawB", Type: "REL2"})
+		err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "raw-edge", StartNode: "rawA", EndNode: "rawB", Type: "REL2"}})
 		require.Error(t, err)
 	})
 

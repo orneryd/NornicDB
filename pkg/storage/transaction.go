@@ -76,10 +76,8 @@ const (
 // It is also JSON-serialized into the WAL buffered-commit payload, so every
 // field carries a tag.
 type Operation struct {
-	// Runtime notification kind; never part of WAL or persisted data.
-	embeddingOutcome bool
-	Type             OperationType `json:"type"`
-	Timestamp        time.Time     `json:"timestamp,omitempty"`
+	Type      OperationType `json:"type"`
+	Timestamp time.Time     `json:"timestamp,omitempty"`
 
 	// For node operations
 	NodeID  NodeID `json:"node_id,omitempty"`
@@ -108,6 +106,12 @@ type Operation struct {
 	// loop falls back to the read-before-write path, preserving snapshot
 	// semantics for recreated user-supplied IDs.
 	FreshID bool `json:"fresh_id,omitempty"`
+
+	// Runtime fields never enter WAL or persisted data. Pack their small flags
+	// beside the existing flags so observed intent does not grow each operation.
+	embeddingOutcome   bool
+	nodeImagePolicy    EntityImagePolicy
+	nodeObservedBefore *Node
 }
 
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.

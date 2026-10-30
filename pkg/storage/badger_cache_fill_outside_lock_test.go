@@ -85,7 +85,7 @@ func TestNodeCacheFillFromStorageReadRejectsStaleBodyAfterWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			// The write lands before the fill reaches the lock.
-			err = engine.UpdateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}})
+			err = engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}})
 			require.NoError(t, err)
 
 			engine.cacheFillNode(gen, decoded, tc.mode)
@@ -193,7 +193,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 
 		// Then a write lands, before any fill.
 		value++
-		require.NoError(t, engine.UpdateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}}))
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}}}))
 
 		var start sync.WaitGroup
 		var filled sync.WaitGroup
@@ -254,7 +254,7 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 	var wrote int64
 	for wrote < 200 {
 		wrote++
-		engine.UpdateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": wrote}})
+		engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": wrote}}})
 	}
 	stop.Store(true)
 	wg.Wait()

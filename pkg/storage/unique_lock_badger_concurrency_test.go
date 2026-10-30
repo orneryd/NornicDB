@@ -44,7 +44,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 		}
 		for key := range badgerUniqueLockKeysPerWriter {
 			node := badgerUniqueFunctionNode(writer, key, 1)
-			if err := tx.UpdateGraphNode(node, ClientNodeEdits); err != nil {
+			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}); err != nil {
 				t.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 			}
 		}
@@ -151,11 +151,11 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 			t.Fatalf("SetDeferredConstraintValidation revision %d: %v", index+1, err)
 		}
-		if err := tx.UpdateGraphNode(&Node{
+		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 			ID:         nodeID,
 			Labels:     []string{"Function"},
 			Properties: map[string]interface{}{"uid": uid, "revision": index + 1},
-		}, ClientNodeEdits); err != nil {
+		}, Policy: ClientNodeEdits}); err != nil {
 			t.Fatalf("UpdateNode revision %d: %v", index+1, err)
 		}
 		transactions[index] = tx
@@ -192,14 +192,14 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		t.Fatalf("same-UID initial result winner=%+v loser=%+v, want one of each", winner, loser)
 	}
 	var violation *ConstraintViolationError
-	if !errors.As(loser.err, &violation) || violation.Type != ConstraintUnique {
-		t.Fatalf("same-UID loser error = %T %v, want UNIQUE ConstraintViolationError", loser.err, loser.err)
+	// Both writers carry the existing uid unchanged. Only their revision
+	// differs, so the loser is an ordinary retryable write conflict, not a
+	// new uniqueness claim (PR #1655).
+	if errors.As(loser.err, &violation) {
+		t.Fatalf("same-UID non-key update falsely reported UNIQUE: %v", loser.err)
 	}
 	if !errors.Is(loser.err, ErrConflict) {
 		t.Fatalf("same-UID loser error = %v, want ErrConflict cause", loser.err)
-	}
-	if violation.Label != "Function" || len(violation.Properties) != 1 || violation.Properties[0] != "uid" {
-		t.Fatalf("same-UID violation target = %s.%v, want Function.[uid]", violation.Label, violation.Properties)
 	}
 
 	retry, err := engine.BeginTransaction()
@@ -209,11 +209,11 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if err := retry.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation retry: %v", err)
 	}
-	if err := retry.UpdateGraphNode(&Node{
+	if err := retry.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 		ID:         nodeID,
 		Labels:     []string{"Function"},
 		Properties: map[string]interface{}{"uid": uid, "revision": loser.revision},
-	}, ClientNodeEdits); err != nil {
+	}, Policy: ClientNodeEdits}); err != nil {
 		t.Fatalf("UpdateNode retry: %v", err)
 	}
 	if err := retry.Commit(); err != nil {
@@ -227,7 +227,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || storedRevision(nodes[0]) != int64(loser.revision) {
 		t.Fatalf("same-UID final nodes = %#v, want one node %s at retry revision %d", nodes, nodeID, loser.revision)
 	}
-	cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)
+	cachedID, found, constrained, _ := schema.LookupUniqueConstraintValue("Function", "uid", uid)
 	if !constrained || !found || cachedID != nodeID {
 		t.Fatalf("same-UID cache = (%s, %v, %v), want (%s, true, true)", cachedID, found, constrained, nodeID)
 	}
@@ -263,7 +263,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 				b.Fatalf("SetDeferredConstraintValidation writer %d: %v", writer, err)
 			}
 			for key := range badgerUniqueLockKeysPerWriter {
-				if err := tx.UpdateGraphNode(badgerUniqueFunctionNode(writer, key, iteration+1), ClientNodeEdits); err != nil {
+				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: badgerUniqueFunctionNode(writer, key, iteration+1), Policy: ClientNodeEdits}); err != nil {
 					b.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 				}
 			}
@@ -358,7 +358,7 @@ func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, sch
 		if storedRevision(node) != int64(revision) {
 			t.Fatalf("node %s revision = %#v, want %d", node.ID, node.Properties["revision"], revision)
 		}
-		cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)
+		cachedID, found, constrained, _ := schema.LookupUniqueConstraintValue("Function", "uid", uid)
 		if !constrained || !found || cachedID != node.ID {
 			t.Fatalf("Function.uid cache for %q = (%s, %v, %v), want (%s, true, true)", uid, cachedID, found, constrained, node.ID)
 		}

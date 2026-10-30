@@ -110,7 +110,7 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 					legacy, err := json.Marshal(manager.databases)
 					require.NoError(t, err)
 					node.Properties["data"] = string(legacy)
-					require.NoError(t, system.UpdateNode(node))
+					require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
 					require.NoError(t, manager.Close())
 					markClosedASCIICatalogFixtureV3(t, dir)
 
@@ -251,7 +251,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			data, err := json.Marshal(manager.databases)
 			require.NoError(t, err)
 			node.Properties["data"] = string(data)
-			require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(node))
+			require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(storage.NodeUpdateRequest{After: node}))
 			require.NoError(t, manager.Close())
 			inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 			require.NoError(t, err)

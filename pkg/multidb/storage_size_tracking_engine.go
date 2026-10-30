@@ -359,8 +359,8 @@ func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 	err := t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateNode, Node: node}}, &id, storage.CommitModeDirect)
 	return id, err
 }
-func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpUpdateNode, Node: node}}, nil, storage.CommitModeDirect)
+func (t *sizeTrackingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
 	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteNode, NodeID: id}}, nil, storage.CommitModeDirect)
@@ -368,8 +368,8 @@ func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpCreateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
 }
-func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
-	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpUpdateEdge, Edge: edge}}, nil, storage.CommitModeDirect)
+func (t *sizeTrackingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	return t.applyEntityOperations([]storage.Operation{updateRequest.Operation()}, nil, storage.CommitModeDirect)
 }
 func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
 	return t.applyEntityOperations([]storage.Operation{{Type: storage.OpDeleteEdge, EdgeID: id}}, nil, storage.CommitModeDirect)
@@ -572,7 +572,9 @@ func (t *sizeTrackingEngine) prepareManagedDirect(ctx context.Context, ops []sto
 	}
 	for _, op := range qualified {
 		apply := func() error {
-			return storage.ApplyEntityChange(tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdate(tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) })
+			return storage.ApplyEntityChange(tx, op, func(updateRequest storage.NodeUpdateRequest) error {
+				return storage.ApplyNodeUpdate(tx, updateRequest)
+			}, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) })
 		}
 		for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {
 			policy, next := owner.writeBoundaries[i], apply

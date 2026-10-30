@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -23,8 +24,6 @@ type roleDeleteFailureEngine struct {
 
 func (e *roleDeleteFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
 func (e *roleDeleteFailureEngine) Namespace() string              { return "system" }
-
-type userStatusFailureEngine struct{ storage.Engine }
 
 type roleRenameFailureEngine struct {
 	storage.Engine
@@ -158,24 +157,12 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 	}
 }
 
-func (e *userStatusFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		return mutate(&userStatusFailureEngine{Engine: view})
-	})
-}
-
-func (e *userStatusFailureEngine) UpdateNode(node *storage.Node) error {
-	if node.Properties["disabled"] == true {
-		return errors.New("injected user status failure")
-	}
-	return e.Engine.UpdateNode(node)
-}
-
 func TestCombinedUserChangeFailureChangesNothingOverHTTP(t *testing.T) {
 	server, _ := setupTestServer(t)
 	system, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	fault := &userStatusFailureEngine{Engine: system}
+	fault := storagefault.NewMutationFailureEngine(system, "", errors.New("injected user status failure"), 0, auth.WithStoreTransaction)
+	fault.RejectUpdate = func(node *storage.Node) bool { return node.Properties["disabled"] == true }
 	config := auth.DefaultAuthConfig()
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	config.BcryptCost, config.DefaultAdminUsername = 4, ""

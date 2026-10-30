@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"path/filepath"
 	"testing"
@@ -76,7 +77,7 @@ func TestIVFPQMainKeyEvidenceDoesNotHideMembers(t *testing.T) {
 		t.Run(map[bool]string{false: "retired alias", true: "hidden named member"}[hidden], func(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 			svc := NewService(engine, 2, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			node := &storage.Node{ID: "winner", ChunkEmbeddings: [][]float32{{1, 0}}}

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 
 // TestIndexRevisionAdvancesOnEveryIndexChange (#945).
 func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	var nilService *Service
 	require.Zero(t, nilService.IndexRevision())
 	node := &storage.Node{ID: "nornic:n", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
@@ -41,7 +42,7 @@ func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
 // indexing, so a search in between could cache the old result) is seen by
 // the next search (#945).
 func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
-	store := newTestMemoryEngine(t)
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(store, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 	for _, id := range []string{"nornic:a", "nornic:b"} {

@@ -176,17 +176,17 @@ func (e *graphifyCountingEngine) CreateNode(node *storage.Node) (storage.NodeID,
 	atomic.AddInt64(&e.nodeCreates, 1)
 	return e.Engine.CreateNode(node)
 }
-func (e *graphifyCountingEngine) UpdateNode(node *storage.Node) error {
+func (e *graphifyCountingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
 	atomic.AddInt64(&e.nodeUpdates, 1)
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(updateRequest)
 }
 func (e *graphifyCountingEngine) CreateEdge(edge *storage.Edge) error {
 	atomic.AddInt64(&e.edgeCreates, 1)
 	return e.Engine.CreateEdge(edge)
 }
-func (e *graphifyCountingEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *graphifyCountingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
 	atomic.AddInt64(&e.edgeUpdates, 1)
-	return e.Engine.UpdateEdge(edge)
+	return e.Engine.UpdateEdge(updateRequest)
 }
 
 func (e *graphifyCountingEngine) NodeCreateCount() int64 { return atomic.LoadInt64(&e.nodeCreates) }

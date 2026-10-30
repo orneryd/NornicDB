@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +14,7 @@ import (
 func TestSearchTextChunksProviderDeadlineKeepsLexicalFallback(t *testing.T) {
 	for _, mode := range []string{"single", "multi"} {
 		t.Run(mode, func(t *testing.T) {
-			engine := newTestMemoryEngine(t)
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})

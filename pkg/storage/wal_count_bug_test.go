@@ -3,118 +3,54 @@ package storage
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
-	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestWALEngine_CountAfterDeleteRecreate tests the full WAL+Badger stack
-// to verify node counts are correct after delete and recreate cycle.
-
-func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "wal_count_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create BadgerEngine
-	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
-	require.NoError(t, err)
-	defer badger.Close()
-
-	// Create WAL
-	wal, err := NewWAL(filepath.Join(tmpDir, "wal"), nil)
-	require.NoError(t, err)
-	defer wal.Close()
-
-	// Wrap with WALEngine
-	walEngine := NewWALEngine(badger, wal)
-
-	// Step 1: Create 10 nodes
-	for i := 0; i < 10; i++ {
-		node := &Node{
-			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
-			Labels: []string{"Test"},
-		}
-		_, err := walEngine.CreateNode(node)
-		require.NoError(t, err)
+// walCountCycle is the exact node population both WAL count tests establish:
+// ten nodes created, all ten deleted, then five nodes written into the empty
+// store.
+func walCountCycle(recreateIsUpdate bool) nodeCountCycle {
+	return nodeCountCycle{
+		createIDs: []string{
+			"node-0", "node-1", "node-2", "node-3", "node-4",
+			"node-5", "node-6", "node-7", "node-8", "node-9",
+		},
+		recreateIDs:      []string{"new-node-0", "new-node-1", "new-node-2", "new-node-3", "new-node-4"},
+		recreateIsUpdate: recreateIsUpdate,
+		wantCounts:       [3]int64{10, 0, 5},
 	}
-
-	count1, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(10), count1, "Should have 10 nodes")
-
-	// Step 2: Delete all
-	for i := 0; i < 10; i++ {
-		require.NoError(t, walEngine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i)))))
-	}
-
-	count2, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(0), count2, "Should have 0 nodes after delete")
-
-	// Step 3: Create NEW nodes via UpdateNode (like AsyncEngine flush does)
-	for i := 0; i < 5; i++ {
-		node := &Node{
-			ID:     NodeID(prefixTestID(fmt.Sprintf("new-node-%d", i))),
-			Labels: []string{"NewTest"},
-		}
-		require.NoError(t, walEngine.UpdateNode(node))
-	}
-
-	count3, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(5), count3, "Should have 5 nodes after UpdateNode")
 }
 
-// TestAsyncEngine_CountAfterDeleteRecreate tests the full Async+WAL+Badger stack
-func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "async_count_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+// newWALCountEngine builds the real Badger+WAL stack both count tests use and
+// returns the WAL wrapper whose NodeCount is asserted.
+func newWALCountEngine(t *testing.T) *WALEngine {
+	t.Helper()
+	tmpDir := t.TempDir()
 
-	// Create full stack: BadgerEngine -> WALEngine -> AsyncEngine
 	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
-	defer badger.Close()
+	t.Cleanup(func() { _ = badger.Close() })
 
 	wal, err := NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
-	defer wal.Close()
+	t.Cleanup(func() { _ = wal.Close() })
 
-	walEngine := NewWALEngine(badger, wal)
+	return NewWALEngine(badger, wal)
+}
 
-	// Step 1: Create 10 nodes
-	for i := 0; i < 10; i++ {
-		node := &Node{
-			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
-			Labels: []string{"Test"},
-		}
-		_, err := walEngine.CreateNode(node)
-		require.NoError(t, err)
-	}
+// TestWALEngine_CountAfterDeleteRecreate tests the full WAL+Badger stack to
+// verify node counts are correct after a delete and recreate cycle where the
+// recreate goes through UpdateNode (the AsyncEngine flush path).
+func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
+	walCountCycle(true).run(t, newWALCountEngine(t))
+}
 
-	count1, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(10), count1, "Should have 10 nodes")
-
-	// Step 2: Delete all
-	for i := 0; i < 10; i++ {
-		require.NoError(t, walEngine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("node-%d", i)))))
-	}
-
-	count2, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(0), count2, "Should have 0 nodes after delete")
-
-	// Step 3: Create NEW nodes (simulating what Cypher MERGE does)
-	for i := 0; i < 5; i++ {
-		node := &Node{
-			ID:     NodeID(prefixTestID(fmt.Sprintf("new-node-%d", i))),
-			Labels: []string{"NewTest"},
-		}
-		_, err := walEngine.CreateNode(node)
-		require.NoError(t, err)
-	}
-
-	count3, _ := walEngine.NodeCount()
-	assert.Equal(t, int64(5), count3, "Should have 5 nodes after recreate")
+// TestAsyncEngine_CountAfterDeleteRecreate tests the full WAL+Badger stack
+// with the recreate going through CreateNode (simulating what Cypher MERGE
+// does). The AsyncEngine itself is not part of this stack.
+func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
+	walCountCycle(false).run(t, newWALCountEngine(t))
 }

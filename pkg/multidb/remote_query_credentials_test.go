@@ -49,7 +49,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 				data, err := json.Marshal(manager.databases)
 				require.NoError(t, err)
 				node.Properties["data"] = string(data)
-				require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(node))
+				require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(storage.NodeUpdateRequest{After: node}))
 			} else {
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}

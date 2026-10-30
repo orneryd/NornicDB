@@ -1,6 +1,8 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,7 +11,7 @@ import (
 // The status names every strategy a pipeline can run, IVF-PQ and k-means
 // routing included, rather than "unknown".
 func TestCurrentStrategyNamesEveryStrategy(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 

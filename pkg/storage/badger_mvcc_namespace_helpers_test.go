@@ -62,7 +62,7 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 	_, err = engine.CreateNode(n)
 	require.NoError(t, err)
 	n.Properties["k"] = "v2"
-	err = engine.UpdateNode(n)
+	err = engine.UpdateNode(NodeUpdateRequest{After: n})
 	require.NoError(t, err)
 
 	// Force cold state so EnsureNamespaceMVCC takes the recovery path.

@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"testing"
 
@@ -29,8 +31,7 @@ import (
 // the M1 default (per CONTEXT MET-21 omission).
 func newTestSearchService(t *testing.T) (*Service, *prometheus.Registry, *observability.SearchMetrics) {
 	t.Helper()
-	engine := newTestMemoryEngine(t)
-	svc := NewService(engine, 4, nil)
+	svc, _ := newVectorService(t, 4, "")
 	reg := prometheus.NewRegistry()
 	bag := observability.NewSearchMetrics(reg, false, &nilSearchProbe{})
 	svc.AttachMetrics(bag)
@@ -79,7 +80,7 @@ func TestSearch_VectorOnlyMode(t *testing.T) {
 // TestSearch_NilMetricsTolerated asserts a Service without AttachMetrics
 // still functions — the observation chokepoints no-op when metrics is nil.
 func TestSearch_NilMetricsTolerated(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 4, nil)
 	svc.ready.Store(true)
 	// NO AttachMetrics call.
@@ -101,7 +102,7 @@ func TestSearch_AttachMetricsRebindings(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			engine := newTestMemoryEngine(t)
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			svc := NewService(engine, 4, nil)
 
 			staleReg := prometheus.NewRegistry()
@@ -134,7 +135,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	t.Cleanup(registry.Close)
 
-	primary := NewService(newTestMemoryEngine(t), 4, nil)
+	primary := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 	t.Cleanup(func() { require.NoError(t, primary.Close()) })
 	primary.SetContinuationRegistry(registry)
 	bag := observability.NewSearchMetrics(prometheus.NewRegistry(), false, &nilSearchProbe{})
@@ -147,7 +148,7 @@ func TestSearch_SharedContinuationRegistryPreservesProcessObserver(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, gaugeValue(t, bag.CursorsActive))
 
-	secondary := NewService(newTestMemoryEngine(t), 4, nil)
+	secondary := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 	t.Cleanup(func() { require.NoError(t, secondary.Close()) })
 	secondary.SetContinuationRegistry(registry)
 	secondaryStream, err := resultstream.NewProgressive([][]any{{"three"}, {"four"}}, true, 2, nil)

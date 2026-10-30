@@ -35,7 +35,7 @@ func TestTransactionSnapshotPhysicalStateDoesNotAdvancePastLogicalBoundary(t *te
 				return
 			default:
 			}
-			if err := engine.UpdateNode(&Node{ID: nodeID, Properties: map[string]interface{}{"revision": revision}}); err != nil {
+			if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]interface{}{"revision": revision}}}); err != nil {
 				writerErr <- err
 				return
 			}

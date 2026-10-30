@@ -108,7 +108,7 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 				edge, err := peer.GetEdge(edgeID)
 				require.NoError(t, err)
 				edge.Properties = map[string]interface{}{"writer": "peer"}
-				require.NoError(t, peer.UpdateEdge(edge))
+				require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
 			}
 			stageReservedPublication(t, peer)
 			reader, err := engine.BeginTransaction()
@@ -129,10 +129,10 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 			stageUpdate := func() {
 				if tc.node {
 					node.Properties = map[string]interface{}{"writer": "reader"}
-					require.NoError(t, reader.UpdateGraphNode(node, ClientNodeEdits), tc.stageMessage)
+					require.NoError(t, reader.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}), tc.stageMessage)
 				} else {
 					edge.Properties = map[string]interface{}{"writer": "reader"}
-					require.NoError(t, reader.UpdateEdge(edge), tc.stageMessage)
+					require.NoError(t, reader.UpdateEdge(EdgeUpdateRequest{After: edge}), tc.stageMessage)
 				}
 			}
 			if !tc.lateUpdate {

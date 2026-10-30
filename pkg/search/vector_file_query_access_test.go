@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"os"
 	"path/filepath"
@@ -312,7 +313,7 @@ func TestVectorFileQueryReadsFallBackWhenMappingFails(t *testing.T) {
 func TestVectorSearchUsesCopiedReadsWhenMappingFails(t *testing.T) {
 	_ = t.TempDir()
 	newService := func(failMapping bool) (*Service, *atomic.Int32) {
-		svc := NewService(newTestMemoryEngine(t), 3, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 		t.Cleanup(func() { require.NoError(t, svc.Close()) })
 		svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 		svc.SetPersistenceEnabled(true)

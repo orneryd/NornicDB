@@ -64,7 +64,7 @@ func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
 	require.Equal(t, hits+1, atomic.LoadInt64(&disk.cacheHits), "ordinary reads keep the written-node cache fast path")
 	updated := CopyNode(cached)
 	updated.Properties["text"] = "after"
-	require.NoError(t, store.UpdateNode(updated))
+	require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: updated}))
 	snapshot, err := SnapshotNodeForEmbedding(cached)
 	require.NoError(t, err)
 	require.Equal(t, cached.ID, snapshot.ID, "namespace translation must survive the storage snapshot reader")
@@ -92,7 +92,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))
-				require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
 			require.NoError(t, disk.FlushWriteBehind())
@@ -142,7 +142,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			require.NoError(t, err)
 			stamp := current.UpdatedAt
 			current.Properties["text"] = "current"
-			require.NoError(t, store.UpdateNode(current))
+			require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: current}))
 			current, err = store.GetNode("doc")
 			require.NoError(t, err)
 			require.True(t, stamp.Equal(current.UpdatedAt))
@@ -199,7 +199,7 @@ func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, same)
 	stamp := materialized.UpdatedAt
-	require.NoError(t, disk.UpdateNode(materialized))
+	require.NoError(t, disk.UpdateNode(NodeUpdateRequest{After: materialized}))
 	updated, err := disk.getNodeSnapshot("test:doc", true)
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(updated.UpdatedAt))

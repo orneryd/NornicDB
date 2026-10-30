@@ -35,10 +35,10 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 					if explicit {
 						tx, err := engine.BeginTransaction()
 						require.NoError(t, err)
-						require.NoError(t, tx.UpdateGraphNode(writer, ClientNodeEdits))
+						require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: writer, Policy: ClientNodeEdits}))
 						require.NoError(t, tx.Commit())
 					} else {
-						require.NoError(t, engine.UpdateNode(writer))
+						require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: writer}))
 					}
 					select {
 					case node := <-updated:

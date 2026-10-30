@@ -17,11 +17,11 @@ func TestTerminalFailureClearedByIdempotentBodyUpdate(t *testing.T) {
 			body, err := b.GetNode(n.ID)
 			require.NoError(t, err)
 			if route == "direct" {
-				require.NoError(t, b.UpdateNode(body))
+				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: body}))
 			} else {
 				tx, err := b.BeginTransaction()
 				require.NoError(t, err)
-				require.NoError(t, tx.UpdateGraphNode(body, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: body, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
 			got, err := b.GetNode(n.ID)
@@ -62,7 +62,7 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 					require.NoError(t, e)
 					v.UpdatedAt = at.Add(time.Duration(i) * time.Second)
 					v.Properties["other"] = int64(i)
-					require.NoError(t, tx.UpdateGraphNode(v, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 				}
 				require.NoError(t, tx.Commit())
 				require.NoError(t, b.Close())
@@ -97,7 +97,7 @@ func TestTransactionRetainedSidecarConflictsWithWorker(t *testing.T) {
 	require.NoError(t, err)
 	v.UpdatedAt = at.Add(time.Second)
 	v.Properties["other"] = true
-	require.NoError(t, tx.UpdateGraphNode(v, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, [][]float32{{3, 4}}, map[string]any{"chunk_count": 1}, time.Time{})))
 	require.ErrorIs(t, tx.Commit(), ErrConflict)
 	got, err := b.GetNode(n.ID)
@@ -131,7 +131,7 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 			}
 			v.UpdatedAt = at.Add(time.Second)
 			v.Properties["other"] = true
-			require.Error(t, tx.UpdateGraphNode(v, ClientNodeEdits))
+			require.Error(t, tx.UpdateGraphNode(NodeUpdateRequest{After: v, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Rollback())
 			got, err := b.GetNode(n.ID)
 			require.NoError(t, err)

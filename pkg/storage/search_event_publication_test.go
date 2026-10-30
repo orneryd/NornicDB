@@ -71,11 +71,11 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	_, err = engine.CreateNode(&Node{ID: "test:b"})
 	require.NoError(t, err)
 	events.reset()
-	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": 1}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": 1}}}))
 	requirePublished(t, events, "node updated test:a", "UpdateNode")
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", Type: "R", StartNode: "test:a", EndNode: "test:b"}))
 	requirePublished(t, events, "edge created test:r", "CreateEdge")
-	require.NoError(t, engine.UpdateEdge(&Edge{ID: "test:r", Type: "R", StartNode: "test:a", EndNode: "test:b", Properties: map[string]any{"v": 1}}))
+	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", Type: "R", StartNode: "test:a", EndNode: "test:b", Properties: map[string]any{"v": 1}}}))
 	requirePublished(t, events, "edge updated test:r", "UpdateEdge")
 
 	for _, suppressed := range []bool{true, false} {
@@ -94,7 +94,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": 2}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": 2}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	requirePublished(t, events, "node updated test:a", "a transaction commit")
 	for _, images := range []EntityImagePolicy{ClientNodeEdits, StoredNodeImages} {
@@ -105,7 +105,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 			require.NoError(t, tx.SetNamespace("test"))
 			prior, err := engine.GetStoredNode("test:a")
 			require.NoError(t, err)
-			require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"prepared": true}}, images))
+			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"prepared": true}}, Policy: images}))
 			prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
 			t.Cleanup(prepared.Abort)
@@ -140,13 +140,13 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 		requirePublished(t, events, "node deleted test:tx-delete", "a transaction deletion commit")
 	}
 
-	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}}))
 	events.reset()
 	cleared, err := engine.ClearAllEmbeddings()
 	require.NoError(t, err)
 	require.Positive(t, cleared)
 	requirePublished(t, events, "node updated test:a", "ClearAllEmbeddings")
-	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}}))
 	events.reset()
 	_, err = engine.ClearAllEmbeddingsForPrefix("test:")
 	require.NoError(t, err)
