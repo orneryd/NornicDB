@@ -7,6 +7,8 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -150,3 +152,68 @@ func nor148DiagPublicWindow(t *testing.T, viaManager bool) {
 		idle.SingleReaderCommitAfter(populated), idle.SameReaderView(populated),
 		updated.GraphMutationVersion()-populated.GraphMutationVersion(), updated.SingleReaderCommitAfter(populated))
 }
+
+// r4: which setup step makes one UpdateNode publish two reader-relevant
+// commits on a DatabaseManager database, and whether it recurs per update.
+func TestNOR148DiagManagerUpdateCommits(t *testing.T) {
+	for _, variant := range []struct {
+		name                string
+		publisher, fulltext bool
+	}{
+		{"raw_engine_no_executor", false, false},
+		{"publisher_no_executor", true, false},
+		{"raw_engine_with_fulltext", false, true},
+		{"publisher_with_fulltext", true, true},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			base := storage.NewMemoryEngine().BadgerEngine
+			t.Cleanup(func() { _ = base.Close() })
+			var inner storage.Engine = base
+			if variant.publisher {
+				inner = &fulltextManagerPublisher{BadgerEngine: base}
+			}
+			manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = manager.Close() })
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "diagdb"}))
+			store, err := manager.GetStorage("diagdb")
+			require.NoError(t, err)
+			nodes := make([]*storage.Node, 16)
+			for i := range nodes {
+				id := fmt.Sprintf("n%06d", i)
+				nodes[i] = &storage.Node{ID: storage.NodeID(id), Labels: []string{"Source"}, Properties: map[string]any{"id": id, "text": "hotel services"}}
+			}
+			require.NoError(t, store.BulkCreateNodes(nodes))
+			if variant.fulltext {
+				exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+				_, err := exec.Execute(context.Background(), "CREATE FULLTEXT INDEX source_text FOR (n:Source) ON EACH [n.text]", nil)
+				require.NoError(t, err)
+				_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('source_text', 'hotel') YIELD node RETURN node.id", nil)
+				require.NoError(t, err)
+			}
+			latest := func() (uint64, uint64) {
+				view, err := storage.OpenReadSnapshot(storage.WithSnapshotReader(context.Background(), storage.SnapshotAllNodes), store)
+				require.NoError(t, err)
+				defer view.Close()
+				rev, _ := view.(storage.QueryReadSnapshot).CapturedRevision()
+				// readerLatest is unexported; read it from the value printed with %+v.
+				var ts uint64
+				if m := nor148ReaderLatest.FindStringSubmatch(fmt.Sprintf("%+v", rev)); m != nil {
+					ts, _ = strconv.ParseUint(m[1], 10, 64)
+				}
+				return ts, rev.GraphMutationVersion()
+			}
+			for update := 1; update <= 3; update++ {
+				beforeTs, beforeGraph := latest()
+				node, err := store.GetNode("n000008")
+				require.NoError(t, err)
+				node.Properties["text"] = fmt.Sprintf("update %d hotel", update)
+				require.NoError(t, store.UpdateNode(node))
+				afterTs, afterGraph := latest()
+				t.Logf("COMMITS %s update=%d readerCommits=%d graphDelta=%d", variant.name, update, afterTs-beforeTs, afterGraph-beforeGraph)
+			}
+		})
+	}
+}
+
+var nor148ReaderLatest = regexp.MustCompile(`readerLatest:(\d+)`)
