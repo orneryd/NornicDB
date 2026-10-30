@@ -69,13 +69,23 @@ func (o *NOR160ControlOverlay) Read(id NodeID, fallback func(NodeID) *Node) *Nod
 	return fallback(id)
 }
 
+type NOR160ControlPager interface{ Page(i, j int) [][]any }
+
+type NOR160ControlRegistry struct{ s map[string]NOR160ControlPager }
+
+func NewNOR160ControlRegistry(p *NOR160ControlReplay) *NOR160ControlRegistry {
+	return &NOR160ControlRegistry{s: map[string]NOR160ControlPager{"a": p}}
+}
+
+func (r *NOR160ControlRegistry) Pull(id string) [][]any { return r.s[id].Page(0, 1) }
+
 func NOR160ControlDoubleCopy(n *Node) *Node {
 	owned := copyNode(n)
 	return copyNode(owned)
 }
 `
 
-var controls = []string{"NOR160ControlCache).Get", "NOR160ControlCache).Visit", "NOR160ControlReplay).Page", "NOR160ControlSecondary).Label", "NOR160ControlHit).Materialize", "NOR160ControlOverlay).Read"}
+var controls = []string{"NOR160ControlCache).Get", "NOR160ControlCache).Visit", "NOR160ControlReplay).Page", "NOR160ControlSecondary).Label", "NOR160ControlHit).Materialize", "NOR160ControlOverlay).Read", "NOR160ControlRegistry).Pull"}
 
 const doubleControl = "NOR160ControlDoubleCopy"
 
@@ -625,8 +635,32 @@ func (a *analysis) flowCall(fn *ssa.Function, c *ssa.CallCommon, get func(ssa.Va
 	}
 	callee := staticCallee(c)
 	if callee == nil {
-		return false
+		for _, target := range a.dynamicCallees(fn, call) {
+			changed = a.flowCallee(fn, target, c, get, call) || changed
+		}
+		return changed
 	}
+	return a.flowCallee(fn, callee, c, get, call)
+}
+
+// dynamicCallees: the loader's VTA/CHA call graph targets of an interface or
+// function-value call site.
+func (a *analysis) dynamicCallees(fn *ssa.Function, call *ssa.Call) []*ssa.Function {
+	node := a.prog.CallGraph.Nodes[fn]
+	if node == nil {
+		return nil
+	}
+	var out []*ssa.Function
+	for _, e := range node.Out {
+		if e.Site == ssa.CallInstruction(call) && e.Callee != nil && e.Callee.Func != nil && inModule(e.Callee.Func) {
+			out = append(out, e.Callee.Func)
+		}
+	}
+	return out
+}
+
+func (a *analysis) flowCallee(fn, callee *ssa.Function, c *ssa.CallCommon, get func(ssa.Value) tags, call *ssa.Call) bool {
+	changed := false
 	o := origin(callee)
 	if a.copiers[o] {
 		return false // the result is a fresh caller-owned value
@@ -639,8 +673,8 @@ func (a *analysis) flowCall(fn *ssa.Function, c *ssa.CallCommon, get func(ssa.Va
 		return false
 	}
 	args := c.Args
-	if mc, ok := c.Value.(*ssa.MakeClosure); ok {
-		_ = mc
+	if c.IsInvoke() {
+		args = append([]ssa.Value{c.Value}, c.Args...)
 	}
 	for k := range s.returns {
 		if strings.HasPrefix(k, "param:") {
