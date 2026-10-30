@@ -299,21 +299,21 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 		path := r.URL.Path
 		switch {
 		case path == "/status":
-			serveRequestTimeout(next, w, r, statusTimeout, "request timeout: status busy")
+			s.serveRequestTimeout(next, w, r, statusTimeout, "request timeout: status busy")
 			return
 		case path == "/nornicdb/embed/stats":
-			serveRequestTimeout(next, w, r, embedStatsTimeout, "request timeout: embed stats busy")
+			s.serveRequestTimeout(next, w, r, embedStatsTimeout, "request timeout: embed stats busy")
 			return
 		case path == "/nornicdb/search":
-			serveRequestTimeout(next, w, r, searchTimeout, "request timeout: search busy")
+			s.serveRequestTimeout(next, w, r, searchTimeout, "request timeout: search busy")
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
 			// Keep the execution deadline and retention wrapper, while binding
 			// participant completion to server lifetime and admitting terminal
 			// commits through the transaction phase owner.
 			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
-			if s.requestsCtx != nil {
-				ctx = fabric.WithTransactionLifetime(ctx, s.requestsCtx)
+			if s.shutdown.workContext != nil {
+				ctx = fabric.WithTransactionLifetime(ctx, s.shutdown.workContext)
 			}
 			defer cancel()
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -329,10 +329,10 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 	}))
 }
 
-func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Request, timeout time.Duration, message string) {
+func (s *Server) serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Request, timeout time.Duration, message string) {
 	// Retain before TimeoutHandler starts its goroutine, even if cancellation
 	// wins before the worker is scheduled. The worker releases on return/panic.
-	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	next = s.shutdown.work.RetainHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
 	http.TimeoutHandler(next, timeout, message).ServeHTTP(w, r)
 }
 
@@ -340,7 +340,9 @@ func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Reque
 // transaction handler remains retained. After COMMIT admission, it waits for
 // the storage outcome instead of replacing that result with a timeout.
 func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWriter, r *http.Request) {
-	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	// The phase owner controls when the caller may stop waiting. The shared
+	// handler owner retains this real worker before it can be dispatched.
+	next = s.shutdown.work.RetainHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
 	response := &transactionResponseWriter{header: make(http.Header)}
 	done := make(chan struct{})
 	panicCh := make(chan any, 1)
