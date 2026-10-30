@@ -2366,9 +2366,10 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Buffered edges this transaction deletes or rewrites are never copied.
-		committed = append(committed, decodedEdges(overlay.ownedEdges(tx.committedEdgeKeptLocked))...)
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil }), nil
+		// Buffered edges this transaction deletes or rewrites are never
+		// copied; the ones it keeps follow the merged result.
+		merged := tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil })
+		return append(merged, overlay.ownedEdges(tx.committedEdgeKeptLocked)...), nil
 	}
 	return tx.getCommittedEdgesByTypeLocked("", func(edge *Edge) bool { return edge != nil })
 }
@@ -2393,10 +2394,10 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		if err != nil {
 			return nil, err
 		}
-		committed = append(committed, decodedEdges(overlay.ownedEdges(tx.committedEdgeKeptLocked))...)
-		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+		merged := tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
 			return edge.Type == edgeType
-		}), nil
+		})
+		return append(merged, overlay.ownedEdges(tx.committedEdgeKeptLocked)...), nil
 	}
 	return tx.getCommittedEdgesByTypeLocked(edgeType, func(edge *Edge) bool { return edge.Type == edgeType })
 }
@@ -2852,11 +2853,12 @@ func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Buffered nodes this transaction deletes or rewrites are never copied.
-	committed = append(committed, decodedNodes(overlay.ownedNodes(tx.committedNodeKeptLocked, nil, false))...)
-	return tx.mergePendingNodesLocked(committed, func(node *Node) bool {
+	// Buffered nodes this transaction deletes or rewrites are never copied;
+	// the ones it keeps follow the merged result.
+	merged := tx.mergePendingNodesLocked(committed, func(node *Node) bool {
 		return node != nil
-	}), nil
+	})
+	return append(merged, overlay.ownedNodes(tx.committedNodeKeptLocked, nil, false)...), nil
 }
 
 func (tx *BadgerTransaction) GetAllNodes() []*Node {

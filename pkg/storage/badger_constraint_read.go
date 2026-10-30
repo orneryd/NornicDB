@@ -36,27 +36,26 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 			if state.deleted {
 				continue
 			}
-			// A buffered node is retained: copied once, if kept. A committed
-			// node is decoded for this read and handed over.
-			node := state.node
-			if !state.found {
-				var err error
-				node, err = b.loadNodeForTemporalTxn(txn, id, false)
-				if err != nil {
-					return err
+			if state.found {
+				// A buffered node is retained: copied once, if kept.
+				seen[id] = true
+				if keep(state.node) {
+					nodes = append(nodes, copyNode(state.node))
 				}
+				continue
+			}
+			// A committed node is decoded for this read and handed over.
+			node, err := b.loadNodeForTemporalTxn(txn, id, false)
+			if err != nil {
+				return err
 			}
 			if node == nil {
 				continue
 			}
 			seen[id] = true
-			if !keep(node) {
-				continue
+			if keep(node) {
+				nodes = append(nodes, node)
 			}
-			if state.found {
-				node = copyNode(node)
-			}
-			nodes = append(nodes, node)
 		}
 		nodes = append(nodes, pending.ownedNodes(func(node *Node) bool { return !seen[node.ID] && keep(node) }, nil, false)...)
 		return nil
