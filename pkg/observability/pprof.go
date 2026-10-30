@@ -2,7 +2,6 @@ package observability
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,8 +17,9 @@ import (
 // goroutine stacks and heap state, so a non-loopback default would be a
 // credential-exfiltration surface.
 type pprofListener struct {
-	srv *http.Server
-	ln  net.Listener
+	srv        *http.Server
+	ln         net.Listener
+	retirement listenerLifetime
 }
 
 // Compile-time interface assertion.
@@ -92,31 +92,20 @@ func (l *pprofListener) Name() string { return "pprof" }
 // http.ErrServerClosed is filtered to nil so errgroup does not
 // interpret a clean shutdown as a fault.
 func (l *pprofListener) Start(ctx context.Context) error {
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- l.srv.Serve(l.ln)
-	}()
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
-		defer cancel()
-		_ = l.Shutdown(shutdownCtx)
-		err := <-serveErr
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
+	l.retirement.init(l.srv, l.ln, nil)
+	return l.retirement.run(ctx)
 }
 
 // Shutdown drains in-flight requests with the supervisor-provided budget.
 // pprof has no analog of the OQ4 BSP-flush ordering — there's nothing to
 // flush, so a plain srv.Shutdown is the entire drain.
 func (l *pprofListener) Shutdown(ctx context.Context) error {
-	return l.srv.Shutdown(ctx)
+	l.retirement.init(l.srv, l.ln, nil)
+	return l.retirement.shutdown(ctx)
+}
+
+// WaitStopped observes actual component retirement without initiating it.
+func (l *pprofListener) WaitStopped(ctx context.Context) error {
+	l.retirement.init(l.srv, l.ln, nil)
+	return l.retirement.wait(ctx)
 }

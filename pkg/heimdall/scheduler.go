@@ -28,6 +28,7 @@ type Manager struct {
 	config    Config
 	modelPath string
 	closed    bool
+	lifetime  func(context.Context) (context.Context, func(), error)
 
 	// Stats
 	requestCount int64
@@ -162,6 +163,9 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 
 	modelsDir := cfg.ModelsDir
 	if modelsDir == "" {
+		modelsDir = strings.TrimSpace(os.Getenv("NORNICDB_MODELS_DIR"))
+	}
+	if modelsDir == "" {
 		candidates := []string{
 			"/usr/local/var/nornicdb/models",
 			"/app/models",
@@ -221,6 +225,11 @@ func loadLocalGenerator(cfg Config) (Generator, string, error) {
 
 // Generate produces a response for the given prompt.
 func (m *Manager) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+	ctx, finish, err := m.beginUse(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer finish()
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
@@ -252,6 +261,11 @@ func (m *Manager) Generate(ctx context.Context, prompt string, params GeneratePa
 
 // GenerateStream produces tokens via callback.
 func (m *Manager) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
+	ctx, finish, useErr := m.beginUse(ctx)
+	if useErr != nil {
+		return useErr
+	}
+	defer finish()
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
@@ -327,6 +341,11 @@ func (m *Manager) SupportsTools() bool {
 // GenerateWithTools runs one round of chat with tools (agentic loop). Only valid when SupportsTools() is true.
 // Returns content and/or toolCalls; caller executes tools and calls again until no toolCalls.
 func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMessage, tools []MCPTool, params GenerateParams) (content string, toolCalls []ParsedToolCall, err error) {
+	ctx, finish, useErr := m.beginUse(ctx)
+	if useErr != nil {
+		return "", nil, useErr
+	}
+	defer finish()
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
@@ -430,20 +449,42 @@ func (m *Manager) Stats() ManagerStats {
 // Close releases all resources.
 func (m *Manager) Close() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if m.closed {
+		m.mu.Unlock()
 		return nil
 	}
 	m.closed = true
-
-	if m.generator != nil {
+	generator, cfg, requests, failures := m.generator, m.config, m.requestCount, m.errorCount
+	m.mu.Unlock()
+	if generator != nil {
 		logHeimdallPrintf(slog.LevelInfo, "🧠 Closing SLM model")
-		logHeimdallPrintf(slog.LevelInfo, "   Total requests: %d", m.requestCount)
-		logHeimdallPrintf(slog.LevelInfo, "   Total errors: %d", m.errorCount)
-		return m.generator.Close()
+		logHeimdallPrintf(slog.LevelInfo, "   Total requests: %d", requests)
+		logHeimdallPrintf(slog.LevelInfo, "   Total errors: %d", failures)
+		return observability.RedactError(generator.Close(), observability.ClientCredentials(cfg.APIURL, cfg.APIKey)...)
 	}
 	return nil
+}
+
+// SetLifetime binds shared model calls to their canonical DB owner before the
+// manager is published to HTTP, db.infer or other aliases.
+func (m *Manager) SetLifetime(use func(context.Context) (context.Context, func(), error)) {
+	m.mu.Lock()
+	m.lifetime = use
+	m.mu.Unlock()
+}
+
+func (m *Manager) beginUse(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.mu.RLock()
+	use := m.lifetime
+	m.mu.RUnlock()
+	if use != nil {
+		return use(ctx)
+	}
+	return ctx, func() {}, nil
 }
 
 // ModelPath returns the path to the loaded model.

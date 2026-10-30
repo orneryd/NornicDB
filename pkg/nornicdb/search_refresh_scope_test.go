@@ -76,7 +76,7 @@ func TestDBRefreshScopeContextCancellationReachesOperation(t *testing.T) {
 	ns := storage.NewNamespacedEngine(engine, "nornic")
 	svc := search.NewService(ns, 3, nil)
 	entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: make(chan struct{})}
-	entry.buildOnce.Do(func() {})
+	entry.buildOnce.Run(func() {})
 	db := &DB{
 		config:            DefaultConfig(),
 		storage:           ns,

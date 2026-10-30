@@ -58,13 +58,18 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	ctx, cancel := context.WithCancel(ctx)
 	job := &hnswBuildJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	s.hnswBuild = job
-	go func() {
+	if !s.RunBackgroundTask(func() {
 		job.index, job.err = s.buildInitialHNSWIndex(ctx, dimensions)
+		s.recordLifetimeOutcome("HNSW build", job.err)
 		if job.err != nil && ctx.Err() == nil {
 			s.logPrintf("[HNSW] background build failed: %v", job.err)
 		}
 		close(job.done)
-	}()
+	}) {
+		job.err = context.Canceled
+		cancel()
+		close(job.done)
+	}
 	return nil, job, nil
 }
 
@@ -341,6 +346,10 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 
 func (s *Service) ensureHNSWMaintenance() {
 	s.hnswMaintOnce.Do(func() {
+		release, accepted := s.retainBackground()
+		if !accepted {
+			return
+		}
 		ctx := s.lifecycleCtx
 		if ctx == nil {
 			ctx = context.Background()
@@ -357,6 +366,7 @@ func (s *Service) ensureHNSWMaintenance() {
 
 		ticker := time.NewTicker(interval)
 		go func() {
+			defer release()
 			defer ticker.Stop()
 			defer close(s.hnswMaintDone)
 			for {
@@ -368,7 +378,7 @@ func (s *Service) ensureHNSWMaintenance() {
 					if s.buildInProgress.Load() {
 						continue
 					}
-					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
+					s.recordLifetimeOutcome("HNSW maintenance", s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval))
 				case <-ctx.Done():
 					// stopHNSWMaintenance and the service's lifecycle
 					// cancel this context; it is the loop's only exit.

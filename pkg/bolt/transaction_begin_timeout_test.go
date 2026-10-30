@@ -122,7 +122,7 @@ func TestTransactionBeginCannotPublishExpiredTransactionAsActive(t *testing.T) {
 		},
 	}
 	require.NoError(t, lifecycle.begin(
-		context.Background(), 10*time.Millisecond, "nornic", executor, nil, nil))
+		context.Background(), testTxOwner(), 10*time.Millisecond, "nornic", executor, nil, nil))
 	_, err := lifecycle.claimCommit()
 	require.ErrorIs(t, err, errTransactionTimedOut)
 	require.Equal(t, int64(1), executor.rollbackCalls.Load())
@@ -151,7 +151,7 @@ func TestBoltExpiredBeginCleanupFailureClosesAndQuarantines(t *testing.T) {
 				ReadBufferSize:  8192,
 				WriteBufferSize: 8192,
 			}, executor)
-			port := startBoltTestServer(t, server)
+			port := startBoltTestServer(t, server, rollbackShutdownCheck(t, tt.rollbackErr, tt.rollbackPanic))
 			conn := openBoltTestConn(t, port)
 			require.NoError(t, SendBegin(t, conn, map[string]any{"tx_timeout": int64(50)}))
 			select {

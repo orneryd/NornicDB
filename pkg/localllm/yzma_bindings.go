@@ -587,11 +587,15 @@ func (m *Model) Close() error {
 // Note: yzma does not currently expose a dedicated reranker/logit API here,
 // so we approximate relevance with embedding cosine similarity.
 type RerankerModel struct {
-	model *Model
+	backend RerankerBackend
+	model   *Model
 }
 
 // LoadRerankerModel loads a GGUF model for reranking.
 func LoadRerankerModel(opts Options) (*RerankerModel, error) {
+	if model, supplied, err := loadRerankerBackend(opts); supplied {
+		return model, err
+	}
 	model, err := LoadModel(opts)
 	if err != nil {
 		return nil, err
@@ -606,6 +610,9 @@ func LoadRerankerModel(opts Options) (*RerankerModel, error) {
 //   - Uses cosine similarity
 //   - Maps from [-1,1] to [0,1]
 func (r *RerankerModel) Score(ctx context.Context, query, document string) (float32, error) {
+	if r != nil && r.backend != nil {
+		return r.backend.Score(ctx, query, document)
+	}
 	if r == nil || r.model == nil {
 		return 0, fmt.Errorf("reranker model not loaded")
 	}
@@ -635,6 +642,10 @@ func (r *RerankerModel) Score(ctx context.Context, query, document string) (floa
 
 // Close releases reranker resources.
 func (r *RerankerModel) Close() error {
+	if r != nil && r.backend != nil {
+		return r.backend.Close()
+	}
+
 	if r == nil || r.model == nil {
 		return nil
 	}

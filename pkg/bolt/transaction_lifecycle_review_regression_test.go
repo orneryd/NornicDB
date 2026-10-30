@@ -176,11 +176,11 @@ func TestTransactionLifecycleStaleTimerCannotExpireReusedLifecycle(t *testing.T)
 		},
 	}
 	executor := &sharedSingleTransactionExecutor{}
-	require.NoError(t, lifecycle.begin(context.Background(), time.Hour, "nornic", executor, nil, nil))
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), time.Hour, "nornic", executor, nil, nil))
 	require.Len(t, callbacks, 1)
 	require.NoError(t, lifecycle.rollback(transactionTerminalRollback))
 
-	require.NoError(t, lifecycle.begin(context.Background(), time.Hour, "nornic", executor, nil, nil))
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), time.Hour, "nornic", executor, nil, nil))
 	require.Len(t, callbacks, 2)
 	callbacks[0]()
 
@@ -194,7 +194,7 @@ func TestTransactionLifecycleFailedBeginCancelsBeforeRollback(t *testing.T) {
 	executor := &beginFailureCancellationExecutor{}
 	lifecycle := &transactionLifecycle{}
 
-	err := lifecycle.begin(context.Background(), 0, "nornic", executor, nil, nil)
+	err := lifecycle.begin(context.Background(), testTxOwner(), 0, "nornic", executor, nil, nil)
 	require.ErrorContains(t, err, "forced BEGIN failure")
 	require.NotContains(t, err.Error(), "rollback cleanup failed")
 }
@@ -210,7 +210,7 @@ func TestBoltIdleTimeoutCleanupFailureImmediatelyClosesAndQuarantines(t *testing
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := startBoltTestServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(25)})
 
@@ -358,7 +358,7 @@ func TestTransactionLifecycleRecoversCleanupPanic(t *testing.T) {
 		err    error
 	}, 2)
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "nornic", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "nornic", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, err error) {
 			events <- struct {
 				reason transactionTerminalReason
@@ -426,7 +426,7 @@ func TestTransactionLifecycleActiveRunPanicStillCompletesOwnedCleanup(t *testing
 		err    error
 	}, 2)
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "nornic", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "nornic", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, err error) {
 			events <- struct {
 				reason transactionTerminalReason
@@ -485,7 +485,7 @@ func TestTransactionLifecycleContendedTimeoutStressIsTransactionLocal(t *testing
 		}
 		lifecycle := &transactionLifecycle{}
 		require.NoError(t, lifecycle.begin(
-			context.Background(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
+			context.Background(), testTxOwner(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
 		runCtx, err := lifecycle.claimRun()
 		require.NoError(t, err)
 		executors = append(executors, executor)

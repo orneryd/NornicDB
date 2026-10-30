@@ -360,19 +360,26 @@ func TestSearchServices_DropSearchServiceState_RemovesPersistedArtifacts(t *test
 	require.True(t, os.IsNotExist(statErr), "expected persisted search directory to be removed")
 }
 
+type failedStatusBuildEngine struct {
+	storage.Engine
+	failure error
+}
+
+func (e *failedStatusBuildEngine) IterateNodes(func(*storage.Node) bool) error {
+	return e.failure
+}
+
 func TestSearchStatusReportsFailedBuild(t *testing.T) {
 	db, err := Open("", DefaultConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	dbName := db.defaultDatabaseName()
-	_, err = db.GetOrCreateSearchService(dbName, db.storage)
-	require.NoError(t, err)
-	db.searchServicesMu.RLock()
-	entry := db.searchServices[dbName]
-	db.searchServicesMu.RUnlock()
-	entry.buildErrMu.Lock()
-	entry.buildErr = errors.New("index rebuild failed")
-	entry.buildErrMu.Unlock()
+	// Exercise an actual failed population. A synthetic buildErr on a ready
+	// service is not a failed current build and must not replace its ready phase.
+	dbName := "failed_status_build"
+	failure := errors.New("index rebuild failed")
+	engine := &failedStatusBuildEngine{Engine: db.storage, failure: failure}
+	_, err = db.EnsureSearchIndexes(t.Context(), dbName, engine, SearchIndexBuildWait)
+	require.ErrorIs(t, err, failure)
 	status := db.GetDatabaseSearchStatus(dbName)
 	require.Equal(t, "failed", status.Phase)
 	require.Equal(t, "index rebuild failed", status.Error)
@@ -880,7 +887,7 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 		buildDone: make(chan struct{}),
 	}
 	// Pre-consume buildOnce so startSearchIndexBuild does not launch a goroutine.
-	entry.buildOnce.Do(func() {})
+	entry.buildOnce.Run(func() {})
 	db.searchServices["tenant_timeout"] = entry
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -947,7 +954,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		db, entry, dbName := start(t)
 		// A pre-consumed Once keeps the build from running, so the buildDone
 		// signal stays open: only a mode that does not wait can return.
-		entry.buildOnce.Do(func() {})
+		entry.buildOnce.Run(func() {})
 		svc, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
 		require.NoError(t, err)
 		require.Same(t, entry.svc, svc)
@@ -975,7 +982,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 	t.Run("wait reports the failed build's error", func(t *testing.T) {
 		db, entry, dbName := start(t)
 		buildErr := errors.New("index build failed")
-		entry.buildOnce.Do(func() {
+		entry.buildOnce.Run(func() {
 			entry.buildErrMu.Lock()
 			entry.buildErr = buildErr
 			entry.buildErrMu.Unlock()
@@ -989,7 +996,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("wait returns the caller context error while the build runs", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		entry.buildOnce.Do(func() {})
+		entry.buildOnce.Run(func() {})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		svc, err := db.EnsureSearchIndexes(ctx, dbName, nil, SearchIndexBuildWait)

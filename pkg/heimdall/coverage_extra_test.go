@@ -308,7 +308,7 @@ func setupHeimdallCoverageGlobals(t *testing.T) {
 
 	globalPostExecutePool = &postExecuteWorkerPool{}
 	globalEventDispatcher = &dbEventDispatcher{
-		events:       make(chan *DatabaseEvent, 1000),
+		events:       make(chan databaseEventWork, 1000),
 		done:         make(chan struct{}),
 		pluginQueues: make(map[string]*pluginEventQueue),
 	}

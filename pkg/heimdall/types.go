@@ -512,18 +512,30 @@ func (p *PromptContext) NotifyProgress(title, message string) {
 
 // SendMessage sends a raw message to the UI (fire-and-forget).
 func (p *PromptContext) SendMessage(message string) {
-	if p.bifrost == nil {
+	bridge := p.bifrost
+	if bridge == nil {
 		return
 	}
-	go p.bifrost.SendMessage(message)
+	m := GetSubsystemManager()
+	_, release, accepted := m.acquireCallbackWork(detachedContext(p.Context))
+	if !accepted {
+		return
+	}
+	go func() { defer release(); m.recordOutcome("prompt message", bridge.SendMessage(message)) }()
 }
 
 // Broadcast sends a message to all connected clients (fire-and-forget).
 func (p *PromptContext) Broadcast(message string) {
-	if p.bifrost == nil {
+	bridge := p.bifrost
+	if bridge == nil {
 		return
 	}
-	go p.bifrost.Broadcast(message)
+	m := GetSubsystemManager()
+	_, release, accepted := m.acquireCallbackWork(detachedContext(p.Context))
+	if !accepted {
+		return
+	}
+	go func() { defer release(); m.recordOutcome("prompt broadcast", bridge.Broadcast(message)) }()
 }
 
 // PromptExample is a user→action mapping example for Heimdall.
@@ -915,6 +927,7 @@ func (p *PromptContext) GetBudgetInfo() PromptBudgetInfo {
 // Notifications: Plugins can send non-blocking SSE messages to the UI
 // via ctx.Notify() - these are fire-and-forget and won't block the request.
 type PreExecuteContext struct {
+	stateOwner *PreExecuteContext
 	// Context carries request cancellation and deadlines.
 	Context context.Context
 
@@ -966,6 +979,12 @@ type PreExecuteContext struct {
 
 // Cancel aborts the action execution with a reason.
 func (p *PreExecuteContext) Cancel(reason string, cancelledBy string) {
+	if p.stateOwner != nil {
+		p.stateOwner.Cancel(reason, cancelledBy)
+		return
+	}
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
 	p.cancelled = true
 	p.cancelReason = reason
 	p.cancelledBy = cancelledBy
@@ -973,16 +992,31 @@ func (p *PreExecuteContext) Cancel(reason string, cancelledBy string) {
 
 // Cancelled returns true if the request has been cancelled.
 func (p *PreExecuteContext) Cancelled() bool {
+	if p.stateOwner != nil {
+		return p.stateOwner.Cancelled()
+	}
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
 	return p.cancelled
 }
 
 // CancelReason returns the reason for cancellation.
 func (p *PreExecuteContext) CancelReason() string {
+	if p.stateOwner != nil {
+		return p.stateOwner.CancelReason()
+	}
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
 	return p.cancelReason
 }
 
 // CancelledBy returns which hook/plugin cancelled.
 func (p *PreExecuteContext) CancelledBy() string {
+	if p.stateOwner != nil {
+		return p.stateOwner.CancelledBy()
+	}
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
 	return p.cancelledBy
 }
 
@@ -994,6 +1028,10 @@ func (p *PreExecuteContext) SetBifrost(b BifrostBridge) {
 // Notify queues a notification to be sent inline after the AI response.
 // This ensures proper ordering with the streaming content.
 func (p *PreExecuteContext) Notify(notificationType, title, message string) {
+	if p.stateOwner != nil {
+		p.stateOwner.Notify(notificationType, title, message)
+		return
+	}
 	p.notificationMu.Lock()
 	defer p.notificationMu.Unlock()
 	p.notificationQueue = append(p.notificationQueue, QueuedNotification{
@@ -1005,11 +1043,55 @@ func (p *PreExecuteContext) Notify(notificationType, title, message string) {
 
 // DrainNotifications returns and clears all queued notifications.
 func (p *PreExecuteContext) DrainNotifications() []QueuedNotification {
+	if p.stateOwner != nil {
+		return p.stateOwner.DrainNotifications()
+	}
 	p.notificationMu.Lock()
 	defer p.notificationMu.Unlock()
 	notifications := p.notificationQueue
 	p.notificationQueue = nil
 	return notifications
+}
+
+// A done-based callback owns a stable view after the response waiter times out.
+// Only the notification/cancellation methods share mutable host state.
+func (p *PreExecuteContext) withContext(ctx context.Context) *PreExecuteContext {
+	owner := p
+	if p.stateOwner != nil {
+		owner = p.stateOwner
+	}
+	return &PreExecuteContext{Context: ctx, RequestID: p.RequestID, RequestTime: p.RequestTime,
+		Action: p.Action, Params: cloneHookMap(p.Params), RawResponse: p.RawResponse,
+		PluginData: cloneHookMap(p.PluginData), Database: p.Database, Metrics: p.Metrics,
+		PrincipalRoles: append([]string(nil), p.PrincipalRoles...), DatabaseAccessMode: p.DatabaseAccessMode,
+		ResolvedAccess: p.ResolvedAccess, bifrost: p.bifrost, stateOwner: owner}
+}
+
+func cloneHookMap(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = cloneHookValue(v)
+	}
+	return dst
+}
+func cloneHookValue(v interface{}) interface{} {
+	switch v := v.(type) {
+	case map[string]interface{}:
+		return cloneHookMap(v)
+	case []interface{}:
+		out := make([]interface{}, len(v))
+		for i := range v {
+			out[i] = cloneHookValue(v[i])
+		}
+		return out
+	case []string:
+		return append([]string(nil), v...)
+	default:
+		return v
+	}
 }
 
 // NotifyInfo queues an info notification.
@@ -1056,6 +1138,8 @@ type PreExecuteResult struct {
 // Notifications from PostExecute are queued and sent inline after the action result,
 // ensuring proper ordering in the streaming response.
 type PostExecuteContext struct {
+	// Context views share their original notification owner, never its mutex.
+	notificationOwner *PostExecuteContext
 	// Context carries request cancellation and deadlines.
 	Context context.Context
 
@@ -1090,6 +1174,10 @@ type PostExecuteContext struct {
 
 // Notify queues a notification to be sent inline after the action result.
 func (p *PostExecuteContext) Notify(notificationType, title, message string) {
+	if p.notificationOwner != nil {
+		p.notificationOwner.Notify(notificationType, title, message)
+		return
+	}
 	p.notificationMu.Lock()
 	defer p.notificationMu.Unlock()
 	p.notificationQueue = append(p.notificationQueue, QueuedNotification{
@@ -1101,11 +1189,29 @@ func (p *PostExecuteContext) Notify(notificationType, title, message string) {
 
 // DrainNotifications returns and clears all queued notifications.
 func (p *PostExecuteContext) DrainNotifications() []QueuedNotification {
+	if p.notificationOwner != nil {
+		return p.notificationOwner.DrainNotifications()
+	}
 	p.notificationMu.Lock()
 	defer p.notificationMu.Unlock()
 	notifications := p.notificationQueue
 	p.notificationQueue = nil
 	return notifications
+}
+
+// WithContext creates a callback view with its retained lifetime while preserving
+// the original notification queue. No mutex or owned mutable queue is copied.
+func (p *PostExecuteContext) WithContext(ctx context.Context) *PostExecuteContext {
+	owner := p
+	if p.notificationOwner != nil {
+		owner = p.notificationOwner
+	}
+	return &PostExecuteContext{
+		Context: ctx, RequestID: p.RequestID, Action: p.Action, Params: p.Params,
+		Result: p.Result, Duration: p.Duration, PluginData: p.PluginData,
+		WasCancelled: p.WasCancelled, CancellationInfo: p.CancellationInfo,
+		notificationOwner: owner,
+	}
 }
 
 // NotifyInfo queues an info notification.
