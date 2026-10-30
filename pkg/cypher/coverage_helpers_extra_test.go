@@ -77,9 +77,9 @@ func TestSmallCypherHelperBranches(t *testing.T) {
 		"MATCH (n) REMOVE n.name",
 	}
 	for _, query := range writeQueries {
-		require.True(t, looksLikeWriteQuery(query), query)
+		require.True(t, statementChangesState(t.Context(), query), query)
 	}
-	require.False(t, looksLikeWriteQuery("MATCH (n) RETURN n"))
+	require.False(t, statementChangesState(t.Context(), "MATCH (n) RETURN n"))
 }
 
 func TestSliceAndNumericCoercionHelpers(t *testing.T) {

@@ -8,6 +8,10 @@ import (
 // Statement execution modes come only from grammar-owned clauses and the live
 // procedure registry. QueryInfo's substring hints belong to cache optimization;
 // neither admission nor resolved execution may consume them.
+//
+// writes is a data write (grammar mutation effects or a registered WRITE
+// procedure); authorization maps it to the WRITE privilege. stateChange is a
+// command's schema or administration change. SHOW changes nothing itself.
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
@@ -20,6 +24,13 @@ type statementExecutionContract struct {
 // data write (grammar mutations or a registered WRITE procedure) or a
 // command's schema or administration change.
 func (c statementExecutionContract) changesState() bool { return c.writes || c.stateChange }
+
+// statementChangesState is the conservative effect answer for optimizations:
+// text the owner cannot read is treated as a write.
+func statementChangesState(ctx context.Context, query string) bool {
+	contract, err := readStatementExecutionContract(ctx, query)
+	return err != nil || contract.changesState()
+}
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
 	if classifyStatement(query).prefixMode == prefixExplain {

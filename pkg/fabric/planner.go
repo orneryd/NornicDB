@@ -24,7 +24,15 @@ type FabricPlanner struct {
 	// callImports is the Cypher executor's reader of the variables a CALL
 	// subquery imports; nil imports none.
 	callImports CallImportReader
+	// statementWrites is the Cypher executor's statement-effect owner, a
+	// required constructor input.
+	statementWrites StatementWriteReader
 }
+
+// StatementWriteReader reports whether a fragment's query changes state: a
+// data write, a registered WRITE procedure, or a schema or administration
+// command. It is the Cypher executor's one statement-effect owner.
+type StatementWriteReader func(ctx context.Context, query string) bool
 
 // CallImportReader returns the variables a CALL subquery imports from its
 // enclosing query ("*" for every variable): the variables its scope clause
@@ -166,9 +174,11 @@ func keywordAt(s string, idx int, keyword string) bool {
 	return true
 }
 
-// NewFabricPlanner creates a planner backed by the given catalog.
-func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
-	return &FabricPlanner{catalog: catalog}
+// NewFabricPlanner creates a planner backed by the given catalog. writes is the
+// Cypher executor's statement-effect owner: every fragment's write mode is its
+// answer.
+func NewFabricPlanner(catalog *Catalog, writes StatementWriteReader) *FabricPlanner {
+	return &FabricPlanner{catalog: catalog, statementWrites: writes}
 }
 
 // Plan decomposes a query into a Fragment tree.
@@ -299,7 +309,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 			if prefix == "" {
 				return inner, nil
 			}
-			prefixExec := newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope)
+			prefixExec := p.newExec(ctx, ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope)
 			return &FragmentApply{
 				Input: &FragmentApply{
 					Input:   &FragmentInit{Columns: nil},
@@ -312,7 +322,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 		}
 
 		// Simple case: single-graph query, no CALL {} blocks at this scope.
-		return newExec(remaining, top, scope), nil
+		return p.newExec(ctx, remaining, top, scope), nil
 	}
 
 	// Multi-graph case: decompose into Apply chain.
@@ -571,7 +581,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 		// Preserve outer query segments before each CALL block.
 		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: p.newExec(ctx, ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
 		}
 
 		subqueryFragment, err := p.planQuery(ctx, block.body, top, scope, true)
@@ -607,7 +617,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 	if trailingQuery != "" {
 		currentInput = &FragmentApply{
 			Input:      currentInput,
-			Inner:      newExec(trailingQuery, top, scope),
+			Inner:      p.newExec(ctx, trailingQuery, top, scope),
 			Projection: true,
 			Columns:    nil,
 		}
@@ -835,13 +845,13 @@ func useTarget(clause UseClause) planTarget {
 
 // newExec is an executable fragment running query on target; a dynamic
 // target may name the constituents of the composite scope.
-func newExec(query string, target planTarget, scope string) *FragmentExec {
+func (p *FabricPlanner) newExec(ctx context.Context, query string, target planTarget, scope string) *FragmentExec {
 	exec := &FragmentExec{
 		Input:     &FragmentInit{Columns: nil},
 		Query:     query,
 		GraphName: target.name,
 		Columns:   nil, // determined at execution time
-		IsWrite:   queryIsWrite(query),
+		IsWrite:   p.statementWrites(ctx, query),
 	}
 	if target.dynamic != nil {
 		exec.Graph = target.dynamic
@@ -1014,26 +1024,6 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	}
 
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
-}
-
-// queryIsWrite performs a simple heuristic check for write operations.
-// Strings, quoted names and comments are skipped; keywords there are text.
-func queryIsWrite(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if next, quoted := cyphertext.SkipToken(query, i); quoted {
-			i = next - 1
-			continue
-		}
-		if keywordAt(query, i, "CREATE") ||
-			keywordAt(query, i, "MERGE") ||
-			keywordAt(query, i, "DETACH DELETE") ||
-			keywordAt(query, i, "DELETE") ||
-			keywordAt(query, i, "SET") ||
-			keywordAt(query, i, "REMOVE") {
-			return true
-		}
-	}
-	return false
 }
 
 // startsWithFold checks if s starts with prefix (case-insensitive).

@@ -1187,7 +1187,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	}
 
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(innerBody), ";"))
-	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFold(trimmed, "RETURN ") || callSubqueryQueryIsWrite(trimmed) {
+	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFold(trimmed, "RETURN ") || statementChangesState(ctx, trimmed) {
 		return nil, false, nil
 	}
 	if containsFold(trimmed, "OPTIONAL MATCH") {
@@ -1497,16 +1497,6 @@ func splitTopLevelResultModifiersCallSubquery(returnPart string) (projection str
 		return strings.TrimSpace(returnPart), ""
 	}
 	return strings.TrimSpace(returnPart[:idx]), strings.TrimSpace(returnPart[idx:])
-}
-
-func callSubqueryQueryIsWrite(query string) bool {
-	// Single-pass: check each write keyword once with findKeywordIndex from position 0.
-	// Previous implementation was O(n*m) — called findKeywordIndex from every byte offset.
-	return findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0
 }
 
 func isSimpleIdentifier(s string) bool {

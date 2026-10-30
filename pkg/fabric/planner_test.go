@@ -13,7 +13,7 @@ func TestPlan_PreservesOuterClausesAroundCallUseBlocks(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
 	catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	query := `USE nornic
 MATCH (seed:Seed) RETURN seed.id AS seedId
@@ -76,7 +76,7 @@ func TestPlan_MultipleCallUseSubqueries(t *testing.T) {
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
 	catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
 	catalog.Register("nornic.txt", &LocationRemote{DBName: "txt", URI: "bolt://b:7687"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	query := `USE nornic
 CALL {
@@ -133,7 +133,7 @@ func TestPlan_CallWithThenUseSubquery(t *testing.T) {
 	catalog.Register("translations", &LocationLocal{DBName: "translations"})
 	catalog.Register("translations.tr", &LocationLocal{DBName: "nornic_tr"})
 	catalog.Register("translations.txr", &LocationLocal{DBName: "nornic_txt"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	query := `USE translations
 CALL {
@@ -211,7 +211,7 @@ func TestPlan_MidQueryUseAfterPipeline(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("translations", &LocationLocal{DBName: "translations"})
 	catalog.Register("translations.txr", &LocationLocal{DBName: "caremark_txt"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	query := `WITH rows
 UNWIND rows AS r
@@ -268,7 +268,7 @@ func TestPlan_CorrelatedWithImports(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 	read, asked := recordedCallImports("myVar")
 	p.SetCallImportReader(read)
 
@@ -310,7 +310,7 @@ func TestPlan_ScopedCallImportsLiveThroughBody(t *testing.T) {
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
 	catalog.Register("db.other", &LocationLocal{DBName: "other"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 	read, asked := recordedCallImports("x")
 	p.SetCallImportReader(read)
 
@@ -361,7 +361,7 @@ func collectExecsByGraph(fragment Fragment, graph string) []*FragmentExec {
 func TestPlan_WriteDetection(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	tests := []struct {
 		query   string
@@ -391,7 +391,7 @@ func TestPlan_WriteDetection(t *testing.T) {
 func TestPlan_CallWithoutUse_NotFabric(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	// CALL {} without USE inside is a regular subquery, not fabric.
 	query := `CALL {
@@ -549,29 +549,6 @@ func TestFindMatchingBrace_Unmatched(t *testing.T) {
 	_, err := findMatchingBrace("{ unclosed", 0)
 	if err == nil {
 		t.Fatal("expected error for unmatched brace")
-	}
-}
-
-func TestQueryIsWrite(t *testing.T) {
-	tests := []struct {
-		query string
-		want  bool
-	}{
-		{"MATCH (n) RETURN n", false},
-		{"CREATE (n:Test)", true},
-		{"MERGE (n:Test {id: 1})", true},
-		{"MATCH (n) DELETE n", true},
-		{"MATCH (n) DETACH DELETE n", true},
-		{"MATCH (n) SET n.x = 1 RETURN n", true},
-		{"MATCH (n) REMOVE n.x RETURN n", true},
-		{"RETURN 1", false},
-	}
-
-	for _, tt := range tests {
-		got := queryIsWrite(tt.query)
-		if got != tt.want {
-			t.Errorf("queryIsWrite(%q) = %v, want %v", tt.query, got, tt.want)
-		}
 	}
 }
 
@@ -955,7 +932,7 @@ func TestCompositeScopeRoot(t *testing.T) {
 func TestInCompositeScope(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("comp.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	if !p.inCompositeScope("comp") {
 		t.Fatal("expected comp to be in composite scope")
@@ -971,7 +948,7 @@ func TestInCompositeScope(t *testing.T) {
 	}
 
 	// Nil catalog.
-	p2 := NewFabricPlanner(nil)
+	p2 := NewFabricPlanner(nil, testStatementWrites)
 	if p2.inCompositeScope("comp") {
 		t.Fatal("expected false with nil catalog")
 	}
@@ -1048,7 +1025,7 @@ func TestContainsFold(t *testing.T) {
 func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("g1", &LocationLocal{DBName: "g1"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	frag, err := p.Plan(t.Context(), "RETURN 1 AS x UNION ALL RETURN 2 AS x UNION ALL RETURN 3 AS x", "g1", cyphertext.RawSource)
 	if err != nil {
@@ -1077,7 +1054,7 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 }
 
 func TestValidateUseTarget_EmptyTarget(t *testing.T) {
-	p := NewFabricPlanner(NewCatalog())
+	p := NewFabricPlanner(NewCatalog(), testStatementWrites)
 	err := p.validateUseTarget("db", "")
 	if err == nil {
 		t.Fatal("expected error for empty target")
@@ -1117,7 +1094,7 @@ func TestPlanMultiGraph_CallBlockWithInvalidUse(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	// CALL block with invalid nested USE target.
 	query := `USE db
@@ -1287,7 +1264,7 @@ func TestPlanMultiGraph_NonFabricCallThenFabricCall(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
-	p := NewFabricPlanner(catalog)
+	p := NewFabricPlanner(catalog, testStatementWrites)
 
 	// First CALL is non-fabric (no USE), second is fabric.
 	// Only the second should be in fabricBlocks.
@@ -1361,7 +1338,7 @@ func TestPlan_LeadingUsePopulations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			catalog := NewCatalog()
 			catalog.Register(tc.graph, tc.location)
-			p := NewFabricPlanner(catalog)
+			p := NewFabricPlanner(catalog, testStatementWrites)
 			frag, err := p.Plan(t.Context(), tc.query, "nornic", cyphertext.RawSource)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -1419,7 +1396,7 @@ RETURN translationId`},
 			catalog := NewCatalog()
 			catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
 			catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
-			p := NewFabricPlanner(catalog)
+			p := NewFabricPlanner(catalog, testStatementWrites)
 			if tc.scope == plannerCallNestedImports {
 				read, _ := recordedCallImports("outerId")
 				p.SetCallImportReader(read)
@@ -1550,7 +1527,7 @@ RETURN x`, "db", "expected error for invalid USE target in CALL block"},
 			for _, graph := range tc.graphs {
 				catalog.Register(graph.name, graph.location)
 			}
-			p := NewFabricPlanner(catalog)
+			p := NewFabricPlanner(catalog, testStatementWrites)
 			_, err := p.Plan(t.Context(), tc.query, tc.session, cyphertext.RawSource)
 			if err == nil {
 				t.Fatalf("%s (site=%d)", tc.message, tc.site)
@@ -1583,7 +1560,7 @@ func TestPlanRejectedSources(t *testing.T) {
 			for _, graph := range test.graphs {
 				catalog.Register(graph[0], &LocationLocal{DBName: graph[1]})
 			}
-			planner := NewFabricPlanner(catalog)
+			planner := NewFabricPlanner(catalog, testStatementWrites)
 			_, err := planner.Plan(t.Context(), test.query, test.session, cyphertext.RawSource)
 			if err == nil {
 				t.Fatal(test.message)
@@ -1667,7 +1644,7 @@ func TestPlannerSuccessfulGraphProducts(t *testing.T) {
 			for _, graph := range test.graphs {
 				catalog.Register(graph[0], &LocationLocal{DBName: graph[1]})
 			}
-			planner := NewFabricPlanner(catalog)
+			planner := NewFabricPlanner(catalog, testStatementWrites)
 			fragment, err := planner.Plan(t.Context(), test.query, test.session, cyphertext.RawSource)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)

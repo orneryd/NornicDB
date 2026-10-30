@@ -56,7 +56,7 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 					}
 					query := "CALL " + procedure.Name + "(" + strings.Join(args, ",") + ")"
 					ctx := withQueryParams(context.Background(), params)
-					require.False(t, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, query), query)
+					require.False(t, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), query), query)
 				})
 			}
 		}
@@ -152,7 +152,7 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 	} {
 		t.Run(test.query+fmt.Sprint(test.params), func(t *testing.T) {
 			ctx := withQueryParams(context.Background(), test.params)
-			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, test.query))
+			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), test.query))
 		})
 	}
 }

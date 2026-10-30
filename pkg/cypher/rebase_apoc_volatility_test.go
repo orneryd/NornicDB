@@ -29,7 +29,7 @@ func TestRebaseDeterminismUsesCanonicalCommaReader(t *testing.T) {
 		{"RETURN datetime.truncate('day' /* comma, inside comment */) AS value", false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			require.Equal(t, tc.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, tc.query))
+			require.Equal(t, tc.cacheable, exec.canUseResultCache(ctx, analyzedReadQueryInfo(true), tc.query))
 			hitsBefore, _, _, _, _ := exec.cache.Stats()
 			first, err := exec.Execute(ctx, tc.query, nil)
 			require.NoError(t, err)

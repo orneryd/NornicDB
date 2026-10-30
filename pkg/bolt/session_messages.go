@@ -291,7 +291,7 @@ func (s *Session) handleRun(data []byte) error {
 			// COMMIT. The failed statement is one of the transaction's writes,
 			// and the same rule as for COMMIT decides whether its UNIQUE
 			// violation is a retryable race.
-			s.recordExplicitTransactionWrite(query, params, isWrite)
+			s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
 			if s.canRetryMergeCommitConflict(err) {
 				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
@@ -344,7 +344,7 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	s.lastQueryDatabase = resultDatabase
 	if s.inTransaction {
-		s.recordExplicitTransactionWrite(query, params, isWrite)
+		s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
 	}
 
 	// Store result for PULL
@@ -510,11 +510,16 @@ func isRetryableBoltStatus(code string) bool {
 	return strings.HasPrefix(code, "Neo.TransientError.")
 }
 
-func (s *Session) recordExplicitTransactionWrite(query string, params map[string]any, isWrite bool) {
+// recordExplicitTransactionWrite analyzes a write of the explicit transaction
+// under the RUN statement's context; a cancelled analysis is a non-merge write.
+func (s *Session) recordExplicitTransactionWrite(ctx context.Context, query string, params map[string]any, isWrite bool) {
 	if !isWrite {
 		return
 	}
-	info := boltTxWriteAnalyzer.Analyze(context.Background(), query)
+	info, err := boltTxWriteAnalyzer.Analyze(ctx, query)
+	if err != nil {
+		info = nil
+	}
 	if info != nil && info.HasMerge {
 		s.txHasMerge = true
 		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})

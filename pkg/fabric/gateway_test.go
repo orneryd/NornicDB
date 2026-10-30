@@ -19,7 +19,7 @@ func TestQueryGatewayExecute(t *testing.T) {
 	}}
 
 	gateway := NewQueryGateway(
-		NewFabricPlanner(catalog),
+		NewFabricPlanner(catalog, testStatementWrites),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 

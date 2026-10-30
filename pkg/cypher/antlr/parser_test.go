@@ -650,7 +650,7 @@ func TestANTLRQueryAnalyzer(t *testing.T) {
 		if !info.HasExplain || !info.HasCall || !info.CallIsDbProcedure {
 			t.Fatalf("expected explain db call flags, got %+v", info)
 		}
-		if !info.IsReadOnly || info.IsWriteQuery {
+		if !info.HasCall || !info.CallIsDbProcedure {
 			t.Fatalf("expected read-only db procedure call, got %+v", info)
 		}
 	})
@@ -661,7 +661,7 @@ func TestANTLRQueryAnalyzer(t *testing.T) {
 		if !info.HasMatch || !info.HasSet || !info.HasReturn {
 			t.Fatalf("expected match/set/return flags, got %+v", info)
 		}
-		if !info.IsWriteQuery || info.IsReadOnly || !info.IsCompoundQuery {
+		if !info.IsCompoundQuery {
 			t.Fatalf("expected compound write query, got %+v", info)
 		}
 		if info.FirstClause != ClauseMatch {
@@ -715,7 +715,7 @@ func TestANTLRQueryAnalyzer_WriteAndRoutingVariants(t *testing.T) {
 			name:  "create query",
 			query: "CREATE (n:Person {name: 'Alice'})",
 			check: func(t *testing.T, info *QueryInfo) {
-				if !info.HasCreate || info.FirstClause != ClauseCreate || !info.IsWriteQuery {
+				if !info.HasCreate || info.FirstClause != ClauseCreate {
 					t.Fatalf("unexpected create analysis: %+v", info)
 				}
 			},
@@ -742,7 +742,7 @@ func TestANTLRQueryAnalyzer_WriteAndRoutingVariants(t *testing.T) {
 			name:  "remove query",
 			query: "MATCH (n:Person) REMOVE n.legacy",
 			check: func(t *testing.T, info *QueryInfo) {
-				if !info.HasRemove || !info.IsWriteQuery {
+				if !info.HasRemove {
 					t.Fatalf("unexpected remove analysis: %+v", info)
 				}
 			},
@@ -751,7 +751,7 @@ func TestANTLRQueryAnalyzer_WriteAndRoutingVariants(t *testing.T) {
 			name:  "with query",
 			query: "MATCH (n:Person) WITH n RETURN n",
 			check: func(t *testing.T, info *QueryInfo) {
-				if !info.HasWith || !info.IsReadOnly {
+				if !info.HasWith {
 					t.Fatalf("unexpected WITH analysis: %+v", info)
 				}
 			},
@@ -760,7 +760,7 @@ func TestANTLRQueryAnalyzer_WriteAndRoutingVariants(t *testing.T) {
 			name:  "unwind query",
 			query: "UNWIND [1, 2] AS x RETURN x",
 			check: func(t *testing.T, info *QueryInfo) {
-				if !info.HasUnwind || info.FirstClause != ClauseUnwind || !info.IsReadOnly {
+				if !info.HasUnwind || info.FirstClause != ClauseUnwind {
 					t.Fatalf("unexpected UNWIND analysis: %+v", info)
 				}
 			},
@@ -964,12 +964,6 @@ func TestANTLRQueryAnalyzer_StandaloneCallDbProc(t *testing.T) {
 	if !info.CallIsDbProcedure {
 		t.Fatal("CALL db.labels() must set CallIsDbProcedure")
 	}
-	if !info.IsReadOnly {
-		t.Fatal("CALL db.labels() must be read-only per Neo4j semantics")
-	}
-	if info.IsWriteQuery {
-		t.Fatal("CALL db.labels() must not be a write query")
-	}
 }
 
 func TestANTLRQueryAnalyzer_StandaloneCallNonDbProc(t *testing.T) {
@@ -983,9 +977,6 @@ func TestANTLRQueryAnalyzer_StandaloneCallNonDbProc(t *testing.T) {
 	}
 	if info.CallIsDbProcedure {
 		t.Fatal("apoc.help is not a db.* procedure")
-	}
-	if info.IsReadOnly {
-		t.Fatal("standalone CALL to non-db.* procedure must not be read-only")
 	}
 }
 
@@ -1021,9 +1012,6 @@ func TestANTLRQueryAnalyzer_OptionalMatchAsFirstClause(t *testing.T) {
 	if info.FirstClause != ClauseOptionalMatch {
 		t.Fatalf("FirstClause = %v, want ClauseOptionalMatch", info.FirstClause)
 	}
-	if !info.IsReadOnly {
-		t.Fatal("OPTIONAL MATCH + RETURN is read-only")
-	}
 }
 
 func TestANTLRQueryAnalyzer_OptionalMatchFollowedByMatch(t *testing.T) {
@@ -1057,8 +1045,8 @@ func TestANTLRQueryAnalyzer_MultipleMerge(t *testing.T) {
 	if !info.IsCompoundQuery {
 		t.Fatal("multiple MERGEs must set IsCompoundQuery")
 	}
-	if !info.IsWriteQuery {
-		t.Fatal("MERGE is a write query")
+	if !info.HasMerge {
+		t.Fatal("MERGE must set HasMerge")
 	}
 }
 
@@ -1069,7 +1057,7 @@ func TestANTLRQueryAnalyzer_MultipleMerge(t *testing.T) {
 func TestANTLRQueryAnalyzer_NilParseResult(t *testing.T) {
 	analyzer := NewQueryAnalyzer()
 	info := analyzer.Analyze("RETURN 1", nil)
-	if info.IsWriteQuery || info.IsReadOnly || info.IsSchemaQuery {
+	if info.HasReturn || info.IsSchemaQuery {
 		t.Fatal("nil parse result should leave all flags false")
 	}
 	// Must return cached value on second call
@@ -1081,7 +1069,7 @@ func TestANTLRQueryAnalyzer_NilParseResult(t *testing.T) {
 func TestANTLRQueryAnalyzer_NilTree(t *testing.T) {
 	analyzer := NewQueryAnalyzer()
 	info := analyzer.Analyze("RETURN 1", &ParseResult{Tree: nil})
-	if info.IsWriteQuery || info.IsReadOnly || info.IsSchemaQuery {
+	if info.HasReturn || info.IsSchemaQuery {
 		t.Fatal("nil tree should leave all flags false")
 	}
 }
