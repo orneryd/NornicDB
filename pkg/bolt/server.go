@@ -219,13 +219,11 @@ type Server struct {
 	config                         *Config
 	listener                       net.Listener
 	lifecycleMu                    sync.Mutex
-	work                           *lifecycle.WorkLifetime
+	work                           atomic.Pointer[lifecycle.WorkLifetime]
 	serving                        bool
-	stopped                        lifecycle.OnceCompletion // the retirement driver, run once and joined by every stopper
 	mu                             sync.RWMutex
 	sessions                       map[string]*Session
 	connectionListings             map[string]cypher.ConnectionListing
-	closed                         atomic.Bool
 	rawTransactionExecutorPoisoned atomic.Bool
 	// nextConnectionID numbers connections for SHOW TRANSACTIONS
 	// (connectionId bolt-N).
@@ -1132,13 +1130,13 @@ func (s *Server) serve() error { return s.Serve(s.listenerSnapshot()) }
 func (s *Server) serveAccepted(ctx context.Context) error {
 	listener := s.listenerSnapshot()
 	for {
-		if s.closed.Load() || ctx.Err() != nil {
+		if s.lifetime().Closing() || ctx.Err() != nil {
 			return nil
 		}
 
 		conn, err := listener.Accept()
 		if err != nil {
-			if s.closed.Load() || ctx.Err() != nil {
+			if s.lifetime().Closing() || ctx.Err() != nil {
 				if !util.ErrorIsOnly(err, net.ErrClosed) && !util.ErrorIsOnly(err, ctx.Err()) {
 					s.lifetime().RecordError("finish Bolt accept", err)
 				}
@@ -1153,7 +1151,7 @@ func (s *Server) serveAccepted(ctx context.Context) error {
 
 // IsClosed returns whether the server is closed.
 func (s *Server) IsClosed() bool {
-	return s.closed.Load()
+	return s.lifetime().Closing()
 }
 
 // handleConnection handles a single client connection. It performs
@@ -1458,7 +1456,7 @@ func (s *Server) handleConnectionOwned(workCtx context.Context, conn net.Conn) {
 
 	keepaliveStarted := false
 	for {
-		if s.closed.Load() {
+		if s.lifetime().Closing() {
 			return
 		}
 		if err := session.handleQueuedMessage(); err != nil {

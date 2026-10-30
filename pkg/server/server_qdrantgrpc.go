@@ -137,7 +137,7 @@ func (s *Server) startQdrantGRPC() error {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
 	}
 
-	rerankEnabled := searchSvc.RerankerAvailable(s.shutdown.workContext)
+	rerankEnabled := searchSvc.RerankerAvailable(s.shutdown.work.Context())
 	nornicSearchSvc, err := nornicgrpc.NewService(
 		nornicgrpc.Config{
 			DefaultDatabase:  dbName,
@@ -180,13 +180,18 @@ func (s *Server) startQdrantGRPC() error {
 	}
 
 	s.mu.Lock()
-	if s.closed.Load() {
+	if s.shutdown.work.Closing() {
 		s.mu.Unlock()
 		return ErrServerClosed
 	}
 	s.qdrantGRPCServer = grpcServer
 	s.qdrantCollectionStore = grpcServer.CollectionStore()
 	s.mu.Unlock()
+	// Publish, then enroll its stop; a refused enrollment stops it now.
+	if !s.shutdown.work.OnStop(func() error { s.stopQdrantGRPC(); return nil }) {
+		s.stopQdrantGRPC()
+		return ErrServerClosed
+	}
 	if err := grpcServer.Start(); err != nil {
 		return fmt.Errorf("qdrant grpc: failed to start: %w", err)
 	}

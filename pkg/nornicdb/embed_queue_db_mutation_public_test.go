@@ -117,10 +117,8 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 			config.Compliance.SubjectIdentifierProperties = []string{"user_id"}
 			config.Compliance.SubjectPseudonymizeProperties = []string{"user_id"}
 			svc := search.NewService(ns, 2, nil)
-			done := make(chan struct{})
-			close(done)
-			entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: done}
-			entry.buildOnce.Run(func() {})
+			entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc}
+			entry.build.Do(func() error { return nil }) // the initial build has completed
 			db := &DB{storage: ns, baseStorage: store, config: config, embedQueue: worker,
 				searchServices: map[string]*dbSearchService{"nornic": entry}}
 			t.Cleanup(func() { release(); worker.Close(); _ = svc.Close(); _ = disk.Close() })

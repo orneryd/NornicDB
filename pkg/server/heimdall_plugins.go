@@ -27,9 +27,8 @@ func (s *Server) initHeimdallPluginsWithoutInference(features *nornicConfig.Feat
 	cfg.BifrostEnabled = false
 	// Plugin-only loading runs during construction, under the server's own
 	// work lifetime; it has no other caller context.
-	s.shutdown.init()
 	s.loadHeimdallPlugins(heimdall.SubsystemContext{
-		Context: s.shutdown.workContext,
+		Context: s.shutdown.work.Context(),
 		Config:  cfg, Database: router, Metrics: metrics, Bifrost: bridge,
 		Heimdall: heimdall.NewLiveHeimdallInvoker(manager, nil, bridge, router, metrics),
 	}, server)
@@ -37,15 +36,14 @@ func (s *Server) initHeimdallPluginsWithoutInference(features *nornicConfig.Feat
 
 // loadHeimdallPlugins is shared by inference-enabled and plugin-only startup.
 func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.Server) {
-	s.shutdown.init()
-	constructorCtx, release, accepted := s.shutdown.acquire(ctx.Context)
+	constructorCtx, release, accepted := s.shutdown.work.Acquire(ctx.Context)
 	if accepted {
 		defer release()
 	}
 	ctx.Context = constructorCtx
 	ctx.Lifetime = &s.shutdown.work
 	s.heimdallPluginsMu.Lock()
-	if s.closed.Load() {
+	if s.shutdown.work.Closing() {
 		if router, ok := ctx.Database.(*heimdallDBRouter); ok {
 			s.shutdown.mu.Lock()
 			s.shutdown.unpublishedRouters = append(s.shutdown.unpublishedRouters, router)

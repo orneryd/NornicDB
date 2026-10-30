@@ -201,10 +201,11 @@ func TestHTTPServerStopHonorsDeadlineWithHeldRequestLease(t *testing.T) {
 
 	requestCtx, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
+	httpServer := &http.Server{}
 	s.lifecycleMu.Lock()
-	s.cancelRequestsCtx = cancelRequests
-	s.httpServer = &http.Server{}
+	s.httpServer = httpServer
 	s.lifecycleMu.Unlock()
+	require.True(t, s.shutdown.work.OnStop(s.stopHTTPServer(httpServer, cancelRequests)))
 
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"statements":[]}`)).WithContext(requestCtx)
 	req.Header.Set("Authorization", token)

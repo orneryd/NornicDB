@@ -33,7 +33,7 @@ func (s *Server) startDiscoveryRefresher(parents ...context.Context) error {
 		return fmt.Errorf("bolt server is closed")
 	}
 	s.lifecycleMu.Lock()
-	if s.closed.Load() || s.discoveryStarted {
+	if w.Closing() || s.discoveryStarted {
 		s.lifecycleMu.Unlock()
 		release()
 		return nil

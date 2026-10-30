@@ -11,7 +11,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/rerankwire"
@@ -53,40 +52,34 @@ func DefaultLocalRerankerConfig() *LocalRerankerConfig {
 
 // LocalReranker performs Stage-2 reranking using a local GGUF reranker model.
 type LocalReranker struct {
-	scorer   RerankScorer
-	cfg      *LocalRerankerConfig
-	mu       sync.RWMutex
-	lifetime func(context.Context) (context.Context, func(), error)
+	scorer RerankScorer
+	cfg    *LocalRerankerConfig
+	// admit is the required admission of the scorer's owner (the DB's
+	// provider owner): every scorer call is accepted work it joins.
+	admit func(context.Context) (context.Context, func(), error)
 }
 
 // UnderlyingScorer identifies the resource adopted by the DB's provider owner.
 func (r *LocalReranker) UnderlyingScorer() RerankScorer { return r.scorer }
 
-// SetLifetime binds every resolver/scorer alias to the canonical DB admission.
-func (r *LocalReranker) SetLifetime(use func(context.Context) (context.Context, func(), error)) {
-	r.mu.Lock()
-	r.lifetime = use
-	r.mu.Unlock()
-}
 func (r *LocalReranker) beginUse(ctx context.Context) (context.Context, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	r.mu.RLock()
-	use := r.lifetime
-	r.mu.RUnlock()
-	if use != nil {
-		return use(ctx)
-	}
-	return ctx, func() {}, nil
+	return r.admit(ctx)
 }
 
-// NewLocalReranker creates a reranker that uses the given scorer (e.g. *localllm.RerankerModel).
-func NewLocalReranker(scorer RerankScorer, cfg *LocalRerankerConfig) *LocalReranker {
+// NewLocalReranker creates a reranker that uses the given scorer (e.g.
+// *localllm.RerankerModel). admit is the scorer owner's admission and is
+// required: there is no untracked mode.
+func NewLocalReranker(scorer RerankScorer, cfg *LocalRerankerConfig, admit func(context.Context) (context.Context, func(), error)) *LocalReranker {
+	if admit == nil {
+		panic("search: NewLocalReranker requires its owner's admission")
+	}
 	if cfg == nil {
 		cfg = DefaultLocalRerankerConfig()
 	}
-	return &LocalReranker{scorer: scorer, cfg: cfg}
+	return &LocalReranker{scorer: scorer, cfg: cfg, admit: admit}
 }
 
 func (r *LocalReranker) Name() string { return "local_gguf" }

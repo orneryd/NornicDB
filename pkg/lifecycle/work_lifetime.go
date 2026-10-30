@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
@@ -15,7 +16,7 @@ import (
 type WorkLifetime struct {
 	once      sync.Once
 	mu        sync.Mutex
-	closing   bool
+	closing   atomic.Bool // written under mu; read without it by Closing
 	active    int
 	quiescent chan struct{}
 	ctx       context.Context
@@ -78,6 +79,14 @@ func (w *WorkLifetime) CloseContext(ctx context.Context) error {
 // arguments are not run.
 func (w *WorkLifetime) Shutdown(ctx context.Context, dispose func() error) error {
 	requireContext("WorkLifetime.Shutdown", ctx)
+	w.BeginStop(dispose)
+	return w.WaitStopped(ctx)
+}
+
+// BeginStop starts Shutdown's one stop protocol without waiting for it: a
+// supervisor signals every sibling before joining any of them. The returned
+// channel closes after dispose; WaitStopped reports the outcomes.
+func (w *WorkLifetime) BeginStop(dispose func() error) <-chan struct{} {
 	w.CloseAdmission()
 	w.Cancel()
 	w.stopped.Go(func() error {
@@ -87,7 +96,7 @@ func (w *WorkLifetime) Shutdown(ctx context.Context, dispose func() error) error
 		}
 		return nil
 	})
-	return w.WaitStopped(ctx)
+	return w.stopped.Done()
 }
 
 // OnStop enrolls a stop signal, such as closing a listener or a transport so
@@ -145,23 +154,27 @@ func (w *WorkLifetime) CloseAdmission() bool {
 	w.init()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closing {
+	if w.closing.Load() {
 		return false
 	}
-	w.closing = true
+	w.closing.Store(true)
 	if w.active == 0 {
 		close(w.quiescent)
 	}
 	return true
 }
 
-// Closing reports whether admission has been closed.
-func (w *WorkLifetime) Closing() bool {
-	w.init()
+// Active reports how many admitted units have not yet returned. It is an
+// observation for diagnostics and tests; admission and completion decisions
+// use Acquire, Enter and Quiescent.
+func (w *WorkLifetime) Active() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.closing
+	return w.active
 }
+
+// Closing reports whether admission has been closed.
+func (w *WorkLifetime) Closing() bool { return w.closing.Load() }
 
 // Enter admits one unit of root work that has no context and no children,
 // without allocating: a storage helper or a reserved notification. The same
@@ -170,7 +183,7 @@ func (w *WorkLifetime) Enter() bool {
 	w.init()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closing {
+	if w.closing.Load() {
 		return false
 	}
 	w.active++
@@ -186,7 +199,7 @@ func (w *WorkLifetime) Leave() {
 		panic("lifecycle: WorkLifetime.Leave without Enter")
 	}
 	w.active--
-	if w.closing && w.active == 0 {
+	if w.closing.Load() && w.active == 0 {
 		close(w.quiescent)
 	}
 }
@@ -200,7 +213,7 @@ func (w *WorkLifetime) acquire(ctx context.Context, request bool) (context.Conte
 	requireContext("WorkLifetime.Acquire", ctx)
 	parent, _ := ctx.Value(workKey{}).(*workTicket)
 	w.mu.Lock()
-	if w.closing && (parent == nil || parent.owner != w || !parent.active) {
+	if w.closing.Load() && (parent == nil || parent.owner != w || !parent.active) {
 		w.mu.Unlock()
 		return ctx, func() {}, false
 	}
@@ -227,7 +240,7 @@ func (w *WorkLifetime) acquire(ctx context.Context, request bool) (context.Conte
 		}
 		w.mu.Lock()
 		w.active--
-		if w.closing && w.active == 0 {
+		if w.closing.Load() && w.active == 0 {
 			close(w.quiescent)
 		}
 		w.mu.Unlock()

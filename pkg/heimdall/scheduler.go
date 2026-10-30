@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -27,8 +28,11 @@ type Manager struct {
 	generator Generator
 	config    Config
 	modelPath string
-	closed    bool
-	lifetime  func(context.Context) (context.Context, func(), error)
+	// work owns every model call: Close disposes the generator only after the
+	// calls it admitted have returned. A bound host admission (the DB's
+	// foreground owner) is taken in addition, never instead.
+	work     lifecycle.WorkLifetime
+	lifetime func(context.Context) (context.Context, func(), error)
 
 	// Stats
 	requestCount int64
@@ -231,7 +235,7 @@ func (m *Manager) Generate(ctx context.Context, prompt string, params GeneratePa
 	}
 	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return "", fmt.Errorf("manager is closed")
 	}
@@ -267,7 +271,7 @@ func (m *Manager) GenerateStream(ctx context.Context, prompt string, params Gene
 	}
 	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return fmt.Errorf("manager is closed")
 	}
@@ -347,7 +351,7 @@ func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMes
 	}
 	defer finish()
 	m.mu.RLock()
-	if m.closed {
+	if m.work.Closing() {
 		m.mu.RUnlock()
 		return "", nil, fmt.Errorf("manager is closed")
 	}
@@ -446,15 +450,14 @@ func (m *Manager) Stats() ManagerStats {
 	}
 }
 
-// Close releases all resources.
+// Close releases all resources once every admitted model call has returned.
+// Every caller joins the same close and receives its outcome.
 func (m *Manager) Close() error {
-	m.mu.Lock()
+	return m.work.Shutdown(context.Background(), m.closeGenerator)
+}
 
-	if m.closed {
-		m.mu.Unlock()
-		return nil
-	}
-	m.closed = true
+func (m *Manager) closeGenerator() error {
+	m.mu.Lock()
 	generator, cfg, requests, failures := m.generator, m.config, m.requestCount, m.errorCount
 	m.mu.Unlock()
 	if generator != nil {
@@ -474,17 +477,25 @@ func (m *Manager) SetLifetime(use func(context.Context) (context.Context, func()
 	m.mu.Unlock()
 }
 
+// beginUse admits one model call in the manager's own lifetime, and also in
+// the bound host admission when one is set.
 func (m *Manager) beginUse(ctx context.Context) (context.Context, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
+	_, release, accepted := m.work.Acquire(m.work.Context())
+	if !accepted {
+		return nil, nil, fmt.Errorf("manager is closed")
 	}
 	m.mu.RLock()
 	use := m.lifetime
 	m.mu.RUnlock()
-	if use != nil {
-		return use(ctx)
+	if use == nil {
+		return ctx, release, nil
 	}
-	return ctx, func() {}, nil
+	ctx, finishHost, err := use(ctx)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return ctx, func() { finishHost(); release() }, nil
 }
 
 // ModelPath returns the path to the loaded model.

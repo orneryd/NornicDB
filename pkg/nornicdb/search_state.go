@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -214,38 +216,33 @@ func writeSearchStateToken(path, token string) error {
 // with discard, its persisted files are removed, loaded service or not. The
 // next use creates the next generation, from storage when discarded.
 func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) {
-	db.searchServicesMu.Lock()
-	if db.searchClosing {
-		db.searchServicesMu.Unlock()
+	if !db.work.Enter() {
 		return
 	}
-	db.bgWg.Add(1)
-	db.searchServicesMu.Unlock()
-	defer db.bgWg.Done()
+	defer db.work.Leave()
 	for {
 		db.searchServiceCreationMu.Lock()
 		db.searchServicesMu.RLock()
-		retiring, done := db.searchRetiring, db.searchRetirementDone
+		running := db.searchRetirement
 		db.searchServicesMu.RUnlock()
-		if !retiring {
+		if running == nil {
 			break
 		}
 		db.searchServiceCreationMu.Unlock()
-		<-done
+		<-running.Done()
 	}
 	// This is a lifetime state, not a generation or origin transition.
+	retirement := &lifecycle.OnceCompletion{}
 	db.searchServicesMu.Lock()
-	db.searchRetiring = true
-	db.searchRetirementDone = make(chan struct{})
-	retirementDone := db.searchRetirementDone
-	constructing, constructionDone := db.searchConstructing, db.searchConstructionDone
+	db.searchRetirement = retirement
+	epoch := db.searchConstruction
 	db.searchServicesMu.Unlock()
 	// Preserve the creation fence's original order: admitted preparation
 	// publishes before Reset retires that generation. Foreign resolvers run
 	// without the native fence, and the phase refuses later constructors.
 	db.searchServiceCreationMu.Unlock()
-	if constructing != 0 {
-		<-constructionDone
+	if epoch != nil {
+		db.recordBackgroundError(epoch.Shutdown(context.Background(), nil))
 	}
 	db.searchServiceCreationMu.Lock()
 	var retired []*dbSearchService
@@ -292,9 +289,13 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 	db.searchServiceCreationMu.Lock()
 	defer func() {
 		db.searchServicesMu.Lock()
-		db.searchRetiring = false
-		close(retirementDone)
+		if epoch != nil {
+			// The sealed epoch stopped above; later constructors use a new one.
+			db.searchConstruction = &lifecycle.WorkLifetime{}
+		}
+		db.searchRetirement = nil
 		db.searchServicesMu.Unlock()
+		retirement.Do(func() error { return nil })
 		db.searchServiceCreationMu.Unlock()
 		db.recordBackgroundError(retirementErr)
 	}()

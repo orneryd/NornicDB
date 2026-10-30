@@ -2,7 +2,6 @@ package fabric
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
@@ -180,15 +179,13 @@ func (it *convertingRowIterator) Close() error {
 }
 
 type prefetchRowIterator struct {
-	ctx             context.Context
-	work            *lifecycle.WorkLifetime
-	producerContext context.Context
-	base            RowIterator
-	rows            chan []interface{}
-	once            sync.Once
-	nativeDone      chan struct{}
-	stopSignal      func() bool
-	cur             []interface{}
+	ctx         context.Context
+	work        *lifecycle.WorkLifetime
+	base        RowIterator
+	rows        chan []interface{}
+	nativeClose lifecycle.OnceCompletion // the base's one close: EOF, Close or cancellation
+	stopSignal  func() bool
+	cur         []interface{}
 }
 
 type concatRowIterator struct {
@@ -221,39 +218,32 @@ func NewPrefetchRowIterator(ctx context.Context, base RowIterator, buffer int) R
 		buffer = 1
 	}
 	work := lifecycle.NewWorkLifetime(ctx)
-	producerContext, release, accepted := work.Acquire(work.Context())
+	_, release, accepted := work.Acquire(work.Context())
 	if !accepted {
 		panic("fabric: new iterator lifetime refused its producer")
 	}
-	it := &prefetchRowIterator{ctx: work.Context(), work: work, producerContext: producerContext, base: base,
-		rows: make(chan []interface{}, buffer), nativeDone: make(chan struct{})}
+	it := &prefetchRowIterator{ctx: work.Context(), work: work, base: base,
+		rows: make(chan []interface{}, buffer)}
 	// The producer obligation is enrolled before this stop signal is armed.
 	// The callback only dispatches the same native stop owner; it never declares
 	// native or producer completion, and can do no resource work after that owner.
-	it.stopSignal = context.AfterFunc(it.ctx, it.beginStop)
+	it.stopSignal = context.AfterFunc(it.ctx, func() { it.beginStop() })
 	go func() { defer release(); it.produce() }()
 	return it
 }
 
-// beginStop is the iterator's one native disposal path, shared by EOF and
-// explicit Close. Its admitted producer enrolls the native child before launch;
-// an already-sealed lifetime still owns that actual child completion.
-func (it *prefetchRowIterator) beginStop() {
-	it.once.Do(func() {
-		it.work.CloseAdmission()
-		_, release, accepted := it.work.Acquire(it.producerContext)
-		if !accepted {
-			panic("fabric: live iterator lost its disposal ownership")
-		}
-		go func() {
-			defer release()
-			defer close(it.nativeDone)
-			it.work.RecordError("iterator close", it.base.Close())
-		}()
+// beginStop dispatches the base's one native close, shared by EOF, explicit
+// Close and cancellation. The producer joins it before returning its ticket,
+// so the close is always retained by the iterator's admitted producer.
+func (it *prefetchRowIterator) beginStop() <-chan struct{} {
+	return it.nativeClose.Go(func() error {
+		err := it.base.Close()
+		it.work.RecordError("iterator close", err)
+		return err
 	})
 }
 func (it *prefetchRowIterator) produce() {
-	defer func() { it.beginStop(); <-it.nativeDone; it.stopSignal(); close(it.rows) }()
+	defer func() { <-it.beginStop(); it.stopSignal(); close(it.rows) }()
 	if it.ctx.Err() != nil {
 		return
 	}
@@ -302,9 +292,7 @@ func (it *prefetchRowIterator) Close() error {
 	if it == nil {
 		return nil
 	}
-	it.work.Cancel()
-	it.beginStop()
-	return it.work.WaitClosed(context.Background())
+	return it.work.Shutdown(context.Background(), nil)
 }
 
 // NewConcatRowIterator owns each child close once. Concurrent stop may interrupt

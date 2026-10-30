@@ -344,11 +344,21 @@ func TestManagerCloseContextMarksTerminalSessionsComplete(t *testing.T) {
 	_, _ = session.Executor.Execute(context.Background(), "ROLLBACK", nil)
 }
 
-func TestManagerCloseContextAcceptsNilContext(t *testing.T) {
+// The lifecycle owner rejects a nil context loudly instead of substituting
+// one: a caller's missing deadline is a programming error, not a default.
+func TestManagerCloseContextRejectsNilContext(t *testing.T) {
 	manager := NewManager(time.Hour, nil)
-	if err := manager.CloseContext(nil); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	defer func() {
+		if recover() == nil {
+			t.Fatal("CloseContext(nil) did not reject the nil context")
+		}
+	}()
+	_ = manager.CloseContext(nil) // panics before returning
 }
 
 func TestManagerCloseContextDoesNotWaitForSessionStateLock(t *testing.T) {

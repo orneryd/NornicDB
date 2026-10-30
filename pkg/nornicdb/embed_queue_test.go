@@ -12,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2042,7 +2043,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			t.Fatal("expected debounced trigger signal")
 		}
 
-		worker.closed.Store(true)
+		worker.work.CloseAdmission()
 		worker.Trigger()
 		require.Zero(t, worker.QueueLen())
 	})
@@ -2456,11 +2457,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		defer worker.Close()
 		require.Zero(t, worker.config.NumWorkers)
 
-		worker.closed.Store(true)
-		worker.StartWorkers()
-		require.False(t, worker.workersStarted)
+		closedWorker := NewEmbedWorker(newMockEmbedder(), engine, cfg)
+		closedWorker.Close()
+		closedWorker.StartWorkers()
+		require.False(t, closedWorker.workersStarted)
 
-		worker.closed.Store(false)
 		worker.StartWorkers()
 		require.True(t, worker.workersStarted)
 	})
@@ -2487,14 +2488,16 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("trigger no-op when closed and non-blocking when already queued", func(t *testing.T) {
+		closedWorker := &EmbedWorker{
+			trigger: make(chan struct{}, 1),
+		}
+		closedWorker.work.CloseAdmission()
+		closedWorker.Trigger()
+		require.Len(t, closedWorker.trigger, 0)
+
 		worker := &EmbedWorker{
 			trigger: make(chan struct{}, 1),
 		}
-		worker.closed.Store(true)
-		worker.Trigger()
-		require.Len(t, worker.trigger, 0)
-
-		worker.closed.Store(false)
 		worker.Trigger()
 		require.Len(t, worker.trigger, 1)
 		worker.Trigger()
@@ -2547,24 +2550,24 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("worker exits promptly when closed before embedder is set", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		gen := lifecycle.NewWorkLifetime(context.Background())
 		ew := &EmbedWorker{
 			config:            DefaultEmbedWorkerConfig(),
-			ctx:               ctx,
-			cancel:            cancel,
+			ctx:               gen.Context(),
 			trigger:           make(chan struct{}, 1),
 			recentlyProcessed: make(map[string]recentNodeEmbedding),
 			loggedSkip:        make(map[string]bool),
 		}
+		ew.gen.Store(gen)
 		done := make(chan struct{}, 1)
-		ew.wg.Add(1)
+		require.True(t, gen.Enter())
 		go func() {
-			ew.worker()
+			ew.worker(gen)
 			done <- struct{}{}
 		}()
 
 		// Closed branch in the wait-for-embedder loop should exit quickly.
-		ew.closed.Store(true)
+		ew.work.CloseAdmission()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -2658,16 +2661,23 @@ func TestEmbedWorker_ResetDrainsPendingTrigger(t *testing.T) {
 	t.Cleanup(worker.Close)
 
 	// Stop the worker goroutine so nothing consumes the trigger before Reset.
-	worker.cancel()
-	worker.wg.Wait()
+	stopEmbedGeneration(t, worker)
 	worker.trigger <- struct{}{}
 
 	worker.Reset()
 	require.Zero(t, len(worker.trigger))
 
 	// A reset with nothing pending leaves the channel empty too.
-	worker.cancel()
-	worker.wg.Wait()
+	stopEmbedGeneration(t, worker)
 	worker.Reset()
 	require.Zero(t, len(worker.trigger))
+}
+
+// stopEmbedGeneration stops the worker's current generation and waits for its
+// workers to return, without closing the worker: a later Reset publishes the
+// next generation.
+func stopEmbedGeneration(t testing.TB, worker *EmbedWorker) {
+	t.Helper()
+	worker.generation().Cancel()
+	require.Eventually(t, func() bool { return worker.generation().Active() == 0 }, 10*time.Second, time.Millisecond)
 }

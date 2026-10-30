@@ -170,11 +170,7 @@ type DB struct {
 	remoteCredentialKey       string
 	remoteCredentialKeySource string
 	mu                        sync.RWMutex
-	closed                    bool
 	opened                    bool // only a published DB may write the clean marker
-
-	closeDone chan struct{}
-	closeErr  error
 
 	// Internal components
 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
@@ -200,16 +196,13 @@ type DB struct {
 	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
-	// searchClosing seals constructor enrollment under searchServicesMu.
-	// Constructors use the existing DB bgWg; publication remains in searchServices.
-	searchClosing bool
-	// The existing native generation fence has one lifetime retirement phase.
+	// Constructors are DB work and work of the current construction epoch;
+	// publication remains in searchServices. A reset seals that epoch and
+	// joins it, and publishes a new epoch only after it stopped.
 	searchServiceCreationMu sync.Mutex
-	searchRetiring          bool            // searchServicesMu
-	searchConstructing      int             // admitted preparation; searchServicesMu
-	searchConstructionDone  chan struct{}   // closes when that admission population completes
-	searchRetirementDone    chan struct{}   // actual retirement completion
-	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
+	searchConstruction      *lifetime.WorkLifetime   // searchServicesMu; the current constructor epoch
+	searchRetirement        *lifetime.OnceCompletion // searchServicesMu; the running reset, nil otherwise
+	searchReranker          search.Reranker          // Optional Stage-2 reranker for hybrid search
 
 	// Per-database inference engines (topology, Kalman, etc.).
 	inferenceServicesMu sync.RWMutex
@@ -222,14 +215,18 @@ type DB struct {
 
 	// K-means clustering timer (runs on schedule instead of trigger)
 	clusterTicker           *time.Ticker
-	clusterTickerStop       chan struct{}
 	lastClusteredEmbedCount int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
 	encryptionEnabled bool
 
-	// Background goroutine tracking
-	bgWg sync.WaitGroup
+	// work is the DB's one admission, completion and outcome owner: background
+	// tasks, constructors, provider users and the stop signal are its accepted
+	// work; Close seals it and retires the DB after they actually returned.
+	work lifetime.WorkLifetime
+	// replicationStop is the replicator's one shutdown, started by the stop
+	// signal and joined by retirement.
+	replicationStop lifetime.OnceCompletion
 
 	// buildCtx is cancelled when the DB closes so startup index build stops promptly.
 	buildCtx    context.Context
@@ -270,20 +267,18 @@ type DB struct {
 	// warming. The default DB hit this most visibly because it's the
 	// first thing warmed.
 	//
-	// Closed by MarkSearchWarmupReady (typically called by server.New
+	// Completed by MarkSearchWarmupReady (typically called by server.New
 	// AFTER SetDbSearchFlagsResolver). Embedded callers that never set
 	// a resolver still get warmup — the auto-ready timer in
-	// startSearchIndexWarmup closes the channel after a grace window
+	// startSearchIndexWarmup completes the gate after a grace window
 	// so callers without a server layer don't deadlock.
-	searchWarmupReady     chan struct{}
-	searchWarmupReadyOnce sync.Once
+	searchWarmupReady lifetime.OnceCompletion
 
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
 	ownedProviders     []*providerResource // protected by mu; released after workers join
 	ownedWork          lifetime.Outcomes   // lifetime completion outcomes, independent of host registry admission
-	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	defaultEmbedConfig *embed.Config       // protected by embedderRegistryMu; owns failure diagnostics
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
@@ -680,7 +675,6 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	db := &DB{
 		config:                 config,
 		preparedReplicationWAL: preparedWAL,
-		searchWarmupReady:      make(chan struct{}),
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
 	// Every construction failure enters the same retirement owner as Close.
@@ -1360,7 +1354,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		// race window: either the caller signed up for the gate and
 		// will release it, or it was never closed.
 		select {
-		case <-db.searchWarmupReady:
+		case <-db.searchWarmupReady.Done():
 		case <-ctx.Done():
 			return
 		}
@@ -1454,12 +1448,12 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if db.memoryPolicy != nil {
 		_ = db.memoryPolicy.Refresh()
 		ticks := time.NewTicker(250 * time.Millisecond)
-		db.bgWg.Add(1)
-		go func() {
-			defer db.bgWg.Done()
+		if !db.startBackgroundTask(func() {
 			defer ticks.Stop()
 			db.memoryPolicy.Run(db.buildCtx, ticks.C)
-		}()
+		}) {
+			ticks.Stop()
+		}
 	}
 
 	// Publish process-wide transaction defaults only after every fallible open
@@ -1681,7 +1675,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		defer queue.providerWriteMu.Unlock()
 	}
 
-	if db.closed {
+	if db.work.Closing() {
 		// Close has stopped, or is stopping, the queue and timers this
 		// would start.
 		db.mu.Unlock()
@@ -1820,14 +1814,10 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	// Per-database model construction is also part of the DB lifetime. In
 	// particular, a constructor ignoring cancellation cannot outlive Close.
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
+	if !db.work.Enter() {
 		return nil
 	}
-	db.bgWg.Add(1)
-	db.mu.RUnlock()
-	defer db.bgWg.Done()
+	defer db.work.Leave()
 
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
@@ -1934,7 +1924,7 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 // each call rebuilds the indexes.
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -1948,22 +1938,21 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry != nil && entry.svc == svc && entry.buildDone != nil {
-		ranInitial := false
-		var initialErr error
-		entry.buildOnce.Run(func() {
-			ranInitial = true
-			initialErr = db.runInitialSearchIndexBuild(entry, ctx)
-		})
-		if ranInitial {
-			return initialErr
-		}
+	if entry != nil && entry.svc == svc {
 		select {
-		case <-entry.buildDone:
-		case <-svc.LifetimeContext().Done():
-			return svc.LifetimeContext().Err()
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-entry.build.Done():
+			// The initial build finished earlier: this call rebuilds below.
+		default:
+			// This call starts or joins the initial build and reports it.
+			db.startSearchIndexBuild(entry, ctx)
+			select {
+			case <-entry.build.Done():
+				return entry.build.Err()
+			case <-svc.LifetimeContext().Done():
+				return svc.LifetimeContext().Err()
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 	return svc.BuildIndexes(ctx)
@@ -2027,16 +2016,8 @@ func (db *DB) startBackgroundTask(fn func()) bool {
 // belongs to actual completion, never a caller deadline. RunBackgroundTask and
 // service construction share this same DB wait group and admission boundary.
 func (db *DB) RetainBackground() (release func(), accepted bool) {
-	db.mu.RLock()
-	if db.closed {
-		db.mu.RUnlock()
-		return func() {}, false
-	}
-	db.bgWg.Add(1)
-	db.mu.RUnlock()
-
-	var once sync.Once
-	return func() { once.Do(db.bgWg.Done) }, true
+	_, release, accepted = db.work.Acquire(db.work.Context())
+	return release, accepted
 }
 
 // RunBackgroundTask runs fn in a goroutine that Close waits for, so work
@@ -2247,11 +2228,7 @@ func (db *DB) SetDbSearchFlagsResolver(resolver DbSearchFlagsResolver) {
 // that don't run a server layer don't need to call this — Open's
 // warmup auto-readies after a grace window so they aren't blocked.
 func (db *DB) MarkSearchWarmupReady() {
-	db.searchWarmupReadyOnce.Do(func() {
-		if db.searchWarmupReady != nil {
-			close(db.searchWarmupReady)
-		}
-	})
+	db.searchWarmupReady.Do(func() error { return nil })
 }
 
 // resolveSearchFlags returns the per-database search index master switches
@@ -2432,7 +2409,7 @@ func (db *DB) GetReplicator() replication.Replicator {
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}

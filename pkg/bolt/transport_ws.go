@@ -264,7 +264,7 @@ func (s *Server) startWebSocketKeepalive(parent context.Context, wc *wsConn) {
 	}
 	go func() {
 		defer release()
-		if err := pingLoop(ctx, ws, pingInterval, pongTimeout, s.closed.Load); !util.ErrorIsOnly(err, net.ErrClosed) {
+		if err := pingLoop(ctx, ws, pingInterval, pongTimeout, w.Closing); !util.ErrorIsOnly(err, net.ErrClosed) {
 			w.RecordError("Bolt WebSocket keepalive", err)
 		}
 	}()

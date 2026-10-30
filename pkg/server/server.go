@@ -163,6 +163,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -173,6 +174,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -190,6 +192,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
@@ -684,9 +687,8 @@ type Server struct {
 	listener   net.Listener
 	// lifecycleMu serializes Start with Stop so shutdown cannot consume the
 	// request cancellation function before Start publishes it.
-	lifecycleMu       sync.Mutex
-	startDone         chan struct{}
-	cancelRequestsCtx context.CancelFunc
+	lifecycleMu  sync.Mutex
+	startClaimed bool // one Start attempt per server
 
 	// httpMetrics is the Plan-04-02 HTTP catalog bag (D-02 typed handle DI).
 	// Populated by SetHTTPMetrics(...) AFTER observability.New runs in
@@ -721,7 +723,6 @@ type Server struct {
 	basicAuthCache *auth.BasicAuthCache
 
 	mu      sync.RWMutex
-	closed  atomic.Bool
 	started atomic.Pointer[time.Time]
 
 	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
@@ -731,12 +732,11 @@ type Server struct {
 	embedderRetryMaxBackoff     time.Duration
 	newEmbedder                 func(context.Context, *embed.Config) (embed.Embedder, error)
 
-	// embedderInitCancel and embedderInitDone own the background embedder
-	// initialisation startEmbedderInit runs: Stop cancels it and waits for
-	// embedderInitDone through the shutdown owner, and DB.Close waits
-	// for it too. Both are nil when embeddings are disabled.
-	embedderInitCancel context.CancelFunc
-	embedderInitDone   chan struct{}
+	// embedderInit is the completion of the background embedder
+	// initialisation startEmbedderInit runs as server work: stopping cancels
+	// it and quiescence waits for it. It stays unstarted when embeddings are
+	// disabled.
+	embedderInit lifecycle.OnceCompletion
 
 	// Metrics
 	requestCount   atomic.Int64
@@ -1065,11 +1065,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		return nil, nornicdb.ErrClosed
 	}
 	s := &Server{db: db, config: config}
-	s.shutdown.init()
 	s.shutdown.dbRelease = dbRelease
-	s.shutdown.constructionDone = make(chan struct{})
-	_, releaseConstruction, _ := s.shutdown.acquire(context.Background())
-	s.startShutdownDriver()
+	_, releaseConstruction, _ := s.shutdown.work.Acquire(context.Background())
+	// Stopping signals every plugin before any accepted work is joined: a
+	// plugin's Stop may be what lets that work finish.
+	s.shutdown.work.OnStop(s.signalHeimdallPlugins)
+	// A DB closed without Stop stops this server too.
+	s.shutdown.stopOnDBClose = context.AfterFunc(db.LifetimeContext(), func() { s.beginShutdown(context.Background()) })
 	defer func() {
 		if newErr == nil && db.LifetimeContext().Err() != nil {
 			newErr = nornicdb.ErrClosed
@@ -1078,7 +1080,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		if newErr != nil {
 			s.beginShutdown(context.Background())
 		}
-		close(s.shutdown.constructionDone)
 		releaseConstruction()
 		if newErr != nil {
 			newErr = compose.Outcomes(newErr, s.WaitStopped(context.Background()))
@@ -1203,7 +1204,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	s.db.SetEmbedQueueShouldYield(func() bool {
 		return s.activeTxReqs.Load() > 0
 	})
-	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase, s.shutdown.workContext)
+	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase, s.shutdown.work.Context())
+	s.shutdown.work.OnStop(func() error { return s.txSessions.CloseContext(s.shutdown.stopBudget()) })
 	s.txSessions.SetTerminalErrorObserver(func(session *txsession.Session, err error) {
 		s.logMVCCSnapshotExpiration(session, err)
 	})
@@ -1529,7 +1531,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 
 				cfg := search.DefaultLocalRerankerConfig()
 				cfg.Enabled = true
-				r := search.NewLocalReranker(rerankerModel, cfg)
+				r := search.NewLocalReranker(rerankerModel, cfg, db.BeginProviderUse)
 				db.SetSearchReranker(r)
 				setGlobalRerankerResolver(func(string) search.Reranker { return r })
 				s.logEvent(context.Background(), slog.LevelInfo,
@@ -1703,13 +1705,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			if s.closed.Load() {
+			if s.shutdown.work.Closing() {
 				return
 			}
 			s.ensureSearchBuildStartedForKnownDatabases()
 			select {
 			case <-ticker.C:
-			case <-s.shutdown.signal:
+			case <-s.shutdown.work.Context().Done():
 				return
 			}
 		}
@@ -1889,7 +1891,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 				"slow_query", config.Logging.SlowQueryThreshold))
 	}
 
-	s.startShutdownDriver()
 	return s, nil
 }
 
@@ -1985,7 +1986,7 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
 //	If TLSCertFile and TLSKeyFile are configured, the server automatically
 //	starts with HTTPS. Otherwise, it uses HTTP.
 func (s *Server) Start() (startErr error) {
-	startCtx, release, accepted := s.shutdown.acquire(context.Background())
+	startCtx, release, accepted := s.shutdown.work.Acquire(context.Background())
 	if !accepted {
 		return ErrServerClosed
 	}
@@ -1994,25 +1995,21 @@ func (s *Server) Start() (startErr error) {
 		if startAttempted && startErr != nil && !errors.Is(startErr, ErrServerClosed) {
 			s.shutdown.work.RecordError("", fmt.Errorf("HTTP server start: %w", startErr))
 			s.beginShutdown(context.Background())
-			s.startShutdownDriver()
-		}
-		if startAttempted {
-			close(s.startDone)
 		}
 		release()
 	}()
 
 	s.lifecycleMu.Lock()
-	if s.closed.Load() {
+	if s.shutdown.work.Closing() {
 		s.lifecycleMu.Unlock()
 		return ErrServerClosed
 	}
-	if s.startDone != nil || s.httpServer != nil {
+	if s.startClaimed || s.httpServer != nil {
 		s.lifecycleMu.Unlock()
 		return fmt.Errorf("HTTP server is already started")
 	}
 	startAttempted = true
-	s.startDone = make(chan struct{})
+	s.startClaimed = true
 	s.lifecycleMu.Unlock()
 
 	addr := fmt.Sprintf("%s:%d", s.config.Address, s.config.Port)
@@ -2029,7 +2026,7 @@ func (s *Server) Start() (startErr error) {
 	})
 
 	s.lifecycleMu.Lock()
-	if s.closed.Load() {
+	if s.shutdown.work.Closing() {
 		s.lifecycleMu.Unlock()
 		s.shutdown.work.RecordError("", listener.Close())
 		return ErrServerClosed
@@ -2047,7 +2044,7 @@ func (s *Server) Start() (startErr error) {
 
 	// Keep the request context local for BaseContext. The cancel function is
 	// published under lifecycleMu, which Stop uses before consuming it.
-	requestsCtx, cancelRequestsCtx := context.WithCancel(s.shutdown.workContext)
+	requestsCtx, cancelRequestsCtx := context.WithCancel(s.shutdown.work.Context())
 	server := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  s.config.ReadTimeout,
@@ -2059,20 +2056,20 @@ func (s *Server) Start() (startErr error) {
 		// unwind, so http.Server.Shutdown returns instead of waiting on a
 		// long-running BFS.
 		BaseContext: func(net.Listener) context.Context {
-			return fabric.WithTransactionLifetime(requestsCtx, s.shutdown.workContext)
+			return fabric.WithTransactionLifetime(requestsCtx, s.shutdown.work.Context())
 		},
 	}
 
-	// Publish before Serve. Shutdown either sees this handle or admission
-	// was already sealed and this attempt never starts a transport.
+	// Publish, then enroll the transport's stop signal. A refused enrollment
+	// means the stop already began: this attempt stops its own transport, so
+	// net/http's Serve after Shutdown returns at once.
 	s.lifecycleMu.Lock()
-	if s.closed.Load() {
-		s.lifecycleMu.Unlock()
-		cancelRequestsCtx()
+	s.httpServer = server
+	s.lifecycleMu.Unlock()
+	if stopHTTP := s.stopHTTPServer(server, cancelRequestsCtx); !s.shutdown.work.OnStop(stopHTTP) {
+		s.shutdown.work.RecordError("", stopHTTP())
 		return ErrServerClosed
 	}
-	s.httpServer, s.cancelRequestsCtx = server, cancelRequestsCtx
-	s.lifecycleMu.Unlock()
 
 	// Configure HTTP/2 (always enabled, backwards compatible with HTTP/1.1)
 	http2Config := &http2.Server{
@@ -2096,16 +2093,31 @@ func (s *Server) Start() (startErr error) {
 			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}
 
+	// The listener stays owned by pendingListener until Serve has taken it.
+	// ServeTLS can fail loading its certificate before it registers the
+	// listener, without closing it; load the pair here so a certificate error
+	// leaves the listener with its owner, which closes it on Stop.
+	serveListener := listener
+	if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
+		certificate, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
+		if err != nil {
+			return fmt.Errorf("HTTP TLS certificate: %w", err)
+		}
+		config := server.TLSConfig.Clone()
+		if config == nil {
+			config = &tls.Config{}
+		}
+		if !slices.Contains(config.NextProtos, "http/1.1") {
+			config.NextProtos = append(config.NextProtos, "http/1.1")
+		}
+		config.Certificates = append(config.Certificates, certificate)
+		serveListener = tls.NewListener(listener, config)
+	}
 	s.lifecycleMu.Lock()
-	s.pendingListener = nil // net/http owns closure, including Serve failure
+	s.pendingListener = nil // Serve registers the listener first, then owns its closure
 	s.lifecycleMu.Unlock()
 	s.runBackground(startCtx, func(context.Context) {
-		var err error
-		if s.config.TLSCertFile != "" && s.config.TLSKeyFile != "" {
-			err = server.ServeTLS(listener, s.config.TLSCertFile, s.config.TLSKeyFile)
-		} else {
-			err = server.Serve(listener)
-		}
+		err := server.Serve(serveListener)
 		if err != nil && err != http.ErrServerClosed {
 			s.shutdown.work.RecordError("", fmt.Errorf("HTTP serve: %w", err))
 			s.logEvent(context.Background(), slog.LevelError, localization.ServerHTTPServeFailedEvent(err))
@@ -2124,19 +2136,8 @@ func (s *Server) Start() (startErr error) {
 // Work accepted before shutdown keeps its resources until actual completion;
 // WaitStopped exposes the eventual cleanup outcome after a deadline.
 func (s *Server) Stop(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if !s.beginShutdown(ctx) {
-		return nil
-	}
-	s.startShutdownDriver()
-	select {
-	case <-s.shutdown.done:
-		return compose.Outcomes(s.shutdown.work.Err(), ctx.Err())
-	case <-ctx.Done():
-		return compose.Outcomes(s.shutdown.work.Err(), ctx.Err())
-	}
+	s.beginShutdown(ctx)
+	return s.shutdown.work.WaitStopped(ctx)
 }
 
 // Addr returns the server's listen address.
@@ -2208,19 +2209,15 @@ func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize
 	// Install the failure redaction owner before the asynchronous worker or
 	// failure endpoint can observe this provider configuration.
 	db.SetDefaultEmbedConfig(embedConfig)
-	ctx, cancel := context.WithCancel(db.LifetimeContext())
-	done := make(chan struct{})
-	s.embedderInitCancel = cancel
-	s.embedderInitDone = done
-	started := db.RunBackgroundTask(func() {
-		defer close(done)
-		defer cancel()
-		s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+	started := s.runBackground(context.Background(), func(ctx context.Context) {
+		s.embedderInit.Do(func() error {
+			s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+			return nil
+		})
 	})
 	if !started {
-		// db is already closing: there is nothing to initialise.
-		cancel()
-		close(done)
+		// The server is already stopping: there is nothing to initialise.
+		s.embedderInit.Do(func() error { return nil })
 	}
 }
 

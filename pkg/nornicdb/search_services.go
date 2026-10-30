@@ -29,10 +29,8 @@ type dbSearchService struct {
 	engine storage.Engine
 	svc    *search.Service
 
-	buildOnce  lifecycle.OnceCompletion
-	buildDone  chan struct{}
-	buildErr   error
-	buildErrMu sync.RWMutex
+	// build is the initial index build: its completion and its outcome.
+	build lifecycle.OnceCompletion
 
 	clusterMu               sync.Mutex
 	lastClusteredEmbedCount int
@@ -56,19 +54,6 @@ type dbSearchService struct {
 	generation uint64
 }
 
-func (e *dbSearchService) closeBuildDone() {
-	if e == nil || e.buildDone == nil {
-		return
-	}
-	defer func() {
-		if recover() != nil {
-			// Tests and shutdown races may observe a pre-closed buildDone channel.
-			// Treat repeated close attempts as idempotent completion.
-		}
-	}()
-	close(e.buildDone)
-}
-
 const searchMutationDebounceDelay = 250 * time.Millisecond
 
 func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
@@ -79,7 +64,7 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 		return true
 	}
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	return closed
 }
@@ -205,7 +190,7 @@ func (db *DB) ensureSearchClustering(svc *search.Service) {
 // GetOrCreateSearchService checks the DB lifetime before entering its existing search registry.
 func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return nil, ErrClosed
@@ -215,21 +200,26 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 
 func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (service *search.Service, resultErr error) {
 	// This path is also entered by storage callbacks while db.mu is held.
-	// Enroll under the existing service registry admission, before any resolver
-	// or construction. Close seals this gate before waiting on the same bgWg.
+	// Enroll in the DB owner and the current constructor epoch under the
+	// registry lock, before any resolver or construction.
 	db.searchServicesMu.Lock()
-	if db.searchClosing || db.searchRetiring {
+	if db.searchRetirement != nil || !db.work.Enter() {
 		db.searchServicesMu.Unlock()
 		return nil, ErrClosed
 	}
-	if db.searchConstructing == 0 {
-		db.searchConstructionDone = make(chan struct{})
+	if db.searchConstruction == nil {
+		db.searchConstruction = &lifecycle.WorkLifetime{}
 	}
-	db.searchConstructing++
-	db.bgWg.Add(1)
+	// A reset seals the epoch only after publishing searchRetirement under
+	// this lock, so entering here cannot be refused.
+	epoch := db.searchConstruction
+	entered := epoch.Enter()
 	db.searchServicesMu.Unlock()
-	defer db.bgWg.Done()
-	defer db.finishSearchConstruction()
+	defer db.work.Leave()
+	if !entered {
+		return nil, ErrClosed
+	}
+	defer epoch.Leave()
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
@@ -440,7 +430,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// This construction was admitted before a retiring phase. That phase
 	// joins admitted preparation before advancing the native generation, so
 	// its original publication must complete and then be retired by Reset.
-	unavailable := db.searchClosing
+	unavailable := db.work.Closing()
 	db.searchServicesMu.RUnlock()
 	if unavailable {
 		return nil, ErrClosed
@@ -464,15 +454,14 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 
 	entry := &dbSearchService{
-		dbName:    dbName,
-		engine:    storageEngine,
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: dbName,
+		engine: storageEngine,
+		svc:    svc,
 	}
 	svc.SetRefreshRetryOwner(db.searchRefreshRetry(entry))
 
 	db.searchServicesMu.Lock()
-	if db.searchClosing {
+	if db.work.Closing() {
 		db.searchServicesMu.Unlock()
 		return nil, ErrClosed
 	}
@@ -491,19 +480,6 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.StartRelationshipIndex()
 
 	return svc, nil
-}
-
-// finishSearchConstruction discharges the existing registry's preparation
-// admission only after publication or actual failed-candidate disposal. Reset
-// joins this population outside the native generation fence; it owns no second
-// resource/task registry and does not decide an origin or generation.
-func (db *DB) finishSearchConstruction() {
-	db.searchServicesMu.Lock()
-	db.searchConstructing--
-	if db.searchConstructing == 0 {
-		close(db.searchConstructionDone)
-	}
-	db.searchServicesMu.Unlock()
 }
 
 func (db *DB) getOrCreateSearchContinuationRegistry() (*resultstream.Registry, error) {
@@ -569,7 +545,6 @@ func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time
 // vector rerank feature flag is turned on.
 func (db *DB) SetSearchReranker(r search.Reranker) {
 	if local, ok := r.(*search.LocalReranker); ok {
-		local.SetLifetime(db.beginProviderUse)
 		if _, accepted := db.OwnProvider("local reranker model", local.UnderlyingScorer()); !accepted {
 			return
 		}
@@ -671,12 +646,10 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 	phase := p.Phase
 	buildError := ""
 	if !p.Ready && !p.Building {
-		entry.buildErrMu.RLock()
-		if entry.buildErr != nil {
+		if buildErr := entry.build.Err(); buildErr != nil {
 			phase = "failed"
-			buildError = entry.buildErr.Error()
+			buildError = buildErr.Error()
 		}
-		entry.buildErrMu.RUnlock()
 	}
 	// The lazy-trigger signal flips on once the service is created but the
 	// build hasn't started. After Service.EnsureWarm fires the WarmFunc on
@@ -733,40 +706,32 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Run the build on its own goroutine: the Once body takes db.mu.RLock
-	// through startBackgroundTask, and callers may hold db.mu.Lock while a
-	// storage write event fires (e.g. RecordConsent). Running the Once
-	// synchronously here would deadlock those callers against the in-flight
-	// build (db.mu → once.mu → db.mu).
-	rejected := func() {
-		entry.buildErrMu.Lock()
-		entry.buildErr = ErrClosed
-		entry.buildErrMu.Unlock()
-		entry.closeBuildDone()
-	}
-	if !entry.svc.RunBackgroundTask(func() {
-		entry.buildOnce.Run(func() {
-			if !db.startBackgroundTask(func() { _ = db.runInitialSearchIndexBuild(entry, ctx) }) {
-				rejected()
-			}
-		})
-	}) {
+	select {
+	case <-entry.build.Done():
 		return
+	default:
+	}
+	// Run the build on its own goroutine: callers may hold db.mu.Lock while a
+	// storage write event fires (e.g. RecordConsent), and the build takes
+	// db.mu.RLock. Each dispatch is an enrolled DB task joining the one build
+	// completion; the first to run executes the build. A refused dispatch
+	// completes a build that never started with ErrClosed, so no waiter is
+	// stranded.
+	if !db.startBackgroundTask(func() {
+		entry.build.Do(func() error { return db.runInitialSearchIndexBuild(entry, ctx) })
+	}) {
+		entry.build.Do(func() error { return ErrClosed })
 	}
 }
 
 // runInitialSearchIndexBuild runs a database's initial search-index build and
-// records its outcome: the build error, clustering state, the buildDone
-// signal, and the flush of writes queued while it ran. It must run inside
-// entry.buildOnce, in the background (startSearchIndexBuild) or synchronously
-// (DB.BuildSearchIndexes).
+// returns its outcome to the build completion, records clustering state and
+// flushes writes queued while it ran. It runs only inside entry.build.
 func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Context) error {
 	err := entry.svc.BuildIndexes(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("search index build failed for database %s: %v", entry.dbName, err)
 	}
-	entry.buildErrMu.Lock()
-	entry.buildErr = err
 	if err == nil {
 		// Mark clustering as current so runClusteringOnceAllDatabases skips this db
 		// (we either restored IVF-HNSW from disk or ran k-means in warmup).
@@ -774,8 +739,6 @@ func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Con
 		entry.lastClusteredEmbedCount = entry.svc.EmbeddingCount()
 		entry.clusterMu.Unlock()
 	}
-	entry.buildErrMu.Unlock()
-	entry.closeBuildDone()
 	if err == nil {
 		db.ensurePendingFlushAfterSuccessfulBuild(entry)
 	}
@@ -819,7 +782,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 					ctx = context.Background()
 				}
 				db.startSearchIndexBuild(entry, ctx)
-				<-entry.buildDone
+				<-entry.build.Done()
 			} else if !progress.Ready {
 				reschedulePending = false
 				return
@@ -880,11 +843,8 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 		ctx = context.Background()
 	}
 	select {
-	case <-entry.buildDone:
-		entry.buildErrMu.RLock()
-		err := entry.buildErr
-		entry.buildErrMu.RUnlock()
-		return err
+	case <-entry.build.Done():
+		return entry.build.Err()
 	case <-ctx.Done():
 		return ctx.Err()
 	}

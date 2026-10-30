@@ -39,7 +39,7 @@ func TestCourseChangeServerRemoteLifetime(t *testing.T) {
 	server, auth := setupTestServer(t)
 	server.config.Port = 0
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "lifetimeremote", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: endpoint.URL, AuthMode: "oidc_forwarding"}}))
-	lifetime := server.shutdown.workContext
+	lifetime := server.shutdown.work.Context()
 	require.NoError(t, server.Start())
 	token := "Bearer " + getAuthToken(t, auth, "admin")
 	post := func(path, body string) (*http.Response, error) {

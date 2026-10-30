@@ -64,7 +64,7 @@ func TestDBRefreshScopeSystemDatabaseErrorReachesOperation(t *testing.T) {
 func TestDBRefreshScopeClosedDBError(t *testing.T) {
 	ctx := context.Background()
 	db, ns := dbRefreshScopeTestDB(t)
-	db.closed = true
+	db.work.CloseAdmission()
 	scope := dbRefreshScope{db: db, dbName: "nornic", storage: ns}
 	require.ErrorIs(t, search.RefreshIndexes(ctx, scope, search.RefreshRequest{Node: "node"}), ErrClosed)
 }
@@ -75,8 +75,8 @@ func TestDBRefreshScopeContextCancellationReachesOperation(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	ns := storage.NewNamespacedEngine(engine, "nornic")
 	svc := search.NewService(ns, 3, nil)
-	entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: make(chan struct{})}
-	entry.buildOnce.Run(func() {})
+	entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc}
+	finishBuild := holdInitialBuild(entry)
 	db := &DB{
 		config:            DefaultConfig(),
 		storage:           ns,
@@ -86,7 +86,7 @@ func TestDBRefreshScopeContextCancellationReachesOperation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	defer close(entry.buildDone)
+	defer finishBuild()
 
 	scope := dbRefreshScope{db: db, dbName: "nornic", storage: ns}
 	require.ErrorIs(t, search.RefreshIndexes(ctx, scope, search.RefreshRequest{Node: "node"}), context.Canceled)

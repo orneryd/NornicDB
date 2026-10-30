@@ -311,9 +311,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			// participant completion to server lifetime and admitting terminal
 			// commits through the transaction phase owner.
 			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
-			if s.shutdown.workContext != nil {
-				ctx = fabric.WithTransactionLifetime(ctx, s.shutdown.workContext)
-			}
+			ctx = fabric.WithTransactionLifetime(ctx, s.shutdown.work.Context())
 			defer cancel()
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				s.activeTxReqs.Add(1)

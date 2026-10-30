@@ -50,7 +50,7 @@ func TestDB_SetEmbedder_ConcurrentWithClose(t *testing.T) {
 	wg.Wait()
 
 	if queue := db.GetEmbedQueue(); queue != nil {
-		require.True(t, queue.closed.Load())
+		require.True(t, queue.work.Closing())
 	}
 }
 
