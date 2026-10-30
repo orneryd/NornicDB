@@ -299,7 +299,7 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 // that namespace's exact begin-time version.
 func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	b.mu.RLock()
-	if b.closed {
+	if b.work.Closing() {
 		b.mu.RUnlock()
 		return nil, localizedError(localization.StorageTransactionEngineClosed(), ErrStorageClosed)
 	}

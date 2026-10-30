@@ -208,10 +208,10 @@ func (m *MVCCLifecycleManager) SetLifecycleSchedule(interval time.Duration) erro
 		}
 	}
 
-	if interval > 0 && m.config.Enabled {
-		if parentCtx == nil {
-			parentCtx = context.Background()
-		}
+	// A restart runs only under the parent the owner started the loop with
+	// (the database lifetime): with none recorded, no owner started it, so the
+	// new schedule waits for StartLifecycle instead of starting an unowned loop.
+	if interval > 0 && m.config.Enabled && parentCtx != nil {
 		m.StartLifecycle(parentCtx)
 	}
 	return nil
