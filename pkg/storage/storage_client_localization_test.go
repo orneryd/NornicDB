@@ -99,7 +99,7 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 		},
 		{
 			name:      "update",
-			operation: func() error { return engine.UpdateNode(&Node{ID: "node-2"}) },
+			operation: func() error { return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "node-2"}}) },
 			messageID: localization.MessageStorageClientNodeIDNamespaceUnprefixed,
 			text:      "node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: node-2",
 		},

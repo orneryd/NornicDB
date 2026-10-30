@@ -43,12 +43,13 @@ func (e *legacyTestEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 	}
 	return readLegacySeed(e, e.nodes, id, storage.CopyNode)
 }
-func (e *legacyTestEngine) UpdateNode(node *storage.Node) error {
+func (e *legacyTestEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
 	if node == nil || node.ID == "" {
 		return storage.ErrInvalidID
 	}
 	if strings.Contains(string(node.ID), ":") {
-		return e.MemoryEngine.UpdateNode(node)
+		return e.MemoryEngine.UpdateNode(updateRequest)
 	}
 	return writeLegacySeed(e, e.nodes, node.ID, node, legacyReplace, storage.CopyNode)
 }
@@ -84,12 +85,13 @@ func (e *legacyTestEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 	}
 	return readLegacySeed(e, e.edges, id, storage.CopyEdge)
 }
-func (e *legacyTestEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *legacyTestEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	if edge == nil || edge.ID == "" {
 		return storage.ErrInvalidID
 	}
 	if strings.Contains(string(edge.ID), ":") {
-		return e.MemoryEngine.UpdateEdge(edge)
+		return e.MemoryEngine.UpdateEdge(updateRequest)
 	}
 	return writeLegacySeed(e, e.edges, edge.ID, edge, legacyReplace, storage.CopyEdge)
 }

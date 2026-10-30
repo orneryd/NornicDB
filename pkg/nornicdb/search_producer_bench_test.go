@@ -70,7 +70,7 @@ func BenchmarkSearchRefreshEdgeUpdatesRelationshipTextOff(b *testing.B) {
 	for n := range b.N {
 		for i, edge := range edges {
 			edge.Properties = map[string]any{"vec": []float32{1, float32(n % 2), 0, float32(i)}}
-			if err := db.storage.UpdateEdge(edge); err != nil {
+			if err := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); err != nil {
 				b.Fatal(err)
 			}
 		}

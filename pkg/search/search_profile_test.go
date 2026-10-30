@@ -17,7 +17,7 @@ import (
 
 func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service, []float32) {
 	tb.Helper()
-	base := newTestMemoryEngine(tb)
+	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	svc := NewService(engine, dims, nil)
 

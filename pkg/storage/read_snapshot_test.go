@@ -73,8 +73,8 @@ func TestReadSnapshotSeesOnePoint(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, ClientNodeEdits))
-	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "new"}}))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "new"}}}))
 	require.NoError(t, tx.Commit())
 
 	require.Equal(t, "old", snapshotEdgeNotes(t, snapshot)["test:r"])
@@ -164,7 +164,7 @@ func BenchmarkReadSnapshotDiskRetention(b *testing.B) {
 		overwrite := func() {
 			for range rounds {
 				for i := range nodes {
-					require.NoError(b, engine.UpdateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}))
+					require.NoError(b, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
 				}
 			}
 		}
@@ -199,7 +199,7 @@ func BenchmarkReadSnapshotDiskRetention(b *testing.B) {
 		held := sstBytes()
 		snapshot.Close()
 		// The discard timestamp advances on a commit (managedBadgerDB).
-		require.NoError(b, engine.UpdateNode(&Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}))
+		require.NoError(b, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
 		released := sstBytes()
 		// The levels are already flat: the retained versions go when later
 		// compactions rewrite their tables, as the write stream goes on.

@@ -607,14 +607,18 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 }
 
 // UpdateNode logs then executes node update.
-func (w *WALEngine) UpdateNode(node *Node) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	// The underlying engine fills a missing update time; log that same value.
-	if node != nil && node.UpdatedAt.IsZero() {
+func (w *WALEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+	node := updateRequest.After
+	if config.IsWALEnabled() && (updateRequest.Before != nil || updateRequest.Policy != ClientNodeEdits) {
+		return w.commitObservedEntityChange(w.databaseFromNode(updateRequest.After), updateRequest.Operation())
+	}
+	// Observed/authoritative requests normalize at native staging before
+	// encoding. Blind direct images retain their existing audit-log timestamp.
+	if node != nil && updateRequest.Before == nil && updateRequest.Policy == ClientNodeEdits && node.UpdatedAt.IsZero() {
 		node.UpdatedAt = time.Now()
 	}
+	w.mutationMu.RLock()
+	defer w.mutationMu.RUnlock()
 
 	if config.IsWALEnabled() {
 		dbName := w.databaseFromNode(node)
@@ -622,7 +626,7 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 			return fmt.Errorf("wal: failed to log update_node: %w", err)
 		}
 	}
-	return w.engine.UpdateNode(node)
+	return w.engine.UpdateNode(updateRequest)
 }
 
 // UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
@@ -695,7 +699,15 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 }
 
 // UpdateEdge logs then executes edge update.
-func (w *WALEngine) UpdateEdge(edge *Edge) error {
+func (w *WALEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+	if config.IsWALEnabled() && updateRequest.Before != nil {
+		namespace, err := w.databaseFromEdge(updateRequest.After)
+		if err != nil {
+			return err
+		}
+		return w.commitObservedEntityChange(namespace, updateRequest.Operation())
+	}
+	edge := updateRequest.After
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -708,7 +720,7 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 			return fmt.Errorf("wal: failed to log update_edge: %w", err)
 		}
 	}
-	return w.engine.UpdateEdge(edge)
+	return w.engine.UpdateEdge(updateRequest)
 }
 
 // DeleteEdge logs then executes edge deletion.
@@ -1339,3 +1351,36 @@ var _ StreamingEngine = (*WALEngine)(nil)
 
 // Verify WALEngine implements PrefixStreamingEngine interface
 var _ PrefixStreamingEngine = (*WALEngine)(nil)
+
+// commitObservedEntityChange validates caller observations before any replayable
+// journal record exists. The accepted semantic commit owns journal uncertainty.
+func (w *WALEngine) commitObservedEntityChange(namespace string, operation Operation) error {
+	w.mutationMu.RLock()
+	var mutationOnce sync.Once
+	releaseMutation := func() { mutationOnce.Do(w.mutationMu.RUnlock) }
+	leaseTransferred := false
+	defer func() {
+		if !leaseTransferred {
+			releaseMutation()
+		}
+	}()
+	ctx := context.Background()
+	prepared, settle, err := PrepareEntityChanges(ctx, w.engine, namespace, []Operation{operation}, CommitModeDirect)
+	if err != nil || prepared == nil {
+		return err
+	}
+	leaseTransferred = true
+	receipt, err := w.submitEntityCommit(ctx, prepared, settle, releaseMutation)
+	if err != nil {
+		prepared.Abort()
+		if settle != nil {
+			settle(CommitOutcome{State: CommitDiscarded, Err: err})
+		}
+		return err
+	}
+	outcome := receipt.WaitOutcome(ctx)
+	if outcome.Err == nil || outcome.State == CommitDiscarded {
+		return outcome.Err
+	}
+	return &AcceptedCommitError{State: outcome.State, LogicalID: prepared.LogicalID(), Err: outcome.Err}
+}

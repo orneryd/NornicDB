@@ -178,11 +178,11 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 }
 
 func TestBadgerEngine_RebuildMVCCHeads_NilContext(t *testing.T) {
-	engine := createMVCCBadgerEngine(t)
+	engine := newRebuildHeadsFixture(t, 100)
 
 	_, err := engine.CreateNode(&Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(&Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}))
+	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
 
 	// nil context branch should default to Background and succeed.
 	require.NoError(t, engine.RebuildMVCCHeads(nil))

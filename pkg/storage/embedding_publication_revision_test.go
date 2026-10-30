@@ -77,7 +77,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 				current, err := store.GetNode("doc")
 				require.NoError(t, err)
 				current.Properties["text"] = "novelquartz"
-				require.NoError(t, store.UpdateNode(current))
+				require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: current}))
 			}
 			unblock.Do(func() { close(resume) })
 			select {

@@ -41,14 +41,14 @@ func TestStatementRemoteEngineRunsEveryOperationThroughItsRunner(t *testing.T) {
 			return err
 		}},
 		"UpdateNode": {run: func(engine *RemoteEngine) error {
-			return engine.UpdateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}})
+			return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}}})
 		}},
 		"DeleteNode": {run: func(engine *RemoteEngine) error { return engine.DeleteNode("n1") }},
 		"CreateEdge": {run: func(engine *RemoteEngine) error {
 			return engine.CreateEdge(&Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
 		}},
 		"UpdateEdge": {run: func(engine *RemoteEngine) error {
-			return engine.UpdateEdge(&Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
+			return engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"}})
 		}},
 		"DeleteEdge": {run: func(engine *RemoteEngine) error { return engine.DeleteEdge("e1") }},
 		"BulkCreateNodes": {run: func(engine *RemoteEngine) error {

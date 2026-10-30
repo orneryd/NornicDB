@@ -58,6 +58,6 @@ func TestAllDatabaseOperationsIncludeSystemAdmission(t *testing.T) {
 		}
 		// The granted regeneration intentionally clears vectors. Restore the
 		// fixture before testing revocation with the same token.
-		require.NoError(t, s.db.GetStorage().UpdateNode(&storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors}))
+		require.NoError(t, s.db.GetStorage().UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors}}))
 	}
 }

@@ -268,7 +268,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			if deletion {
 				require.NoError(t, nodeTx.DeleteGraphNode("test:hub", CascadeEdges))
 			} else {
-				require.NoError(t, nodeTx.UpdateGraphNode(&Node{ID: "test:hub", Labels: []string{"After"}}, ClientNodeEdits))
+				require.NoError(t, nodeTx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}, Policy: ClientNodeEdits}))
 			}
 			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "edge-held"})
 			require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 				_, err = b.GetEdge("test:e")
 				require.ErrorIs(t, err, ErrNotFound)
 			} else {
-				require.NoError(t, b.UpdateNode(&Node{ID: "test:hub", Labels: []string{"After"}}))
+				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}}))
 				n, err := b.EdgeCountByStartLabelInNamespace("test", "Before", "LINK")
 				require.NoError(t, err)
 				require.Equal(t, int64(0), n)

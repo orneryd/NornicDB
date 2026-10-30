@@ -119,7 +119,7 @@ func TestTemporalIndexAuthoritative_TransactionUsesKeyHistory(t *testing.T) {
 	// A committed node the transaction moves away no longer blocks its old window.
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(temporalFact("f-7-0", int64(7), 100, 110), ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: temporalFact("f-7-0", int64(7), 100, 110), Policy: ClientNodeEdits}))
 	_, err = tx.CreateNode(temporalFact("reuse-7", int64(7), 0, 10))
 	require.NoError(t, err, "the window a rewritten committed node gave up is free")
 	require.NoError(t, tx.Commit())
@@ -266,7 +266,7 @@ func TestTemporalCurrentPointerRefresh_PointsAtCurrentVersion(t *testing.T) {
 	// A later commit closes v2 and adds v3: the pointer moves to v3.
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(at("r1-v2", 1, now.Add(-5*day), now.Add(-day), false), ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: at("r1-v2", 1, now.Add(-5*day), now.Add(-day), false), Policy: ClientNodeEdits}))
 	_, err = tx.CreateNode(at("r1-v3", 1, now.Add(-day), time.Time{}, true))
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())

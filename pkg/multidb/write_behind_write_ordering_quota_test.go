@@ -39,9 +39,9 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				require.NoError(t, tx.SetImplicit(true))
 				acknowledged := map[string]any{"v": "acknowledged and much longer than the later body"}
 				if kind == "node" {
-					err = tx.UpdateGraphNode(&storage.Node{ID: "nornic:n", Properties: acknowledged}, storage.ClientNodeEdits)
+					err = tx.UpdateGraphNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "nornic:n", Properties: acknowledged}, Policy: storage.ClientNodeEdits})
 				} else {
-					err = tx.UpdateEdge(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b", Type: "LINK", Properties: acknowledged})
+					err = tx.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b", Type: "LINK", Properties: acknowledged}})
 				}
 				require.NoError(t, err)
 				require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
@@ -52,11 +52,11 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				case kind == "node" && op == "delete":
 					err = store.DeleteNode("n")
 				case kind == "node":
-					err = store.UpdateNode(&storage.Node{ID: "n", Properties: later})
+					err = store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: later}})
 				case op == "delete":
 					err = store.DeleteEdge("r")
 				default:
-					err = store.UpdateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: later})
+					err = store.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: later}})
 				}
 				require.NoError(t, err)
 				require.NoError(t, engine.FlushWriteBehind())

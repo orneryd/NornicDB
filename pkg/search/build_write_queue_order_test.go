@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
 	"math/rand"
@@ -230,7 +231,7 @@ func TestBuildRemovalThenRecreationDuringABuild(t *testing.T) {
 	built := startGatedBuild(t, engine, svc)
 	requireReturnsDuringBuild(t, "a removal", func() error { return svc.RemoveNode("nornic:o") })
 	again := buildWriteNode("nornic:o", "againterm", []float32{0, 1, 0})
-	require.NoError(t, engine.UpdateNode(again))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: again}))
 	requireReturnsDuringBuild(t, "a re-creation", func() error { return svc.IndexNode(again) })
 	engine.open()
 	require.NoError(t, <-built)
@@ -259,7 +260,7 @@ func (h *finalPersistGateLog) Handle(_ context.Context, r slog.Record) error {
 // survives the second build's restore of the saved indexes.
 func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
@@ -282,7 +283,7 @@ func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 		return svc.buildWrites.owners == 2
 	}, 5*time.Second, time.Millisecond)
 	updated := buildWriteNode("nornic:a", "newterm", []float32{0, 1, 0})
-	require.NoError(t, engine.UpdateNode(updated))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: updated}))
 	requireReturnsDuringBuild(t, "a tail write", func() error { return svc.IndexNode(updated) })
 	release()
 	require.NoError(t, <-built)
@@ -483,7 +484,7 @@ func applyBuildReplayOp(engine storage.Engine, svc *Service, op buildReplayOp) s
 		if _, err := engine.GetNode(node.ID); err != nil {
 			_, _ = engine.CreateNode(storage.CopyNode(node))
 		} else {
-			_ = engine.UpdateNode(storage.CopyNode(node))
+			_ = engine.UpdateNode(storage.NodeUpdateRequest{After: storage.CopyNode(node)})
 		}
 		err := svc.IndexNode(node)
 		vec[0], vec[1], vec[2] = 0.5, 0.5, 0.5
@@ -498,7 +499,7 @@ func applyBuildReplayOp(engine storage.Engine, svc *Service, op buildReplayOp) s
 		if _, err := engine.GetEdge(edge.ID); err != nil {
 			_ = engine.CreateEdge(storage.CopyEdge(edge))
 		} else {
-			_ = engine.UpdateEdge(storage.CopyEdge(edge))
+			_ = engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)})
 		}
 		err := svc.IndexEdge(edge)
 		vec[0], vec[1], vec[2] = 0.5, 0.5, 0.5
@@ -678,7 +679,7 @@ func (e *relationshipLoaderGateEngine) StreamEdges(ctx context.Context, fn func(
 // loader applies the stored relationships from a snapshot; a live update or
 // removal made meanwhile wins over the loader's older copy.
 func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
-	engine := &relationshipLoaderGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
+	engine := &relationshipLoaderGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { engine.open(); _ = engine.MemoryEngine.Close() })
 	for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
@@ -698,7 +699,7 @@ func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
 		t.Fatal("the relationship loader did not read its snapshot")
 	}
 	newer := &storage.Edge{ID: updated.ID, StartNode: updated.StartNode, EndNode: updated.EndNode, Type: "REL", Properties: map[string]any{"note": "newrelterm"}}
-	require.NoError(t, engine.UpdateEdge(storage.CopyEdge(newer)))
+	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(newer)}))
 	svc.IndexRelationship(newer)
 	require.NoError(t, engine.DeleteEdge(removed.ID))
 	svc.RemoveRelationship(removed.ID)

@@ -256,7 +256,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 
 		for _, prop := range mergePropertyNamesSorted(props) {
 			val := props[prop]
-			nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValueForPlanning(label, prop, val)
+			nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValue(label, prop, val)
 			if !constraintExists {
 				continue
 			}
@@ -414,7 +414,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 	}
 	label := labels[0]
 	for _, prop := range mergePropertyNamesSorted(props) {
-		nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValueForPlanning(label, prop, props[prop])
+		nodeID, valueFound, constraintExists, cacheComplete := schema.LookupUniqueConstraintValue(label, prop, props[prop])
 		if !constraintExists {
 			continue
 		}

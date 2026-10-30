@@ -4,6 +4,8 @@
 // with the underlying graph database storage engine.
 package storage
 
+import "maps"
+
 // Storage defines the interface for graph database operations.
 type Storage interface {
 	// Node operations
@@ -117,9 +119,7 @@ func (s *InMemoryStorage) UpdateNode(id int64, properties map[string]interface{}
 	if err != nil {
 		return err
 	}
-	for k, v := range properties {
-		node.Properties[k] = v
-	}
+	maps.Copy(node.Properties, properties)
 	return nil
 }
 
@@ -198,9 +198,7 @@ func (s *InMemoryStorage) UpdateRelationship(id int64, properties map[string]int
 	if err != nil {
 		return err
 	}
-	for k, v := range properties {
-		rel.Properties[k] = v
-	}
+	maps.Copy(rel.Properties, properties)
 	return nil
 }
 

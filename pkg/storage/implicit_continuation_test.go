@@ -83,7 +83,7 @@ func TestImplicitContinuationRetainsConflictChecks(t *testing.T) {
 			node, err := outer.GetNode("continue:same")
 			require.NoError(t, err)
 			node.Properties["value"] = int64(1)
-			require.NoError(t, outer.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, outer.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			if !beforeResume {
 				require.NoError(t, outer.ResumeAfterIndependentCommit())
 			}
@@ -92,7 +92,7 @@ func TestImplicitContinuationRetainsConflictChecks(t *testing.T) {
 			node, err = peer.GetNode("continue:same")
 			require.NoError(t, err)
 			node.Properties["value"] = int64(2)
-			require.NoError(t, peer.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, peer.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, peer.Commit())
 			if beforeResume {
 				require.ErrorIs(t, outer.ResumeAfterIndependentCommit(), ErrConflict)

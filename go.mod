@@ -57,7 +57,7 @@ require (
 
 require (
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/orneryd/go-json v0.11.3-0.20261027022034-ec39cafc98b3
+	github.com/orneryd/go-json v0.11.3-0.20261030214440-fa0195dc9464
 )
 
 require (

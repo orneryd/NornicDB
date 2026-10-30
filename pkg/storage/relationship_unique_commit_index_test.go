@@ -106,7 +106,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 				edge, err := tx.GetEdge("test:existing1")
 				require.NoError(t, err)
 				edge.Properties["id"] = int64(200)
-				require.NoError(t, tx.UpdateEdge(edge))
+				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				require.NoError(t, create(tx, "test:replacement", int64(1)))
 				require.NoError(t, tx.Commit())
 				next, err := engine.BeginTransaction()
@@ -128,7 +128,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 				edge, err := engine.GetEdge("test:existing1")
 				require.NoError(t, err)
 				edge.Type = "OTHER"
-				require.NoError(t, engine.UpdateEdge(edge))
+				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				require.NoError(t, create(tx, "test:type-replacement", int64(1)))
 				require.NoError(t, tx.Commit())
 			case "other namespace":

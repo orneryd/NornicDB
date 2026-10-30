@@ -44,7 +44,7 @@ func TestHTTPContinuationDoesNotLoseFilteredMatchesAfterShortBatch(t *testing.T)
 		node, err := engine.GetNode(storage.NodeID(id))
 		require.NoError(t, err)
 		node.Properties["eligible"] = "yes"
-		require.NoError(t, engine.UpdateNode(node))
+		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	}
 	type page struct {
 		Results []hit  `json:"results"`

@@ -20,7 +20,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) (err error) {
 
 func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) (err error) {
 	if edge != nil {
-		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inMutationTransaction(string(edge.ID), false, func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(edge)
 		}); handled {
 			return err
@@ -313,12 +313,11 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 }
 
 // UpdateEdge updates an existing edge.
-func (b *BadgerEngine) UpdateEdge(edge *Edge) error { return b.updateEdgeWithWriteContext(edge, nil) }
-
-func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) error {
+func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	if edge != nil {
-		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
-			return tx.UpdateEdge(edge)
+		if handled, err := b.inMutationTransaction(string(edge.ID), updateRequest.Before != nil, func(tx *BadgerTransaction) error {
+			return tx.UpdateEdge(updateRequest)
 		}); handled {
 			return err
 		}
@@ -331,7 +330,7 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, nil, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
 		stored, err := b.GetStoredEdge(EdgeID(entityID))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return writtenEntities{}, err
@@ -586,7 +585,7 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
-	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
 		return tx.DeleteEdge(id)
 	}); handled {
 		return err

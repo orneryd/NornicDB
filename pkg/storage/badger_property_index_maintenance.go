@@ -148,23 +148,32 @@ func (b *BadgerEngine) schemaForNodeID(id NodeID) *SchemaManager {
 	return sm
 }
 
-// publishUniqueValues updates the registry from the committed before/after images.
-// The publication stage orders all users of each old and new UNIQUE value.
-func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
+// publishUniqueValues projects one atomic frame into the canonical claims.
+// All predecessor claims retire before any final claim is acquired, so key
+// transfers do not depend on mutation order. Recovery folds a bounded physical
+// batch; its historical claims cannot overwrite another current holder.
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, ops []Operation, action UniqueValueAction) {
 	if schema == nil || !schema.HasUniqueValueTracking() {
 		return
 	}
-	if old != nil {
+	states := newCommitStates(ops)
+	for id, old := range states.committedNodes {
+		if old == nil {
+			continue
+		}
 		for _, label := range old.Labels {
 			for property, value := range old.Properties {
-				schema.UnregisterUniqueValue(label, property, value)
+				schema.ApplyUniqueValue(label, property, value, id, RetiredUniqueClaim)
 			}
 		}
 	}
-	if written != nil {
+	for id, written := range states.finalNodes {
+		if written == nil {
+			continue
+		}
 		for _, label := range written.Labels {
 			for property, value := range written.Properties {
-				schema.RegisterUniqueValue(label, property, value, id)
+				schema.ApplyUniqueValue(label, property, value, id, action)
 			}
 		}
 	}

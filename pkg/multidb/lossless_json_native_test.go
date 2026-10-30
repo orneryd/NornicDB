@@ -137,7 +137,7 @@ func TestCompleteCatalogStartupGuardPreservesInitialization(t *testing.T) {
 			encoded, err := jsontext.Marshal(records)
 			require.NoError(t, err)
 			metadata.Properties["data"] = string(encoded)
-			require.NoError(t, system.UpdateNode(metadata))
+			require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: metadata}))
 			restored, err := NewDatabaseManager(t.Context(), inner, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = restored.Close() })

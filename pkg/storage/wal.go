@@ -2366,7 +2366,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return namespacedEngine.UpdateNode(data.Node)
+		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.Node})
 
 	case OpDeleteNode:
 		var data WALDeleteData
@@ -2387,7 +2387,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.UpdateEdge(data.Edge)
+		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.Edge})
 
 	case OpDeleteEdge:
 		var data WALDeleteData
@@ -2518,7 +2518,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateNode(data.OldNode)
+		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.OldNode})
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2552,7 +2552,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateEdge(data.OldEdge)
+		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.OldEdge})
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge

@@ -33,9 +33,9 @@ func temporalConstraintForLookup(schema *SchemaManager, label, keyProp, startPro
 	if schema == nil {
 		return Constraint{}, false
 	}
-	constraints := schema.GetConstraintsForLabels([]string{label})
+	constraints := schema.GetConstraintsForLabels([]string{label}, ConstraintTemporal)
 	for _, c := range constraints {
-		if c.Type != ConstraintTemporal || len(c.Properties) != 3 {
+		if len(c.Properties) != 3 {
 			continue
 		}
 		if c.Label == label && c.Properties[0] == keyProp && c.Properties[1] == startProp && c.Properties[2] == endProp {
@@ -49,10 +49,10 @@ func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Cons
 	if schema == nil {
 		return nil
 	}
-	constraints := schema.GetConstraintsForLabels(labels)
-	out := make([]Constraint, 0, len(constraints))
+	constraints := schema.GetConstraintsForLabels(labels, ConstraintTemporal)
+	out := constraints[:0]
 	for _, c := range constraints {
-		if c.Type != ConstraintTemporal || c.EffectiveEntityType() != ConstraintEntityNode {
+		if c.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
 		if _, ok := splitTemporalKeySpec(c.Properties); ok {

@@ -29,15 +29,15 @@ func TestManagedEntityRegistryPreservesObserverAndAdmission(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), observed.Load())
 	wrapped := NewNamespacedEngine(b, "test")
-	_, _, handled, err := PrepareManagedEntityChanges(context.Background(), wrapped, "test", []Operation{{Type: OpDeleteNode, NodeID: "test:a"}}, CommitModeDirect)
-	require.True(t, handled, "registered rejection cannot fall back to unadmitted native apply")
+	_, _, err = PrepareEntityChanges(context.Background(), wrapped, "test", []Operation{{Type: OpDeleteNode, NodeID: "test:a"}}, CommitModeDirect)
 	require.ErrorIs(t, err, rejected)
-	_, _, handled, err = PrepareManagedEntityChanges(context.Background(), wrapped, "other", nil, CommitModeDirect)
-	require.False(t, handled)
+	_, readErr := b.GetNode("test:a")
+	require.NoError(t, readErr, "registered rejection cannot fall back to native apply")
+	_, _, err = PrepareEntityChanges(context.Background(), wrapped, "other", nil, CommitModeDirect)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), admission.Load())
 	b.RegisterManagedEntityPreparer("test", callback, nil)
-	require.NoError(t, b.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"value": "after"}}))
+	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after"}}}))
 	require.Equal(t, int32(2), observed.Load(), "preparer registration preserves installed observer")
 }
 
@@ -81,9 +81,8 @@ func TestManagedEntityRegistrationDoesNotWaitForInitializationCut(t *testing.T) 
 	case <-time.After(5 * time.Second):
 		t.Fatal("initializer did not complete")
 	}
-	_, _, handled, err := PrepareManagedEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
+	_, _, err := PrepareEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
 	require.NoError(t, err)
-	require.True(t, handled)
 	require.True(t, called, "observer install preserves concurrent preparer registration")
 }
 
@@ -109,9 +108,8 @@ func TestManagedEntityRuntimeAndPreparerFirstOwner(t *testing.T) {
 	}, nil))
 	require.Same(t, first, b.GetOrAttachManagedEntityRuntime("test", nil), "observer initialization preserves shared runtime")
 	require.NoError(t, b.initializeManagedEntityNamespace(context.Background(), "test"))
-	_, _, handled, err := PrepareManagedEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
+	_, _, err := PrepareEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
 	require.NoError(t, err)
-	require.True(t, handled)
 	require.Equal(t, int32(1), prepareFirst.Load())
 	require.Zero(t, prepareSecond.Load())
 	require.Equal(t, int32(1), initFirst.Load())
@@ -131,7 +129,9 @@ func TestManagedEntityRuntimeResetRetainsBindingUntilCatalogRetirement(t *testin
 	require.NoError(t, err)
 	runtime := &registryUsageRuntime{policy: "keep-policy"}
 	require.Same(t, runtime, b.GetOrAttachManagedEntityRuntime("test", runtime))
+	var preparationCalls int
 	b.RegisterManagedEntityPreparer("test", func(context.Context, []Operation, EntityCommitMode) (*PreparedEntityCommit, func(CommitOutcome), error) {
+		preparationCalls++
 		return nil, nil, nil
 	}, func(context.Context) error { return nil })
 	_, _, err = b.DeleteByPrefix("test:a:")
@@ -152,14 +152,14 @@ func TestManagedEntityRuntimeResetRetainsBindingUntilCatalogRetirement(t *testin
 	require.NoError(t, err)
 	require.True(t, listenerSawReset, "actual usage reset precedes listeners without detaching runtime")
 	require.Equal(t, "keep-policy", runtime.policy)
-	_, _, handled, err := PrepareManagedEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
+	_, _, err = PrepareEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
 	require.NoError(t, err)
-	require.True(t, handled, "graph clear retains admission policy")
+	require.Equal(t, 1, preparationCalls, "graph clear retains admission policy")
 	b.RetireManagedEntityRuntime("test")
 	require.Same(t, runtime, b.GetOrAttachManagedEntityRuntime("test", nil), "catalog retirement keeps views on canonical object")
-	_, _, handled, err = PrepareManagedEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
+	_, _, err = PrepareEntityChanges(context.Background(), b, "test", nil, CommitModeDirect)
 	require.NoError(t, err)
-	require.False(t, handled, "catalog retirement releases old callback claim")
+	require.Equal(t, 1, preparationCalls, "catalog retirement releases old callback claim; native no-op preparation takes over")
 	require.Same(t, runtime, b.GetOrAttachManagedEntityRuntime("test", &registryUsageRuntime{policy: "candidate"}))
 }
 

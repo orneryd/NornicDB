@@ -17,6 +17,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -30,7 +31,7 @@ import (
 
 func newFilterTestEngine(tb testing.TB) storage.Engine {
 	tb.Helper()
-	eng := newTestMemoryEngine(tb)
+	eng := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	tb.Cleanup(func() { eng.Close() })
 	return eng
 }

@@ -70,7 +70,7 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 							require.NoError(t, e)
 							n.Properties[key] = value
 							n.UpdatedAt = n.UpdatedAt.Add(time.Second)
-							require.NoError(t, tx.UpdateGraphNode(n, storage.ClientNodeEdits))
+							require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: n, Policy: storage.ClientNodeEdits}))
 							require.NoError(t, tx.Commit())
 							if worker.ctx.Err() == nil {
 								worker.Enqueue(string(id))

@@ -65,7 +65,7 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			go func() {
 				defer close(joined)
 				if operation == "move" {
-					done <- b.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "moved"}})
+					done <- b.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "moved"}}})
 				} else {
 					done <- b.DeleteNode("test:a")
 				}

@@ -226,7 +226,7 @@ func TestEmbedWorkerResultAcceptanceHealthySibling(t *testing.T) {
 			healthy, err := queue.GetNode("node-001")
 			require.NoError(t, err)
 			healthy.Properties["text"] = "healthy sibling document"
-			require.NoError(t, queue.UpdateNode(healthy))
+			require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: healthy}))
 			published := make(map[storage.NodeID]int)
 			worker.SetOnEmbedded(func(node *storage.Node) { published[node.ID]++ })
 			require.Equal(t, embedBatchWorked, worker.processNextBatchResult())

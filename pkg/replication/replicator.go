@@ -153,6 +153,15 @@ const (
 
 	// CmdCommitTransaction applies one atomic versioned entity transaction.
 	CmdCommitTransaction
+
+	// CmdUpdateNodeRequest forwards one node mutation together with the
+	// preimage its caller observed and the caller's image policy. Appended
+	// after every existing kind so no published numeric slot moves.
+	CmdUpdateNodeRequest
+
+	// CmdUpdateEdgeRequest forwards one relationship mutation together with
+	// the preimage its caller observed.
+	CmdUpdateEdgeRequest
 )
 
 // HealthStatus represents the health state of the replicator.

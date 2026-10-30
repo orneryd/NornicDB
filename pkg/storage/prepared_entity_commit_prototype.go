@@ -165,7 +165,10 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
 	for _, op := range request.Operations {
-		if err := ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		if err := ApplyEntityChange(tx, op, func(updateRequest NodeUpdateRequest) error {
+			updateRequest.Policy = StoredNodeImages
+			return tx.UpdateGraphNode(updateRequest)
+		}, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
 			return nil, err
 		}
 	}

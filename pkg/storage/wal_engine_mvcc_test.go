@@ -9,21 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newLoggedMVCCDelegationWAL(t *testing.T, engine Engine) *WALEngine {
+	t.Helper()
+	log, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
+	require.NoError(t, err)
+	wal := NewWALEngine(engine, log)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
+	return wal
+}
+
 func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 	t.Run("delegates head lookups and maintenance to MVCC-capable engine", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		walLog, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
-		require.NoError(t, err)
-		defer walLog.Close()
-		wal := NewWALEngine(engine, walLog)
-		// Close the complete owner before its WAL directory is removed.
-		t.Cleanup(func() { require.NoError(t, wal.Close()) })
+		wal := newLoggedMVCCDelegationWAL(t, engine)
 
 		nodeID := NodeID(prefixTestID("wal-mvcc-node"))
-		_, err = wal.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
+		_, err := wal.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
 		require.NoError(t, err)
-		require.NoError(t, wal.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}))
-		require.NoError(t, wal.UpdateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}))
+		require.NoError(t, wal.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
+		require.NoError(t, wal.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}}))
 
 		head, err := wal.GetNodeCurrentHead(nodeID)
 		require.NoError(t, err)
@@ -69,13 +73,10 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 	t.Run("returns ErrNotImplemented when wrapped engine is not MVCC-capable", func(t *testing.T) {
 		baseInner := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = baseInner.Close() })
-		walLog, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
-		require.NoError(t, err)
-		defer walLog.Close()
-		wal := NewWALEngine(&nonMVCCEngine{Engine: baseInner}, walLog)
+		wal := newLoggedMVCCDelegationWAL(t, &nonMVCCEngine{Engine: baseInner})
 
 		version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-		_, err = wal.GetNodeCurrentHead(NodeID("nornic:wal-head-node"))
+		_, err := wal.GetNodeCurrentHead(NodeID("nornic:wal-head-node"))
 		require.ErrorIs(t, err, ErrNotImplemented)
 		_, err = wal.GetEdgeCurrentHead(EdgeID("nornic:wal-head-edge"))
 		require.ErrorIs(t, err, ErrNotImplemented)

@@ -312,14 +312,14 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, between, "the hidden-only candidate must not enter relationship matching")
 			candidate.Properties["payload"] = "stored"
-			require.NoError(t, tx.UpdateEdge(candidate))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: candidate}))
 			repeated := &Edge{
 				ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type,
 				Properties: map[string]any{"key": "same"},
 			}
 			require.NoError(t, tx.CreateEdge(repeated), "a repeated hidden-ID admission reuses the hidden-only disposition")
 			repeated.Properties["payload"] = "stored"
-			require.NoError(t, tx.UpdateEdge(repeated))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: repeated}))
 			require.NoError(t, tx.Commit(), "the final image, not the intermediate CREATE image, decides identity")
 
 			different := &Edge{
@@ -329,7 +329,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			tx = begin()
 			require.NoError(t, tx.CreateEdge(different))
 			different.Properties["payload"] = "different"
-			require.NoError(t, tx.UpdateEdge(different))
+			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: different}))
 			err = tx.Commit()
 			var conflict *HiddenEdgeIdentityConflictError
 			require.ErrorAs(t, err, &conflict)
@@ -542,7 +542,7 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 					require.NoError(t, engine.FlushWriteBehind())
 				} else {
 					rewrite := implicit()
-					require.NoError(t, rewrite.UpdateEdge(edge(tc.same())))
+					require.NoError(t, rewrite.UpdateEdge(EdgeUpdateRequest{After: edge(tc.same())}))
 					require.NoError(t, rewrite.Commit())
 				}
 				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))

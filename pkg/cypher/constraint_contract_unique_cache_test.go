@@ -36,7 +36,7 @@ REQUIRE {
 
 	schema := baseStore.GetSchemaForNamespace("test")
 	require.NotNil(t, schema)
-	_, found, constrained, complete := schema.LookupUniqueConstraintValueForPlanning("Account", "aid", int64(7))
+	_, found, constrained, complete := schema.LookupUniqueConstraintValue("Account", "aid", int64(7))
 	require.True(t, constrained, "the contract's IS UNIQUE entry must register a unique constraint")
 	require.True(t, complete, "the unique-value cache must be complete right after the contract DDL, or writes take the label-scan fallback")
 	require.True(t, found, "pre-existing values must be registered in the cache")
@@ -44,7 +44,7 @@ REQUIRE {
 	// Writes keep the cache authoritative: new values are found, duplicates rejected.
 	_, err = exec.Execute(ctx, "UNWIND range(51, 100) AS i MERGE (n:Account {aid: i}) SET n.abalance = 0", nil)
 	require.NoError(t, err)
-	_, found, _, complete = schema.LookupUniqueConstraintValueForPlanning("Account", "aid", int64(99))
+	_, found, _, complete = schema.LookupUniqueConstraintValue("Account", "aid", int64(99))
 	require.True(t, complete)
 	require.True(t, found)
 
@@ -75,7 +75,7 @@ REQUIRE {
 	}
 	schema := baseStore.GetSchemaForNamespace("test")
 	for i := 0; i < 5; i++ {
-		_, found, constrained, complete := schema.LookupUniqueConstraintValueForPlanning(fmt.Sprintf("L%d", i), "k", int64(20))
+		_, found, constrained, complete := schema.LookupUniqueConstraintValue(fmt.Sprintf("L%d", i), "k", int64(20))
 		require.True(t, constrained)
 		require.True(t, complete, "label L%d cache must stay complete after later contract DDL", i)
 		require.True(t, found, "label L%d value written before later DDL must still be registered", i)

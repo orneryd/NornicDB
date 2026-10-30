@@ -11,7 +11,7 @@ import (
 )
 
 func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 4, nil)
 	svc.hnswMu.Lock()
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())

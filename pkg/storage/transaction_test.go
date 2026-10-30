@@ -235,7 +235,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 		Labels:     []string{"Updated"},
 		Properties: map[string]interface{}{"version": 2},
 	}
-	err := tx.UpdateGraphNode(updatedNode, ClientNodeEdits)
+	err := tx.UpdateGraphNode(NodeUpdateRequest{After: updatedNode, Policy: ClientNodeEdits})
 	if err != nil {
 		t.Fatalf("UpdateNode failed: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 		Type:       "NEW",
 		Properties: map[string]interface{}{"version": 2},
 	}
-	if err := tx.UpdateEdge(updated); err != nil {
+	if err := tx.UpdateEdge(EdgeUpdateRequest{After: updated}); err != nil {
 		t.Fatalf("UpdateEdge failed: %v", err)
 	}
 
@@ -448,10 +448,10 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
-	if err := tx.UpdateEdge(nil); err != ErrInvalidData {
+	if err := tx.UpdateEdge(EdgeUpdateRequest{After: nil}); err != ErrInvalidData {
 		t.Errorf("Expected ErrInvalidData, got %v", err)
 	}
-	if err := tx.UpdateEdge(&Edge{}); err != ErrInvalidID {
+	if err := tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{}}); err != ErrInvalidID {
 		t.Errorf("Expected ErrInvalidID, got %v", err)
 	}
 
@@ -472,17 +472,17 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 	if err := tx2.DeleteEdge(edgeID); err != nil {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
-	if err := tx2.UpdateEdge(&Edge{ID: edgeID, StartNode: node1.ID, EndNode: node2.ID, Type: "REL"}); err != ErrNotFound {
+	if err := tx2.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: node1.ID, EndNode: node2.ID, Type: "REL"}}); err != ErrNotFound {
 		t.Errorf("Expected ErrNotFound for deleted edge, got %v", err)
 	}
 
 	tx3, _ := engine.BeginTransaction()
-	err := tx3.UpdateEdge(&Edge{
+	err := tx3.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID:        edgeID,
 		StartNode: node1.ID,
 		EndNode:   NodeID(prefixTestID("missing-node")),
 		Type:      "REL",
-	})
+	}})
 	if err == nil {
 		t.Error("Expected missing endpoint validation error")
 	}
@@ -493,7 +493,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 	if err := tx.Rollback(); err != nil {
 		t.Fatalf("Rollback failed: %v", err)
 	}
-	if err := tx.UpdateEdge(&Edge{ID: edgeID, StartNode: node1.ID, EndNode: node2.ID, Type: "REL"}); err != ErrTransactionClosed {
+	if err := tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: node1.ID, EndNode: node2.ID, Type: "REL"}}); err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 }
@@ -598,7 +598,7 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	err = tx.UpdateGraphNode(node, ClientNodeEdits)
+	err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 	if err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
@@ -1272,16 +1272,16 @@ func TestTransaction_WriteWriteConflict(t *testing.T) {
 	tx2, err := engine.BeginTransaction()
 	require.NoError(t, err)
 
-	require.NoError(t, tx1.UpdateGraphNode(&Node{
+	require.NoError(t, tx1.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"version": 2},
-	}, ClientNodeEdits))
-	require.NoError(t, tx2.UpdateGraphNode(&Node{
+	}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx2.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"version": 3},
-	}, ClientNodeEdits))
+	}, Policy: ClientNodeEdits}))
 
 	require.NoError(t, tx1.Commit())
 	require.ErrorIs(t, tx2.Commit(), ErrConflict)
@@ -1316,20 +1316,20 @@ func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
 	tx2, err := engine.BeginTransaction()
 	require.NoError(t, err)
 
-	require.NoError(t, tx1.UpdateEdge(&Edge{
+	require.NoError(t, tx1.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID:         edgeID,
 		StartNode:  start,
 		EndNode:    end,
 		Type:       "LINKS",
 		Properties: map[string]interface{}{"weight": 2},
-	}))
-	require.NoError(t, tx2.UpdateEdge(&Edge{
+	}}))
+	require.NoError(t, tx2.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID:         edgeID,
 		StartNode:  start,
 		EndNode:    end,
 		Type:       "LINKS",
 		Properties: map[string]interface{}{"weight": 3},
-	}))
+	}}))
 
 	require.NoError(t, tx1.Commit())
 	require.ErrorIs(t, tx2.Commit(), ErrConflict)
@@ -1351,7 +1351,7 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	// Mix of operations
 	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-1")), Labels: []string{"New"}})
 	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-2")), Labels: []string{"New"}})
-	tx.UpdateGraphNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Updated"}}, ClientNodeEdits)
+	tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Updated"}}, Policy: ClientNodeEdits})
 	tx.DeleteGraphNode(NodeID(prefixTestID("existing-2")), CascadeEdges)
 
 	// Verify operation count
@@ -1494,83 +1494,41 @@ func TestTransaction_DeleteNode_CascadeEdges(t *testing.T) {
 }
 
 func TestTransaction_UpdateEdge_EndpointChange(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-
-	n1 := testNode("ue-n1")
-	n2 := testNode("ue-n2")
-	n3 := testNode("ue-n3")
-	_, err := engine.CreateNode(n1)
-	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
-	require.NoError(t, err)
-	_, err = engine.CreateNode(n3)
-	require.NoError(t, err)
-
-	e := testEdge("ue-e1", "ue-n1", "ue-n2", "KNOWS")
-	require.NoError(t, engine.CreateEdge(e))
-
-	// Update edge endpoints in a transaction
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-
-	updated := &Edge{
-		ID:         EdgeID(prefixTestID("ue-e1")),
-		StartNode:  NodeID(prefixTestID("ue-n1")),
-		EndNode:    NodeID(prefixTestID("ue-n3")),
-		Type:       "KNOWS",
-		Properties: map[string]interface{}{},
-	}
-	err = tx.UpdateEdge(updated)
-	require.NoError(t, err)
-
-	err = tx.Commit()
-	require.NoError(t, err)
-
-	// Verify endpoint changed
-	got, err := engine.GetEdge(EdgeID(prefixTestID("ue-e1")))
-	require.NoError(t, err)
-	assert.Equal(t, NodeID(prefixTestID("ue-n3")), got.EndNode)
+	runUpdateEdgeMutation(t, []string{"ue-n1", "ue-n2", "ue-n3"}, "ue-e1", updateEdgeMutation{
+		// Update edge endpoints in a transaction.
+		throughTransaction: true,
+		after: &Edge{
+			ID:         EdgeID(prefixTestID("ue-e1")),
+			StartNode:  NodeID(prefixTestID("ue-n1")),
+			EndNode:    NodeID(prefixTestID("ue-n3")),
+			Type:       "KNOWS",
+			Properties: map[string]interface{}{},
+		},
+		assert: func(t *testing.T, engine *BadgerEngine) {
+			updateEdgeEndpoint(t, engine,
+				EdgeID(prefixTestID("ue-e1")),
+				NodeID(prefixTestID("ue-n2")),
+				NodeID(prefixTestID("ue-n3")),
+			)
+		},
+	})
 }
 
 func TestTransaction_UpdateEdge_TypeChange(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-
-	n1 := testNode("utc-n1")
-	n2 := testNode("utc-n2")
-	_, err := engine.CreateNode(n1)
-	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
-	require.NoError(t, err)
-
-	e := testEdge("utc-e1", "utc-n1", "utc-n2", "KNOWS")
-	require.NoError(t, engine.CreateEdge(e))
-
-	// Update edge type in a transaction
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-
-	updated := &Edge{
-		ID:         EdgeID(prefixTestID("utc-e1")),
-		StartNode:  NodeID(prefixTestID("utc-n1")),
-		EndNode:    NodeID(prefixTestID("utc-n2")),
-		Type:       "LIKES",
-		Properties: map[string]interface{}{},
-	}
-	err = tx.UpdateEdge(updated)
-	require.NoError(t, err)
-
-	err = tx.Commit()
-	require.NoError(t, err)
-
-	// Verify type changed
-	got, err := engine.GetEdge(EdgeID(prefixTestID("utc-e1")))
-	require.NoError(t, err)
-	assert.Equal(t, "LIKES", got.Type)
-
-	// Verify edge type indexes updated
-	likeEdges, err := engine.GetEdgesByType("LIKES")
-	require.NoError(t, err)
-	assert.Len(t, likeEdges, 1)
+	runUpdateEdgeMutation(t, []string{"utc-n1", "utc-n2"}, "utc-e1", updateEdgeMutation{
+		// Update edge type in a transaction.
+		throughTransaction: true,
+		after: &Edge{
+			ID:         EdgeID(prefixTestID("utc-e1")),
+			StartNode:  NodeID(prefixTestID("utc-n1")),
+			EndNode:    NodeID(prefixTestID("utc-n2")),
+			Type:       "LIKES",
+			Properties: map[string]interface{}{},
+		},
+		assert: func(t *testing.T, engine *BadgerEngine) {
+			updateEdgeType(t, engine, EdgeID(prefixTestID("utc-e1")), "KNOWS", "LIKES")
+		},
+	})
 }
 
 func TestTransaction_DeleteNode_NotFound(t *testing.T) {
@@ -1664,7 +1622,7 @@ func TestTransaction_RelationshipConstraintUsesFinalEdgeStateAtCommit(t *testing
 		},
 	}))
 
-	require.NoError(t, tx.UpdateEdge(&Edge{
+	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 		ID:        EdgeID(prefixTestID("edge-final-state-rel")),
 		StartNode: NodeID(prefixTestID("edge-final-state-a")),
 		EndNode:   NodeID(prefixTestID("edge-final-state-b")),
@@ -1673,7 +1631,7 @@ func TestTransaction_RelationshipConstraintUsesFinalEdgeStateAtCommit(t *testing
 			"note":  "created before required property is set",
 			"since": int64(2026),
 		},
-	}))
+	}}))
 
 	require.NoError(t, tx.Commit())
 
@@ -1693,7 +1651,7 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 	_, err = tx.CreateNode(&Node{ID: nodeID, Labels: []string{"MongoRecord"}})
 	require.NoError(t, err)
 
-	err = tx.UpdateGraphNode(&Node{
+	err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{
 		ID:     nodeID,
 		Labels: []string{"MongoRecord"},
 		Properties: map[string]interface{}{
@@ -1702,7 +1660,7 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 			"code":        1,
 			"description": "entry-1",
 		},
-	}, ClientNodeEdits)
+	}, Policy: ClientNodeEdits})
 	require.NoError(t, err)
 	require.Equal(t, 1, tx.OperationCount(), "create+update in the same transaction should collapse into a single create operation")
 

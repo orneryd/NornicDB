@@ -134,13 +134,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// Acquire per-(label, property, value) commit locks for every unique
 	// constraint value touched by this transaction's pending nodes. Held
 	// across validateAllConstraints + badgerTx.Commit + the post-commit
-	// RegisterUniqueValue calls below so that a peer transaction touching the
+	// ApplyUniqueValue calls below so that a peer transaction touching the
 	// same constrained value cannot pass validation against an empty cache
 	// while we are still committing. Without this lock, two concurrent
 	// transactions that both add a node with the same constrained property
 	// value both pass deferred validation (cache empty for both), both reach
 	// badgerTx.Commit (Badger writes them under distinct node IDs so the KV
-	// layer does not detect the conflict), and both call RegisterUniqueValue
+	// layer does not detect the conflict), and both call ApplyUniqueValue
 	// — the second overwriting the first — leaving the UNIQUE constraint
 	// silently violated in storage. See cross_session_merge_unique_test.go
 	// for the reproduction.
@@ -462,6 +462,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 // same constraint/conflict and consumer error-classification owner.
 func (tx *BadgerTransaction) validateCommitLocked() error {
 	if err := tx.resolveConnectedDeletesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+
+	if err := tx.validateNodeClaimPreimagesLocked(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
