@@ -247,14 +247,17 @@ func main() {
 	// ways, selects a status code, provides a status by type, defaults a status
 	// when an error has none, and renders diagnostics with a dispatch of its own.
 	// It also discovers a terminal outcome carrier with a walk of its own.
-	// The enumeration must report all nine kinds.
-	control := "// Analysis-only planted control, never a product change.\npackage nor180behaviourcontrol\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\n" +
+	// It also applies an error policy only when one is installed in the
+	// context. The enumeration must report all ten kinds.
+	control := "// Analysis-only planted control, never a product change.\npackage nor180behaviourcontrol\n\nimport (\n\t\"context\"\n\t\"errors\"\n\t\"fmt\"\n)\n\n" +
 		"func Join(primary, cleanup error) error { return errors.Join(primary, cleanup) }\n\n" +
 		"func Wrap(primary, cleanup error) error { return fmt.Errorf(\"%w: %w\", primary, cleanup) }\n\n" +
 		"type pair struct{ a, b error }\n\nfunc (p pair) Error() string { return p.a.Error() }\n\nfunc (p pair) Unwrap() []error { return []error{p.a, p.b} }\n\n" +
 		"type statusErr struct{}\n\nfunc (statusErr) Error() string { return \"control\" }\n\nfunc (statusErr) BoltErrorCode() string { return \"Neo.ClientError.Statement.SyntaxError\" }\n\n" +
 		"type diagnostic interface{ StatusDiagnostic() string }\n\n" +
 		"type carrier interface{ terminalOutcomeView() string }\n\n" +
+		"type policy interface{ Classify(error) error }\n\ntype policyKey struct{}\n\n" +
+		"func Classify(ctx context.Context, err error) error {\n\tif p, ok := ctx.Value(policyKey{}).(policy); ok {\n\t\treturn p.Classify(err)\n\t}\n\treturn err\n}\n\n" +
 		"func Find(err error) bool {\n\tfor err != nil {\n\t\tif _, ok := err.(carrier); ok {\n\t\t\treturn true\n\t\t}\n\t\tw, ok := err.(interface{ Unwrap() error })\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\terr = w.Unwrap()\n\t}\n\treturn false\n}\n\n" +
 		"func Render(err error) string {\n\tvar d diagnostic\n\tif errors.As(err, &d) {\n\t\treturn err.Error() + \"\\n\" + d.StatusDiagnostic()\n\t}\n\treturn err.Error()\n}\n\n" +
 		"func Status(err error) string {\n\tvar coder interface{ BoltErrorCode() string }\n\tif errors.As(err, &coder) {\n\t\treturn coder.BoltErrorCode()\n\t}\n\treturn \"Neo.DatabaseError.Transaction.TransactionRollbackFailed\"\n}\n"
@@ -326,6 +329,7 @@ func main() {
 	edges := map[*ssa.Function][]*ssa.Function{}
 	dispatch := map[*ssa.Function]bool{}
 	carrierProbe, unwrapProbe := map[*ssa.Function]bool{}, map[*ssa.Function]bool{}
+	contextValue, optionalPolicy := map[*ssa.Function]bool{}, map[*ssa.Function]bool{}
 	for _, fn := range all {
 		if fn == nil || seen[fn] || !strings.Contains(fn.String(), module) || fn.Synthetic != "" && fn.Synthetic != "bound" && fn.Synthetic != "package initializer" {
 			continue
@@ -357,6 +361,18 @@ func main() {
 				}
 				if ta, ok := ins.(*ssa.TypeAssert); ok && renderProbe(ta.AssertedType) {
 					dispatch[fn] = true
+				}
+				// An optional policy: a value read from the context and tested
+				// (comma-ok) for an interface, so the policy may be absent.
+				if ta, ok := ins.(*ssa.TypeAssert); ok && ta.CommaOk {
+					if _, isIface := ta.AssertedType.Underlying().(*types.Interface); isIface {
+						optionalPolicy[fn] = true
+					}
+				}
+				if call, ok := ins.(ssa.CallInstruction); ok && call.Common().IsInvoke() && call.Common().Method.Name() == "Value" {
+					if named, ok := call.Common().Value.Type().(*types.Named); ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "context" && named.Obj().Name() == "Context" {
+						contextValue[fn] = true
+					}
 				}
 				// Terminal outcome discovery: testing a value for the carrier
 				// method and walking Unwrap in the same function.
@@ -505,6 +521,12 @@ func main() {
 		}
 	}
 	for fn := range seen {
+		sig := fn.Signature
+		if contextValue[fn] && optionalPolicy[fn] && hasErrorParam(sig) && returnsError(sig) {
+			add(fn, finding{"optional-classifier", position(fn.Pos()), "applies an error policy only when one is installed in the context"})
+		}
+	}
+	for fn := range seen {
 		if carrierProbe[fn] && unwrapProbe[fn] {
 			add(fn, finding{"carrier-discovery", position(fn.Pos()), "tests for a terminal outcome carrier while walking Unwrap"})
 		}
@@ -525,7 +547,7 @@ func main() {
 			}
 		}
 	}
-	controlOK := controlKinds["status-default"] && controlKinds["status-provider"] && controlKinds["errors.Join"] && controlKinds["fmt.Errorf-multi-%w"] && controlKinds["multi-error-type"] && controlKinds["status-code"] && controlKinds["combiner-signature"] && controlKinds["render-dispatch"] && controlKinds["carrier-discovery"]
+	controlOK := controlKinds["status-default"] && controlKinds["status-provider"] && controlKinds["errors.Join"] && controlKinds["fmt.Errorf-multi-%w"] && controlKinds["multi-error-type"] && controlKinds["status-code"] && controlKinds["combiner-signature"] && controlKinds["render-dispatch"] && controlKinds["carrier-discovery"] && controlKinds["optional-classifier"]
 	if !controlOK {
 		panic(fmt.Sprintf("planted control not fully detected: %v", controlKinds))
 	}
