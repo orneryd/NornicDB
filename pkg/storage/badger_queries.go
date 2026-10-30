@@ -1429,13 +1429,14 @@ func (b *BadgerEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 
 // GetEdgesBetween returns all edges between two nodes.
 func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	images, err := b.edgesBetweenImages(startID, endID)
+	images, err := b.edgesBetweenImages(startID, endID, nil)
 	return deliverEdges(images), err
 }
 
 // edgesBetweenImages selects the edges between two nodes as images: committed
-// rows decoded for this read, buffered live edges borrowed (NOR-160).
-func (b *BadgerEngine) edgesBetweenImages(startID, endID NodeID) ([]edgeImage, error) {
+// rows decoded for this read, buffered live edges borrowed. keep, when set, is
+// the caller's selection, decided here before anything is delivered (NOR-160).
+func (b *BadgerEngine) edgesBetweenImages(startID, endID NodeID, keep func(*Edge) bool) ([]edgeImage, error) {
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
 		return nil, err
 	}
@@ -1473,14 +1474,28 @@ func (b *BadgerEngine) edgesBetweenImages(startID, endID NodeID) ([]edgeImage, e
 			return nil, err
 		}
 		for _, e := range committed {
-			if _, dead := suppressed[e.ID]; dead {
+			if _, dead := suppressed[e.ID]; dead || keep != nil && !keep(e) {
 				continue
 			}
 			result = append(result, decodedEdge(e))
 		}
-		return append(result, live...), nil
+		for _, e := range live {
+			if keep == nil || keep(e.Edge) {
+				result = append(result, e)
+			}
+		}
+		return result, nil
 	}
 	committed, err := b.committedEdgesBetween(startID, endID, "")
+	if keep != nil {
+		kept := committed[:0]
+		for _, e := range committed {
+			if keep(e) {
+				kept = append(kept, e)
+			}
+		}
+		committed = kept
+	}
 	return decodedEdges(committed), err
 }
 

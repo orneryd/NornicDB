@@ -482,7 +482,10 @@ func (cache *snapshotAdjacencyCache) clear() {
 // scanned every visible edge in the graph and filtered by endpoint in memory,
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
-func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]edgeImage, error) {
+// keep, when set, is the transaction's selection (its own writes superseding
+// committed edges, the read's direction), decided before any retained body is
+// copied (NOR-160).
+func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, keep func(*Edge) bool) ([]edgeImage, error) {
 	// Write-behind reads are read-committed: the flusher may land a buffered
 	// commit after the pinned snapshot, and buffered-but-unflushed edges are
 	// invisible to the pinned view. Read the latest overlaid engine view
@@ -493,7 +496,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 		}
 		// The engine's adjacency images: the transaction merges its own
 		// writes before anything is delivered (NOR-160).
-		reader, err := tx.engine.captureAdjacencyReader(nodeID, direction == Outgoing, direction == Incoming, visibleRead)
+		reader, err := tx.engine.captureAdjacencyReader(nodeID, direction == Outgoing, direction == Incoming, visibleRead, keep)
 		if err != nil {
 			return nil, err
 		}
@@ -503,9 +506,18 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 		return reader.read(direction == Outgoing)
 	}
 	if tx.snapshotDeregister != nil {
-		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
+		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false, keep)
 	}
 	edges, err := tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
+	if keep != nil {
+		kept := edges[:0]
+		for _, edge := range edges {
+			if keep(edge) {
+				kept = append(kept, edge)
+			}
+		}
+		edges = kept
+	}
 	return decodedEdges(edges), err
 }
 
@@ -518,7 +530,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 // snapshot record is read. The adjacency cache is filled only after the whole
 // view succeeds: a partial edge ID list would make a later read of the same
 // node report a truncated adjacency as complete.
-func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool) ([]edgeImage, error) {
+func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection, headersOnly bool, keep func(*Edge) bool) ([]edgeImage, error) {
 	var cache *snapshotAdjacencyCache
 	switch direction {
 	case Outgoing:
@@ -559,7 +571,11 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 				if tx.engine.visibilityFiltered() && tx.engine.filterEntityByDecay(visibleRead, cachedEdge, DecayScoringTime()) {
 					continue
 				}
-				edge = borrowedEdge(cachedEdge)
+				if !attachedAt(cachedEdge, nodeID, direction == Outgoing) || keep != nil && !keep(cachedEdge) {
+					continue
+				}
+				// Selected: the read's one copy of the snapshot body.
+				edge = decodedEdge(copyEdge(cachedEdge))
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
 				edge = decodedEdge(header)
 			} else {
@@ -573,7 +589,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(nodeID NodeID
 				tx.cacheSnapshotEdgeByIDLocked(decoded)
 				edge = decodedEdge(decoded)
 			}
-			if edge.Edge == nil {
+			if edge.Edge == nil || keep != nil && !keep(edge.Edge) {
 				continue
 			}
 			if direction == Outgoing && edge.StartNode == nodeID || direction == Incoming && edge.EndNode == nodeID {
@@ -634,7 +650,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 			return edge.EndNode == nodeID
 		}), true, nil
 	}
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true, tx.committedEdgeKeptLocked)
 	if err != nil {
 		return nil, true, err
 	}
