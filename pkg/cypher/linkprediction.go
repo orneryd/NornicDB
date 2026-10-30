@@ -61,6 +61,8 @@
 
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers are the declared values in procedure_result_headers.go.
+
 import (
 	"context"
 
@@ -568,7 +570,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
 func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {
 	result := &ExecuteResult{
-		Columns: []string{"node1", "node2", "score"},
+		Columns: columnNames(linkPredictionColumns),
 		Rows:    make([][]interface{}, 0, len(predictions)),
 	}
 
@@ -587,7 +589,7 @@ func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.
 // formatHybridPredictionResults formats hybrid predictions with extended columns
 func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID) *ExecuteResult {
 	result := &ExecuteResult{
-		Columns: []string{"node1", "node2", "score", "topology_score", "semantic_score", "reason"},
+		Columns: columnNames(gdsLinkPredictionPredictStreamColumns),
 		Rows:    make([][]interface{}, 0, len(predictions)),
 	}
 

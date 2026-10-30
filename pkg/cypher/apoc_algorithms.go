@@ -1,6 +1,8 @@
 // Package cypher implements APOC graph algorithms for Neo4j compatibility.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"container/heap"
 	"context"
@@ -75,9 +77,9 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 	}
 	path, weight := e.dijkstra(startID, endID, steps, weightProp, defaultWeight)
 	if path == nil {
-		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
+		return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{}}, nil
 	}
-	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
+	return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
 }
 
 func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
@@ -144,9 +146,9 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 	}
 	path, weight := e.astar(startID, endID, steps, weightProp, latProp, lonProp)
 	if path == nil {
-		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
+		return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{}}, nil
 	}
-	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
+	return &ExecuteResult{Columns: columnNames(pathWeightColumns), Rows: [][]interface{}{{e.storage.(*graphIdentityStorage).outputPath(path), weight}}}, nil
 }
 
 func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
@@ -245,7 +247,7 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	for i, path := range paths {
 		rows[i] = []interface{}{e.storage.(*graphIdentityStorage).outputPath(path)}
 	}
-	return &ExecuteResult{Columns: []string{"path"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(pathColumns), Rows: rows}, nil
 }
 
 func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int) [][]storage.NodeID {
@@ -293,7 +295,7 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	}
 	scores := graph.computePageRank(nodes, damping, iterations)
 	rows := graphAlgorithmRows(nodes, scores)
-	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
 // computePageRank ranks the given nodes over the relationships between
@@ -348,7 +350,7 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 	}
 	scores := graph.computeBetweenness(nodes)
 	rows := graphAlgorithmRows(nodes, scores)
-	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
 func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
@@ -419,7 +421,7 @@ func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []inte
 	}
 	scores := graph.computeCloseness(nodes)
 	rows := graphAlgorithmRows(nodes, scores)
-	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(nodeScoreColumns), Rows: rows}, nil
 }
 
 func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
@@ -484,7 +486,7 @@ func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []int
 			rows = append(rows, []interface{}{graphIdentityNodeValue(node)})
 		}
 	}
-	return &ExecuteResult{Columns: []string{"node"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(nodeColumns), Rows: rows}, nil
 }
 
 func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
@@ -565,7 +567,7 @@ func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []int
 	}
 	rows := make([][]interface{}, 0)
 	if relType == "" {
-		return &ExecuteResult{Columns: []string{"nodes"}, Rows: rows}, nil
+		return &ExecuteResult{Columns: columnNames(apocNeighborsByhopColumns), Rows: rows}, nil
 	}
 	for depth := 0; depth < maxHops; depth++ {
 		if err := ctx.Err(); err != nil {
@@ -585,7 +587,7 @@ func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []int
 		}
 		rows = append(rows, []interface{}{nodesList})
 	}
-	return &ExecuteResult{Columns: []string{"nodes"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: columnNames(apocNeighborsByhopColumns), Rows: rows}, nil
 }
 
 func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, error) {

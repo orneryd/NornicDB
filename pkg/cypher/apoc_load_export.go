@@ -306,7 +306,7 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(valueMapColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -420,7 +420,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 
 	if len(records) == 0 {
 		return &ExecuteResult{
-			Columns: []string{"lineNo", "list", "map"},
+			Columns: columnNames(apocLoadCsvColumns),
 			Rows:    [][]interface{}{},
 		}, nil
 	}
@@ -459,7 +459,7 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"lineNo", "list", "map"},
+		Columns: columnNames(apocLoadCsvColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -796,7 +796,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"value"},
+		Columns: columnNames(valueMapColumns),
 		Rows:    rows,
 	}, nil
 }

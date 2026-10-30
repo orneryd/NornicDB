@@ -1,5 +1,7 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
 	"fmt"
@@ -37,7 +39,7 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 		if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
 			name = manager.SystemDatabaseName()
 		}
-		columns = []string{"id", "name", "creationDate"}
+		columns = columnNames(dbmsInfoColumns)
 		row = make([]interface{}, 3)
 	} else {
 		nodeCount, _ := e.storage.NodeCount()
@@ -46,7 +48,7 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 		if selected := GetUseDatabaseFromContext(ctx); selected != "" {
 			name = selected
 		}
-		columns = []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"}
+		columns = columnNames(dbInfoColumns)
 		row = make([]interface{}, 5)
 		row[3], row[4] = nodeCount, edgeCount
 	}
@@ -66,7 +68,7 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 // callDbPing checks database connectivity - Neo4j db.ping()
 func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"success"},
+		Columns: columnNames(dbPingColumns),
 		Rows:    [][]interface{}{{true}},
 	}, nil
 }
@@ -102,7 +104,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 	)
 	sort.Slice(rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) })
 	result := &ExecuteResult{
-		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Columns: columnNames(configSettingColumns),
 		Rows:    [][]interface{}{},
 	}
 	for _, row := range rows {
@@ -116,7 +118,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 // callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
 func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
+		Columns: columnNames(configSettingColumns),
 		Rows: [][]interface{}{
 			{"server.bolt.advertised_address", "Bolt connector advertised address", "localhost:7687", false, nil, nil, false, "localhost:7687"},
 			{"server.http.advertised_address", "HTTP connector advertised address", "localhost:7474", false, nil, nil, false, "localhost:7474"},
@@ -131,7 +133,7 @@ func (e *StorageExecutor) callDbmsListConnections() (*ExecuteResult, error) {
 
 func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"connectionId", "connectTime", "connector", "username", "userAgent", "serverAddress", "clientAddress"},
+		Columns: columnNames(dbmsListConnectionsColumns),
 		Rows:    [][]interface{}{},
 	}
 	identity := requestIdentityFromContext(ctx)
@@ -177,7 +179,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 		})
 	}
 	return &ExecuteResult{
-		Columns: []string{"analyzer", "description", "stopwords", "kind", "version", "digest", "dynamicLoad", "selectedDatabases"},
+		Columns: columnNames(dbIndexFulltextListAvailableAnalyzersColumns),
 		Rows:    rows,
 	}, nil
 }
@@ -198,7 +200,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 // Returns one row per matching edge with columns [relationship, score].
 func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
-		Columns: []string{"relationship", "score"},
+		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryRelationships", args)
@@ -516,7 +518,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		if !input.hasValue {
 			params := getParamsFromContext(ctx)
 			if params == nil {
-				return &ExecuteResult{Columns: []string{"relationship", "score"}, Rows: [][]interface{}{}}, nil
+				return &ExecuteResult{Columns: columnNames(relationshipScoreColumns), Rows: [][]interface{}{}}, nil
 			}
 			var exists bool
 			paramValue, exists = params[input.paramName]
@@ -577,7 +579,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"relationship", "score"},
+		Columns: columnNames(relationshipScoreColumns),
 		Rows:    [][]interface{}{},
 	}
 
@@ -875,7 +877,7 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
+		Columns: legacyProcedureColumns("db.index.vector.drop"),
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
 }
