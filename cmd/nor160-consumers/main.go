@@ -120,6 +120,26 @@ func NOR160ControlDroppedCopy(edge *Edge, deliver bool) *Edge {
 	return nil
 }
 
+// NOR160ControlAbandoned copies a population and abandons it on a path its
+// copies do not decide (the partial cache-miss shape).
+func NOR160ControlAbandoned(edges []*Edge, complete bool) ([]*Edge, bool) {
+	var out []*Edge
+	for _, e := range edges {
+		out = append(out, copyEdge(e))
+	}
+	if !complete {
+		return nil, false
+	}
+	return out, true
+}
+
+func nor160ControlExit(edge *Edge) *Edge { return copyEdge(edge) }
+
+// NOR160ControlCopyOfExit copies again what a copying exit already copied.
+func NOR160ControlCopyOfExit(edge *Edge) *Edge {
+	return copyEdge(nor160ControlExit(edge))
+}
+
 // NOR160ControlStripAfterDelivery strips the vectors of a delivered node in the
 // consumer, after its source copied them (vectors copied then dropped).
 func NOR160ControlStripAfterDelivery(b *BadgerEngine) []*Node {
@@ -176,6 +196,7 @@ var copierNames = map[string]bool{
 	"(*" + storagePkg + ".Node).CallerCopy": true, "(*" + storagePkg + ".Edge).CallerCopy": true,
 	module + "/pkg/callerowned.Value": true, module + "/pkg/callerowned.Map": true, module + "/pkg/callerowned.List": true,
 	module + "/pkg/callerowned.Rows": true, module + "/pkg/callerowned.RowsObservingMaps": true, module + "/pkg/callerowned.Of": true,
+	storagePkg + ".deliverEdge": true, storagePkg + ".deliverEdges": true, storagePkg + ".deliverNode": true, storagePkg + ".deliverNodes": true,
 }
 
 var tree string
@@ -224,6 +245,7 @@ type report struct {
 	Dispatchers   []string        `json:"copier_dispatch_rules"`
 	OwnerDispatch []string        `json:"owner_dispatch_functions"`
 	DroppedCopies []string        `json:"copies_that_may_be_dropped"`
+	SecondCopies  []string        `json:"copies_of_copies"`
 	ShallowCopies []string        `json:"shallow_entity_copies"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
@@ -726,9 +748,92 @@ func callResults(call *ssa.Call) map[ssa.Value]bool {
 	return out
 }
 
-// delivers: ins hands a value derived from roots onward (returns, stores,
-// appends, passes it to a call that returns something other than a bool, or
-// sends it); a predicate call that only reads it is not a delivery.
+// addrBase: the local allocation, slice or map an address or container refers
+// to, or nil when it reaches memory the function does not own.
+func addrBase(v ssa.Value) ssa.Value {
+	switch x := v.(type) {
+	case *ssa.Alloc:
+		if x.Referrers() != nil {
+			for _, ref := range *x.Referrers() {
+				if _, captured := ref.(*ssa.MakeClosure); captured {
+					return nil // a closure reads it: treat as escaping
+				}
+			}
+		}
+		return x
+	case *ssa.MakeSlice, *ssa.MakeMap:
+		return v
+	case *ssa.IndexAddr:
+		return addrBase(x.X)
+	case *ssa.FieldAddr:
+		return addrBase(x.X)
+	case *ssa.Slice:
+		return addrBase(x.X)
+	case *ssa.UnOp:
+		if x.Op == token.MUL {
+			return addrBase(x.X)
+		}
+	case *ssa.Call:
+		if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+			if k, ok := x.Call.Args[0].(*ssa.Const); ok && k.IsNil() {
+				return x
+			}
+			if addrBase(x.Call.Args[0]) != nil {
+				return x
+			}
+		}
+	}
+	return nil
+}
+
+// rootClosure extends roots through the function's own memory: a copy stored
+// in a local variable, slice or map, or appended to a local slice, is still
+// the same undelivered copy.
+func rootClosure(fn *ssa.Function, roots map[ssa.Value]bool) {
+	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
+	for changed := true; changed; {
+		changed = false
+		mark := func(v ssa.Value) {
+			if v != nil && !roots[v] {
+				roots[v] = true
+				changed = true
+			}
+		}
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Store:
+					if in(x.Val) {
+						mark(addrBase(x.Addr))
+					}
+				case *ssa.MapUpdate:
+					if in(x.Value) {
+						mark(addrBase(x.Map))
+					}
+				case *ssa.Call:
+					if bi, ok := x.Call.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+						for _, arg := range x.Call.Args {
+							if in(arg) {
+								mark(x)
+							}
+						}
+					}
+				case *ssa.Phi:
+					for _, e := range x.Edges {
+						if in(e) {
+							mark(x)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// delivers: ins hands a value derived from roots out of the function's own
+// memory (returns it, stores it where the function does not own, sends it,
+// or passes it to a call other than a predicate, append or a copier). A
+// predicate call that only reads it is not a delivery.
 func delivers(ins ssa.Instruction, roots map[ssa.Value]bool) bool {
 	in := func(v ssa.Value) bool { return derives(v, roots, map[ssa.Value]bool{}) }
 	switch x := ins.(type) {
@@ -739,23 +844,20 @@ func delivers(ins ssa.Instruction, roots map[ssa.Value]bool) bool {
 			}
 		}
 	case *ssa.Store:
-		return in(x.Val)
+		return in(x.Val) && addrBase(x.Addr) == nil
 	case *ssa.Send:
 		return in(x.X)
 	case *ssa.MapUpdate:
-		return in(x.Value)
+		return in(x.Value) && addrBase(x.Map) == nil
 	case ssa.CallInstruction:
 		c := x.Common()
+		if bi, ok := c.Value.(*ssa.Builtin); ok && bi.Name() == "append" {
+			return false
+		}
 		predicate := c.Signature().Results().Len() == 1 && types.Identical(c.Signature().Results().At(0).Type(), types.Typ[types.Bool])
 		for _, a := range c.Args {
 			if in(a) && !predicate {
 				return true
-			}
-		}
-	case *ssa.Phi:
-		for _, e := range x.Edges {
-			if in(e) {
-				roots[x] = true
 			}
 		}
 	}
@@ -786,6 +888,7 @@ func derivedCond(cond ssa.Value, roots map[ssa.Value]bool) (derived bool, presen
 // not decide.
 func mayDrop(call *ssa.Call, start *ssa.BasicBlock, index int) bool {
 	roots := callResults(call)
+	rootClosure(start.Parent(), roots)
 	for _, ins := range start.Instrs[index+1:] {
 		if delivers(ins, roots) {
 			return false
@@ -1292,6 +1395,50 @@ func main() {
 	}
 	sort.Strings(r.DroppedCopies)
 
+	// 11: copies of copies: a copier applied to a value another copier or a
+	// copying exit already produced in the same function.
+	for _, fn := range fns {
+		if copierNames[fullName(fn)] || exits[origin(fn)] {
+			continue
+		}
+		var copies []*ssa.Call
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				if call, ok := ins.(*ssa.Call); ok {
+					c := call.Common()
+					callee := staticCallee(c)
+					if (elementCopier(c) || (callee != nil && exits[origin(callee)])) && entityResult(call.Type()) {
+						copies = append(copies, call)
+					}
+				}
+			}
+		}
+		for _, second := range copies {
+			if !elementCopier(second.Common()) {
+				continue
+			}
+			for _, first := range copies {
+				if first == second {
+					continue
+				}
+				roots := callResults(first)
+				rootClosure(fn, roots)
+				hit := false
+				for _, arg := range second.Common().Args {
+					if derives(arg, roots, map[ssa.Value]bool{}) {
+						hit = true
+					}
+				}
+				if hit {
+					file, line := pos(fn, second.Pos())
+					r.SecondCopies = append(r.SecondCopies, fmt.Sprintf("%s:%d %s -> %s copies the result of %s", file, line, strings.TrimPrefix(fn.String(), module+"/"), calleeName(second.Common()), calleeName(first.Common())))
+					break
+				}
+			}
+		}
+	}
+	sort.Strings(r.SecondCopies)
+
 	// 10: shallow copies of entity collections: append(nil, s...) or
 	// slices.Clone(s) of a slice whose elements are entities or Copiers.
 	for _, fn := range fns {
@@ -1361,6 +1508,18 @@ func main() {
 	for _, x := range r.DroppedCopies {
 		if strings.Contains(x, "NOR160ControlDroppedCopy") {
 			r.Controls["copy dropped on an unrelated condition"] = true
+		}
+	}
+	r.Controls["copied population abandoned on a miss"] = false
+	for _, x := range r.DroppedCopies {
+		if strings.Contains(x, "NOR160ControlAbandoned") {
+			r.Controls["copied population abandoned on a miss"] = true
+		}
+	}
+	r.Controls["copy of a copying exit's result"] = false
+	for _, x := range r.SecondCopies {
+		if strings.Contains(x, "NOR160ControlCopyOfExit") {
+			r.Controls["copy of a copying exit's result"] = true
 		}
 	}
 	r.Controls["vectors stripped after delivery"] = false
