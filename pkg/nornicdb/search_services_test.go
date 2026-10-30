@@ -1092,10 +1092,10 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	svc := search.NewService(engine, 3, nil)
 
 	entry := &dbSearchService{
-		dbName:    "tenant_flush",
-		svc:       svc,
-		buildDone: make(chan struct{}),
+		dbName: "tenant_flush",
+		svc:    svc,
 	}
+	finishBuild := holdInitialBuild(entry)
 
 	// Queue refreshes before the build completes: one for a node that is
 	// missing (tolerated) and one for a stored node (applied).
@@ -1105,7 +1105,7 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
 
 	db.ensurePendingFlush(entry)
-	close(entry.buildDone)
+	finishBuild()
 
 	require.Eventually(t, func() bool {
 		return svc.EmbeddingCount() == 1
