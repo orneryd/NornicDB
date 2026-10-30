@@ -766,6 +766,31 @@ func (c *NOR160ControlCache) GetViaInterface(id NodeID, hidden func(*Node) bool)
 	var g nor160ControlGetter = c
 	return g.nor160GetVia(id, hidden)
 }
+
+// Call-graph scope: a dropped copy inside a function value stored in a struct
+// field, reached from an exported read only by calling that stored value. VTA
+// must resolve it (K1, must report).
+type NOR160ControlStoredFn struct {
+	get func(NodeID, func(*Node) bool) *Node
+}
+
+func nor160ControlStoredGet(c *NOR160ControlCache) func(NodeID, func(*Node) bool) *Node {
+	return func(id NodeID, hidden func(*Node) bool) *Node {
+		n := copyNode(c.nodes[id])
+		if hidden(n) {
+			return nil
+		}
+		return n
+	}
+}
+
+func NewNOR160ControlStoredFn(c *NOR160ControlCache) *NOR160ControlStoredFn {
+	return &NOR160ControlStoredFn{get: nor160ControlStoredGet(c)}
+}
+
+func (s *NOR160ControlStoredFn) GetStored(id NodeID, hidden func(*Node) bool) *Node {
+	return s.get(id, hidden)
+}
 `
 
 const cypherControlFile = `package cypher
@@ -856,6 +881,7 @@ var controls = []control{
 	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
+	{"K1", storagePkg + ".nor160ControlStoredGet$1", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -3461,6 +3487,7 @@ type readScope struct {
 	ret, param, cb, cell map[*ssa.Function][]bool
 	field                map[fieldKey]bool
 	under                map[*ssa.Function]bool // runs under a read exit
+	exitOf               map[*ssa.Function]*ssa.Function
 }
 
 func flags(m map[*ssa.Function][]bool, fn *ssa.Function, n int) []bool {
@@ -3740,14 +3767,18 @@ func (a *analysis) reachSet(fn *ssa.Function, rs *readScope) map[ssa.Value]bool 
 	return set
 }
 
+// scopeByFlow selects the replaced value-flow scope (method history only).
+const scopeByFlow = false
+
 // computeReadScope: the flow facts to a fixpoint, then each function's reach set.
 func (a *analysis) computeReadScope() {
-	rs := &readScope{ret: map[*ssa.Function][]bool{}, param: map[*ssa.Function][]bool{}, cb: map[*ssa.Function][]bool{}, cell: map[*ssa.Function][]bool{}, field: map[fieldKey]bool{}, under: map[*ssa.Function]bool{}}
+	rs := &readScope{ret: map[*ssa.Function][]bool{}, param: map[*ssa.Function][]bool{}, cb: map[*ssa.Function][]bool{}, cell: map[*ssa.Function][]bool{}, field: map[fieldKey]bool{}, under: map[*ssa.Function]bool{}, exitOf: map[*ssa.Function]*ssa.Function{}}
 	// Functions that run under a read exit.
 	var queue []*ssa.Function
 	for _, fn := range a.fns {
 		if isExit(fn) {
 			rs.under[fn] = true
+			rs.exitOf[fn] = fn
 			queue = append(queue, fn)
 		}
 	}
@@ -3760,6 +3791,7 @@ func (a *analysis) computeReadScope() {
 					for _, g := range a.calleesOf(call) {
 						if !rs.under[g] {
 							rs.under[g] = true
+							rs.exitOf[g] = rs.exitOf[fn]
 							queue = append(queue, g)
 						}
 					}
@@ -3767,11 +3799,16 @@ func (a *analysis) computeReadScope() {
 				if mc, ok := ins.(*ssa.MakeClosure); ok {
 					if g, ok := mc.Fn.(*ssa.Function); ok && !rs.under[g] {
 						rs.under[g] = true
+						rs.exitOf[g] = rs.exitOf[fn]
 						queue = append(queue, g)
 					}
 				}
 			}
 		}
+	}
+	a.scope = rs
+	if !scopeByFlow {
+		return // call-graph scope: the flow fixpoint below is not needed
 	}
 	set := func(m map[*ssa.Function][]bool, fn *ssa.Function, n, i int) bool {
 		f := flags(m, fn, n)
@@ -3886,6 +3923,18 @@ func (a *analysis) computeReadScope() {
 // inReadScope: a member at pos in fn concerns a value that reaches a reader.
 // With no instruction at pos (a function-level member), it counts.
 func (a *analysis) inReadScope(fn *ssa.Function, pos token.Pos) bool {
+	// Scope by the call graph: a member counts when its function runs under a
+	// public read exit (reachable from one). No value flow is modelled, so no
+	// modelling gap can drop a member.
+	if a.scope != nil {
+		return a.scope.under[originFn(fn)] || a.scope.under[fn]
+	}
+	return true
+}
+
+// inReadScopeByFlow is the value-flow scope it replaces (kept for reference
+// in the method history; not used).
+func (a *analysis) inReadScopeByFlow(fn *ssa.Function, pos token.Pos) bool {
 	r := a.reach[fn]
 	s := a.states[fn]
 	found := false
@@ -3961,6 +4010,7 @@ type hit struct {
 	Detail   string   `json:"detail"`
 	Entries  int      `json:"public_entries_reaching"`
 	Examples []string `json:"entry_examples,omitempty"`
+	ReadExit string   `json:"read_exit,omitempty"`
 }
 
 type report struct {
@@ -4192,7 +4242,17 @@ func main() {
 		}
 		seenHit[key] = true
 		n, ex := a.entriesReaching(fn)
-		r.Hits = append(r.Hits, hit{Class: class, Function: fullName(fn), File: file, Line: line, Detail: detail, Entries: n, Examples: ex})
+		exit := ""
+		if a.scope != nil {
+			e := a.scope.exitOf[fn]
+			if e == nil {
+				e = a.scope.exitOf[originFn(fn)]
+			}
+			if e != nil {
+				exit = strings.TrimPrefix(fullName(e), module+"/")
+			}
+		}
+		r.Hits = append(r.Hits, hit{Class: class, Function: fullName(fn), File: file, Line: line, Detail: detail, Entries: n, Examples: ex, ReadExit: exit})
 	}
 	mappers := map[string]*ssa.Function{}
 	for _, or := range ownerReports {
