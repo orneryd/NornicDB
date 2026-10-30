@@ -343,7 +343,7 @@ func collectTerminalView(err error) terminalView {
 	code := ""
 	var prefaces []outcomePreface
 	var records []terminalRecord
-	seen := map[*TerminalFailure]bool{}
+	seenCode := map[string]bool{}
 	for _, item := range scan.items {
 		if item.carrier != nil {
 			child := item.carrier.terminalOutcomeView()
@@ -363,8 +363,10 @@ func collectTerminalView(err error) terminalView {
 				}
 			}
 			for _, record := range child.records {
-				if !seen[record.identity] {
-					seen[record.identity] = true
+				// PLANTED DROP (r24 mutant M2, never merged): records are merged
+				// by status, so a second child with the same status is dropped.
+				if !seenCode[record.code] {
+					seenCode[record.code] = true
 					records = append(records, record)
 				}
 			}
