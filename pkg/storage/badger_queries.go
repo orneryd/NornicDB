@@ -620,7 +620,7 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 
 // AllNodes returns all nodes (implements Engine interface).
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
-	images, overlay, err := b.allNodeImages()
+	images, overlay, err := b.allNodeImages(true)
 	if err != nil {
 		return nil, err
 	}
@@ -628,11 +628,15 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 }
 
 // allNodeImages selects every committed node as images, with the buffered
-// nodes that follow them captured, borrowed (see labelNodeImages).
-func (b *BadgerEngine) allNodeImages() ([]nodeImage, bufferedEntityResult, error) {
+// nodes that follow them captured, borrowed (see labelNodeImages). A
+// collection read uses the node cache (useCache), whose hits are copied once
+// the whole read stands. A stream, which may stop at any node, does not: every
+// committed node is decoded for it and handed over, so a stop drops no copy
+// (NOR-160).
+func (b *BadgerEngine) allNodeImages(useCache bool) ([]nodeImage, bufferedEntityResult, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
-	nodes, overlay, complete, err := b.allNodeImagesWith(true)
+	nodes, overlay, complete, err := b.allNodeImagesWith(useCache)
 	if err == nil && !complete {
 		nodes, overlay, _, err = b.allNodeImagesWith(false)
 	}

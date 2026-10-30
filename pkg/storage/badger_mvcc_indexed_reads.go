@@ -486,8 +486,9 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 		return err
 	}
 
-	// Delivered one at a time: a yield that stops copies no buffered node.
-	nodes, overlay, err := b.allNodeImages()
+	// Delivered one at a time from decoded rows and the buffer's stream exit:
+	// a yield that stops leaves no copy behind.
+	nodes, overlay, err := b.allNodeImages(false)
 	if err != nil {
 		return err
 	}

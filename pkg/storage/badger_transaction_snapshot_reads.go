@@ -414,13 +414,14 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 
 // getAllCommittedNodesLocked returns the committed nodes as images and the
 // buffered ones that follow them, still borrowed: each caller copies only the
-// buffered nodes it keeps, through the overlay's exits (NOR-160).
-func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]nodeImage, bufferedEntityResult, error) {
+// buffered nodes it keeps, through the overlay's exits (NOR-160). useCache is
+// allNodeImages': collections set it, streams do not.
+func (tx *BadgerTransaction) getAllCommittedNodesLocked(useCache bool) ([]nodeImage, bufferedEntityResult, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.allNodeImages()
+		return tx.engine.allNodeImages(useCache)
 	}
 	nodes, err := tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
 	return decodedNodes(nodes), bufferedEntityResult{}, err

@@ -2754,7 +2754,7 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opt
 			}, opts)
 		})
 	}
-	nodes, overlay, err := tx.getAllCommittedNodesLocked()
+	nodes, overlay, err := tx.getAllCommittedNodesLocked(false)
 	if err != nil {
 		return err
 	}
@@ -2849,7 +2849,7 @@ func (tx *BadgerTransaction) AllNodes() ([]*Node, error) {
 		return nil, err
 	}
 
-	committed, overlay, err := tx.getAllCommittedNodesLocked()
+	committed, overlay, err := tx.getAllCommittedNodesLocked(true)
 	if err != nil {
 		return nil, err
 	}
