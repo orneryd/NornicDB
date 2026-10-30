@@ -594,6 +594,30 @@ func (c *NOR160ControlCache) GetCallbackFirstErr(small bool) ([]*Node, error) {
 	return first, nil
 }
 
+// The same behind a defer, so every return goes through result slots.
+func (c *NOR160ControlCache) GetCallbackFirstDeferred(small bool) ([]*Node, bool, error) {
+	defer func() {}()
+	var first []*Node
+	err := c.nor160EachErr(func(n *Node) { first = append(first, copyNode(n)) })
+	if err != nil {
+		return nil, false, err
+	}
+	if !small {
+		return first, true, nil
+	}
+	return c.nor160CopyAll(), true, nil
+}
+
+func (c *NOR160ControlCache) GetCallbackAllDeferred() ([]*Node, bool, error) {
+	defer func() {}()
+	var first []*Node
+	err := c.nor160EachErr(func(n *Node) { first = append(first, copyNode(n)) })
+	if err != nil {
+		return nil, false, err
+	}
+	return first, true, nil
+}
+
 func (c *NOR160ControlCache) GetCallbackAllErr() ([]*Node, error) {
 	var first []*Node
 	err := c.nor160EachErr(func(n *Node) { first = append(first, copyNode(n)) })
@@ -772,6 +796,8 @@ var controls = []control{
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetGatheredAll", true},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackFirstErr", false},
 	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAllErr", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackFirstDeferred", false},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).GetCallbackAllDeferred", true},
 }
 
 var tree string
@@ -847,15 +873,16 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
-	owners   map[*ssa.Function]owner // the single owner of each entity type
-	slots    map[*ssa.Function]map[*ssa.Alloc]bool
-	cellRoot bool // mayDrop is following callback-filled variables
-	p        *workcensus.Program
-	fns      []*ssa.Function
-	sums     map[*ssa.Function]*summary
-	states   map[*ssa.Function]*fnState
-	callees  map[ssa.CallInstruction][]*ssa.Function
-	callers  map[*ssa.Function][]*ssa.Function
+	candidates []string                // every function found deciding between a value and its copy
+	owners     map[*ssa.Function]owner // the single owner of each entity type
+	slots      map[*ssa.Function]map[*ssa.Alloc]bool
+	cellRoot   bool // mayDrop is following callback-filled variables
+	p          *workcensus.Program
+	fns        []*ssa.Function
+	sums       map[*ssa.Function]*summary
+	states     map[*ssa.Function]*fnState
+	callees    map[ssa.CallInstruction][]*ssa.Function
+	callers    map[*ssa.Function][]*ssa.Function
 }
 
 // ---------------------------------------------------------------- types
@@ -2108,6 +2135,17 @@ func errorReturn(ret *ssa.Return) bool {
 		return false
 	}
 	last := ret.Results[len(ret.Results)-1]
+	// Through a result slot, the error is what this return statement stored.
+	if ld, ok := last.(*ssa.UnOp); ok && ld.Op == token.MUL {
+		if al, ok := ld.X.(*ssa.Alloc); ok {
+			for i := len(ret.Block().Instrs) - 1; i >= 0; i-- {
+				if st, ok := ret.Block().Instrs[i].(*ssa.Store); ok && st.Addr == al {
+					last = st.Val
+					break
+				}
+			}
+		}
+	}
 	return isErrorType(last.Type()) && !isNilConst(last)
 }
 
@@ -2873,6 +2911,29 @@ func (a *analysis) mergeOf(fn *ssa.Function, s *fnState) (int, *types.Named, ssa
 	return 0, nil, nil, nil, false
 }
 
+// paramOf: the parameter a value is, directly or through the local the
+// function spilled it into.
+func paramOf(fn *ssa.Function, v ssa.Value) int {
+	if i := paramIndex(fn, v); i >= 0 {
+		return i
+	}
+	if ld, ok := v.(*ssa.UnOp); ok && ld.Op == token.MUL {
+		v = ld.X
+	}
+	al, ok := v.(*ssa.Alloc)
+	if !ok || al.Referrers() == nil {
+		return -1
+	}
+	for _, r := range *al.Referrers() {
+		if st, ok := r.(*ssa.Store); ok && st.Addr == al {
+			if i := paramIndex(fn, st.Val); i >= 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 // gateOf: the parameter (and field) a condition reads, and whether it is negated.
 func gateOf(fn *ssa.Function, v ssa.Value, neg bool, depth int) (gate, bool) {
 	if depth > 4 {
@@ -2889,13 +2950,13 @@ func gateOf(fn *ssa.Function, v ssa.Value, neg bool, depth int) (gate, bool) {
 			return gateOf(fn, x.X, !neg, depth+1)
 		case token.MUL:
 			if fa, ok := x.X.(*ssa.FieldAddr); ok {
-				if i := paramIndex(fn, fa.X); i >= 0 {
+				if i := paramOf(fn, fa.X); i >= 0 {
 					return gate{param: i, field: fa.Field, unchanged: !neg, known: true}, true
 				}
 			}
 		}
 	case *ssa.Field:
-		if i := paramIndex(fn, x.X); i >= 0 {
+		if i := paramOf(fn, x.X); i >= 0 {
 			return gate{param: i, field: x.Field, unchanged: !neg, known: true}, true
 		}
 	}
@@ -2979,10 +3040,14 @@ func (a *analysis) findOwners() map[*ssa.Function]owner {
 	}
 	out := map[*ssa.Function]owner{}
 	for n, os := range byType {
+		for i, o := range os {
+			a.candidates = append(a.candidates, fmt.Sprintf("%s: %s, parameter %d, gate known %v, field %d, %d candidates for the type", n.Obj().Name(), strings.TrimPrefix(fullName(fnOf[n][i]), module+"/"), o.value, o.gate.known, o.gate.field, len(os)))
+		}
 		if len(os) == 1 && os[0].gate.known {
 			out[fnOf[n][0]] = os[0]
 		}
 	}
+	sort.Strings(a.candidates)
 	return out
 }
 
@@ -3185,11 +3250,11 @@ func (a *analysis) valueField(fn *ssa.Function, o owner) int {
 		for _, ins := range b.Instrs {
 			switch x := ins.(type) {
 			case *ssa.Field:
-				if paramIndex(fn, x.X) == o.value && family(x.Type()) {
+				if paramOf(fn, x.X) == o.value && family(x.Type()) {
 					return x.Field
 				}
 			case *ssa.FieldAddr:
-				if paramIndex(fn, x.X) == o.value && family(pointee(x.Type())) {
+				if paramOf(fn, x.X) == o.value && family(pointee(x.Type())) {
 					return x.Field
 				}
 			}
@@ -3252,19 +3317,20 @@ type hit struct {
 }
 
 type report struct {
-	Author        string            `json:"author"`
-	Target        string            `json:"target"`
-	Loader        string            `json:"loader"`
-	Functions     int               `json:"functions_loaded"`
-	Analyzed      int               `json:"functions_analyzed"`
-	SummaryRounds int               `json:"summary_rounds"`
-	Converged     bool              `json:"summaries_converged"`
-	Owners        []string          `json:"owners"`
-	Counts        map[string]int    `json:"counts"`
-	Hits          []hit             `json:"hits"`
-	Mappers       []string          `json:"population_mappers"`
-	Controls      map[string]string `json:"controls"`
-	AllControlsOK bool              `json:"all_controls_detected"`
+	Author          string            `json:"author"`
+	Target          string            `json:"target"`
+	Loader          string            `json:"loader"`
+	Functions       int               `json:"functions_loaded"`
+	Analyzed        int               `json:"functions_analyzed"`
+	SummaryRounds   int               `json:"summary_rounds"`
+	Converged       bool              `json:"summaries_converged"`
+	Owners          []string          `json:"owners"`
+	OwnerCandidates []string          `json:"owner_candidates"`
+	Counts          map[string]int    `json:"counts"`
+	Hits            []hit             `json:"hits"`
+	Mappers         []string          `json:"population_mappers"`
+	Controls        map[string]string `json:"controls"`
+	AllControlsOK   bool              `json:"all_controls_detected"`
 }
 
 func (a *analysis) postOrder() []*ssa.Function {
@@ -3449,6 +3515,7 @@ func main() {
 		r.Owners = append(r.Owners, fmt.Sprintf("%s owns %s (parameter %d)", strings.TrimPrefix(fullName(ofn), module+"/"), o.entity.Obj().Name(), o.value))
 	}
 	sort.Strings(r.Owners)
+	r.OwnerCandidates = a.candidates
 	rounds2, converged2 := 0, true
 	if len(a.owners) > 0 {
 		a.sums = map[*ssa.Function]*summary{}
