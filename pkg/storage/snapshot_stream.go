@@ -1,5 +1,7 @@
 package storage
 
+// Snapshot Edge encoder convergence author: Claude (storage-format-owners lane), 30 October 2026.
+
 import (
 	"bufio"
 	"context"
@@ -213,27 +215,27 @@ func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes in
 	var payload []byte
 	var err error
 	var edge *Edge
-	var raw *snapshotEdgeTranscoder
+	var properties snapshotPropertyWriter
 	if frameType == streamSnapshotEdge {
 		switch typed := value.(type) {
 		case *snapshotEdgeTranscoder:
-			raw = typed
+			edge, properties = &typed.edge, typed
 		case *Edge:
 			edge = typed
 		case Edge:
 			edge = &typed
 		}
+		if edge != nil && properties == nil {
+			edge = prepareRecoveryEdge(edge)
+			properties = snapshotDecodedProperties(edge.Properties)
+		}
 	}
-	if raw != nil {
-		w.encoder.reset()
-		err = encodeSnapshotStoredEdge(w.encoder.msgpack, &raw.edge, raw.properties)
-		payload = w.encoder.buffer.Bytes()
-	} else if edge != nil {
-		// Both the reflected encoder and the stored-body transcoder use this
-		// order. Only snapshot edge maps change order; the format is unchanged.
+	if edge != nil {
+		// Stored-body and decoded edges share one record encoder. Only snapshot
+		// edge maps sort their keys; the format is unchanged.
 		w.encoder.reset()
 		w.encoder.msgpack.SetSortMapKeys(true)
-		err = w.encoder.msgpack.Encode(prepareRecoveryEdge(edge))
+		err = encodeSnapshotEdge(w.encoder.msgpack, edge, properties)
 		payload = w.encoder.buffer.Bytes()
 	} else {
 		payload, err = w.encoder.recovery(value)
