@@ -11,7 +11,7 @@ var unionPlainPlanSink Fragment
 var unionPlainPartsSink []string
 
 func TestPlan_UnionLexicalTokens(t *testing.T) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	for _, body := range []string{
 		"USE cmp.a RETURN 'plain' AS value /* UNION */",
 		"USE cmp.a RETURN 'plain' AS value // UNION\n",
@@ -28,7 +28,7 @@ func TestPlan_UnionLexicalTokens(t *testing.T) {
 }
 
 func TestPlan_UnionPlainAllocations(t *testing.T) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	// The narrow change must not exceed the composed parent budgets.
 	// Check each non-UNION shape independently of result cardinality.
 	ceilings := map[string]float64{"return": 14, "use": 19, "call": 34, "nested": 49}
@@ -70,7 +70,7 @@ func unionPlainShapes() []struct {
 }
 
 func BenchmarkFabricUnionPlainPlanning(b *testing.B) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	for _, shape := range unionPlainShapes() {
 		b.Run(shape.name, func(b *testing.B) {
 			b.ReportAllocs()

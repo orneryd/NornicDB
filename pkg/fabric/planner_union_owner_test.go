@@ -14,7 +14,7 @@ import (
 )
 
 func TestPlan_UnionPlanningEntries(t *testing.T) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	for _, op := range []string{"UNION", "UNION ALL"} {
 		body := "USE cmp.a RETURN 'left' AS value " + op + " USE cmp.b RETURN 'right' AS value"
 		for _, entry := range []struct {
@@ -83,7 +83,7 @@ func TestPlan_UnionPlanningEntries(t *testing.T) {
 }
 
 func TestPlan_UnionBranchContext(t *testing.T) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	for _, wrap := range []string{"%s", "CALL { %s } RETURN value"} {
 		body := "USE cmp.a RETURN 'left' AS value UNION ALL RETURN 'inherited' AS value"
 		query := strings.Replace(wrap, "%s", body, 1)
@@ -97,7 +97,7 @@ func TestPlan_UnionBranchContext(t *testing.T) {
 }
 
 func TestPlan_UnionUseContinuations(t *testing.T) {
-	p := NewFabricPlanner(plannerUseCatalog())
+	p := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 	fragment, err := p.Plan(t.Context(), "WITH 'left' AS value USE cmp.a RETURN value UNION ALL WITH 'right' AS value USE cmp.b RETURN value", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 	u, ok := fragment.(*FragmentUnion)

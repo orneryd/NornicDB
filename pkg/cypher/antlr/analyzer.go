@@ -71,9 +71,9 @@ type QueryInfo struct {
 	// Incremented during AST walk - used for IsCompoundQuery derivation
 	ClauseCount int
 
-	// Derived properties
-	IsReadOnly    bool
-	IsWriteQuery  bool
+	// Derived properties. Whether the statement writes is not a clause fact:
+	// it is the statement-effect owner's answer (cypher.QueryInfo.Writes and
+	// ReadOnly), which also knows registered WRITE procedures.
 	IsSchemaQuery bool
 
 	// IsCompoundQuery is true if query has multiple clause types (e.g., MATCH...CREATE)
@@ -121,18 +121,6 @@ func (a *QueryAnalyzer) Analyze(query string, parseResult *ParseResult) *QueryIn
 	}
 
 	// Derive properties
-	info.IsWriteQuery = info.HasCreate || info.HasMerge || info.HasDelete || info.HasSet || info.HasRemove
-
-	// Determine if query is read-only (safe to cache)
-	// - Must not be a write query or schema change
-	// - CALL procedures are NOT read-only UNLESS they're db.* metadata queries
-	// - Pure read patterns (MATCH, RETURN without writes) are read-only
-	callIsReadOnly := info.HasCall && info.CallIsDbProcedure
-	hasReadPattern := info.HasMatch || info.HasReturn || info.HasWith || info.HasUnwind
-
-	info.IsReadOnly = !info.IsWriteQuery && !info.HasSchema &&
-		(callIsReadOnly || (!info.HasCall && hasReadPattern))
-
 	info.IsSchemaQuery = info.HasSchema || info.HasShow
 
 	// IsCompoundQuery derived from clause counts tracked during AST walk

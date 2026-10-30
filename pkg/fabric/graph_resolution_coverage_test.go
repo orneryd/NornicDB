@@ -249,7 +249,7 @@ func (r *recordingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, dbNa
 // the query on the constituent it names.
 func TestFabricExecutor_DynamicUseRunsOnResolvedConstituent(t *testing.T) {
 	catalog := graphResolutionCatalog()
-	fragment, err := NewFabricPlanner(catalog).Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", "cmp", cyphertext.RawSource)
+	fragment, err := NewFabricPlanner(catalog, testStatementWrites).Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 
 	recorder := &recordingCypherExecutor{}

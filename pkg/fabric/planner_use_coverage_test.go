@@ -50,7 +50,8 @@ func plannerUseCatalog() *Catalog {
 // session on the composite or on one of its constituents.
 func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 	for _, sessionDB := range []string{"cmp", "cmp.a"} {
-		fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", sessionDB, cyphertext.RawSource)
+		planner := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
+		fragment, err := planner.Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", sessionDB, cyphertext.RawSource)
 		require.NoError(t, err, sessionDB)
 		exec, ok := fragment.(*FragmentExec)
 		require.True(t, ok, "expected *FragmentExec, got %T", fragment)
@@ -67,7 +68,7 @@ func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 // doesn't exist plans, while the same name in a static USE is rejected at
 // plan time.
 func TestPlan_DynamicUseResolvedAtRunTime(t *testing.T) {
-	planner := NewFabricPlanner(plannerUseCatalog())
+	planner := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 
 	fragment, err := planner.Plan(t.Context(), "USE graph.byName('cmp.zzz') RETURN 1", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
@@ -83,7 +84,7 @@ func TestPlan_DynamicUseResolvedAtRunTime(t *testing.T) {
 // TestPlan_DynamicUseInUnionBranches pins that each UNION branch keeps its
 // own dynamic reference.
 func TestPlan_DynamicUseInUnionBranches(t *testing.T) {
-	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(),
+	fragment, err := NewFabricPlanner(plannerUseCatalog(), testStatementWrites).Plan(t.Context(),
 		"USE graph.byName('cmp.a') RETURN 1 AS x UNION USE graph.byElementId($id) RETURN 2 AS x", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 	union, ok := fragment.(*FragmentUnion)
@@ -158,7 +159,7 @@ func TestPlan_DynamicUseSubqueryPositions(t *testing.T) {
 
 	for _, tc := range outerTable {
 		t.Run(tc.name, func(t *testing.T) {
-			planner := NewFabricPlanner(plannerUseCatalog())
+			planner := NewFabricPlanner(plannerUseCatalog(), testStatementWrites)
 			if tc.importColumn != "" {
 				read, _ := recordedCallImports(tc.importColumn)
 				planner.SetCallImportReader(read)

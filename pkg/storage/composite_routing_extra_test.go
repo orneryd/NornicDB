@@ -10,16 +10,22 @@ func TestQueryAnalyzer_AnalyzeQuery(t *testing.T) {
 	a := NewQueryAnalyzer()
 
 	// Label extraction in this lightweight analyzer expects explicit ":Label" tokens.
-	readWithLabelToken := a.AnalyzeQuery("MATCH :Person RETURN n")
+	// The second argument is the statement-effect owner's answer.
+	readWithLabelToken := a.AnalyzeQuery("MATCH :Person RETURN n", false)
 	assert.Contains(t, readWithLabelToken.Labels, "PERSON")
 	assert.False(t, readWithLabelToken.IsWrite)
 	assert.False(t, readWithLabelToken.IsFullScan)
 
-	write := a.AnalyzeQuery("CREATE (n:Person {name: 'a'})")
+	write := a.AnalyzeQuery("CREATE (n:Person {name: 'a'})", true)
 	assert.True(t, write.IsWrite)
+	// The analyzer reads no write answer from text: a statement whose text
+	// names no mutation clause is a write when the owner says so (a WRITE
+	// procedure), and a string holding "CREATE" is not.
+	assert.True(t, a.AnalyzeQuery("CALL custom.writer()", true).IsWrite)
+	assert.False(t, a.AnalyzeQuery("RETURN 'CREATE' AS word", false).IsWrite)
 
 	// Typical MATCH syntax without an explicit :Label token is treated as full scan.
-	scan := a.AnalyzeQuery("MATCH (n:Person) RETURN n")
+	scan := a.AnalyzeQuery("MATCH (n:Person) RETURN n", false)
 	assert.True(t, scan.IsFullScan)
 }
 
@@ -46,7 +52,7 @@ func TestQueryAnalyzer_AnalyzeQuery_ParenLabel(t *testing.T) {
 
 	// Test the ( :Label pattern — triggers the uncovered branch at line 73
 	// where a label follows "(" or ","
-	q := a.AnalyzeQuery("MATCH ( :Person ) RETURN n")
+	q := a.AnalyzeQuery("MATCH ( :Person ) RETURN n", false)
 	assert.Contains(t, q.Labels, "PERSON")
 	assert.False(t, q.IsWrite)
 }

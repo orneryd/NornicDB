@@ -116,7 +116,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 	}
-	write := callSubqueryQueryIsWrite(body)
+	write := statementChangesState(ctx, body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
 

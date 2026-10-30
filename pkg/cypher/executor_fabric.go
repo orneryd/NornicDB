@@ -478,7 +478,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 // any part of it plans or runs. A statement the planner can't read is checked
 // as it is, and planning reports the error.
 func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
-	planner := fabric.NewFabricPlanner(nil)
+	planner := fabric.NewFabricPlanner(nil, statementChangesState)
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
 		return callSubqueryImportedVariables(ctx, scope, scoped, body)
@@ -499,7 +499,7 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, cypher, sessionDB
 
 	// A plan is cached across principals, so it reads no catalog: each selection
 	// is validated per request, against the principal's view.
-	planner := fabric.NewFabricPlanner(nil)
+	planner := fabric.NewFabricPlanner(nil, statementChangesState)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
@@ -533,6 +533,8 @@ func (e *StorageExecutor) fabricProcedureWritePlan(ctx context.Context, fragment
 		if err != nil {
 			return nil, err
 		}
+		// Cached structural plans are re-read against the live procedure
+		// registry; the answer is the one statement-effect owner's.
 		write := contract.changesState()
 		if e.dbManager != nil && e.dbManager.IsCompositeDatabase(current.GraphName) {
 			write = false
@@ -840,7 +842,11 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
-	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(ctx, query))
+	info, analyzeErr := exec.analyzer.Analyze(ctx, query)
+	if analyzeErr != nil {
+		return nil, nil, analyzeErr
+	}
+	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(info)
 	query, names := canonicalizeQuotedVariablesWithBindings(ctx, query, recordBindings)
 	if names != nil {
 		params = names.parameterValues(params)

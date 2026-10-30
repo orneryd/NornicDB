@@ -40,8 +40,8 @@ package cypher
 //	parse_error (info nil) → defensive nil-info safety net (Site 2 callers
 //	                          should emit parse_error directly)
 //	schema (IsSchemaQuery) → CREATE/DROP INDEX, SHOW INDEXES, etc.
-//	write (IsWriteQuery)   → CREATE/MERGE/DELETE/SET/REMOVE
-//	read (IsReadOnly)      → MATCH/RETURN/UNWIND/CALL db.*
+//	write (Writes)         → the statement-effect owner: data, WRITE procedures
+//	read (ReadOnly)        → nothing written, MATCH/RETURN/CALL db.*/SHOW rows
 //	read (default)         → safe default; closed enum NEVER returns outside
 //	                          AllowedCypherOpTypes (TestClassifyOpType_AllReturnsAreClosedEnum)
 //
@@ -64,10 +64,10 @@ func classifyOpType(info *QueryInfo, isFabric, isAdmin bool) string {
 	if info.IsSchemaQuery {
 		return "schema"
 	}
-	if info.IsWriteQuery {
+	if info.Writes() {
 		return "write"
 	}
-	if info.IsReadOnly {
+	if info.ReadOnly() {
 		return "read"
 	}
 	// Safe default: a query that classifies as neither write nor schema

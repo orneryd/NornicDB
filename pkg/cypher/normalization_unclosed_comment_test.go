@@ -171,7 +171,7 @@ func TestCommentAdmissionRetainsRawSourceAndTransactionSemantics(t *testing.T) {
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 					// A permissive classifier may inspect malformed source first.
 					// Its rewrite/cache entry must not certify execution admission.
-					exec.analyzer.Analyze(t.Context(), tc.query)
+					mustAnalyze(t, exec.analyzer, t.Context(), tc.query)
 					if explicit {
 						_, err := exec.Execute(boundedContext(t), "BEGIN", nil)
 						require.NoError(t, err)

@@ -267,7 +267,7 @@ RETURN textKey, textKey128, texts
 
 	catalog, err := exec.buildFabricCatalog()
 	require.NoError(t, err)
-	frag, err := fabric.NewFabricPlanner(catalog).Plan(t.Context(), query, "nornic", cyphertext.RawSource)
+	frag, err := fabric.NewFabricPlanner(catalog, statementChangesState).Plan(t.Context(), query, "nornic", cyphertext.RawSource)
 	require.NoError(t, err)
 	var fragmentExecs []*fabric.FragmentExec
 	var walk func(fabric.Fragment)

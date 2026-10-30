@@ -114,7 +114,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
 		normalized := normalizeMultiMatchWhereClauses(plan.remainder)
-		if canApplySetBasedUnwindRewrite(normalized, plan.items) {
+		if canApplySetBasedUnwindRewrite(ctx, normalized, plan.items) {
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)

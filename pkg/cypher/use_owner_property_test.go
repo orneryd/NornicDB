@@ -129,7 +129,7 @@ func newUsePropertyFixture(t *testing.T) *usePropertyFixture {
 	require.Len(t, result.Rows, 1)
 	catalog := fabric.NewCatalog()
 	require.NoError(t, catalog.PopulateFromManager(manager))
-	return &usePropertyFixture{exec: exec, manager: manager, planner: fabric.NewFabricPlanner(catalog), params: map[string]interface{}{"element": result.Rows[0][0]}}
+	return &usePropertyFixture{exec: exec, manager: manager, planner: fabric.NewFabricPlanner(catalog, statementChangesState), params: map[string]interface{}{"element": result.Rows[0][0]}}
 }
 
 func usePropertyFunctions(query string) ([]string, error) {
@@ -221,7 +221,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	policy := cachedExecutionPolicy(ctx, cacheQuery)
 	check("cache", policy.cacheable, wantCache)
 	check("cache", policy == cachedExecutionPolicy(ctx, cacheQuery), true)
-	check("cache", f.exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: !statement.writes}, cacheQuery), wantCache)
+	check("cache", f.exec.canUseResultCache(ctx, analyzedReadQueryInfo(!statement.writes), cacheQuery), wantCache)
 	// Raw selector identity is a separate observation from cache policy. A
 	// dynamic selector acquires dependencies when its runtime target is resolved;
 	// the static-name population must be tracked before routing or normalization.

@@ -44,7 +44,7 @@ func TestUseNameContextReader(t *testing.T) {
 		require.True(t, clauseKeywordUsedAsName(query, at, at+3, "USE"))
 		require.Zero(t, testing.AllocsPerRun(100, func() { _ = clauseKeywordUsedAsName(query, at, at+3, "USE") }))
 	}
-	p := fabric.NewFabricPlanner(nil)
+	p := fabric.NewFabricPlanner(nil, statementChangesState)
 	p.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	single, err := p.SingleGraphStatement(t.Context(), "USE comp CALL { USE comp.one WITH 7 AS use WITH DISTINCT use RETURN use AS k } RETURN k", cyphertext.AcceptedSource)
 	require.NoError(t, err)

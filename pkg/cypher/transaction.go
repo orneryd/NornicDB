@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -570,15 +569,6 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 	wrapper.owner = e.txContext
 	e.txContext.storageWrapper = wrapper
 	return wrapper
-}
-
-func looksLikeWriteQuery(cypher string) bool {
-	upper := upperASCII(classificationText(cypher))
-	return strings.Contains(upper, "CREATE") ||
-		strings.Contains(upper, "MERGE") ||
-		strings.Contains(upper, "DELETE") ||
-		strings.Contains(upper, "SET ") ||
-		strings.Contains(upper, "REMOVE ")
 }
 
 // executeQueryAgainstStorage executes query with current storage context.

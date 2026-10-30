@@ -10,7 +10,7 @@ import (
 // A composite statement's variable scopes are checked on the statement
 // without the USE clauses the planner reads, wherever they stand.
 func TestSingleGraphStatement(t *testing.T) {
-	p := NewFabricPlanner(nil)
+	p := NewFabricPlanner(nil, testStatementWrites)
 	for _, tt := range []struct{ query, want string }{
 		{"RETURN 'USE comp' AS s", "RETURN 'USE comp' AS s"},
 		{"USE comp WITH 1 AS x CALL (x) { USE comp.remote RETURN x AS y } RETURN y", "WITH 1 AS x CALL (x) { RETURN x AS y } RETURN y"},

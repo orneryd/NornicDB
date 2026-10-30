@@ -30,7 +30,6 @@ type AST struct {
 	Clauses    []ASTClause
 	RawQuery   string
 	QueryType  QueryType
-	IsReadOnly bool
 	IsCompound bool
 }
 
@@ -357,7 +356,6 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	}
 
 	// Determine query properties
-	ast.IsReadOnly = b.determineReadOnly(ast)
 	ast.IsCompound = len(ast.Clauses) > 1
 	ast.QueryType = b.determineQueryType(ast)
 
@@ -1097,18 +1095,6 @@ func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
 		expr.Variable = name
 	}
 	return expr
-}
-
-// determineReadOnly checks if the AST represents a read-only query.
-func (b *ASTBuilder) determineReadOnly(ast *AST) bool {
-	for _, clause := range ast.Clauses {
-		switch clause.Type {
-		case ASTClauseCreate, ASTClauseMerge, ASTClauseDelete, ASTClauseDetachDelete,
-			ASTClauseSet, ASTClauseRemove:
-			return false
-		}
-	}
-	return true
 }
 
 // determineQueryType determines the primary query type.

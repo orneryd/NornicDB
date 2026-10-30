@@ -532,8 +532,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 			return e.executeProfile(modeCtx, modeQuery)
 		}
-		info := e.analyzer.Analyze(ctx, cypher)
-		if err := ctx.Err(); err != nil {
+		info, err := e.analyzer.Analyze(ctx, cypher)
+		if err != nil {
 			return nil, err
 		}
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
@@ -860,10 +860,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// TRC-15: plan span wraps the analysis/classification phase.
 	_, planSpan := startPlanSpan(ctx)
 	// Analyze query - uses cached analysis if available
-	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
+	// This extracts query metadata (HasMatch, ReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
-	info := e.analyzer.Analyze(ctx, cypher)
-	if err := ctx.Err(); err != nil {
+	info, err := e.analyzer.Analyze(ctx, cypher)
+	if err != nil {
 		return nil, err
 	}
 	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
@@ -980,7 +980,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 		// This owner executes metadata/schema effects directly, with no
 		// implicit transaction to publish their completed outcome.
-		if !info.IsReadOnly && !e.inTransaction(ctx) {
+		if !info.ReadOnly() && !e.inTransaction(ctx) {
 			publishStatementCommit(ctx)
 		}
 		return result, nil
@@ -990,7 +990,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// produces them (#939). The result-limit truncation and the restores of
 	// rewritten rows below need the whole result, so a statement with
 	// either keeps it. A streamed result is not cached.
-	if stream != nil && info.IsReadOnly && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
+	if stream != nil && info.ReadOnly() && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
 		ctx = armResultStream(ctx, stream, cypher, func(columns []string) []string {
 			restored, _ := (resultRestoration{source: rewrite}).restore(&ExecuteResult{Columns: columns}, nil, nil)
 			return restored.Columns

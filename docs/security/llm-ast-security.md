@@ -209,11 +209,16 @@ func DangerousNLToQuery(naturalLanguage string) (*Result, error) {
 func SafeNLToQuery(naturalLanguage string, constraints QueryConstraints) (*Result, error) {
     query := llm.GenerateCypher(naturalLanguage)
     
-    // 1. Parse and analyze
-    info := analyzer.Analyze(ctx, query)
+    // 1. Parse and analyze. Writes() is the statement-effect owner's answer:
+    // mutation clauses, registered WRITE procedures, schema and
+    // administration commands. Never decide writes from the query text.
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return nil, err
+    }
     
     // 2. Enforce constraints
-    if !constraints.AllowWrites && info.IsWriteQuery {
+    if !constraints.AllowWrites && info.Writes() {
         return nil, errors.New("write operations not allowed")
     }
     
@@ -229,7 +234,7 @@ func SafeNLToQuery(naturalLanguage string, constraints QueryConstraints) (*Resul
     }
     
     // 4. Use read-only transaction for safety
-    if !info.IsWriteQuery {
+    if !info.Writes() {
         return executor.ExecuteReadOnly(ctx, query, nil)
     }
     
@@ -253,9 +258,12 @@ type PluginQueryConstraints struct {
 
 func ExecutePluginQuery(plugin Plugin, query string, constraints PluginQueryConstraints) (*Result, error) {
     // 1. Validate plugin has permission for this query type
-    info := analyzer.Analyze(ctx, query)
+    info, err := analyzer.Analyze(ctx, query)
+    if err != nil {
+        return nil, err
+    }
     
-    if constraints.ReadOnly && info.IsWriteQuery {
+    if constraints.ReadOnly && info.Writes() {
         return nil, errors.New("plugin attempted write in read-only mode")
     }
     

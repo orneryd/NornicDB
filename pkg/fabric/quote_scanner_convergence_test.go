@@ -51,7 +51,7 @@ func TestFabricStructuralReadersUseCanonicalQuotation(t *testing.T) {
 			require.Equal(t, -1, indexTopLevelKeyword(mapText, "AND"))
 			require.Len(t, splitTopLevelAnd("n.x = "+mapText+" AND n.y = 1"), 2)
 
-			fragment, planErr := NewFabricPlanner(NewCatalog()).Plan(t.Context(), "RETURN "+mapText+" AS x", "neo4j", cyphertext.RawSource)
+			fragment, planErr := NewFabricPlanner(NewCatalog(), testStatementWrites).Plan(t.Context(), "RETURN "+mapText+" AS x", "neo4j", cyphertext.RawSource)
 			require.NoError(t, planErr)
 			require.NotNil(t, fragment)
 		})

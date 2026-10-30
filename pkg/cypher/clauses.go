@@ -1625,19 +1625,15 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
 }
 
-func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
+func canApplySetBasedUnwindRewrite(ctx context.Context, query string, items []interface{}) bool {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
 		return false
 	}
 	upper := upperASCII(query)
-	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
-	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
-	// must execute per-row to preserve semantics.
-	if findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0 {
+	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines. A
+	// statement that changes state (the statement-effect owner's answer, which
+	// includes registered WRITE procedures) must execute per row.
+	if statementChangesState(ctx, query) {
 		return false
 	}
 	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {

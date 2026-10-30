@@ -72,7 +72,7 @@ func TestSearchStreamParameterAwareEligibility(t *testing.T) {
 	} {
 		ctx := withQueryParams(context.Background(), map[string]any{"request": request})
 		for _, query := range []string{"CALL db.rretrieve($request)", "CALL db.rretrieve($request) YIELD node RETURN node", "CALL { CALL db.rretrieve($request) YIELD node RETURN node } RETURN node"} {
-			require.True(t, exec.canUseResultCache(ctx, exec.analyzer.Analyze(t.Context(), query), query), query)
+			require.True(t, exec.canUseResultCache(ctx, mustAnalyze(t, exec.analyzer, t.Context(), query), query), query)
 		}
 	}
 	for _, request := range []map[string]any{
@@ -81,9 +81,9 @@ func TestSearchStreamParameterAwareEligibility(t *testing.T) {
 	} {
 		ctx := withQueryParams(context.Background(), map[string]any{"request": request})
 		query := "CALL db.rretrieve($request)"
-		require.False(t, exec.canUseResultCache(ctx, exec.analyzer.Analyze(t.Context(), query), query), request)
+		require.False(t, exec.canUseResultCache(ctx, mustAnalyze(t, exec.analyzer, t.Context(), query), query), request)
 	}
 	ctx := withQueryParams(context.Background(), map[string]any{"requests": []any{map[string]any{"query": "transcript"}}})
 	query := "UNWIND $requests AS request CALL db.rretrieve(request) YIELD node RETURN node"
-	require.False(t, exec.canUseResultCache(ctx, exec.analyzer.Analyze(t.Context(), query), query), "row expressions are interpreted by execution, never pre-evaluated to admit outer caching")
+	require.False(t, exec.canUseResultCache(ctx, mustAnalyze(t, exec.analyzer, t.Context(), query), query), "row expressions are interpreted by execution, never pre-evaluated to admit outer caching")
 }

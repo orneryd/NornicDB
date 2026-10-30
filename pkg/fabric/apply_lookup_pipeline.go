@@ -89,15 +89,15 @@ func (e *FabricExecutor) planApplyLookupShape(
 	trimmed := strings.TrimSpace(inner.Query)
 	switch shape {
 	case applyLookupShapeCount:
-		if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
+		if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || inner.IsWrite {
 			return plan, false
 		}
 	case applyLookupShapeRows:
-		if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+		if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || inner.IsWrite {
 			return plan, false
 		}
 	case applyLookupShapeCollect:
-		if !startsWithFold(trimmed, "WITH ") || queryIsWrite(trimmed) || !containsFold(trimmed, "RETURN collect(") {
+		if !startsWithFold(trimmed, "WITH ") || inner.IsWrite || !containsFold(trimmed, "RETURN collect(") {
 			return plan, false
 		}
 	default:
