@@ -52,6 +52,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/workcensus"
+	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -64,6 +65,32 @@ const controlFile = `package storage
 type NOR160ControlCache struct {
 	nodes map[NodeID]*Node
 	max   int
+}
+
+// The capture-callback shape (a cache-answered read, cachedAdjacency): a read
+// view runs the read's callback, which fills the read's captured result. A
+// callback that copies inside it may be reported as left undelivered; one that
+// hands the retained value out through it must still be K0, whether it
+// captures one value or collects a population.
+type nor160ControlView struct{ cached func() bool }
+
+func nor160ControlCapture(view nor160ControlView) bool { return view.cached != nil && view.cached() }
+
+func (c *NOR160ControlCache) GetCapturedLent(id NodeID) *Node {
+	var out *Node
+	nor160ControlCapture(nor160ControlView{cached: func() bool { out = c.nodes[id]; return true }})
+	return out
+}
+
+func (c *NOR160ControlCache) GetCapturedLentAll(ids []NodeID) []*Node {
+	var out []*Node
+	nor160ControlCapture(nor160ControlView{cached: func() bool {
+		for _, id := range ids {
+			out = append(out, c.nodes[id])
+		}
+		return true
+	}})
+	return out
 }
 
 // Exits through deeper result shapes: an anonymous struct, and a named
@@ -945,6 +972,22 @@ func (c *NOR160ControlCache) GetFreshOrSame(n *Node) *Node {
 }
 `
 
+// fixtureControlFile plants a retention point in a test-only package
+// (internal/testfixture/storagefault, which already imports pkg/storage and
+// which no product package imports): handing its
+// retained node out would be K0 in a product package, so a census that keeps
+// test-only packages out of the product population reports nothing here.
+const fixtureControlFile = `package storagefault
+
+import "github.com/orneryd/nornicdb/pkg/storage"
+
+type NOR160ControlFixtureCache struct {
+	nodes map[storage.NodeID]*storage.Node
+}
+
+func (c *NOR160ControlFixtureCache) GetShared(id storage.NodeID) *storage.Node { return c.nodes[id] }
+`
+
 const cypherControlFile = `package cypher
 
 import "github.com/orneryd/nornicdb/pkg/storage"
@@ -1040,6 +1083,9 @@ type control struct {
 }
 
 var controls = []control{
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLent", false},
+	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetCapturedLentAll", false},
+	{"K0", "(*" + module + "/internal/testfixture/storagefault.NOR160ControlFixtureCache).GetShared", true},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetShared", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetWrapShared", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetOuterShared", false},
@@ -1367,7 +1413,35 @@ func inModule(fn *ssa.Function) bool {
 	if fn == nil || fn.Pkg == nil {
 		return false
 	}
-	return inModulePath(fn.Pkg.Pkg.Path())
+	path := fn.Pkg.Pkg.Path()
+	return inModulePath(path) && (productPkgs == nil || productPkgs[path])
+}
+
+// productPkgs is the product population: every module package outside
+// internal/, and the internal packages they import, transitively. An internal
+// package can only be imported from inside the module, so one that no product
+// package imports is linked only into tests (test fixtures and helpers): its
+// functions are neither analysed nor resolved as interface callees.
+var productPkgs map[string]bool
+
+func productPackages(roots []*packages.Package) map[string]bool {
+	product := map[string]bool{}
+	var mark func(p *packages.Package)
+	mark = func(p *packages.Package) {
+		if p == nil || product[p.PkgPath] || !inModulePath(p.PkgPath) {
+			return
+		}
+		product[p.PkgPath] = true
+		for _, imported := range p.Imports {
+			mark(imported)
+		}
+	}
+	for _, p := range roots {
+		if inModulePath(p.PkgPath) && !strings.Contains(p.PkgPath+"/", "/internal/") {
+			mark(p)
+		}
+	}
+	return product
 }
 
 func pos(fn *ssa.Function, p token.Pos) (string, int) {
@@ -4646,13 +4720,15 @@ func main() {
 	defer cleanup()
 	config := workcensus.Config{Dir: tree, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Env: append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")}
 	config.Overlay = map[string][]byte{
-		filepath.Join(tree, "pkg/storage/nor160_census_control.go"): []byte(controlFile),
-		filepath.Join(tree, "pkg/cypher/nor160_census_control.go"):  []byte(cypherControlFile),
+		filepath.Join(tree, "pkg/storage/nor160_census_control.go"):                       []byte(controlFile),
+		filepath.Join(tree, "pkg/cypher/nor160_census_control.go"):                        []byte(cypherControlFile),
+		filepath.Join(tree, "internal/testfixture/storagefault/nor160_census_control.go"): []byte(fixtureControlFile),
 	}
 	p, err := workcensus.LoadProgram(config)
 	if err != nil {
 		panic(err)
 	}
+	productPkgs = productPackages(p.Packages)
 	a := &analysis{p: p, fns: allFunctions(p), sums: map[*ssa.Function]*summary{}, states: map[*ssa.Function]*fnState{}, callees: map[ssa.CallInstruction][]*ssa.Function{}, callers: map[*ssa.Function][]*ssa.Function{}}
 	for fn, node := range p.CallGraph.Nodes {
 		if fn == nil || node == nil {
