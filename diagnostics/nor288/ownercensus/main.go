@@ -457,6 +457,232 @@ func (b *BadgerEngine) nor288PlantedGNilGuard() bool {
 	})
 }
 `, false},
+	// F after audit #31 (each reported; the twin after them is not): a write
+	// two calls away; a decision returned as an error and forwarded by a
+	// helper; an interface callee that writes; a flag recorded beside an owner
+	// by a callee and read elsewhere; a bound method value; a closure; a
+	// decision passed as an argument.
+	{"pkg/storage/zz_nor288_f_hop.go", "nor288PlantedFHop", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedFHopB(p *PreparedEntityCommit) { _ = p.startCommit(nil) }
+func (b *BadgerEngine) nor288PlantedFHopA(p *PreparedEntityCommit) { b.nor288PlantedFHopB(p) }
+
+func (b *BadgerEngine) nor288PlantedFHop(p *PreparedEntityCommit) {
+	if b.work.Closing() {
+		return
+	}
+	b.nor288PlantedFHopA(p)
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_forward.go", "nor288PlantedFCheck", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedFCheck() error {
+	if b.work.Closing() {
+		return ErrStorageClosed
+	}
+	return nil
+}
+
+func (b *BadgerEngine) nor288PlantedFForward() error { return b.nor288PlantedFCheck() }
+
+func (b *BadgerEngine) nor288PlantedFForwarded(p *PreparedEntityCommit) {
+	if err := b.nor288PlantedFForward(); err != nil {
+		return
+	}
+	_ = p.startCommit(nil)
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_dynamic.go", "nor288PlantedFDynamic", "F", `package storage
+
+type nor288PlantedFWriter interface{ nor288PlantedFWrite(*PreparedEntityCommit) }
+type nor288PlantedFCommitter struct{}
+
+func (nor288PlantedFCommitter) nor288PlantedFWrite(p *PreparedEntityCommit) { _ = p.startCommit(nil) }
+
+func (b *BadgerEngine) nor288PlantedFDynamic(w nor288PlantedFWriter, p *PreparedEntityCommit) {
+	if !b.work.Closing() {
+		w.nor288PlantedFWrite(p)
+	}
+}
+
+func (b *BadgerEngine) nor288PlantedFDynamicCaller(p *PreparedEntityCommit) {
+	b.nor288PlantedFDynamic(nor288PlantedFCommitter{}, p)
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_flag.go", "nor288PlantedFFlag", "F", `package storage
+
+import "github.com/orneryd/nornicdb/pkg/lifecycle"
+
+type nor288PlantedFOwner struct {
+	work lifecycle.WorkLifetime
+	shut bool
+}
+
+func (o *nor288PlantedFOwner) nor288PlantedFMarkShut() { o.shut = true }
+
+func (b *BadgerEngine) nor288PlantedFFlag(o *nor288PlantedFOwner) {
+	if b.work.Closing() {
+		o.nor288PlantedFMarkShut()
+	}
+}
+
+func nor288PlantedFFlagGate(o *nor288PlantedFOwner, p *PreparedEntityCommit) {
+	if !o.shut {
+		_ = p.startCommit(nil)
+	}
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_method_value.go", "nor288PlantedFMethodValue", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedFMethodValue(p *PreparedEntityCommit) {
+	closing := b.work.Closing
+	if !closing() {
+		_ = p.startCommit(nil)
+	}
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_closure.go", "nor288PlantedFClosure", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedFRun(f func()) { f() }
+
+func (b *BadgerEngine) nor288PlantedFClosure(p *PreparedEntityCommit) {
+	b.nor288PlantedFRun(func() {
+		if b.work.Closing() {
+			return
+		}
+		_ = p.startCommit(nil)
+	})
+}
+`, true},
+	{"pkg/storage/zz_nor288_f_arg.go", "nor288PlantedFArg", "F", `package storage
+
+func nor288PlantedFArgGate(closing bool, p *PreparedEntityCommit) {
+	if !closing {
+		_ = p.startCommit(nil)
+	}
+}
+
+func (b *BadgerEngine) nor288PlantedFArg(p *PreparedEntityCommit) {
+	nor288PlantedFArgGate(b.work.Closing(), p)
+}
+`, true},
+	// F twin: the same two-hop shape whose helpers only read.
+	{"pkg/storage/zz_nor288_f_read_hop.go", "nor288PlantedFReadHop", "F", `package storage
+
+func (b *BadgerEngine) nor288PlantedFReadHopB() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.acceptedApplications)
+}
+func (b *BadgerEngine) nor288PlantedFReadHopA() int { return b.nor288PlantedFReadHopB() }
+
+func (b *BadgerEngine) nor288PlantedFReadHop() int {
+	if b.work.Closing() {
+		return 0
+	}
+	return b.nor288PlantedFReadHopA()
+}
+`, false},
+	// G after audit #31, reached from enrolled work; expected classes are in
+	// classControls: a callback field the program assigns (followed) and one
+	// it never assigns (closed); Done compared to nil, polled, and in a
+	// blocking select; an interface callee that blocks and one that does not;
+	// a context stored in a field then waited on, and one only checked; a
+	// context returned by a helper then waited on, and one only checked; a
+	// receipt wait on Background.
+	{"pkg/storage/zz_nor288_g_flow.go", "nor288PlantedG", "G", `package storage
+
+import "context"
+
+type nor288PlantedHookTag struct{}
+
+type nor288PlantedHooks struct {
+	stored, unstored func(context.Context, *nor288PlantedHookTag)
+}
+
+func nor288PlantedStoredHookTarget(ctx context.Context, _ *nor288PlantedHookTag)   { <-ctx.Done() }
+func nor288PlantedUnstoredHookTarget(ctx context.Context, _ *nor288PlantedHookTag) { <-ctx.Done() }
+
+var nor288PlantedHookState = &nor288PlantedHooks{stored: nor288PlantedStoredHookTarget}
+
+func nor288PlantedGStoredHook() { nor288PlantedHookState.stored(context.Background(), nil) }
+func nor288PlantedGUnstoredHook() {
+	if h := nor288PlantedHookState.unstored; h != nil {
+		h(context.Background(), nil)
+	}
+}
+
+func nor288PlantedDoneNil(ctx context.Context) bool { return ctx.Done() != nil }
+func nor288PlantedDonePoll(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+func nor288PlantedDoneSelect(ctx context.Context, c chan struct{}) {
+	select {
+	case <-ctx.Done():
+	case <-c:
+	}
+}
+func nor288PlantedGDoneNil()    { _ = nor288PlantedDoneNil(context.Background()) }
+func nor288PlantedGDonePoll()   { _ = nor288PlantedDonePoll(context.Background()) }
+func nor288PlantedGDoneSelect() { nor288PlantedDoneSelect(context.Background(), nil) }
+
+type nor288PlantedBlockingWaiter interface{ nor288PlantedWaitBlocking(context.Context) }
+type nor288PlantedQuietWaiter interface{ nor288PlantedWaitQuiet(context.Context) }
+type nor288PlantedWaiterImpl struct{}
+
+func (nor288PlantedWaiterImpl) nor288PlantedWaitBlocking(ctx context.Context) { <-ctx.Done() }
+func (nor288PlantedWaiterImpl) nor288PlantedWaitQuiet(ctx context.Context)    { _ = ctx.Err() }
+
+func nor288PlantedGDynamicBlocking() {
+	var w nor288PlantedBlockingWaiter = nor288PlantedWaiterImpl{}
+	w.nor288PlantedWaitBlocking(context.Background())
+}
+func nor288PlantedGDynamicQuiet() {
+	var w nor288PlantedQuietWaiter = nor288PlantedWaiterImpl{}
+	w.nor288PlantedWaitQuiet(context.Background())
+}
+
+type nor288PlantedBlockingBox struct{ ctx context.Context }
+type nor288PlantedQuietBox struct{ ctx context.Context }
+
+func nor288PlantedBlockingBoxWait(b *nor288PlantedBlockingBox)  { <-b.ctx.Done() }
+func nor288PlantedQuietBoxCheck(b *nor288PlantedQuietBox) error { return b.ctx.Err() }
+func nor288PlantedGFieldBlocking() {
+	nor288PlantedBlockingBoxWait(&nor288PlantedBlockingBox{ctx: context.Background()})
+}
+func nor288PlantedGFieldQuiet() {
+	_ = nor288PlantedQuietBoxCheck(&nor288PlantedQuietBox{ctx: context.Background()})
+}
+
+func nor288PlantedBlockingBg() context.Context { return context.Background() }
+func nor288PlantedQuietBg() context.Context    { return context.Background() }
+func nor288PlantedGReturnedBlocking()          { <-nor288PlantedBlockingBg().Done() }
+func nor288PlantedGReturnedQuiet()             { _ = nor288PlantedQuietBg().Err() }
+
+func nor288PlantedGReceiptWait(r *CommitReceipt) { _ = r.WaitOutcome(context.Background()) }
+
+func (b *BadgerEngine) nor288PlantedGFlow() bool {
+	return b.RunAcceptedContinuation(func(ctx context.Context) {
+		nor288PlantedGStoredHook()
+		nor288PlantedGUnstoredHook()
+		nor288PlantedGDoneNil()
+		nor288PlantedGDonePoll()
+		nor288PlantedGDoneSelect()
+		nor288PlantedGDynamicBlocking()
+		nor288PlantedGDynamicQuiet()
+		nor288PlantedGFieldBlocking()
+		nor288PlantedGFieldQuiet()
+		nor288PlantedGReturnedBlocking()
+		nor288PlantedGReturnedQuiet()
+		nor288PlantedGReceiptWait(nil)
+	})
+}
+`, false},
 	// D: parent context plus deadline (classified) and a derived context
 	// without a deadline (must report), on planted (added) lines.
 	{"pkg/storage/zz_nor288_d_deadline.go", "nor288PlantedDDeadline", "D", `package storage
@@ -597,7 +823,7 @@ func main() {
 	prog.Build()
 	funcs := sourceFunctions(prog)
 	cg := vta.CallGraph(funcs, cha.CallGraph(prog))
-	graph := buildGraph(cg, funcs)
+	graph := buildGraph(cg, funcs, storedFields(prog))
 
 	byPath := map[string]*packages.Package{}
 	packages.Visit(pkgs, nil, func(p *packages.Package) { byPath[p.PkgPath] = p })
@@ -622,6 +848,7 @@ func main() {
 		engineWork = field(storagePkg, "BadgerEngine", "work")
 	}
 	writeDecider := method(storagePkg, "BadgerEngine", "ensureOpen")
+	writeDeciderLocked := methodOpt(storagePkg, "BadgerEngine", "ensureOpenLocked")
 	ownerClose := method(storagePkg, "BadgerEngine", "Close")
 	var lifetimeType types.Type
 	if lp := byPath[nornic+"pkg/lifecycle"]; lp != nil {
@@ -738,137 +965,6 @@ func main() {
 				writeSites[f] = true
 			}
 		}
-	}
-	// F on control dependence: a Closing() read gates a write admission when
-	// the function is itself a write site, or a call in the region its
-	// not-closing branch alone reaches is a write site or directly calls one.
-	// A function returning the read is judged by its callers' regions.
-	fStaticObj := func(cc *ssa.CallCommon) types.Object {
-		if f := cc.StaticCallee(); f != nil && f.Object() != nil {
-			return f.Object()
-		}
-		return nil
-	}
-	directWrite := func(g *ssa.Function) bool {
-		if g == nil {
-			return false
-		}
-		if writeSites[g] {
-			return true
-		}
-		for _, block := range g.Blocks {
-			for _, instr := range block.Instrs {
-				if c, ok := instr.(ssa.CallInstruction); ok && writeSites[c.Common().StaticCallee()] {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	reach := func(from *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
-		seen := map[*ssa.BasicBlock]bool{}
-		stack := []*ssa.BasicBlock{from}
-		for len(stack) > 0 {
-			b := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if b == nil || seen[b] {
-				continue
-			}
-			seen[b] = true
-			stack = append(stack, b.Succs...)
-		}
-		return seen
-	}
-	// gatedWrite reports the write call in the region only the not-closing
-	// branch of an If on v reaches.
-	gatedWrite := func(fn *ssa.Function, v ssa.Value) string {
-		for _, block := range fn.Blocks {
-			for _, instr := range block.Instrs {
-				ifi, ok := instr.(*ssa.If)
-				if !ok || len(block.Succs) != 2 {
-					continue
-				}
-				closingSucc, openSucc := -1, -1
-				if ifi.Cond == v {
-					closingSucc, openSucc = 0, 1
-				} else if u, ok := ifi.Cond.(*ssa.UnOp); ok && u.Op == token.NOT && u.X == v {
-					closingSucc, openSucc = 1, 0
-				}
-				if closingSucc < 0 {
-					continue
-				}
-				open, closing := reach(block.Succs[openSucc]), reach(block.Succs[closingSucc])
-				for b := range open {
-					if closing[b] {
-						continue
-					}
-					for _, in := range b.Instrs {
-						if c, ok := in.(ssa.CallInstruction); ok {
-							if callee := c.Common().StaticCallee(); directWrite(callee) {
-								return callee.String()
-							}
-						}
-					}
-				}
-			}
-		}
-		return ""
-	}
-	type fVerdict struct {
-		Func   string `json:"func"`
-		File   string `json:"file"`
-		Line   int    `json:"line"`
-		Member bool   `json:"member"`
-		Reason string `json:"reason"`
-	}
-	var fVerdicts []fVerdict
-	gateReason := map[*types.Func]string{}
-	gatesWrite := func(obj *types.Func) bool {
-		if obj == nil {
-			return false
-		}
-		f := prog.FuncValue(obj)
-		if f == nil {
-			return false
-		}
-		if writeSites[f] {
-			gateReason[obj] = "the function is itself a write-admission site"
-			return true
-		}
-		for _, block := range f.Blocks {
-			for _, instr := range block.Instrs {
-				c, ok := instr.(*ssa.Call)
-				if !ok || fStaticObj(c.Common()) != types.Object(closingFn) {
-					continue
-				}
-				if w := gatedWrite(f, c); w != "" {
-					gateReason[obj] = "its not-closing branch alone reaches " + w
-					return true
-				}
-				returned := false
-				for _, b := range f.Blocks {
-					for _, in := range b.Instrs {
-						if ret, ok := in.(*ssa.Return); ok {
-							for _, r := range ret.Results {
-								returned = returned || r == ssa.Value(c)
-							}
-						}
-					}
-				}
-				if returned {
-					for _, e := range graph.in[f] {
-						if call, ok := e.site.(*ssa.Call); ok && !graph.fallback[e.site] {
-							if w := gatedWrite(e.caller, call); w != "" {
-								gateReason[obj] = "returned to " + e.caller.String() + ", whose not-closing branch alone reaches " + w
-								return true
-							}
-						}
-					}
-				}
-			}
-		}
-		gateReason[obj] = "no not-closing branch reaches a write-admission call (read, drain or reporting only)"
-		return false
 	}
 	rel := func(file string) string {
 		r, err := filepath.Rel(root, file)
@@ -1022,50 +1118,6 @@ func main() {
 					})
 				}
 			}
-			// F (whole unit, every line): a read of the engine owner's sealed
-			// phase (BadgerEngine.work.Closing) outside the engine's one write
-			// decider (ensureOpen). Close refuses writers before that phase;
-			// no-write work enrolls through Acquire, which decides itself.
-			// (Type and object identity.)
-			if closingFn != nil && engineWork != nil && p.PkgPath != nornic+"pkg/lifecycle" {
-				for _, decl := range file.Decls {
-					fn, ok := decl.(*ast.FuncDecl)
-					if !ok || fn.Body == nil {
-						continue
-					}
-					fnObj, _ := info.Defs[fn.Name].(*types.Func)
-					reported := false
-					ast.Inspect(fn.Body, func(x ast.Node) bool {
-						sel, ok := x.(*ast.SelectorExpr)
-						if !ok || reported {
-							return !reported
-						}
-						if obj, ok := info.Uses[sel.Sel].(*types.Func); ok && obj == closingFn && fnObj != writeDecider && fnObj != ownerClose && func() bool {
-							recv, ok := sel.X.(*ast.SelectorExpr)
-							if !ok {
-								return false
-							}
-							rs := info.Selections[recv]
-							return rs != nil && rs.Obj() == types.Object(engineWork)
-						}() {
-							member := gatesWrite(fnObj)
-							fVerdicts = append(fVerdicts, fVerdict{Func: funcName(fn), File: rel(path), Line: fset.Position(sel.Pos()).Line, Member: member, Reason: gateReason[fnObj]})
-							if !member {
-								return true
-							}
-							{
-								{
-									record("F", path, fn, "gates a write admission on the engine owner's sealed phase: "+gateReason[fnObj])
-									findings[len(findings)-1].Added = onAdded(sel.Pos())
-									findings[len(findings)-1].Line = fset.Position(sel.Pos()).Line
-									reported = true
-								}
-							}
-						}
-						return !reported
-					})
-				}
-			}
 			// D: WaitGroup variables and fields declared on added lines (type identity).
 			ast.Inspect(file, func(x ast.Node) bool {
 				id, ok := x.(*ast.Ident)
@@ -1088,6 +1140,375 @@ func main() {
 				lifetimeSites = append(lifetimeSites, site)
 				return true
 			})
+		}
+	}
+	// F (whole unit, every line), after audit #31. Sources: every call to
+	// WorkLifetime.Closing in the program (closures, bound method values and
+	// helpers taking the lifetime as a parameter included) whose receiver may
+	// be the engine owner's field BadgerEngine.work: traced through fields,
+	// parameters (every caller's argument), free variables, phis and returns;
+	// a receiver that cannot be traced counts as the engine's. Excluded only:
+	// the engine's one decider (ensureOpen, ensureOpenLocked), the owner's
+	// Close, and pkg/lifecycle's own declared functions.
+	// Membership: the decision is followed by the value flow (explicitly, and
+	// implicitly at its If: a join's phis, a return or a constant flag store
+	// into an existing object inside a branch region, and lifecycle state a
+	// callee in the region records beside an owner); a decision gates a write
+	// admission when a call in either branch region (blocks reachable from the
+	// branch before the branches' join) may reach a write-admission site in
+	// the call graph (any number of calls; static, interface, function-value
+	// and signature-fallback edges). A function that is itself a write-admission
+	// site and reads the sealed phase is a member. An escape the flow does not
+	// model is a member ("unproven").
+	type fVerdict struct {
+		Func   string `json:"func"`
+		File   string `json:"file"`
+		Line   int    `json:"line"`
+		Member bool   `json:"member"`
+		Reason string `json:"reason"`
+	}
+	var fVerdicts []fVerdict
+	sinkPkg := func(path string) bool {
+		return path == "log/slog" || path == "log" || path == nornic+"pkg/observability" || strings.HasPrefix(path, "go.opentelemetry.io/")
+	}
+	env := newFlowEnv(prog, graph, fset, rel, func(f *ssa.Function) bool { return sinkPkg(pkgPathOf(f)) })
+	if closingFn != nil && engineWork != nil {
+		closingSSA := prog.FuncValue(closingFn)
+		excluded := map[*ssa.Function]bool{}
+		for _, m := range []*types.Func{writeDecider, writeDeciderLocked, ownerClose} {
+			if m != nil {
+				if f := prog.FuncValue(m); f != nil {
+					excluded[f] = true
+				}
+			}
+		}
+		// Admission reach: every function with a call path to a write-admission site.
+		admits := map[*ssa.Function]bool{}
+		var aq []*ssa.Function
+		for f := range writeSites {
+			admits[f] = true
+			aq = append(aq, f)
+		}
+		for len(aq) > 0 {
+			f := aq[0]
+			aq = aq[1:]
+			for _, e := range graph.in[f] {
+				if !admits[e.caller] {
+					admits[e.caller] = true
+					aq = append(aq, e.caller)
+				}
+			}
+		}
+		// Lifecycle state beside an owner: bool and sync/atomic fields of a
+		// module struct that also holds a lifecycle.WorkLifetime.
+		ownerState := map[*types.Var]bool{}
+		if lifetimeType != nil {
+			for _, p := range byPath {
+				if !strings.HasPrefix(p.PkgPath, nornic) || p.Types == nil {
+					continue
+				}
+				for _, name := range p.Types.Scope().Names() {
+					tn, ok := p.Types.Scope().Lookup(name).(*types.TypeName)
+					if !ok {
+						continue
+					}
+					st, ok := tn.Type().Underlying().(*types.Struct)
+					if !ok {
+						continue
+					}
+					hosts := false
+					for i := 0; i < st.NumFields(); i++ {
+						t := st.Field(i).Type()
+						if ptr, ok := t.(*types.Pointer); ok {
+							t = ptr.Elem()
+						}
+						hosts = hosts || types.Identical(t, lifetimeType)
+					}
+					for i := 0; hosts && i < st.NumFields(); i++ {
+						t := st.Field(i).Type()
+						basic, isBasic := t.Underlying().(*types.Basic)
+						named, isNamed := t.(*types.Named)
+						if (isBasic && basic.Kind() == types.Bool) || (isNamed && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "sync/atomic") {
+							ownerState[st.Field(i).Origin()] = true
+						}
+					}
+				}
+			}
+		}
+		// Owner state a function records with a constant, directly or through
+		// any module function it calls.
+		directFlags := func(f *ssa.Function) []*types.Var {
+			var out []*types.Var
+			for _, b := range f.Blocks {
+				for _, instr := range b.Instrs {
+					switch x := instr.(type) {
+					case *ssa.Store:
+						if fa, ok := x.Addr.(*ssa.FieldAddr); ok {
+							if _, isConst := x.Val.(*ssa.Const); isConst {
+								if v := fieldVar(fa.X, fa.Field); v != nil && ownerState[v] {
+									out = append(out, v)
+								}
+							}
+						}
+					case ssa.CallInstruction:
+						cc := x.Common()
+						if c := cc.StaticCallee(); c != nil && pkgPathOf(c) == "sync/atomic" && len(cc.Args) > 0 {
+							if fa, ok := cc.Args[0].(*ssa.FieldAddr); ok {
+								if v := fieldVar(fa.X, fa.Field); v != nil && ownerState[v] {
+									out = append(out, v)
+								}
+							}
+						}
+					}
+				}
+			}
+			return out
+		}
+		flagMemo := map[*ssa.Function][]*types.Var{}
+		calleeFlags := func(root *ssa.Function) []*types.Var {
+			if got, ok := flagMemo[root]; ok {
+				return got
+			}
+			seen := map[*ssa.Function]bool{root: true}
+			queue := []*ssa.Function{root}
+			var out []*types.Var
+			for len(queue) > 0 {
+				f := queue[0]
+				queue = queue[1:]
+				out = append(out, directFlags(f)...)
+				for _, e := range graph.out[f] {
+					if !seen[e.callee] && strings.HasPrefix(pkgPathOf(e.callee), nornic) {
+						seen[e.callee] = true
+						queue = append(queue, e.callee)
+					}
+				}
+			}
+			flagMemo[root] = out
+			return out
+		}
+		idomMemo := map[*ssa.Function]map[*ssa.BasicBlock]*ssa.BasicBlock{}
+		fHook := func(w *flowWalker, it flowItem, use ssa.Instruction) bool {
+			ifi, ok := use.(*ssa.If)
+			if !ok || it.kind != "dec" {
+				return false
+			}
+			fn, block := ifi.Parent(), ifi.Block()
+			if idomMemo[fn] == nil {
+				idomMemo[fn] = postIdoms(fn)
+			}
+			join := idomMemo[fn][block]
+			for _, succ := range block.Succs {
+				region := regionOf(succ, join)
+				for b := range region {
+					for _, instr := range b.Instrs {
+						switch x := instr.(type) {
+						case ssa.CallInstruction:
+							for _, c := range env.calleesAt[x] {
+								if admits[c] {
+									w.fail("the decision at"+strings.TrimPrefix(env.where(ifi), " at")+" controls a call to "+c.String()+", which reaches a write-admission site", nil)
+									return true
+								}
+								for _, v := range calleeFlags(c) {
+									w.pushField(v, "dec")
+								}
+							}
+						case *ssa.Return:
+							w.returnFrom(fn, "dec", -1, it.stack)
+						case *ssa.Store:
+							if _, isConst := x.Val.(*ssa.Const); isConst {
+								root := x.Addr
+								for {
+									fa, ok := root.(*ssa.FieldAddr)
+									if !ok {
+										break
+									}
+									root = fa.X
+								}
+								if a, ok := root.(*ssa.Alloc); !(ok && region[a.Block()]) {
+									w.storeTo(x.Addr, "dec", nil, x)
+								}
+							}
+						}
+					}
+					for _, s := range b.Succs {
+						if region[s] {
+							continue
+						}
+						for _, instr := range s.Instrs {
+							if phi, ok := instr.(*ssa.Phi); ok {
+								w.push(phi, "dec", -1, it.stack)
+							}
+						}
+					}
+				}
+			}
+			return true
+		}
+		// Receiver origin: "engine", "other" (another owner's field) or "unknown".
+		join := func(a, b string) string {
+			switch {
+			case a == "":
+				return b
+			case b == "":
+				return a
+			case a == "engine" || b == "engine":
+				return "engine"
+			case a == "unknown" || b == "unknown":
+				return "unknown"
+			}
+			return "other"
+		}
+		var origin func(v ssa.Value, seen map[ssa.Value]bool) string
+		origin = func(v ssa.Value, seen map[ssa.Value]bool) string {
+			if seen[v] {
+				return ""
+			}
+			seen[v] = true
+			if len(seen) > 4096 {
+				return "unknown"
+			}
+			switch x := v.(type) {
+			case *ssa.FieldAddr:
+				if fieldVar(x.X, x.Field) == engineWork.Origin() {
+					return "engine"
+				}
+				return "other"
+			case *ssa.Phi:
+				out := ""
+				for _, e := range x.Edges {
+					out = join(out, origin(e, seen))
+				}
+				return out
+			case *ssa.Parameter:
+				fn, idx := x.Parent(), -1
+				for i, p := range fn.Params {
+					if p == x {
+						idx = i
+					}
+				}
+				if len(graph.in[fn]) == 0 {
+					return "unknown"
+				}
+				out := ""
+				for _, e := range graph.in[fn] {
+					cc := e.site.Common()
+					var arg ssa.Value
+					switch {
+					case cc.IsInvoke() && idx == 0:
+						arg = cc.Value
+					case cc.IsInvoke() && idx-1 < len(cc.Args):
+						arg = cc.Args[idx-1]
+					case !cc.IsInvoke() && idx < len(cc.Args):
+						arg = cc.Args[idx]
+					}
+					if arg == nil {
+						return "unknown"
+					}
+					out = join(out, origin(arg, seen))
+				}
+				return out
+			case *ssa.FreeVar:
+				fn, idx := x.Parent(), -1
+				for i, f := range fn.FreeVars {
+					if f == x {
+						idx = i
+					}
+				}
+				out := ""
+				for _, mc := range env.closures[fn] {
+					if idx >= 0 && idx < len(mc.Bindings) {
+						out = join(out, origin(mc.Bindings[idx], seen))
+					}
+				}
+				if out == "" {
+					return "unknown"
+				}
+				return out
+			case *ssa.Call:
+				out := ""
+				callees, _ := env.callees(x)
+				for _, c := range callees {
+					for _, b := range c.Blocks {
+						if r, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return); ok && len(r.Results) == 1 {
+							out = join(out, origin(r.Results[0], seen))
+						}
+					}
+				}
+				if out == "" {
+					return "unknown"
+				}
+				return out
+			}
+			return "unknown"
+		}
+		for fn := range ssautil.AllFunctions(prog) {
+			top := fn
+			for top.Parent() != nil {
+				top = top.Parent()
+			}
+			if excluded[top] || (fn.Synthetic == "" && pkgPathOf(top) == nornic+"pkg/lifecycle") {
+				continue
+			}
+			for _, b := range fn.Blocks {
+				for _, instr := range b.Instrs {
+					call, ok := instr.(*ssa.Call)
+					if !ok {
+						continue
+					}
+					isClosing := call.Call.StaticCallee() == closingSSA
+					for _, c := range env.calleesAt[call] {
+						isClosing = isClosing || c == closingSSA
+					}
+					if !isClosing || len(call.Call.Args) == 0 {
+						continue
+					}
+					if o := origin(call.Call.Args[0], map[ssa.Value]bool{}); o != "engine" && o != "unknown" {
+						continue
+					}
+					// Attribution: the function holding the read; a bound method
+					// value is attributed to every function creating it.
+					holders := []*ssa.Function{fn}
+					if fn.Synthetic != "" {
+						holders = nil
+						for _, mc := range env.closures[fn] {
+							if len(mc.Bindings) == 0 {
+								continue
+							}
+							if o := origin(mc.Bindings[0], map[ssa.Value]bool{}); o == "engine" || o == "unknown" {
+								holders = append(holders, mc.Parent())
+							}
+						}
+					}
+					reason := ""
+					if writeSites[top] {
+						reason = "the function is itself a write-admission site and decides on the sealed phase"
+					} else {
+						w := newFlowWalker(env, 200000, fHook)
+						w.push(call, "dec", -1, nil)
+						if stop := w.run(); stop != "" {
+							reason = stop
+							if !strings.HasPrefix(stop, "the decision at") {
+								reason = "unproven: the decision escapes the modelled flow (" + stop + ")"
+							}
+						}
+					}
+					for _, h := range holders {
+						pos := fset.Position(call.Pos())
+						if fn.Synthetic != "" {
+							pos = fset.Position(h.Pos())
+						}
+						file := rel(pos.Filename)
+						v := fVerdict{Func: shortFunc(h), File: file, Line: pos.Line, Member: reason != "", Reason: reason}
+						if v.Reason == "" {
+							v.Reason = "no decision path reaches a write-admission site (followed through values, returns, calls, fields, closures and branch regions)"
+						}
+						fVerdicts = append(fVerdicts, v)
+						if reason != "" && (planted[pos.Filename] || inUnitFile(file)) {
+							findings = append(findings, finding{Class: "F", Func: shortFunc(h), File: file, Line: pos.Line, Shape: "gates a write admission on the engine owner's sealed phase: " + reason, Added: planted[pos.Filename] || added[file][pos.Line]})
+						}
+					}
+				}
+			}
 		}
 	}
 	// G: enrolled accepted work (functions passed to RunAcceptedContinuation,
@@ -1247,145 +1668,107 @@ func main() {
 				}
 			}
 		}
-		sinkPkg := func(path string) bool {
-			return path == "log/slog" || path == "log" || path == nornic+"pkg/observability" || strings.HasPrefix(path, "go.opentelemetry.io/")
-		}
-		// A context value is used only non-blockingly when every use is a
-		// sink call, Value/Err, a nil comparison, a nil-guard phi (other edges
-		// Background/TODO or the value itself), or a parameter of a callee
-		// that uses it only non-blockingly. The first other use is the reason.
-		isBackground := func(v ssa.Value) bool {
-			c, ok := v.(*ssa.Call)
-			if !ok {
-				return false
-			}
-			o := staticObj(c.Common())
-			return o != nil && background[o]
-		}
-		memo := map[ssa.Value]string{} // "" non-blocking; "…" reason; "~" in progress
-		var nonBlockingValue func(v ssa.Value, depth int) string
-		nonBlockingValue = func(v ssa.Value, depth int) string {
-			if depth > 12 {
-				return "context use nested too deeply to follow"
-			}
-			if r, ok := memo[v]; ok {
-				if r == "~" {
-					return ""
-				}
-				return r
-			}
-			memo[v] = "~"
-			reason := ""
-			where := func(i ssa.Instruction) string {
-				pos := fset.Position(i.Pos())
-				fn := i.Parent().String()
-				if pos.Filename == "" {
-					return " in " + fn
-				}
-				return " at " + rel(pos.Filename) + ":" + strconv.Itoa(pos.Line) + " in " + fn
-			}
-			refs := v.Referrers()
-			if refs == nil {
-				memo[v] = ""
-				return ""
-			}
-			for _, ref := range *refs {
-				if reason != "" {
-					break
-				}
-				switch r := ref.(type) {
-				case *ssa.DebugRef:
-				case *ssa.BinOp:
-					other := r.X
-					if other == v {
-						other = r.Y
-					}
-					if c, ok := other.(*ssa.Const); !(ok && c.IsNil() && (r.Op == token.EQL || r.Op == token.NEQ)) {
-						reason = "comparison" + where(r)
-					}
-				case *ssa.Phi:
-					for _, e := range r.Edges {
-						if e != v && e != ssa.Value(r) && !isBackground(e) {
-							if _, isPhi := e.(*ssa.Phi); !isPhi {
-								reason = "merged with another context" + where(r)
-							}
-						}
-					}
-					if reason == "" {
-						reason = nonBlockingValue(r, depth+1)
-					}
-				case ssa.CallInstruction:
-					cc := r.Common()
-					if cc.IsInvoke() && cc.Value == v {
-						if m := cc.Method.Name(); m != "Value" && m != "Err" {
-							reason = "ctx." + m + "()" + where(r)
-						}
-						continue
-					}
-					callee := cc.StaticCallee()
-					if callee == nil {
-						reason = "passed to a dynamic call" + where(r)
-						continue
-					}
-					if callee.Pkg != nil && sinkPkg(callee.Pkg.Pkg.Path()) {
-						continue
-					}
-					for i, a := range cc.Args {
-						if a == v && reason == "" {
-							if i >= len(callee.Params) {
-								reason = "passed variadically" + where(r)
-							} else {
-								reason = nonBlockingValue(callee.Params[i], depth+1)
-							}
-						}
-					}
-				default:
-					reason = fmt.Sprintf("%T use", ref) + where(ref)
+		// G sources (after audit #31): every context.Background()/TODO() call
+		// inside a reached function declared in a unit package, whatever its
+		// first use (argument, store, return). Its value is followed by the
+		// shared flow; terminal uses: non-blocking are a sink call, Value, Err,
+		// Deadline, a nil or identity comparison, ctx.Done() compared to nil or
+		// polled by a select with a default, a deadline parent (WithTimeout,
+		// WithDeadline), AfterFunc/Cause, and the owner's own Shutdown join;
+		// WithValue/WithoutCancel pass the same lifetime on. Members: a receive
+		// or blocking select on ctx.Done(), the parent of WithCancel or of a
+		// WorkLifetime acquire (a lifetime the owner's Close cannot end), and
+		// every unmodelled use. Receipt waits are not exempt (Nornic2,
+		// 2026-10-30): work that outlives the request takes its owner's
+		// lifetime, so a Background() receipt wait is a member.
+		acquireFns := map[types.Object]bool{}
+		if lp := byPath[nornic+"pkg/lifecycle"]; lp != nil {
+			for _, n := range []string{"Acquire", "acquire"} {
+				if m := methodOpt(lp.Types, "WorkLifetime", n); m != nil {
+					acquireFns[m] = true
 				}
 			}
-			memo[v] = reason
-			return reason
 		}
-		nonBlockingReason := func(fn *ssa.Function, idx int) string {
-			if fn == nil || idx >= len(fn.Params) {
-				return "callee parameter not found"
-			}
-			if fn.Pkg != nil && sinkPkg(fn.Pkg.Pkg.Path()) {
-				return ""
-			}
-			return nonBlockingValue(fn.Params[idx], 0)
-		}
-		ctxDeadline := map[types.Object]bool{ctxPkg.Types.Scope().Lookup("WithTimeout"): true, ctxPkg.Types.Scope().Lookup("WithDeadline"): true}
 		var shutdownFn types.Object
 		if lp := byPath[nornic+"pkg/lifecycle"]; lp != nil {
 			if m := methodOpt(lp.Types, "WorkLifetime", "Shutdown"); m != nil {
 				shutdownFn = m
 			}
 		}
-		lastReason := ""
-		classifyG := func(cc *ssa.CallCommon, arg *ssa.Call) string {
-			lastReason = ""
-			o := staticObj(cc)
-			if o != nil && ctxDeadline[o] {
-				return "deadline parent: the derived context is bounded by its deadline"
-			}
-			if o != nil && o == shutdownFn {
-				return "the owner's own Shutdown join (bounded when its enrolled work is, which this census checks)"
-			}
-			if callee := cc.StaticCallee(); callee != nil {
-				for i, a := range cc.Args {
-					if a == ssa.Value(arg) {
-						if why := nonBlockingReason(callee, i); why == "" {
-							return "context used only non-blockingly (logging, metrics or tracing sinks, Value, Err, nil guards)"
-						} else {
-							lastReason = why
-						}
-					}
+		gHook := func(w *flowWalker, it flowItem, use ssa.Instruction) bool {
+			switch it.kind {
+			case "ctx":
+				if _, ok := use.(*ssa.BinOp); ok {
+					return true // identity or nil comparison
 				}
-			} else {
-				lastReason = "dynamic call"
+				c, ok := use.(ssa.CallInstruction)
+				if !ok {
+					return false
+				}
+				cc := c.Common()
+				if cc.IsInvoke() && cc.Value == it.v {
+					switch cc.Method.Name() {
+					case "Done":
+						if call, ok := c.(*ssa.Call); ok {
+							w.push(call, "done", -1, it.stack)
+						}
+					case "Err", "Value", "Deadline":
+					default:
+						w.fail("ctx."+cc.Method.Name()+"()", use)
+					}
+					return true
+				}
+				callee := cc.StaticCallee()
+				if callee == nil {
+					return false
+				}
+				passed := false
+				for _, a := range cc.Args {
+					passed = passed || a == it.v
+				}
+				if !passed {
+					return false
+				}
+				if pkgPathOf(callee) == "context" {
+					switch callee.Name() {
+					case "WithTimeout", "WithDeadline", "WithTimeoutCause", "WithDeadlineCause", "AfterFunc", "Cause":
+						return true
+					case "WithValue", "WithoutCancel":
+						if call, ok := c.(*ssa.Call); ok {
+							w.push(call, "ctx", -1, it.stack)
+						}
+						return true
+					case "WithCancel", "WithCancelCause":
+						w.fail("parent of a cancellable lifetime (context."+callee.Name()+") that the owner's Close cannot end", use)
+						return true
+					}
+					return false
+				}
+				if o := callee.Object(); o != nil && acquireFns[o] {
+					w.fail("parent of enrolled work (WorkLifetime."+o.Name()+") that the owner's Close cannot cancel", use)
+					return true
+				}
+				if o := callee.Object(); o != nil && o == shutdownFn {
+					return true // the owner's own Shutdown join
+				}
+				return false
+			case "done":
+				switch u := use.(type) {
+				case *ssa.UnOp:
+					if u.Op == token.ARROW {
+						w.fail("receive from ctx.Done()", use)
+						return true
+					}
+				case *ssa.Select:
+					if u.Blocking {
+						w.fail("blocking select on ctx.Done()", use)
+					}
+					return true
+				case *ssa.BinOp:
+					return true // nil comparison
+				}
 			}
-			return ""
+			return false
 		}
 		seen := map[string]bool{}
 		for f := range reached {
@@ -1395,51 +1778,40 @@ func main() {
 					if !ok {
 						continue
 					}
-					// A wait on a commit receipt is bounded by the enrolled work
-					// that resolves it (Close cancels that work, which resolves
-					// the receipt); only outgoing calls are in scope.
+					// Receipt waits are listed with their path (informational).
 					if callee := c.Common().StaticCallee(); callee != nil && callee.Signature.Recv() != nil && receiptType != nil && types.Identical(callee.Signature.Recv().Type(), receiptType) {
 						if pos := fset.Position(c.Pos()); pos.Filename != "" && !planted[pos.Filename] {
-							name := f.String()
-							if i := strings.LastIndex(name, "."); i >= 0 {
-								name = name[i+1:]
-							}
-							receiptWaits = append(receiptWaits, finding{Class: "G-wait", Func: name + " -> " + callee.Name(), File: rel(pos.Filename), Line: pos.Line, Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]})
+							receiptWaits = append(receiptWaits, finding{Class: "G-wait", Func: shortFunc(f) + " -> " + callee.Name(), File: rel(pos.Filename), Line: pos.Line, Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]})
 						}
+					}
+					call, ok := instr.(*ssa.Call)
+					if !ok {
 						continue
 					}
-					for _, a := range c.Common().Args {
-						call, ok := a.(*ssa.Call)
-						if !ok {
-							continue
-						}
-						o := staticObj(call.Common())
-						if o == nil || !background[o] {
-							continue
-						}
-						pos := fset.Position(call.Pos())
-						if pos.Filename == "" || !(planted[pos.Filename] || inUnitFile(rel(pos.Filename))) {
-							continue
-						}
-						key := rel(pos.Filename) + ":" + strconv.Itoa(pos.Line)
-						if seen[key] {
-							continue
-						}
-						seen[key] = true
-						name := f.String()
-						if i := strings.LastIndex(name, "."); i >= 0 {
-							name = name[i+1:]
-						}
-						g := finding{Class: "G", Func: name, File: rel(pos.Filename), Line: pos.Line, Shape: "context." + o.Name() + " in enrolled work", Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]}
-						if why := classifyG(c.Common(), call); why != "" {
-							g.Class, g.Shape = "G-classified", why
-						} else if !vtaReach[f] {
-							g.Class, g.Shape = "G-closed", "reached only through the signature fallback; VTA alone (no fallback edges) finds no path from any root"
-						} else if lastReason != "" {
-							g.Shape += "; blocking or unknown use: " + lastReason
-						}
-						findings = append(findings, g)
+					o := staticObj(call.Common())
+					if o == nil || !background[o] {
+						continue
 					}
+					pos := fset.Position(call.Pos())
+					if pos.Filename == "" || !(planted[pos.Filename] || inUnitFile(rel(pos.Filename))) {
+						continue
+					}
+					key := rel(pos.Filename) + ":" + strconv.Itoa(pos.Line)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					g := finding{Class: "G", Func: shortFunc(f), File: rel(pos.Filename), Line: pos.Line, Shape: "context." + o.Name() + " in enrolled work", Path: pathTo(f), Added: added[rel(pos.Filename)][pos.Line]}
+					w := newFlowWalker(env, 100000, gHook)
+					w.push(call, "ctx", -1, nil)
+					if why := w.run(); why == "" {
+						g.Class, g.Shape = "G-classified", "every use of the context, followed through values, calls, returns, fields and closures, is non-blocking (sinks, Value/Err/Deadline, nil checks, polled Done, deadline parent, owner Shutdown)"
+					} else if !vtaReach[f] {
+						g.Class, g.Shape = "G-closed", "reached only through the signature fallback; VTA alone (no fallback edges) finds no path from any root"
+					} else {
+						g.Shape += "; blocking or unknown use: " + why
+					}
+					findings = append(findings, g)
 				}
 			}
 		}
@@ -1458,6 +1830,12 @@ func main() {
 		{"nor288PlantedGJoin", "G-classified"}, {"nor288PlantedGAcquire", "G"},
 		{"nor288PlantedGHook", "G"},
 		{"nor288PlantedGNilGuardLog", "G-classified"}, {"nor288PlantedGNilGuardWait", "G"},
+		{"nor288PlantedGStoredHook", "G"}, {"nor288PlantedGUnstoredHook", "G-classified"},
+		{"nor288PlantedGDoneNil", "G-classified"}, {"nor288PlantedGDonePoll", "G-classified"}, {"nor288PlantedGDoneSelect", "G"},
+		{"nor288PlantedGDynamicBlocking", "G"}, {"nor288PlantedGDynamicQuiet", "G-classified"},
+		{"nor288PlantedGFieldBlocking", "G"}, {"nor288PlantedGFieldQuiet", "G-classified"},
+		{"nor288PlantedBlockingBg", "G"}, {"nor288PlantedQuietBg", "G-classified"},
+		{"nor288PlantedGReceiptWait", "G"},
 	}
 	for _, cc := range classControls {
 		found := false
@@ -1503,6 +1881,7 @@ func main() {
 		"callgraph_nodes":           len(cg.Nodes),
 		"call_sites":                len(graph.sites),
 		"sites_via_signature":       graph.fallbackSites,
+		"sites_closed_unassigned":   graph.closedSites,
 		"deleting_functions":        len(deleting),
 		"probe_functions":           len(probe),
 		"controls":                  verdicts,
@@ -1536,15 +1915,21 @@ type graphIndex struct {
 	sites         map[ssa.CallInstruction]bool
 	fallback      map[ssa.CallInstruction]bool
 	fallbackSites int
+	// closed: a call through a function-valued field the analysed program
+	// never assigns (only tests set it): it calls nothing in production.
+	closed      map[ssa.CallInstruction]bool
+	closedSites int
 }
 
 // buildGraph indexes the VTA call graph by function. A dynamic call (through
 // a function value) inside an analysed function that VTA leaves without any
 // callee is resolved conservatively to every analysed function value with an
 // identical signature (plain functions, closures, bound-method and interface
-// wrappers): an unresolved call never counts as reaching nothing.
-func buildGraph(cg *callgraph.Graph, funcs map[*ssa.Function]bool) *graphIndex {
-	g := &graphIndex{funcs: map[*ssa.Function]bool{}, out: map[*ssa.Function][]edge{}, in: map[*ssa.Function][]edge{}, sites: map[ssa.CallInstruction]bool{}, fallback: map[ssa.CallInstruction]bool{}}
+// wrappers): an unresolved call never counts as reaching nothing. The one
+// exception is computed (decision 3, after audit #31): a call through a load
+// of a struct field that no store in the analysed program assigns is closed.
+func buildGraph(cg *callgraph.Graph, funcs map[*ssa.Function]bool, stored map[*types.Var]bool) *graphIndex {
+	g := &graphIndex{funcs: map[*ssa.Function]bool{}, out: map[*ssa.Function][]edge{}, in: map[*ssa.Function][]edge{}, sites: map[ssa.CallInstruction]bool{}, fallback: map[ssa.CallInstruction]bool{}, closed: map[ssa.CallInstruction]bool{}}
 	add := func(e edge) {
 		g.funcs[e.caller], g.funcs[e.callee] = true, true
 		g.out[e.caller] = append(g.out[e.caller], e)
@@ -1587,6 +1972,11 @@ func buildGraph(cg *callgraph.Graph, funcs map[*ssa.Function]bool) *graphIndex {
 				}
 				sig, ok := common.Value.Type().Underlying().(*types.Signature)
 				if !ok {
+					continue
+				}
+				if fv := fieldLoadOf(common.Value); fv != nil && !stored[fv] {
+					g.closed[site] = true
+					g.closedSites++
 					continue
 				}
 				targets := bySignature[signatureKey(sig)]
@@ -1940,4 +2330,579 @@ func decides(fn *ast.FuncDecl, probeSite, deleteSite map[token.Pos]bool) bool {
 	}
 	walk(fn.Body.List, env{})
 	return found
+}
+
+// ---------------------------------------------------------------------------
+// Author: NOR-288 lane (Claude), 2026-10-30, after audit #31. Value flow
+// shared by F (decisions on the engine owner's sealed phase) and G (contexts
+// in enrolled work), and the field-resolved callbacks of the call graph.
+//
+// A tracked value is followed through every SSA use: conversions, phis, tuple
+// extraction (by result index), comparisons (decisions only), calls (into the
+// matching parameter of every resolved callee, keeping the call site, so a
+// return goes back to that site; a value arising inside a function returns to
+// every caller), closures (free variables), and stores: a local cell's loads,
+// a struct field's loads anywhere in the program (sync/atomic loads of the
+// field included), a global's loads. Recursion folds the call stack back to
+// the repeated site, and a stack deeper than flowDepth drops its oldest site
+// (that return then goes to every caller: wider, never narrower). A use
+// outside this model, a call resolved only by signature, a callee without a
+// body, or exceeding the budget is reported, never assumed harmless.
+
+const flowDepth = 8
+
+// fieldVar is the struct field selected by a FieldAddr or Field on x.
+func fieldVar(x ssa.Value, idx int) *types.Var {
+	t := x.Type().Underlying()
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem().Underlying()
+	}
+	st, ok := t.(*types.Struct)
+	if !ok || idx < 0 || idx >= st.NumFields() {
+		return nil
+	}
+	return st.Field(idx).Origin()
+}
+
+// fieldLoadOf is the field v loads, or nil.
+func fieldLoadOf(v ssa.Value) *types.Var {
+	switch x := v.(type) {
+	case *ssa.UnOp:
+		if fa, ok := x.X.(*ssa.FieldAddr); ok && x.Op == token.MUL {
+			return fieldVar(fa.X, fa.Field)
+		}
+	case *ssa.Field:
+		return fieldVar(x.X, x.Field)
+	}
+	return nil
+}
+
+func pkgPathOf(fn *ssa.Function) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.Pkg != nil {
+		return fn.Pkg.Pkg.Path()
+	}
+	if o := fn.Object(); o != nil && o.Pkg() != nil {
+		return o.Pkg().Path()
+	}
+	if o := fn.Origin(); o != nil && o != fn {
+		return pkgPathOf(o)
+	}
+	return ""
+}
+
+// storedFields is every struct field the analysed program assigns: a store
+// through its address (composite literals included), or a store, map update
+// or send of a whole struct value containing it. A function-valued field
+// outside this set is never set by the program (only by tests, not loaded).
+// Assumption, stated: no field is set through reflect or unsafe.
+func storedFields(prog *ssa.Program) map[*types.Var]bool {
+	out := map[*types.Var]bool{}
+	var markAll func(t types.Type, depth int)
+	markAll = func(t types.Type, depth int) {
+		st, ok := t.Underlying().(*types.Struct)
+		if !ok || depth > 8 {
+			return
+		}
+		for i := 0; i < st.NumFields(); i++ {
+			out[st.Field(i).Origin()] = true
+			markAll(st.Field(i).Type(), depth+1)
+		}
+	}
+	for fn := range ssautil.AllFunctions(prog) {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				switch s := instr.(type) {
+				case *ssa.Store:
+					if fa, ok := s.Addr.(*ssa.FieldAddr); ok {
+						if v := fieldVar(fa.X, fa.Field); v != nil {
+							out[v] = true
+						}
+					}
+					markAll(s.Val.Type(), 0)
+				case *ssa.MapUpdate:
+					markAll(s.Value.Type(), 0)
+				case *ssa.Send:
+					markAll(s.X.Type(), 0)
+				}
+			}
+		}
+	}
+	return out
+}
+
+type flowEnv struct {
+	graph      *graphIndex
+	fset       *token.FileSet
+	rel        func(string) string
+	sink       func(*ssa.Function) bool
+	fieldLoads map[*types.Var][]ssa.Value
+	globals    map[*ssa.Global][]ssa.Value
+	calleesAt  map[ssa.CallInstruction][]*ssa.Function
+	closures   map[*ssa.Function][]*ssa.MakeClosure
+}
+
+func newFlowEnv(prog *ssa.Program, graph *graphIndex, fset *token.FileSet, rel func(string) string, sink func(*ssa.Function) bool) *flowEnv {
+	env := &flowEnv{graph: graph, fset: fset, rel: rel, sink: sink, fieldLoads: map[*types.Var][]ssa.Value{}, globals: map[*ssa.Global][]ssa.Value{},
+		calleesAt: map[ssa.CallInstruction][]*ssa.Function{}, closures: map[*ssa.Function][]*ssa.MakeClosure{}}
+	for _, edges := range graph.out {
+		for _, e := range edges {
+			env.calleesAt[e.site] = append(env.calleesAt[e.site], e.callee)
+		}
+	}
+	for fn := range ssautil.AllFunctions(prog) {
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				switch x := instr.(type) {
+				case *ssa.UnOp:
+					if v := fieldLoadOf(x); v != nil {
+						env.fieldLoads[v] = append(env.fieldLoads[v], x)
+					} else if g, ok := x.X.(*ssa.Global); ok && x.Op == token.MUL {
+						env.globals[g] = append(env.globals[g], x)
+					}
+				case *ssa.Field:
+					if v := fieldLoadOf(x); v != nil {
+						env.fieldLoads[v] = append(env.fieldLoads[v], x)
+					}
+				case *ssa.Call:
+					// A sync/atomic load of a field reads that field.
+					if c := x.Call.StaticCallee(); c != nil && pkgPathOf(c) == "sync/atomic" && strings.HasPrefix(c.Name(), "Load") && len(x.Call.Args) > 0 {
+						if fa, ok := x.Call.Args[0].(*ssa.FieldAddr); ok {
+							if v := fieldVar(fa.X, fa.Field); v != nil {
+								env.fieldLoads[v] = append(env.fieldLoads[v], x)
+							}
+						}
+					}
+				case *ssa.MakeClosure:
+					if f, ok := x.Fn.(*ssa.Function); ok {
+						env.closures[f] = append(env.closures[f], x)
+					}
+				}
+			}
+		}
+	}
+	return env
+}
+
+func (env *flowEnv) where(i ssa.Instruction) string {
+	fn := ""
+	if i.Parent() != nil {
+		fn = i.Parent().String()
+	}
+	pos := env.fset.Position(i.Pos())
+	if pos.Filename == "" && i.Block() != nil && i.Parent() != nil {
+		pos = env.fset.Position(i.Parent().Pos())
+	}
+	if pos.Filename == "" {
+		return " in " + fn
+	}
+	return " at " + env.rel(pos.Filename) + ":" + strconv.Itoa(pos.Line) + " in " + fn
+}
+
+// callees resolves a call site. A load of a function-valued field the program
+// never assigns calls nothing; a call resolved only by signature is reported.
+func (env *flowEnv) callees(site ssa.CallInstruction) ([]*ssa.Function, string) {
+	if env.graph.closed[site] {
+		return nil, ""
+	}
+	if env.graph.fallback[site] {
+		return nil, "a call resolved only by signature (an unresolved function value)"
+	}
+	if out := env.calleesAt[site]; len(out) > 0 {
+		return out, ""
+	}
+	if c := site.Common().StaticCallee(); c != nil {
+		return []*ssa.Function{c}, ""
+	}
+	return nil, ""
+}
+
+type flowItem struct {
+	v     ssa.Value
+	kind  string // "ctx", "done", "dec"; "&"+kind for a cell holding one
+	idx   int    // tuple result index, -1 for the whole value
+	stack []*ssa.Call
+}
+
+type flowWalker struct {
+	env    *flowEnv
+	seen   map[string]bool
+	fields map[string]bool
+	queue  []flowItem
+	budget int
+	hook   func(*flowWalker, flowItem, ssa.Instruction) bool
+	stop   string
+}
+
+func newFlowWalker(env *flowEnv, budget int, hook func(*flowWalker, flowItem, ssa.Instruction) bool) *flowWalker {
+	return &flowWalker{env: env, seen: map[string]bool{}, fields: map[string]bool{}, budget: budget, hook: hook}
+}
+
+func (w *flowWalker) push(v ssa.Value, kind string, idx int, stack []*ssa.Call) {
+	if v == nil || w.stop != "" {
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%p|%s|%d", v, kind, idx)
+	for _, s := range stack {
+		fmt.Fprintf(&b, "|%p", s)
+	}
+	if k := b.String(); !w.seen[k] {
+		w.seen[k] = true
+		w.queue = append(w.queue, flowItem{v, kind, idx, stack})
+	}
+}
+
+func (w *flowWalker) fail(reason string, at ssa.Instruction) {
+	if w.stop == "" {
+		w.stop = reason
+		if at != nil {
+			w.stop += w.env.where(at)
+		}
+	}
+}
+
+func (w *flowWalker) pushField(v *types.Var, kind string) {
+	key := fmt.Sprintf("%p|%s", v, kind)
+	if w.fields[key] {
+		return
+	}
+	w.fields[key] = true
+	for _, l := range w.env.fieldLoads[v] {
+		w.push(l, kind, -1, nil)
+	}
+}
+
+func (w *flowWalker) run() string {
+	for len(w.queue) > 0 && w.stop == "" {
+		if w.budget--; w.budget < 0 {
+			w.stop = "the value flow exceeds the analysis budget (unproven)"
+			break
+		}
+		it := w.queue[0]
+		w.queue = w.queue[1:]
+		refs := it.v.Referrers()
+		if refs == nil {
+			continue
+		}
+		for _, use := range *refs {
+			if w.stop != "" {
+				break
+			}
+			if w.hook != nil && w.hook(w, it, use) {
+				continue
+			}
+			w.generic(it, use)
+		}
+	}
+	return w.stop
+}
+
+func (w *flowWalker) generic(it flowItem, use ssa.Instruction) {
+	inner, isCell := strings.CutPrefix(it.kind, "&")
+	switch u := use.(type) {
+	case *ssa.DebugRef, *ssa.If, *ssa.Panic:
+	case *ssa.Phi:
+		w.push(u, it.kind, it.idx, it.stack)
+	case *ssa.Extract:
+		if it.idx < 0 || it.idx == u.Index {
+			w.push(u, it.kind, -1, it.stack)
+		}
+	case *ssa.ChangeType, *ssa.Convert, *ssa.ChangeInterface, *ssa.MakeInterface, *ssa.TypeAssert, *ssa.MultiConvert, *ssa.SliceToArrayPointer:
+		w.push(u.(ssa.Value), it.kind, -1, it.stack)
+	case *ssa.UnOp:
+		switch {
+		case isCell && u.Op == token.MUL:
+			w.push(u, inner, -1, it.stack)
+		case it.kind == "dec" && u.Op == token.NOT:
+			w.push(u, it.kind, -1, it.stack)
+		default:
+			w.fail("unmodelled "+u.Op.String()+" of the value", use)
+		}
+	case *ssa.BinOp:
+		if it.kind == "dec" {
+			w.push(u, it.kind, -1, it.stack)
+		}
+	case *ssa.Store:
+		if u.Val == it.v {
+			w.storeTo(u.Addr, it.kind, it.stack, use)
+		}
+	case ssa.CallInstruction:
+		w.call(it, u)
+	case *ssa.Return:
+		for i, r := range u.Results {
+			if r == it.v {
+				idx := -1
+				if len(u.Results) > 1 {
+					idx = i
+				}
+				w.returnFrom(u.Parent(), it.kind, idx, it.stack)
+			}
+		}
+	case *ssa.MakeClosure:
+		if fn, ok := u.Fn.(*ssa.Function); ok {
+			for i, b := range u.Bindings {
+				if b == it.v && i < len(fn.FreeVars) {
+					w.push(fn.FreeVars[i], it.kind, -1, nil)
+				}
+			}
+		}
+	case *ssa.Send:
+		w.fail("sent on a channel", use)
+	case *ssa.MapUpdate:
+		w.fail("stored in a map", use)
+	default:
+		w.fail(fmt.Sprintf("unmodelled %T use", use), use)
+	}
+}
+
+func (w *flowWalker) storeTo(addr ssa.Value, kind string, stack []*ssa.Call, at ssa.Instruction) {
+	switch a := addr.(type) {
+	case *ssa.Alloc:
+		w.push(a, "&"+kind, -1, stack)
+	case *ssa.FieldAddr:
+		if v := fieldVar(a.X, a.Field); v != nil {
+			w.pushField(v, kind)
+			return
+		}
+		w.fail("stored into an unresolved field", at)
+	case *ssa.Global:
+		for _, l := range w.env.globals[a] {
+			w.push(l, kind, -1, nil)
+		}
+	case *ssa.FreeVar:
+		fn, idx := a.Parent(), -1
+		for i, f := range fn.FreeVars {
+			if f == a {
+				idx = i
+			}
+		}
+		for _, mc := range w.env.closures[fn] {
+			if idx >= 0 && idx < len(mc.Bindings) {
+				w.storeTo(mc.Bindings[idx], kind, nil, at)
+			}
+		}
+	case *ssa.IndexAddr:
+		w.fail("stored in a slice or array element", at)
+	default:
+		w.fail(fmt.Sprintf("stored through %T", addr), at)
+	}
+}
+
+func (w *flowWalker) returnFrom(fn *ssa.Function, kind string, idx int, stack []*ssa.Call) {
+	if len(stack) > 0 {
+		w.push(stack[len(stack)-1], kind, idx, stack[:len(stack)-1])
+		return
+	}
+	for _, e := range w.env.graph.in[fn] {
+		if c, ok := e.site.(*ssa.Call); ok {
+			w.push(c, kind, idx, nil)
+		}
+	}
+}
+
+func (w *flowWalker) call(it flowItem, u ssa.CallInstruction) {
+	cc := u.Common()
+	if !cc.IsInvoke() && cc.Value == it.v {
+		w.fail("called as a function value", u)
+		return
+	}
+	if b, ok := cc.Value.(*ssa.Builtin); ok {
+		switch b.Name() {
+		case "len", "cap", "print", "println":
+		default:
+			w.fail("passed to builtin "+b.Name(), u)
+		}
+		return
+	}
+	// A sync/atomic store, swap or compare-and-swap into a field records the
+	// value in that field.
+	if c := cc.StaticCallee(); c != nil && pkgPathOf(c) == "sync/atomic" && len(cc.Args) > 1 && cc.Args[0] != it.v {
+		if n := c.Name(); strings.HasPrefix(n, "Store") || strings.HasPrefix(n, "Swap") || strings.HasPrefix(n, "CompareAndSwap") {
+			if fa, ok := cc.Args[0].(*ssa.FieldAddr); ok {
+				if v := fieldVar(fa.X, fa.Field); v != nil {
+					w.pushField(v, it.kind)
+					return
+				}
+			}
+		}
+	}
+	callees, why := w.env.callees(u)
+	if why != "" {
+		w.fail("passed to "+why, u)
+		return
+	}
+	var stack []*ssa.Call
+	if c, ok := u.(*ssa.Call); ok {
+		stack = append([]*ssa.Call{}, it.stack...)
+		for i, s := range stack {
+			if s == c { // recursion: the repeated site is the same frame
+				stack = stack[:i]
+				break
+			}
+		}
+		if len(stack) >= flowDepth {
+			stack = stack[1:]
+		}
+		stack = append(stack, c)
+	}
+	var positions []int
+	if cc.IsInvoke() && cc.Value == it.v {
+		positions = append(positions, 0)
+	}
+	for i, a := range cc.Args {
+		if a == it.v {
+			if cc.IsInvoke() {
+				positions = append(positions, i+1)
+			} else {
+				positions = append(positions, i)
+			}
+		}
+	}
+	for _, callee := range callees {
+		if w.env.sink(callee) {
+			continue
+		}
+		if len(callee.Blocks) == 0 {
+			w.fail("passed to "+callee.String()+", whose body is not available", u)
+			return
+		}
+		for _, p := range positions {
+			if p >= len(callee.Params) {
+				w.fail("passed beyond the parameters of "+callee.String(), u)
+				return
+			}
+			w.push(callee.Params[p], it.kind, -1, stack)
+		}
+	}
+}
+
+// postIdoms is each block's immediate post-dominator; nil means the exit (or
+// a block that never reaches the exit, whose region is then unbounded).
+func postIdoms(fn *ssa.Function) map[*ssa.BasicBlock]*ssa.BasicBlock {
+	n := len(fn.Blocks)
+	exit := n
+	// Reverse CFG rooted at a virtual exit: its successors are the blocks
+	// without successors; a block's reverse successors are its predecessors.
+	rsucc := func(i int) []int {
+		var out []int
+		if i == exit {
+			for _, b := range fn.Blocks {
+				if len(b.Succs) == 0 {
+					out = append(out, b.Index)
+				}
+			}
+			return out
+		}
+		for _, p := range fn.Blocks[i].Preds {
+			out = append(out, p.Index)
+		}
+		return out
+	}
+	rpred := func(i int) []int {
+		if i == exit {
+			return nil
+		}
+		var out []int
+		if len(fn.Blocks[i].Succs) == 0 {
+			out = append(out, exit)
+		}
+		for _, s := range fn.Blocks[i].Succs {
+			out = append(out, s.Index)
+		}
+		return out
+	}
+	order := make([]int, n+1)
+	for i := range order {
+		order[i] = -1
+	}
+	var post []int
+	visited := make([]bool, n+1)
+	var dfs func(int)
+	dfs = func(i int) {
+		visited[i] = true
+		for _, s := range rsucc(i) {
+			if !visited[s] {
+				dfs(s)
+			}
+		}
+		order[i] = len(post)
+		post = append(post, i)
+	}
+	dfs(exit)
+	idom := make([]int, n+1)
+	for i := range idom {
+		idom[i] = -1
+	}
+	idom[exit] = exit
+	intersect := func(a, b int) int {
+		for a != b {
+			for order[a] < order[b] {
+				a = idom[a]
+			}
+			for order[b] < order[a] {
+				b = idom[b]
+			}
+		}
+		return a
+	}
+	for changed := true; changed; {
+		changed = false
+		for k := len(post) - 1; k >= 0; k-- {
+			i := post[k]
+			if i == exit {
+				continue
+			}
+			nd := -1
+			for _, p := range rpred(i) {
+				if order[p] < 0 || idom[p] < 0 {
+					continue
+				}
+				if nd < 0 {
+					nd = p
+				} else {
+					nd = intersect(p, nd)
+				}
+			}
+			if nd >= 0 && idom[i] != nd {
+				idom[i] = nd
+				changed = true
+			}
+		}
+	}
+	out := map[*ssa.BasicBlock]*ssa.BasicBlock{}
+	for _, b := range fn.Blocks {
+		if d := idom[b.Index]; d >= 0 && d != exit {
+			out[b] = fn.Blocks[d]
+		}
+	}
+	return out
+}
+
+// regionOf is the blocks reachable from start before the join stop (nil: no
+// join, every reachable block).
+func regionOf(start, stop *ssa.BasicBlock) map[*ssa.BasicBlock]bool {
+	seen := map[*ssa.BasicBlock]bool{}
+	stack := []*ssa.BasicBlock{start}
+	for len(stack) > 0 {
+		b := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if b == nil || b == stop || seen[b] {
+			continue
+		}
+		seen[b] = true
+		stack = append(stack, b.Succs...)
+	}
+	return seen
+}
+
+// shortFunc names a function relative to its package, without pointer stars.
+func shortFunc(fn *ssa.Function) string {
+	s := fn.String()
+	if fn.Pkg != nil {
+		s = fn.RelString(fn.Pkg.Pkg)
+	}
+	return strings.ReplaceAll(s, "(*", "(")
 }
