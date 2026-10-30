@@ -104,11 +104,10 @@ func NewOutcomeFlow(t testing.TB, engine *Engine, family, outcome string, closed
 		f.CommittedNodes = 1
 	case "commit_postcommit":
 		// Author: Claude, NOR-180 one committed representation, 30 October 2026.
-		// The native commit and its COMMIT record succeed (this child's WAL
-		// stays writable); its post-commit suppression step then fails with a
-		// transient storage error, so its committed failure has no WAL failure.
-		f.CommittedNodes, f.PostCommit, closed = 1, storage.ErrStorageRestoring, false
-		f.Closed, f.WantError = false, true
+		// The native commit succeeds; its post-commit suppression step then
+		// fails with a transient storage error. With a writable WAL its COMMIT
+		// record is written; with a failed one the record fails too.
+		f.CommittedNodes, f.PostCommit, f.WantError = 1, storage.ErrStorageRestoring, true
 	case "empty":
 	default:
 		t.Fatalf("unknown logical terminal outcome %q", outcome)
@@ -196,7 +195,12 @@ type MultipleOutcomeOptions struct {
 	Parallel   bool
 	HealthyWAL bool
 	// Author: Codex,R5. Explicit child kinds and original primary identity.
-	Kinds          []string
+	Kinds []string
+	// Closed, when set, is each child's own WAL outcome (Claude, 30 Oct 2026);
+	// otherwise every child's WAL is healthy or failed together (HealthyWAL).
+	Closed []bool
+	// ObservePrimary receives each child's reported primary, one per child in
+	// order: its abort primary, its post-commit failure, or nil.
 	ObservePrimary func(error)
 }
 
@@ -218,7 +222,7 @@ func NewMultipleOutcomeFlow(t testing.TB, engines []*Engine, options ...Multiple
 		option = options[0]
 	}
 	closed := !option.HealthyWAL
-	f := &OutcomeFlow{Closed: closed, WantError: closed}
+	f := &OutcomeFlow{Closed: closed, WantError: closed && len(option.Closed) == 0}
 	var callbacks []flowCallback
 	for i, engine := range engines {
 		kind := "abort_timeout"
@@ -228,19 +232,29 @@ func NewMultipleOutcomeFlow(t testing.TB, engines []*Engine, options ...Multiple
 		if len(option.Kinds) != 0 {
 			kind = option.Kinds[i]
 		}
-		child := NewOutcomeFlow(t, engine, "implicit", kind, closed)
+		childClosed := closed
+		if len(option.Closed) != 0 {
+			childClosed = option.Closed[i]
+		}
+		child := NewOutcomeFlow(t, engine, "implicit", kind, childClosed)
 		if option.ObservePrimary != nil {
-			option.ObservePrimary(child.Primary)
+			reported := child.Primary
 			if child.PostCommit != nil {
-				option.ObservePrimary(child.PostCommit)
+				reported = child.PostCommit
 			}
+			option.ObservePrimary(reported)
 		}
 		if f.Primary == nil {
 			f.Primary = child.Primary
 		}
-		// A committed child's failure is retained even by this count-only
-		// consumer, which discards its children's returns.
-		f.WantError = f.WantError || child.PostCommit != nil
+		// Only terminal child outcomes survive this count-only consumer, which
+		// discards its children's returns: failed WAL records and committed
+		// failures.
+		if len(option.Closed) != 0 {
+			f.WantError = f.WantError || childClosed || child.PostCommit != nil
+		} else {
+			f.WantError = f.WantError || child.PostCommit != nil
+		}
 		var store storage.Engine = storage.NewNamespacedEngine(engine, "nornic")
 		if child.PostCommit != nil {
 			store = &PostCommitFault{Engine: store, Cause: child.PostCommit}
