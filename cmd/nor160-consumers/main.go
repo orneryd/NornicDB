@@ -932,6 +932,17 @@ func (c *NOR160ControlCache) GetCopyIfKept(id NodeID, keep bool) *Node {
 	}
 	return n
 }
+
+// Receipt with a pass-through. An exported read that returns either the
+// caller's own node unchanged or a fresh copy from its cache: a cross-package
+// caller that drops the result handles a received value (clean, see pkg/cypher
+// NOR160ControlDropsFresh).
+func (c *NOR160ControlCache) GetFreshOrSame(n *Node) *Node {
+	if n == nil || n.ID == "" {
+		return n
+	}
+	return copyNode(c.nodes[n.ID])
+}
 `
 
 const cypherControlFile = `package cypher
@@ -1001,6 +1012,16 @@ func NOR160ControlUseLent(c *storage.NOR160ControlCache) error {
 	})
 }
 
+// NOR160ControlDropsFresh drops what storage's GetFreshOrSame returned to it:
+// a received value, even though the read may hand back the argument itself.
+func NOR160ControlDropsFresh(c *storage.NOR160ControlCache, n *storage.Node, keep bool) *storage.Node {
+	f := c.GetFreshOrSame(n)
+	if !keep {
+		return nil
+	}
+	return f
+}
+
 // NOR160ControlReceiver drops a node that storage's public read delivered to
 // it. The census must prove the receipt and not report it.
 func NOR160ControlReceiver(c *storage.NOR160ControlCache, id storage.NodeID, hidden func(*storage.Node) bool) *storage.Node {
@@ -1040,6 +1061,7 @@ var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlotted", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlottedCopied", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCrossCopy", false},
+	{"K1", module + "/pkg/cypher.NOR160ControlDropsFresh", true},
 	{"K4", storagePkg + ".nor160ControlPrepare", true},
 	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
 	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
@@ -1479,8 +1501,12 @@ func (a *analysis) receivedAcross(fn *ssa.Function, call ssa.CallInstruction) bo
 					return false
 				}
 			}
+			// A result made from the caller's argument by the callee's own
+			// copy, a function the caller supplied, or the owner's decision on
+			// it is the caller's copy. Returning the caller's value unchanged
+			// on some path is not: the rest is the callee's delivery.
 			for _, r := range sg.Ret {
-				if r.Params|r.FuncRes|r.Delivered != 0 {
+				if r.FuncRes|r.Delivered != 0 {
 					return false
 				}
 			}
