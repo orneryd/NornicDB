@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +12,7 @@ import (
 // are keyword hits; when a node loses its listed label, it stops being one;
 // the label list joins the BM25 build fingerprint only when set (#1067).
 func TestServiceFulltextLabelAllowlist(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	service := NewService(base, DefaultVectorDimensions, nil)
 	service.SetFulltextLabels([]string{"Searchable", " ", "Source", "Searchable"})
@@ -38,7 +39,7 @@ func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	require.Empty(t, ids(), "a node that lost its listed label is no longer a keyword hit")
 
 	require.Contains(t, service.composeBM25BuildSettings(), ";labels=Searchable,Source")
-	unset := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
+	unset := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), DefaultVectorDimensions, nil)
 	require.NotContains(t, unset.composeBM25BuildSettings(), "labels=")
 	require.NotEqual(t, unset.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }

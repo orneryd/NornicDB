@@ -33,7 +33,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			name:    "relationship move off a relabelled start",
 			relabel: "test:n0",
 			write: func(b *BadgerEngine) error {
-				return b.UpdateEdge(&Edge{ID: "test:r0", StartNode: "test:n2", EndNode: "test:n1", Type: "LINK"})
+				return b.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r0", StartNode: "test:n2", EndNode: "test:n1", Type: "LINK"}})
 			},
 			start:    map[string]int64{"A": 0, "C": 0, "D": 1},
 			end:      map[string]int64{"B": 1},
@@ -57,7 +57,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind())
 
 			buffered, err := implicitWrite(b, func(tx *BadgerTransaction) error {
-				return tx.UpdateGraphNode(&Node{ID: tc.relabel, Labels: []string{"C"}}, ClientNodeEdits)
+				return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: tc.relabel, Labels: []string{"C"}}, Policy: ClientNodeEdits})
 			})
 			require.NoError(t, err)
 			require.True(t, buffered, "the relabel is acknowledged, not yet applied")

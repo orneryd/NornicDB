@@ -609,10 +609,10 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if _, err := engine.GetNode("n1"); err != nil {
 		t.Fatalf("GetNode failed: %v", err)
 	}
-	if err := engine.UpdateNode(&Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}); err != ErrNotFound {
+	if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateNode")
 	}
-	if err := engine.UpdateNode(&Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}); err != nil {
+	if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}}); err != nil {
 		t.Fatalf("UpdateNode failed: %v", err)
 	}
 	if err := engine.DeleteNode("n1"); err != nil {
@@ -631,10 +631,10 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if _, err := engine.GetEdge("e1"); err != nil {
 		t.Fatalf("GetEdge failed: %v", err)
 	}
-	if err := engine.UpdateEdge(&Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}); err != ErrNotFound {
+	if err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateEdge")
 	}
-	if err := engine.UpdateEdge(&Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}); err != nil {
+	if err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}}); err != nil {
 		t.Fatalf("UpdateEdge failed: %v", err)
 	}
 	if err := engine.DeleteEdge("e1"); err != nil {
@@ -907,13 +907,13 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	if _, err := queryErrEngine.GetNode("n1"); err == nil {
 		t.Fatalf("expected GetNode query error")
 	}
-	if err := queryErrEngine.UpdateNode(&Node{ID: "n1"}); err == nil {
+	if err := queryErrEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1"}}); err == nil {
 		t.Fatalf("expected UpdateNode query error")
 	}
 	if _, err := queryErrEngine.GetEdge("e1"); err == nil {
 		t.Fatalf("expected GetEdge query error")
 	}
-	if err := queryErrEngine.UpdateEdge(&Edge{ID: "e1"}); err == nil {
+	if err := queryErrEngine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1"}}); err == nil {
 		t.Fatalf("expected UpdateEdge query error")
 	}
 	if _, err := queryErrEngine.GetNodesByLabel("Person"); err == nil {

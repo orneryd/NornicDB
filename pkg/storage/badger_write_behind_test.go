@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,9 +17,10 @@ type writeBehindTestOptions struct {
 	dataDir string
 	wal     bool
 	// Existing callers keep the background write-behind worker by default.
-	synchronous bool
-	manualDrain bool
-	lowMemory   bool
+	synchronous  bool
+	manualDrain  bool
+	lowMemory    bool
+	memoryPolicy *memory.Policy
 }
 
 func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
@@ -38,6 +40,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 		LowMemory:           opts.lowMemory,
 		WriteBehind:         !opts.synchronous,
 		WriteBehindInterval: interval,
+		MemoryPolicy:        opts.memoryPolicy,
 	}))
 	if engine != nil {
 		fixtureowner.OwnChecked(t, engine)
@@ -118,7 +121,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	err = tx.UpdateGraphNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits)
+	err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -523,7 +526,7 @@ func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
 					bufferedCreate(t, engine, node(step.id, step.version))
 				case "update":
 					bufferedWrite(t, engine, func(tx *BadgerTransaction) error {
-						return tx.UpdateGraphNode(node(step.id, step.version), ClientNodeEdits)
+						return tx.UpdateGraphNode(NodeUpdateRequest{After: node(step.id, step.version), Policy: ClientNodeEdits})
 					})
 				case "delete":
 					bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:u1", CascadeEdges) })

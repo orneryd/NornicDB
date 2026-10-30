@@ -13,10 +13,10 @@ func TestSolIVFPQReaderOwnership(t *testing.T) {
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)
 	idx := &IVFPQIndex{
-		profile: IVFPQProfile{Dimensions: 1, NProbe: 1},
+		profile:   IVFPQProfile{Dimensions: 1, NProbe: 1},
 		centroids: [][]float32{{1}},
 		codebooks: []ivfpqCodebook{{SubDim: 1, Codeword: [][]float32{{0}}}},
-		lists: []ivfpqList{{IDs: []string{"a", "b"}, CodeSize: 1, Codes: []byte{0, 0}}},
+		lists:     []ivfpqList{{IDs: []string{"a", "b"}, CodeSize: 1, Codes: []byte{0, 0}}},
 	}
 	for n := 0; n < 20; n++ {
 		first, err := idx.SearchApprox(context.Background(), []float32{1}, 2, -2, 1)

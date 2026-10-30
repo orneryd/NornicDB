@@ -2,6 +2,15 @@ package storage
 
 import "github.com/dgraph-io/badger/v4"
 
+// nodeBodyAccess keeps mutable query results detached. Commit validation may
+// borrow an immutable version-matched body only for its immediate comparisons.
+type nodeBodyAccess uint8
+
+const (
+	nodeBodyDetached nodeBodyAccess = iota
+	nodeBodyBorrowed
+)
+
 type nodeItemHydration uint8
 
 const (
@@ -14,7 +23,7 @@ const (
 // Worker embedding state is hydrated from the same transaction, independently
 // of the body cache: sidecar writes do not change the node record's version.
 func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
-	node, hit := b.cacheLoadNodeBody(id, item.Version())
+	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
 	if !hit {
 		err := item.Value(func(value []byte) error {
 			var err error
@@ -50,12 +59,12 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}) (*Node, error) {
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
 	}
-	if cached, ok := b.cacheLoadNodeBody(id, item.Version()); ok {
-		return projectCachedNodeForRead(cached, properties, false), nil
+	if cached, ok := b.cacheLoadNodeBody(id, item.Version(), properties, access); ok {
+		return cached, nil
 	}
 	var node *Node
 	err := item.Value(func(value []byte) error {

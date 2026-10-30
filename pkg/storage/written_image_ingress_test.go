@@ -59,8 +59,8 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				require.NoError(t, engine.CreateEdge(edge(round)))
 				return
 			}
-			require.NoError(t, engine.UpdateNode(node(round)))
-			require.NoError(t, engine.UpdateEdge(edge(round)))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node(round)}))
+			require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge(round)}))
 		}},
 		{"bulk", func(t *testing.T, engine *BadgerEngine, round int) {
 			if round == 0 {
@@ -68,8 +68,8 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				require.NoError(t, engine.BulkCreateEdges([]*Edge{edge(round)}))
 				return
 			}
-			require.NoError(t, engine.UpdateNode(node(round)))
-			require.NoError(t, engine.UpdateEdge(edge(round)))
+			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node(round)}))
+			require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge(round)}))
 		}},
 		{"explicit transaction", func(t *testing.T, engine *BadgerEngine, round int) {
 			inTx(t, engine, false, func(tx *BadgerTransaction) error {
@@ -79,10 +79,10 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 					}
 					return tx.CreateEdge(edge(round))
 				}
-				if err := tx.UpdateGraphNode(node(round), ClientNodeEdits); err != nil {
+				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
 					return err
 				}
-				return tx.UpdateEdge(edge(round))
+				return tx.UpdateEdge(EdgeUpdateRequest{After: edge(round)})
 			})
 		}},
 		{"implicit transaction", func(t *testing.T, engine *BadgerEngine, round int) {
@@ -93,10 +93,10 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 					}
 					return tx.CreateEdge(edge(round))
 				}
-				if err := tx.UpdateGraphNode(node(round), ClientNodeEdits); err != nil {
+				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
 					return err
 				}
-				return tx.UpdateEdge(edge(round))
+				return tx.UpdateEdge(EdgeUpdateRequest{After: edge(round)})
 			})
 		}},
 	}

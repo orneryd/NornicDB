@@ -74,11 +74,11 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 					node, err := tx.GetNode("test:a")
 					require.NoError(t, err)
 					node.Properties = map[string]any{"v": float64(4)}
-					require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					edge, err := tx.GetEdge("test:r")
 					require.NoError(t, err)
 					edge.Properties = map[string]any{"v": float64(4)}
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				}
 				if mutation == "delete" {
 					require.NoError(t, tx.DeleteEdge("test:r"))
@@ -87,11 +87,11 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 					node, err := tx.GetNode("test:a")
 					require.NoError(t, err)
 					node.Properties = final
-					require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					edge, err := tx.GetEdge("test:r")
 					require.NoError(t, err)
 					edge.Properties = final
-					require.NoError(t, tx.UpdateEdge(edge))
+					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 				}
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())

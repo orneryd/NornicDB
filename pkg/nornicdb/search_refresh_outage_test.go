@@ -47,7 +47,7 @@ func TestXhighTransientOutageDoesNotSpendAllRefreshRetriesImmediately(t *testing
 	settleQueuedRefreshes()
 	require.Equal(t, 1, consumerDBHits(t, svc, "beforeoutage"))
 	fault.armed.Store(true)
-	require.NoError(t, tenant.UpdateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afteroutage"}}))
+	require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afteroutage"}}}))
 	require.Eventually(t, func() bool { return fault.failures.Load() > 0 }, 5*time.Second, 10*time.Millisecond)
 	// Correct exponential backoff's first retry is 500ms after the first
 	// failed read; it therefore observes recovery. A drain that immediately

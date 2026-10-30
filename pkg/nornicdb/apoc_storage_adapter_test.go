@@ -142,7 +142,8 @@ func (e *apocAdapterTestEngine) GetNode(id storage.NodeID) (*storage.Node, error
 	return cloneNode(node), nil
 }
 
-func (e *apocAdapterTestEngine) UpdateNode(node *storage.Node) error {
+func (e *apocAdapterTestEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+	node := updateRequest.After
 	if _, ok := e.nodes[node.ID]; !ok {
 		return storage.ErrNotFound
 	}
@@ -185,7 +186,8 @@ func (e *apocAdapterTestEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error
 	return cloneEdge(edge), nil
 }
 
-func (e *apocAdapterTestEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *apocAdapterTestEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+	edge := updateRequest.After
 	if _, ok := e.edges[edge.ID]; !ok {
 		return storage.ErrNotFound
 	}

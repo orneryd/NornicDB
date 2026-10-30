@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"strings"
 	"testing"
@@ -191,7 +192,7 @@ func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 			otel.SetTracerProvider(noop.NewTracerProvider())
 			defer otel.SetTracerProvider(previous)
 			if tracing {
-				_, restore := spanSetup(t)
+				_, restore := fixtureowner.RecordSpans(t)
 				defer restore()
 			}
 			exec, logged := captureSlowQueryLog(t)

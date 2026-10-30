@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
 	"runtime"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestHNSWMutationsRemainImmediatelySearchableAtAnyIndexSize(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	// Cross the former live-update cutoff before indexing the new node. Keeping
 	// the large corpus in the canonical vector store makes this regression test
 	// cheap while exercising the same Service decision path as production.
@@ -76,7 +77,7 @@ func BenchmarkHNSWLiveAdditionAtScale(b *testing.B) {
 }
 
 func TestPersistedHNSWIncludesLatestLiveMutations(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	require.NoError(t, svc.vectorIndex.Add("existing", []float32{0, 1}))
 	require.NoError(t, svc.vectorIndex.Add("new", []float32{1, 0}))
 
@@ -99,7 +100,7 @@ func TestPersistedHNSWIncludesLatestLiveMutations(t *testing.T) {
 }
 
 func TestHNSWRebuildPreservesMutationsArrivingBeforeSwap(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	require.NoError(t, svc.vectorIndex.Add("existing", []float32{0, 1}))
 	require.NoError(t, svc.vectorIndex.Add("trigger", []float32{0.5, 0.5}))
 

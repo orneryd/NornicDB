@@ -58,7 +58,7 @@ func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 			if mode == "advanced_timestamp" {
 				node.UpdatedAt = stamp.Add(time.Second)
 			}
-			require.NoError(t, s.UpdateNode(node))
+			require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			current, err := s.GetNode("doc")
 			require.NoError(t, err)
 			if mode != "advanced_timestamp" {
@@ -100,7 +100,7 @@ func TestReviewR73UpdateAfterSuccessWithoutEnqueue(t *testing.T) {
 	require.NoError(t, err)
 	stamp := node.UpdatedAt
 	node.Properties["text"] = "after"
-	require.NoError(t, s.UpdateNode(node))
+	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	current, err := s.GetNode("doc")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(current.UpdatedAt))

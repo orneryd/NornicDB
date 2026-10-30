@@ -73,7 +73,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			edge, err := writer.GetEdge(edgeID)
 			require.NoError(t, err)
 			edge.Properties = map[string]interface{}{"writer": "stale"}
-			require.NoError(t, writer.UpdateEdge(edge))
+			require.NoError(t, writer.UpdateEdge(EdgeUpdateRequest{After: edge}))
 			require.NoError(t, writer.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 			barrier.target = writer.ID
 			var release sync.Once
@@ -95,7 +95,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 				edge, err := peer.GetEdge(edgeID)
 				require.NoError(t, err)
 				edge.Properties = map[string]interface{}{"writer": "peer"}
-				require.NoError(t, peer.UpdateEdge(edge))
+				require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
 			} else {
 				require.NoError(t, peer.DeleteEdge(edgeID))
 			}
@@ -153,7 +153,7 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	edge, err := peer.GetEdge(edgeID)
 	require.NoError(t, err)
 	edge.Properties = map[string]interface{}{"writer": "peer"}
-	require.NoError(t, peer.UpdateEdge(edge))
+	require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
 	require.NoError(t, peer.Commit())
 	unblock()
 	select {

@@ -52,7 +52,7 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 				edge, err := tx.GetEdge(ids[worker])
 				if err == nil {
 					edge.Properties["round"] = int64(round)
-					err = tx.UpdateEdge(edge)
+					err = tx.UpdateEdge(EdgeUpdateRequest{After: edge})
 				}
 				if err == nil {
 					err = tx.Commit()

@@ -249,7 +249,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 					node, err := blocked.GetNode(end)
 					require.NoError(t, err)
 					node.Properties = map[string]any{"mutation": "blocked"}
-					require.NoError(t, blocked.UpdateGraphNode(node, ClientNodeEdits))
+					require.NoError(t, blocked.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					waiter, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 					_, err = blocked.PrepareEntityCommit(waiter, EntityCommitRequest{LogicalID: "endpoint-writer"})
 					cancel()
@@ -268,7 +268,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 				node, err := owner.GetNode("test:a")
 				require.NoError(t, err)
 				node.Properties = map[string]any{"mutation": "allowed"}
-				require.NoError(t, owner.UpdateGraphNode(node, ClientNodeEdits))
+				require.NoError(t, owner.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				require.NoError(t, owner.Commit())
 			}
 		})
@@ -321,7 +321,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 					return err
 				}
 				node.Properties = map[string]any{"mutation": "update"}
-				return tx.UpdateGraphNode(node, ClientNodeEdits)
+				return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 			},
 			// The update touches only the node, so it proceeds on the published
 			// endpoint and commits.

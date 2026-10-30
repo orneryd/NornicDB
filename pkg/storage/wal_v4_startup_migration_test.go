@@ -84,7 +84,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("legacy"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "legacy:new", Labels: []string{"New"}, Properties: map[string]any{"value": "later"}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "legacy:new", Labels: []string{"New"}, Properties: map[string]any{"value": "later"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)

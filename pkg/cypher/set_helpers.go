@@ -267,6 +267,11 @@ func (e *StorageExecutor) generateUUID() string {
 // node whose labels changed is checked against the label policies first.
 // On an error the entity is restored and the error is wrapped by its caller
 // (wrap).
+//
+// Every entity is stored as an update observed from its state before the
+// clause (setEntityState.before and beforeEdge): the label policy check reads
+// that state's labels, and storage receives that observation instead of
+// reconstructing it from the entity the clause already changed.
 func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
 	for index := range states {
 		state := &states[index]
@@ -278,12 +283,15 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
 				continue
 			}
+			state.before = observeNode(node)
+			state.before.Properties = state.properties
+			state.before.Labels = state.labels
 			restore := func() {
 				node.Properties = state.properties
 				node.Labels = state.labels
 			}
 			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
+				if err := validatePolicyOnLabelChange(store, node, state.before.Labels); err != nil {
 					restore()
 					return err
 				}
@@ -291,7 +299,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := updateMutatedNode(store, node); err != nil {
+			if err := mutateNodeWithObservation(store, state.before, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -302,7 +310,9 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
-		if err := updateMutatedEdge(store, relationship); err != nil {
+		state.beforeEdge = observeEdge(relationship)
+		state.beforeEdge.Properties = state.properties
+		if err := mutateEdgeWithObservation(store, state.beforeEdge, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
@@ -356,14 +366,16 @@ func appendSetClauseRuns(runs []setRun, body string, assignments []string) []set
 	return runs
 }
 
-// setEntityState is an entity a SET clause wrote: its properties and
-// labels before the clause, and the properties the clause wrote (setWrites).
+// setEntityState retains the fields a SET clause may change. Its immutable
+// observation reuses the existing rollback copies rather than copying embeddings.
 type setEntityState struct {
 	variable     string
 	node         *storage.Node
 	relationship *storage.Edge
 	properties   map[string]interface{}
 	labels       []string
+	before       *storage.Node
+	beforeEdge   *storage.Edge
 	written      int
 }
 

@@ -5,8 +5,6 @@ import (
 
 	"context"
 	"errors"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,14 +18,9 @@ import (
 // observation itself is the barrier; no goroutine stacks are inspected.
 type consumerObservationBarrier struct {
 	storage.Engine
+	*runtimeFixtureOwner.PauseGate
 	observed func(*storage.Node, error) bool
-	armed    atomic.Bool
-	entered  chan struct{}
-	release  chan struct{}
-	opened   sync.Once
 }
-
-func (b *consumerObservationBarrier) open() { b.opened.Do(func() { close(b.release) }) }
 
 // newerWrite runs the newer statement while the older observation is paused.
 // If it is still waiting, release the observation so the caller can verify
@@ -43,21 +36,20 @@ func (b *consumerObservationBarrier) newerWrite(t *testing.T, exec *StorageExecu
 	case err := <-done:
 		return err
 	case <-time.After(5 * time.Second):
-		b.open()
+		b.ReleaseWrites()
 		t.Log("newer write was still waiting when the older observation was released")
 		return <-done
 	}
 }
 
 func newConsumerObservationBarrier(inner storage.Engine, observed func(*storage.Node, error) bool) *consumerObservationBarrier {
-	return &consumerObservationBarrier{Engine: inner, observed: observed, entered: make(chan struct{}), release: make(chan struct{})}
+	return &consumerObservationBarrier{Engine: inner, observed: observed, PauseGate: runtimeFixtureOwner.NewPauseGate()}
 }
 
 func (b *consumerObservationBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
 	node, err := b.Engine.GetNode(id)
-	if b.armed.Load() && b.observed(node, err) && b.armed.CompareAndSwap(true, false) {
-		close(b.entered)
-		<-b.release
+	if b.Armed.Load() && b.observed(node, err) {
+		b.Pause(b.Armed, b.Entered)
 	}
 	return node, err
 }
@@ -71,7 +63,7 @@ type consumerSuppressionBarrier struct{ *consumerObservationBarrier }
 func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error {
 	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(kind, id, suppressed)
 	if err == nil && kind == storage.StoredEntityNodeKind && !suppressed {
-		b.armed.Store(true)
+		b.Armed.Store(true)
 	}
 	return err
 }
@@ -105,7 +97,7 @@ func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bo
 	_, err := store.CreateNode(node)
 	require.NoError(t, err)
 	barrier := newConsumerObservationBarrier(store, observed)
-	t.Cleanup(barrier.open)
+	t.Cleanup(barrier.ReleaseWrites)
 	svc := search.NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -155,16 +147,16 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 			older.SetSearchService(svc)
 			newer := NewStorageExecutor(store)
 			newer.SetSearchService(svc)
-			barrier.armed.Store(true)
+			barrier.Armed.Store(true)
 			done := make(chan error, 1)
 			go func() {
 				_, err := older.Execute(ctx, tc.olderSet, nil)
 				done <- err
 			}()
-			runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "older SET did not reach its observation")
+			runtimeFixtureOwner.WaitForBarrier(t, barrier.Entered, 5*time.Second, barrier.ReleaseWrites, "older SET did not reach its observation")
 			err := barrier.newerWrite(t, newer, tc.newer)
 			require.NoError(t, err)
-			barrier.open()
+			barrier.ReleaseWrites()
 			require.NoError(t, <-done)
 			tc.verify(t, store, svc)
 		})
@@ -179,18 +171,18 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 	require.NoError(t, store.DeleteNode("source"))
 	exec := NewStorageExecutor(barrier)
 	exec.SetSearchService(svc)
-	barrier.armed.Store(true)
+	barrier.Armed.Store(true)
 	done := make(chan error, 1)
 	go func() {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.queryNodes('managed', 5, [1.0, 0.0]) YIELD node, score RETURN node, score", nil)
 		done <- err
 	}()
-	runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "vector query did not reach its observation")
+	runtimeFixtureOwner.WaitForBarrier(t, barrier.Entered, 5*time.Second, barrier.ReleaseWrites, "vector query did not reach its observation")
 	newer := &storage.Node{ID: "source", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 	_, err := store.CreateNode(newer)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(newer))
-	barrier.open()
+	barrier.ReleaseWrites()
 	require.NoError(t, <-done)
 	require.Equal(t, 1, svc.EmbeddingCount(), "an older orphan observation removed a newer live vector")
 }
@@ -207,7 +199,7 @@ func TestCypherDelayedUnsuppressCannotResurrectDelete(t *testing.T) {
 	require.NoError(t, err)
 	// Search reads through the barrier too, which only unsuppress arms.
 	barrier := newConsumerObservationBarrier(store, func(node *storage.Node, err error) bool { return err == nil && node != nil })
-	t.Cleanup(barrier.open)
+	t.Cleanup(barrier.ReleaseWrites)
 	svc := search.NewService(barrier, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.BuildIndexes(ctx))
@@ -222,10 +214,10 @@ func TestCypherDelayedUnsuppressCannotResurrectDelete(t *testing.T) {
 		_, err := older.Execute(ctx, "MATCH (n:Doc) WHERE reveal(n) IS NOT NULL CALL kp.unsuppress(n)", nil)
 		done <- err
 	}()
-	runtimeFixtureOwner.WaitForBarrier(t, barrier.entered, 5*time.Second, barrier.open, "unsuppress did not reach its observation")
+	runtimeFixtureOwner.WaitForBarrier(t, barrier.Entered, 5*time.Second, barrier.ReleaseWrites, "unsuppress did not reach its observation")
 	err = barrier.newerWrite(t, plain, "MATCH (n:Doc) DETACH DELETE n")
 	require.NoError(t, err)
-	barrier.open()
+	barrier.ReleaseWrites()
 	require.NoError(t, <-done)
 	result, err := plain.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
 	require.NoError(t, err)

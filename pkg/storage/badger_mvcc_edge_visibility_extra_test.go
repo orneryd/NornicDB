@@ -129,7 +129,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			return engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}, v1.Version)
 		}))
-		require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}))
+		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
 		v2, err := engine.GetEdgeCurrentHead(edgeID)
 		require.NoError(t, err)
 
@@ -153,7 +153,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		}
 		edgeID := EdgeID("test:hu-edge")
 		require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
-		require.NoError(t, engine.UpdateEdge(&Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}))
+		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
 		v2, err := engine.GetEdgeCurrentHead(edgeID)
 		require.NoError(t, err)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {

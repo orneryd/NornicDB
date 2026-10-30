@@ -37,7 +37,7 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	index.tracked["N"] = map[string]struct{}{"v": {}}
 	for i, value := range values {
 		id := NodeID([]string{"even", "odd", "uintmax", "negative", "platformuint"}[i])
-		schema.RegisterUniqueValue("N", "v", value, id)
+		schema.ApplyUniqueValue("N", "v", value, id, ValidatedUniqueClaim)
 		node := &Node{ID: id, Labels: []string{"N"}, Properties: map[string]interface{}{"v": value}}
 		buffer.nodes[id] = node
 		index.add(node)
@@ -45,7 +45,7 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	view := pendingWriteView{index: index, owner: &WriteBehindBuffer{active: buffer}}
 	for i, value := range values {
 		want := NodeID([]string{"even", "odd", "uintmax", "negative", "platformuint"}[i])
-		got, found, _ := schema.LookupUniqueConstraintValue("N", "v", value)
+		got, found, _, _ := schema.LookupUniqueConstraintValue("N", "v", value)
 		require.True(t, found)
 		require.Equal(t, want, got)
 		key, ok := indexValueKey(value)
@@ -57,11 +57,11 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	numericKey, ok := indexValueKey(values[1])
 	require.True(t, ok)
 	lookalike := fmt.Sprint(numericKey)
-	schema.RegisterUniqueValue("N", "v", lookalike, "string-lookalike")
-	stringHolder, stringFound, _ := schema.LookupUniqueConstraintValue("N", "v", lookalike)
+	schema.ApplyUniqueValue("N", "v", lookalike, "string-lookalike", ValidatedUniqueClaim)
+	stringHolder, stringFound, _, _ := schema.LookupUniqueConstraintValue("N", "v", lookalike)
 	require.True(t, stringFound)
 	require.Equal(t, NodeID("string-lookalike"), stringHolder)
-	numericHolder, numericFound, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
+	numericHolder, numericFound, _, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
 	require.True(t, numericFound)
 	require.Equal(t, NodeID("odd"), numericHolder)
 	// One key for every index: a float64 holds 2^53 exactly, so its key is
@@ -70,12 +70,58 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	b, _ := indexValueKey(values[1])
 	require.Equal(t, float64(9007199254740992), a)
 	require.Equal(t, uint64(9007199254740993), b)
-	schema.UnregisterUniqueValue("N", "v", values[1])
-	_, found, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
+	schema.ApplyUniqueValue("N", "v", values[1], "odd", RetiredUniqueClaim)
+	_, found, _, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
 	require.False(t, found)
-	got, found, _ := schema.LookupUniqueConstraintValue("N", "v", float64(9007199254740992))
+	got, found, _, _ := schema.LookupUniqueConstraintValue("N", "v", float64(9007199254740992))
 	require.True(t, found)
 	require.Equal(t, NodeID("even"), got)
+}
+
+// ApplyUniqueValue owns every canonical claim transition: a validated claim
+// takes the value unconditionally, a recovered claim keeps a different current
+// holder, a retirement leaves another owner intact, and an unknown action is a
+// programmer error rather than a publication mode.
+func TestApplyUniqueValueActionsPreserveOwnershipContract(t *testing.T) {
+	schema := NewSchemaManager()
+	require.NoError(t, schema.AddUniqueConstraint("apply_unique", "N", "v"))
+
+	schema.ApplyUniqueValue("N", "v", "recovered", "node-1", RecoveredUniqueClaim)
+	holder, found, _, _ := schema.LookupUniqueConstraintValue("N", "v", "recovered")
+	require.True(t, found)
+	require.Equal(t, NodeID("node-1"), holder)
+
+	// A recovered claim must not overwrite a different current holder.
+	schema.ApplyUniqueValue("N", "v", "recovered", "node-2", RecoveredUniqueClaim)
+	holder, found, _, _ = schema.LookupUniqueConstraintValue("N", "v", "recovered")
+	require.True(t, found)
+	require.Equal(t, NodeID("node-1"), holder)
+
+	// A validated claim is the authoritative owner.
+	schema.ApplyUniqueValue("N", "v", "recovered", "node-2", ValidatedUniqueClaim)
+	holder, found, _, _ = schema.LookupUniqueConstraintValue("N", "v", "recovered")
+	require.True(t, found)
+	require.Equal(t, NodeID("node-2"), holder)
+
+	// A retirement from a stale owner cannot release the current holder.
+	schema.ApplyUniqueValue("N", "v", "recovered", "node-1", RetiredUniqueClaim)
+	holder, found, _, _ = schema.LookupUniqueConstraintValue("N", "v", "recovered")
+	require.True(t, found)
+	require.Equal(t, NodeID("node-2"), holder)
+
+	schema.ApplyUniqueValue("N", "v", "recovered", "node-2", RetiredUniqueClaim)
+	_, found, _, _ = schema.LookupUniqueConstraintValue("N", "v", "recovered")
+	require.False(t, found)
+
+	// Constraint and value-key no-ops stay silent for every action.
+	require.NotPanics(t, func() {
+		schema.ApplyUniqueValue("N", "absent", "recovered", "node-3", ValidatedUniqueClaim)
+		schema.ApplyUniqueValue("N", "v", []string{"unindexable"}, "node-3", RetiredUniqueClaim)
+	})
+
+	require.PanicsWithValue(t, "storage: ApplyUniqueValue: unknown UniqueValueAction 3", func() {
+		schema.ApplyUniqueValue("N", "v", "recovered", "node-3", UniqueValueAction(3))
+	})
 }
 
 var uniqueCacheBenchmarkNode NodeID
@@ -90,11 +136,11 @@ func BenchmarkUniqueCachePrecision(b *testing.B) {
 			if err := schema.AddUniqueConstraint("bench", "N", "v"); err != nil {
 				b.Fatal(err)
 			}
-			schema.RegisterUniqueValue("N", "v", tc.value, "node")
+			schema.ApplyUniqueValue("N", "v", tc.value, "node", ValidatedUniqueClaim)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				node, found, _ := schema.LookupUniqueConstraintValue("N", "v", tc.value)
+				node, found, _, _ := schema.LookupUniqueConstraintValue("N", "v", tc.value)
 				if !found {
 					b.Fatal("missing registered value")
 				}

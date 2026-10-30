@@ -140,9 +140,15 @@ func (p *ProcedurePrivilegeStore) Lookup(ctx context.Context, role, procedure st
 // again changes nothing, except that GRANT IMMUTABLE makes a regular grant
 // immutable.
 func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure string, boosted, immutable bool) error {
-	existing, found, err := p.Lookup(ctx, role, procedure, boosted)
-	if err != nil {
+	key := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
+	before, err := p.storage.GetNode(procedurePrivilegeNodeID(key))
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return err
+	}
+	var existing ProcedurePrivilege
+	found := false
+	if before != nil {
+		existing, found = procedurePrivilegeNode(before)
 	}
 	if found && (existing.Immutable || !immutable) {
 		return nil
@@ -156,7 +162,8 @@ func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure str
 		},
 	}
 	if found {
-		return p.storage.UpdateNode(node)
+		// Keep the actual stored predecessor separate from the replacement grant.
+		return p.storage.UpdateNode(storage.NodeUpdateRequest{Before: before, After: node})
 	}
 	_, err = p.storage.CreateNode(node)
 	return err

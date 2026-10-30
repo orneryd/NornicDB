@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // TestUserRecordPopulatedReadAllocBudget preserves the complete stored-user
@@ -13,26 +11,7 @@ import (
 // entries. The result escapes, and only the actual read is inside measurement.
 func TestUserRecordPopulatedReadAllocBudget(t *testing.T) {
 	const budget = 7
-	node := &storage.Node{
-		ID:     storage.NodeID("user:alice"),
-		Labels: []string{"_User", "_System"},
-		Properties: map[string]any{
-			"id":            "user-alice",
-			"username":      "alice",
-			"email":         "alice@example.com",
-			"password_hash": "$2a$10$fixturefixturefixturefixturefi",
-			"roles":         `["admin","viewer"]`,
-			"created_at":    int64(1700000000),
-			"updated_at":    int64(1700000900),
-			"last_login":    int64(1700001800),
-			"failed_logins": int64(2),
-			"locked_until":  int64(0),
-			"disabled":      true,
-			"metadata":      `{"one":"two","three":"four"}`,
-		},
-		CreatedAt: time.Unix(1600000000, 0).UTC(),
-		UpdatedAt: time.Unix(1600000100, 0).UTC(),
-	}
+	node := populatedUserReadFixture()
 	want := &User{
 		ID:           "user-alice",
 		Username:     "alice",

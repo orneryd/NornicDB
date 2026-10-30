@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
 	"math/rand"
@@ -423,7 +424,7 @@ func requireContinuationReturnsEveryLiveDocument(t *testing.T, service *Service,
 // of the document at the entry point and further inserts.
 func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	live := map[string]bool{}
@@ -636,7 +637,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 	for _, docs := range []int{40, 200, 1000} {
 		t.Run(fmt.Sprintf("docs=%d", docs), func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 			service := NewService(engine, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			for i := 0; i < docs; i++ {
@@ -704,27 +705,98 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 	const docs = 1000
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = service.Close() })
-	for i := 0; i < docs; i++ {
-		vec := []float32{0, 1}
-		if i == docs/2 {
-			vec = []float32{1, 0}
-		}
-		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{vec}}
-		_, err := engine.CreateNode(node)
-		require.NoError(t, err)
-		require.NoError(t, service.IndexNode(node))
-	}
+	target := seedSoleMatchNodes(t, engine, docs, nil, service.IndexNode)
 	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
 
 	// Cut every link into the matching document, at every level; move the
 	// entry point off it first.
-	target := fmt.Sprintf("doc-%d", docs/2)
+	require.True(t, cutSoleMatchLinks(t, graph, target))
+
+	ids, page := collectSoleMatchContinuation(t, service, "", "vector_hnsw")
+	require.Equal(t, map[string]bool{target: true}, ids, "ended with %s", page.Completion)
+	require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+}
+
+// Review of #1499/#1446, F1: the same sole match behind cut links, served by
+// IVF-HNSW (one cluster, so routing can't be the reason it's missed). The
+// cluster generator must report its graph's exhaustion, not a short page as
+// the end, so the continuation reaches the population-wide search; for
+// vector and hybrid search alike.
+func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
+	const docs = 1000
+	for _, mode := range []struct{ name, query string }{{"vector", ""}, {"hybrid", "unrelated words"}} {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
+			target := seedSoleMatchNodes(t, engine, docs, func(node *storage.Node) {
+				node.Labels = []string{"Doc"}
+				node.Properties = map[string]any{"text": "background text"}
+			}, nil)
+			service := NewService(engine, 2, nil)
+			t.Cleanup(func() { _ = service.Close() })
+			service.EnableClustering(nil, 1)
+			service.SetMinEmbeddingsForClustering(1)
+			require.NoError(t, service.BuildIndexes(context.Background()))
+			pipeline, err := service.getOrCreateVectorPipeline(context.Background())
+			require.NoError(t, err)
+			require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
+
+			// Cut every link into the matching vector in every cluster graph.
+			service.clusterStateMu.RLock()
+			graphs := service.clusterGen.graphs
+			service.clusterStateMu.RUnlock()
+			require.NotEmpty(t, graphs)
+			for _, graph := range graphs {
+				cutSoleMatchLinks(t, graph, target)
+			}
+
+			ids, page := collectSoleMatchContinuation(t, service, mode.query, "")
+			require.True(t, ids[target], "%s missing; ended %s with %d rows", target, page.Completion, len(ids))
+			require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+		})
+	}
+}
+
+// seedSoleMatchNodes preserves the common population and matching vector.
+// Callers supply their original document fields and immediate-index policy;
+// the IVF case deliberately waits for BuildIndexes after all stored writes.
+func seedSoleMatchNodes(t *testing.T, engine storage.Engine, docs int, decorate func(*storage.Node), afterCreate func(*storage.Node) error) string {
+	t.Helper()
+	for i := 0; i < docs; i++ {
+		vector := []float32{0, 1}
+		if i == docs/2 {
+			vector = []float32{1, 0}
+		}
+		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{vector}}
+		if decorate != nil {
+			decorate(node)
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		if afterCreate != nil {
+			require.NoError(t, afterCreate(node))
+		}
+	}
+	return fmt.Sprintf("doc-%d", docs/2)
+}
+
+// cutSoleMatchLinks removes incoming links at every level of one graph. Both
+// fixtures give the target exactly one vector entry; a cluster without it is
+// left unchanged, as in the original IVF control.
+func cutSoleMatchLinks(t *testing.T, graph *HNSWIndex, target string) bool {
+	t.Helper()
 	graph.mu.Lock()
+	defer graph.mu.Unlock()
 	orphan, found := uint32(0), false
 	for id, external := range graph.internalToID {
 		if mustVectorEntryOwner(t, external) == target {
@@ -732,7 +804,9 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 			break
 		}
 	}
-	require.True(t, found)
+	if !found {
+		return false
+	}
 	if graph.entryPoint == orphan {
 		for id := range graph.nodeLevel {
 			if uint32(id) != orphan && !graph.deleted[id] {
@@ -753,16 +827,21 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 			graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
 		}
 	}
-	graph.mu.Unlock()
+	return true
+}
 
+func collectSoleMatchContinuation(t *testing.T, service *Service, query, strategyPrefix string) (map[string]bool, *SearchContinuationPage) {
+	t.Helper()
 	threshold := 0.9
 	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
 	request := SearchContinuationRequest{Owner: "alice", N: 7}
-	page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 7, MinSimilarity: &threshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+	page, err := service.SearchTextContinuation(context.Background(), query, &SearchOptions{Limit: 7, MinSimilarity: &threshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
 	require.NoError(t, err)
 	ids := map[string]bool{}
 	for {
-		require.True(t, strings.HasPrefix(page.SearchMethod, "vector_hnsw"), "search method %q", page.SearchMethod)
+		if strategyPrefix != "" {
+			require.True(t, strings.HasPrefix(page.SearchMethod, strategyPrefix), "search method %q", page.SearchMethod)
+		}
 		for _, result := range page.Results {
 			ids[searchResultID(result)] = true
 		}
@@ -773,104 +852,5 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
 		require.NoError(t, err)
 	}
-	require.Equal(t, map[string]bool{target: true}, ids, "ended with %s", page.Completion)
-	require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-}
-
-// Review of #1499/#1446, F1: the same sole match behind cut links, served by
-// IVF-HNSW (one cluster, so routing can't be the reason it's missed). The
-// cluster generator must report its graph's exhaustion, not a short page as
-// the end, so the continuation reaches the population-wide search; for
-// vector and hybrid search alike.
-func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
-	const docs = 1000
-	for _, mode := range []struct{ name, query string }{{"vector", ""}, {"hybrid", "unrelated words"}} {
-		t.Run(mode.name, func(t *testing.T) {
-			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
-			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
-			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
-			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
-			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
-			target := fmt.Sprintf("doc-%d", docs/2)
-			for i := 0; i < docs; i++ {
-				vec := []float32{0, 1}
-				if i == docs/2 {
-					vec = []float32{1, 0}
-				}
-				_, err := engine.CreateNode(&storage.Node{
-					ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), Labels: []string{"Doc"},
-					Properties: map[string]any{"text": "background text"}, ChunkEmbeddings: [][]float32{vec},
-				})
-				require.NoError(t, err)
-			}
-			service := NewService(engine, 2, nil)
-			t.Cleanup(func() { _ = service.Close() })
-			service.EnableClustering(nil, 1)
-			service.SetMinEmbeddingsForClustering(1)
-			require.NoError(t, service.BuildIndexes(context.Background()))
-			pipeline, err := service.getOrCreateVectorPipeline(context.Background())
-			require.NoError(t, err)
-			require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
-
-			// Cut every link into the matching vector in every cluster graph.
-			service.clusterStateMu.RLock()
-			graphs := service.clusterGen.graphs
-			service.clusterStateMu.RUnlock()
-			require.NotEmpty(t, graphs)
-			for _, graph := range graphs {
-				graph.mu.Lock()
-				orphan, found := uint32(0), false
-				for id, external := range graph.internalToID {
-					if mustVectorEntryOwner(t, external) == target {
-						orphan, found = uint32(id), true
-					}
-				}
-				if found {
-					if graph.entryPoint == orphan {
-						for id := range graph.nodeLevel {
-							if uint32(id) != orphan && !graph.deleted[id] {
-								graph.entryPoint, graph.maxLevel = uint32(id), int(graph.nodeLevel[id])
-								break
-							}
-						}
-					}
-					for node := range graph.nodeLevel {
-						for level := 0; level <= int(graph.nodeLevel[node]); level++ {
-							neighbors, _ := graph.neighborsAtLevelLocked(uint32(node), level)
-							kept := make([]uint32, 0, len(neighbors))
-							for _, n := range neighbors {
-								if n != orphan {
-									kept = append(kept, n)
-								}
-							}
-							graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
-						}
-					}
-				}
-				graph.mu.Unlock()
-			}
-
-			threshold := 0.9
-			embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
-			request := SearchContinuationRequest{Owner: "alice", N: 7}
-			page, err := service.SearchTextContinuation(context.Background(), mode.query, &SearchOptions{Limit: 7, MinSimilarity: &threshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
-			require.NoError(t, err)
-			ids := map[string]bool{}
-			for {
-				for _, result := range page.Results {
-					ids[searchResultID(result)] = true
-				}
-				if !page.HasMore {
-					break
-				}
-				request.QID = page.QID
-				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-				require.NoError(t, err)
-			}
-			require.True(t, ids[target], "%s missing; ended %s with %d rows", target, page.Completion, len(ids))
-			require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
-		})
-	}
+	return ids, page
 }

@@ -128,6 +128,13 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		return err
 	}
 
+	// Observed client requests are admission input, never accepted state-machine
+	// records. Only the leader preparer may normalize them into a validated
+	// CmdCommitTransaction before any replication/WAL publication.
+	if cmd.Type == CmdUpdateNodeRequest || cmd.Type == CmdUpdateEdgeRequest {
+		return storage.ErrInvalidData
+	}
+
 	// Decode once before publishing to the replication WAL. An unreadable
 	// command must never be replayed to a peer after its caller saw rejection.
 	var envelope storage.EntityTransactionEnvelope

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	storageapi "github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,7 +16,7 @@ func TestEmbedWorkerRetryWithZonedTimeInputs(t *testing.T) {
 			node, err := queue.GetNode("node-000")
 			require.NoError(t, err)
 			node.Properties["event_time"] = stamp
-			require.NoError(t, queue.UpdateNode(node))
+			require.NoError(t, queue.UpdateNode(storageapi.NodeUpdateRequest{After: node}))
 			require.True(t, worker.processNextBatch())
 			calls := provider.GetEmbedCount()
 			makeNodeSaveRetriesReady(worker)

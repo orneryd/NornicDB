@@ -34,7 +34,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
 	// Park the direct update on its write-order stripe, after it took the
@@ -44,7 +44,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	engine.writeBehind.order.lock(&stripes, true)
 	updated := make(chan error, 1)
 	go func() {
-		updated <- engine.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(3)}})
+		updated <- engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(3)}}})
 	}()
 	require.Eventually(t, func() bool {
 		if engine.writeBarrier.TryLock() {

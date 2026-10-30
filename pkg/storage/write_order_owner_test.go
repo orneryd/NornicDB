@@ -52,10 +52,10 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 			require.True(t, ok)
 			update := map[string]func() error{
 				"node": func() error {
-					return e.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}})
+					return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}})
 				},
 				"relationship": func() error {
-					return e.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}})
+					return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}})
 				},
 			}
 			for kind, logical := range map[string][]byte{
@@ -108,7 +108,7 @@ func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.NotZero(t, e.writeBehind.PendingOps(), "the update is acknowledged, not applied")
 

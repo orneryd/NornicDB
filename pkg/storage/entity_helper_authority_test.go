@@ -59,12 +59,12 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 				edge, err := tx.GetStoredEdge(EdgeID(target))
 				require.NoError(t, err)
 				edge.Properties = map[string]any{"prepared": true}
-				require.NoError(t, tx.UpdateEdge(edge))
+				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
 			} else {
 				node, err := tx.GetStoredNode(NodeID(target))
 				require.NoError(t, err)
 				node.Properties["prepared"] = true
-				require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			}
 			prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "helper-guard"})
 			require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 	node, err := tx.GetStoredNode("test:a")
 	require.NoError(t, err)
 	node.Properties["value"] = "prepared"
-	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "accepted-repair"})
 	require.NoError(t, err)
 	releaseAccepted, err := prepared.RetainAcceptedAuthority()
@@ -217,7 +217,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 	require.Equal(t, "before", snapshotValue, "failed native attempt made no stored change")
 	_, err = b.CreateNode(&Node{ID: "test:disjoint"})
 	require.NoError(t, err)
-	require.ErrorIs(t, b.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"value": "blocked"}}), ErrConflict, "pending accepted authority still protects target")
+	require.ErrorIs(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "blocked"}}}), ErrConflict, "pending accepted authority still protects target")
 	releaseAccepted()
-	require.NoError(t, b.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"value": "after-discard"}}))
+	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after-discard"}}}))
 }

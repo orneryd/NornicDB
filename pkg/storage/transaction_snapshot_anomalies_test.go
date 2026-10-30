@@ -40,9 +40,9 @@ func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	require.Equal(t, 2, count2)
 	require.Equal(t, 2, count3)
 
-	require.NoError(t, tx1.UpdateGraphNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
-	require.NoError(t, tx2.UpdateGraphNode(&Node{ID: doctor2, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
-	require.NoError(t, tx3.UpdateGraphNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
+	require.NoError(t, tx1.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx2.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: doctor2, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx3.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, Policy: ClientNodeEdits}))
 
 	require.NoError(t, tx1.Commit())
 	require.NoError(t, tx2.Commit())
@@ -407,7 +407,7 @@ func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
 			}
 			updated := copyNode(node)
 			updated.Properties["version"] = job
-			if err := tx.UpdateGraphNode(updated, ClientNodeEdits); err != nil {
+			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: updated, Policy: ClientNodeEdits}); err != nil {
 				select {
 				case errCh <- err:
 				default:

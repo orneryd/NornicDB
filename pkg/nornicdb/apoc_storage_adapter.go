@@ -6,6 +6,8 @@
 package nornicdb
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 
 	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
@@ -53,13 +55,13 @@ func (a *APOCStorageAdapter) UpdateNode(id int64, properties map[string]interfac
 	if err != nil {
 		return apocstorage.ErrNodeNotFound
 	}
+	before := *node
+	before.Properties = maps.Clone(node.Properties)
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}
-	for k, v := range properties {
-		node.Properties[k] = v
-	}
-	return a.engine.UpdateNode(node)
+	maps.Copy(node.Properties, properties)
+	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // DeleteNode removes a node by ID.
@@ -75,6 +77,8 @@ func (a *APOCStorageAdapter) AddLabels(id int64, labels []string) error {
 	if err != nil {
 		return apocstorage.ErrNodeNotFound
 	}
+	before := *node
+	before.Labels = slices.Clone(node.Labels)
 	labelSet := make(map[string]bool)
 	for _, l := range node.Labels {
 		labelSet[l] = true
@@ -84,7 +88,7 @@ func (a *APOCStorageAdapter) AddLabels(id int64, labels []string) error {
 			node.Labels = append(node.Labels, l)
 		}
 	}
-	return a.engine.UpdateNode(node)
+	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // RemoveLabels removes labels from a node.
@@ -94,6 +98,7 @@ func (a *APOCStorageAdapter) RemoveLabels(id int64, labels []string) error {
 	if err != nil {
 		return apocstorage.ErrNodeNotFound
 	}
+	before := *node
 	labelSet := make(map[string]bool)
 	for _, l := range labels {
 		labelSet[l] = true
@@ -105,7 +110,7 @@ func (a *APOCStorageAdapter) RemoveLabels(id int64, labels []string) error {
 		}
 	}
 	node.Labels = newLabels
-	return a.engine.UpdateNode(node)
+	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // GetRelationship retrieves a relationship by ID.
@@ -140,13 +145,13 @@ func (a *APOCStorageAdapter) UpdateRelationship(id int64, properties map[string]
 	if err != nil {
 		return apocstorage.ErrRelationshipNotFound
 	}
+	before := *edge
+	before.Properties = maps.Clone(edge.Properties)
 	if edge.Properties == nil {
 		edge.Properties = make(map[string]interface{})
 	}
-	for k, v := range properties {
-		edge.Properties[k] = v
-	}
-	return a.engine.UpdateEdge(edge)
+	maps.Copy(edge.Properties, properties)
+	return a.engine.UpdateEdge(storage.EdgeUpdateRequest{Before: &before, After: edge})
 }
 
 // DeleteRelationship removes a relationship by ID.

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 
@@ -35,7 +36,7 @@ func (e *xhighNestedFaultEngine) GetEdge(id storage.EdgeID) (*storage.Edge, erro
 
 func xhighNestedService(t *testing.T) (*storage.NamespacedEngine, *Service, *xhighNestedFaultEngine) {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "nesteddiscard")
 	fault := &xhighNestedFaultEngine{Engine: engine}
@@ -70,7 +71,7 @@ func TestXhighNestedDiscardedRefreshes(t *testing.T) {
 		before, err := service.Search(ctx, "stalenodeword", nil, opts)
 		require.NoError(t, err)
 		require.Len(t, before.Results, 1)
-		require.NoError(t, engine.UpdateNode(&storage.Node{ID: "source", Properties: map[string]any{"content": "survivornestedword"}}))
+		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "source", Properties: map[string]any{"content": "survivornestedword"}}}))
 		older := service.ReserveNodeMutation("source")
 		middle := service.ReserveNodeMutation("source")
 		latest := service.ReserveNodeMutation("source")
@@ -97,7 +98,7 @@ func TestXhighNestedDiscardedRefreshes(t *testing.T) {
 		require.NoError(t, service.BuildIndexes(ctx))
 		require.NoError(t, service.RefreshEdge("r"))
 		require.True(t, service.HasRelationshipVectorEntries("BEFORE", "vec"))
-		require.NoError(t, engine.UpdateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{0, 1}}}))
+		require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{0, 1}}}}))
 		older := service.ReserveEdgeMutation("r")
 		middle := service.ReserveEdgeMutation("r")
 		latest := service.ReserveEdgeMutation("r")

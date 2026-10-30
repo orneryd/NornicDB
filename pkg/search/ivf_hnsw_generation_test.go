@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math/rand"
 	"path/filepath"
@@ -127,7 +128,7 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	const dimensions = 4
 	ctx := context.Background()
-	svc := NewService(newTestMemoryEngine(t), dimensions, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dimensions, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
@@ -193,7 +194,7 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
-			svc := NewService(newTestMemoryEngine(t), 4, nil)
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			svc.EnableClustering(nil, 1)
 			original := svc.clusterIndex

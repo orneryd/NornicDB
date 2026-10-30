@@ -101,7 +101,7 @@ func TestEmbeddingPublicationProofFallsBackAfterBodyChanges(t *testing.T) {
 				updated, err := b.GetNode(node.ID)
 				require.NoError(t, err)
 				updated.Properties["text"] = "new source"
-				require.NoError(t, b.UpdateNode(updated))
+				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: updated}))
 			}
 			require.False(t, proof.matches(b, node.ID, revision))
 			same, err := b.embeddingRevisionIsCurrent(node.ID, revision, proof)

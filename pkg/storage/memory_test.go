@@ -162,11 +162,11 @@ func TestMemoryEngine_UpdateNode(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = engine.UpdateNode(&Node{
+		err = engine.UpdateNode(NodeUpdateRequest{After: &Node{
 			ID:         NodeID(prefixTestID("node-1")),
 			Labels:     []string{"New"},
 			Properties: map[string]any{"name": "New Name"},
-		})
+		}})
 		require.NoError(t, err)
 
 		updated, _ := engine.GetNode(NodeID(prefixTestID("node-1")))
@@ -182,10 +182,10 @@ func TestMemoryEngine_UpdateNode(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.UpdateNode(&Node{
+		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{
 			ID:     NodeID(prefixTestID("node-1")),
 			Labels: []string{"NewLabel"},
-		}))
+		}}))
 
 		// Old label should be empty
 		oldNodes, _ := engine.GetNodesByLabel("OldLabel")
@@ -199,18 +199,18 @@ func TestMemoryEngine_UpdateNode(t *testing.T) {
 
 	t.Run("nil node", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		err := engine.UpdateNode(nil)
+		err := engine.UpdateNode(NodeUpdateRequest{After: nil})
 		assert.ErrorIs(t, err, ErrInvalidData)
 	})
 
 	t.Run("upsert creates if not exists", func(t *testing.T) {
 		// UpdateNode now has upsert behavior - creates if not exists
 		engine := newTestMemoryEngine(t)
-		err := engine.UpdateNode(&Node{
+		err := engine.UpdateNode(NodeUpdateRequest{After: &Node{
 			ID:         NodeID(prefixTestID("new-node")),
 			Labels:     []string{"Created"},
 			Properties: map[string]any{"via": "UpdateNode"},
-		})
+		}})
 		assert.NoError(t, err)
 
 		// Verify the node was created
@@ -434,13 +434,13 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 			Properties: map[string]any{"weight": 1},
 		}))
 
-		err = engine.UpdateEdge(&Edge{
+		err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 			ID:         EdgeID(prefixTestID("edge-1")),
 			StartNode:  NodeID(prefixTestID("n1")),
 			EndNode:    NodeID(prefixTestID("n2")),
 			Type:       "KNOWS",
 			Properties: map[string]any{"weight": 5},
-		})
+		}})
 		require.NoError(t, err)
 
 		updated, _ := engine.GetEdge(EdgeID(prefixTestID("edge-1")))
@@ -486,11 +486,11 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 			EndNode:   NodeID(prefixTestID("n2")),
 		}))
 
-		err = engine.UpdateEdge(&Edge{
+		err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 			ID:        EdgeID(prefixTestID("edge-1")),
 			StartNode: NodeID(prefixTestID("n2")),
 			EndNode:   NodeID(prefixTestID("n3")),
-		})
+		}})
 		require.NoError(t, err)
 
 		// Verify indexes updated
@@ -504,7 +504,7 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		err := engine.UpdateEdge(&Edge{ID: EdgeID(prefixTestID("nonexistent"))})
+		err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(prefixTestID("nonexistent"))}})
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
@@ -520,11 +520,11 @@ func TestMemoryEngine_UpdateEdge(t *testing.T) {
 			EndNode:   NodeID(prefixTestID("n2")),
 		}))
 
-		err = engine.UpdateEdge(&Edge{
+		err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{
 			ID:        EdgeID(prefixTestID("edge-1")),
 			StartNode: NodeID(prefixTestID("nonexistent")),
 			EndNode:   NodeID(prefixTestID("n2")),
-		})
+		}})
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -1031,10 +1031,10 @@ func TestMemoryEngine_Concurrency(t *testing.T) {
 			go func(id int) {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
-					_ = engine.UpdateNode(&Node{
+					_ = engine.UpdateNode(NodeUpdateRequest{After: &Node{
 						ID:         NodeID(prefixTestID("shared")),
 						Properties: map[string]any{"counter": id*10 + j},
-					})
+					}})
 				}
 			}(i)
 		}

@@ -40,7 +40,7 @@ func TestDecayScalarRelationshipVersionAndPropertyScores(t *testing.T) {
 			for _, recent := range []bool{true, false} {
 				if !recent {
 					edge.UpdatedAt = old
-					require.NoError(t, store.UpdateEdge(edge))
+					require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
 				}
 				executor := NewStorageExecutor(store)
 				result, err := executor.Execute(context.Background(), `MATCH ()-[r:LINKS]->() RETURN decayScore(r), decay(r), decayScore(r, {property:'summary'}), decay(r, {property:'summary'})`, nil)
@@ -75,7 +75,7 @@ func TestDecayScalarRelationshipVersionAndPropertyScores(t *testing.T) {
 			node.Properties = map[string]any{"summary": "old text"}
 			node.CreatedAt = old
 			node.UpdatedAt = now.Add(-time.Minute)
-			require.NoError(t, store.UpdateNode(node))
+			require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			result, err := NewStorageExecutor(store).Execute(context.Background(), `MATCH (n:Doc) RETURN decayScore(n), decay(n), decayScore(n, {property:'summary'}), decay(n, {property:'summary'})`, nil)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)

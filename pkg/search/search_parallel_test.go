@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 
 	"testing"
 	"time"
@@ -93,7 +95,7 @@ func (g *overlapCandidateGenerator) searchCandidatesWithExhaustion(ctx context.C
 }
 
 func TestRRFHybridSearchUsesRankedBM25ResultsAsVectorEntryPoints(t *testing.T) {
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	fulltext := &rankedBM25Index{
 		bm25Index: svc.fulltext(),
 		results: []indexResult{
@@ -196,7 +198,7 @@ func TestRRFHybridSearch_ParallelRetrievalJoinsBM25(t *testing.T) {
 		bm25Started := make(chan struct{})
 		vectorStarted := make(chan struct{})
 		releaseBM25 := make(chan struct{})
-		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 		svc.setFulltext(&blockingBM25Index{
 			bm25Index: svc.fulltext(),
 			started:   bm25Started,
@@ -227,7 +229,7 @@ func TestRRFHybridSearch_ParallelRetrievalJoinsBM25(t *testing.T) {
 		bm25Started := make(chan struct{})
 		vectorStarted := make(chan struct{})
 		releaseBM25 := make(chan struct{})
-		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 		svc.setFulltext(&blockingBM25Index{
 			bm25Index: svc.fulltext(),
 			started:   bm25Started,
@@ -257,7 +259,7 @@ func TestRRFHybridSearch_ParallelRetrievalJoinsBM25(t *testing.T) {
 	})
 
 	t.Run("retrieval branches overlap", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 4, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4, nil)
 		bm25Started := make(chan struct{})
 		vectorStarted := make(chan struct{})
 		release := make(chan struct{})

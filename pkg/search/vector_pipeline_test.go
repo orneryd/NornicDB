@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
 	"testing"
@@ -232,7 +233,7 @@ func TestBoundCandidateLimit(t *testing.T) {
 }
 
 func TestVectorSearchCandidates_UsesPipeline(t *testing.T) {
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 4, nil)
 
 	// Add test nodes
@@ -273,7 +274,7 @@ func TestVectorSearchCandidatesStrategySelection(t *testing.T) {
 			if tc.bruteForce {
 				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100")
 			}
-			engine := newTestMemoryEngine(t)
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			svc := NewService(engine, 4, nil)
 			for i := 0; i < 12; i++ {
 				node := &storage.Node{
@@ -301,7 +302,7 @@ func TestVectorSearchCandidatesStrategySelection(t *testing.T) {
 
 func TestVectorSearchPipeline_UsesBruteForceWhenClusteredAndThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "50")
-	engine := newTestMemoryEngine(t)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewService(engine, 4, nil)
 
 	// Enable clustering and force it to cluster with a dataset below the CPU brute-force threshold.

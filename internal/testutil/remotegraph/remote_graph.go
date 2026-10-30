@@ -5,6 +5,7 @@ package remotegraph
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -123,8 +124,10 @@ func (p *Peer) SetMarker(t *testing.T, marker string) {
 	t.Helper()
 	node, err := p.store.GetNode("marker")
 	require.NoError(t, err)
+	before := *node
+	before.Properties = maps.Clone(node.Properties)
 	node.Properties["marker"] = marker
-	require.NoError(t, p.store.UpdateNode(node))
+	require.NoError(t, p.store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}))
 }
 
 // Calls counts authenticated statement executions against the remote graph.

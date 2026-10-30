@@ -336,7 +336,7 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		constraints := restored.GetConstraints()
 		require.Len(t, constraints, 1)
 		require.NoError(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
-		restored.RegisterUniqueValue("User", "email", "alice@example.com", "node-1")
+		restored.ApplyUniqueValue("User", "email", "alice@example.com", "node-1", ValidatedUniqueClaim)
 		require.Error(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
 		_, ok := restored.GetCompositeIndex("user_loc_idx")
 		require.True(t, ok)

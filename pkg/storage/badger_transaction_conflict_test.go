@@ -183,7 +183,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
 
-	schema.UnregisterUniqueValue("Person", "name", "Alice")
+	schema.ApplyUniqueValue("Person", "name", "Alice", nodeID, RetiredUniqueClaim)
 	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))
 }
 
@@ -262,7 +262,7 @@ func TestTransactionEntityPolicyScenarios(t *testing.T) {
 				require.NoError(t, err)
 			}
 			if tc.update != nil {
-				err = tx.UpdateGraphNode(tc.update, ClientNodeEdits)
+				err = tx.UpdateGraphNode(NodeUpdateRequest{After: tc.update, Policy: ClientNodeEdits})
 				if tc.violation == "" {
 					require.NoError(t, err)
 				}

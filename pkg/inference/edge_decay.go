@@ -284,8 +284,9 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 		} else if decayedConfidence < edge.Confidence {
 			// Confidence decayed but still above threshold - update it
 			if !ed.config.DryRun {
+				before := *edge
 				edge.Confidence = decayedConfidence
-				if err := ed.storage.UpdateEdge(edge); err != nil {
+				if err := ed.storage.UpdateEdge(storage.EdgeUpdateRequest{Before: &before, After: edge}); err != nil {
 					ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] Failed to update decayed edge")
 				}
 			}

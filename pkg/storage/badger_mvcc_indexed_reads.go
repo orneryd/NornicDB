@@ -329,7 +329,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if queryNodes {
 				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {

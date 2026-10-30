@@ -24,7 +24,7 @@ func TestPendingCandidatesReadHoldRetries(t *testing.T) {
 func TestPendingCandidatesUpsertMissing(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
-	require.NoError(t, e.UpdateNode(pendingCandidateNode(0)))
+	require.NoError(t, e.UpdateNode(NodeUpdateRequest{After: pendingCandidateNode(0)}))
 	node := e.FindNodeNeedingEmbedding()
 	require.NotNil(t, node, "upsert's insert branch must publish its durable marker into the loaded cache")
 	require.Equal(t, pendingCandidateNode(0).ID, node.ID)

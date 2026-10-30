@@ -15,6 +15,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type searchLifecyclePage struct {
+	Results  []any  `json:"results"`
+	QID      string `json:"qid"`
+	HasMore  bool   `json:"has_more"`
+	Released bool   `json:"released"`
+}
+
+func requestSearchLifecycle(t *testing.T, s *Server, token string, request map[string]any, status int, out any) {
+	t.Helper()
+	response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", request, token)
+	require.Equal(t, status, response.Code, response.Body.String())
+	if out != nil {
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), out))
+	}
+}
+
 func TestSearchStreamLifecycleHTTP(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
@@ -34,14 +50,8 @@ func TestSearchStreamLifecycleHTTP(t *testing.T) {
 				request := map[string]any{"database": database, "mode": mode, "query": "transcript", "limit": 3, "n": 1}
 				count := 0
 				for {
-					response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", request, token)
-					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-					var page struct {
-						Results []any  `json:"results"`
-						QID     string `json:"qid"`
-						HasMore bool   `json:"has_more"`
-					}
-					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+					var page searchLifecyclePage
+					requestSearchLifecycle(t, s, token, request, http.StatusOK, &page)
 					count += len(page.Results)
 					if !page.HasMore {
 						break
@@ -74,9 +84,7 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				_, err := engine.CreateNode(&storage.Node{ID: id})
 				require.NoError(t, err)
 			}
-			var first struct {
-				QID string `json:"qid"`
-			}
+			var first searchLifecyclePage
 			if end == "disconnect" {
 				req := httptest.NewRequest(http.MethodPost, "/nornicdb/search", strings.NewReader(`{"database":"stream_lifecycle","mode":"id","n":1}`))
 				req.Header.Set("Authorization", token)
@@ -85,15 +93,12 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				s.buildRouter().ServeHTTP(writer, req)
 				require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &first))
 			} else {
-				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"database": database, "mode": "id", "n": 1}, token)
-				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &first))
+				requestSearchLifecycle(t, s, token, map[string]any{"database": database, "mode": "id", "n": 1}, http.StatusOK, &first)
 			}
 			require.NotEmpty(t, first.QID)
 			switch end {
 			case "last_page":
-				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "n": 1}, token)
-				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				requestSearchLifecycle(t, s, token, map[string]any{"qid": first.QID, "n": 1}, http.StatusOK, nil)
 			case "write":
 				_, err := engine.CreateNode(&storage.Node{ID: "c"})
 				require.NoError(t, err)
@@ -101,21 +106,16 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				node, err := engine.GetNode("b")
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
-				require.NoError(t, engine.UpdateNode(node))
+				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 			case "drop":
 				require.NoError(t, (&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(s.dbManager), db: s.db, server: s}).DropDatabase(t.Context(), database))
 			}
 			if end == "write" || end == "backfill" || end == "disconnect" {
-				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "n": 1}, token)
-				require.Equal(t, http.StatusGone, response.Code, response.Body.String())
+				requestSearchLifecycle(t, s, token, map[string]any{"qid": first.QID, "n": 1}, http.StatusGone, nil)
 			}
 			for i := 0; i < 2; i++ {
-				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "discard": true}, token)
-				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				var released struct {
-					Released bool `json:"released"`
-				}
-				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &released))
+				var released searchLifecyclePage
+				requestSearchLifecycle(t, s, token, map[string]any{"qid": first.QID, "discard": true}, http.StatusOK, &released)
 				require.True(t, released.Released)
 			}
 		})

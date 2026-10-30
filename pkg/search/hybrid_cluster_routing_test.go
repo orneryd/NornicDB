@@ -49,14 +49,14 @@ func preferredSeedsForTest(t *testing.T, ci interface{}) []int {
 func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 	t.Run("default max iterations is five", func(t *testing.T) {
 		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "")
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 2)
 		require.NotNil(t, svc.clusterIndex)
 		require.Equal(t, 5, svc.clusterIndex.Config().MaxIterations)
 	})
 
 	t.Run("reentrant same mode keeps existing cluster index", func(t *testing.T) {
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 2)
 		require.NotNil(t, svc.clusterIndex)
 		first := svc.clusterIndex
@@ -70,7 +70,7 @@ func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "11")
 		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
 
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 0)
 		require.NotNil(t, svc.clusterIndex)
 		cfg := svc.clusterIndex.Config()
@@ -83,7 +83,7 @@ func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "")
 		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9999")
 
-		svc := NewService(newTestMemoryEngine(t), 2, nil)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.EnableClustering(nil, 0)
 		require.NotNil(t, svc.clusterIndex)
 		cfg := svc.clusterIndex.Config()
@@ -105,9 +105,7 @@ func TestSelectHybridClusters_UsesLexicalSignal(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "5")
 
-	svc := NewService(newTestMemoryEngine(t), 2, nil)
-	svc.EnableClustering(nil, 2)
-	svc.SetMinEmbeddingsForClustering(1)
+	svc := newRoutingProfileFixture(t, 2)
 
 	// Two clear semantic groups.
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID("a1"), Properties: map[string]interface{}{"text": "alpha topic"}, ChunkEmbeddings: [][]float32{{1, 0}}}))
@@ -175,9 +173,7 @@ func BenchmarkSelectHybridClusters(b *testing.B) {
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM")
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX")
 
-	svc := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
-	svc.EnableClustering(nil, 8)
-	svc.SetMinEmbeddingsForClustering(1)
+	svc := newRoutingProfileFixture(b, 8)
 	for i := 0; i < 256; i++ {
 		id := storage.NodeID(fmt.Sprintf("n-%d", i))
 		vec := []float32{float32(i % 2), float32((i + 1) % 2)}
@@ -211,7 +207,7 @@ func TestApplyBM25SeedHints_PreferredSeeds(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewService(newTestMemoryEngine(t), 2, nil)
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 			svc.EnableClustering(nil, 2)
 			require.NotNil(t, svc.clusterIndex)
 
@@ -228,4 +224,13 @@ func TestApplyBM25SeedHints_PreferredSeeds(t *testing.T) {
 			require.Equal(t, tc.want, preferredSeedsForTest(t, svc.clusterIndex))
 		})
 	}
+}
+
+// newRoutingProfileFixture shares untimed service/clustering setup. Populations,
+// weights, lexical overrides and the benchmark loop remain at their call sites.
+func newRoutingProfileFixture(t testing.TB, clusters int) *Service {
+	t.Helper()
+	svc, _ := newVectorService(t, 2, "")
+	enableVectorClustering(t, svc, clusters)
+	return svc
 }

@@ -407,7 +407,7 @@ func TestCollectionMetadataAdmission(t *testing.T) {
 	node, err := engine.GetNode(collectionMetaNodeID)
 	require.NoError(t, err)
 	node.Labels = []string{"WrongLabel"}
-	require.NoError(t, engine.UpdateNode(node))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
 	_, _, err = store.Open(ctx, "meta_db")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 
@@ -538,7 +538,7 @@ func TestCollectionStore_DropExistsPointCountBranches(t *testing.T) {
 	metaNode, err := engine.GetNode(collectionMetaNodeID)
 	require.NoError(t, err)
 	metaNode.Labels = []string{"bad"}
-	require.NoError(t, engine.UpdateNode(metaNode))
+	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: metaNode}))
 	require.Error(t, collections.Drop(ctx, "drop_invalid_meta"))
 	require.False(t, collections.Exists("drop_invalid_meta"))
 
