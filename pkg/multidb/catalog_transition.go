@@ -70,7 +70,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		return err
 	}
 	// The catalog is a system record: it never queues vector work.
-	tx, err := storage.BeginEntityTransaction(m.inner, storage.CommitModeDirect, storage.SystemStoreAdmission)
+	tx, err := storage.BeginEntityTransaction(storage.SystemStoreEngine(m.inner), storage.CommitModeDirect)
 	if err != nil {
 		release()
 		return err

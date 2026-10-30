@@ -113,7 +113,9 @@ const (
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller. A
 // selected command may also transport its already-bound admission across that
-// opening. An empty transaction retains first-mutation admission by default.
+// opening, and an admission carried by a write handle in the chain
+// (EngineWithVectorWorkOrigin, SystemStoreEngine) binds the transaction the
+// same way. An empty transaction retains first-mutation admission by default.
 func BeginEntityTransaction(engine Engine, mode EntityCommitMode, origins ...uint64) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
@@ -121,6 +123,9 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode, origins ...uin
 	visited := map[Engine]bool{}
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
+		if carrier, ok := engine.(*vectorWorkOriginEngine); ok && len(origins) == 0 {
+			origins = []uint64{carrier.origin}
+		}
 		if starter, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
 		}); ok {
