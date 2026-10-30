@@ -48,6 +48,16 @@ func NOR160ControlSecondCopy(b *BadgerEngine) []*Node {
 	return out
 }
 
+// nor160ControlCloneMap clones a property map with no helper of the tree under
+// analysis, so the controls type-check on every revision (release included).
+func nor160ControlCloneMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 // NOR160ControlCapturedEmitter copies an owned delivery again inside a captured
 // emitter closure, the shape of a transaction stream emitter.
 func NOR160ControlCapturedEmitter(b *BadgerEngine) []*Node {
@@ -67,7 +77,7 @@ func NOR160ControlCapturedEmitter(b *BadgerEngine) []*Node {
 func NOR160ControlQueueCopier(node *Node) *Node {
 	clone := *node
 	clone.Labels = append([]string(nil), node.Labels...)
-	clone.Properties, _ = copyPropertyValue(node.Properties).(map[string]any)
+	clone.Properties = nor160ControlCloneMap(node.Properties)
 	return &clone
 }
 
@@ -78,7 +88,7 @@ type NOR160ControlPartialHit struct {
 }
 
 func (h NOR160ControlPartialHit) CallerCopy() any {
-	h.Props, _ = copyPropertyValue(h.Props).(map[string]any)
+	h.Props = nor160ControlCloneMap(h.Props)
 	return h
 }
 
@@ -89,7 +99,7 @@ type NOR160ControlCompleteHit struct {
 }
 
 func (h NOR160ControlCompleteHit) CallerCopy() any {
-	h.Props, _ = copyPropertyValue(h.Props).(map[string]any)
+	h.Props = nor160ControlCloneMap(h.Props)
 	h.Rel = copyEdge(h.Rel)
 	return h
 }
@@ -721,6 +731,11 @@ func main() {
 				copierIface, _ = obj.Type().Underlying().(*types.Interface)
 			}
 		}
+	}
+	if copierIface == nil {
+		// A revision before pkg/callerowned (the release): the same method set.
+		sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.NewInterfaceType(nil, nil))), false)
+		copierIface = types.NewInterfaceType([]*types.Func{types.NewFunc(token.NoPos, nil, "CallerCopy", sig)}, nil).Complete()
 	}
 	implementsCopier := map[string]bool{}
 	if copierIface != nil {
