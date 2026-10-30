@@ -246,6 +246,8 @@ type report struct {
 	OwnerDispatch []string        `json:"owner_dispatch_functions"`
 	DroppedCopies []string        `json:"copies_that_may_be_dropped"`
 	SecondCopies  []string        `json:"copies_of_copies"`
+	ReadEntries   int             `json:"read_entry_points"`
+	ReadReach     int             `json:"read_path_functions"`
 	ShallowCopies []string        `json:"shallow_entity_copies"`
 	Controls      map[string]bool `json:"controls_detected"`
 	AllControlsOK bool            `json:"all_controls_detected"`
@@ -1032,6 +1034,68 @@ func mayDropFrom(fn *ssa.Function, roots map[ssa.Value]bool, start *ssa.BasicBlo
 	return false
 }
 
+var readVerb = []string{"Get", "Stream", "All", "Read", "Iterate", "Lookup", "Match", "Find", "Search", "Pull", "Batch", "Outgoing", "Incoming", "Snapshot", "Scan", "Visit"}
+
+// readPathFunctions: the functions reachable from public read entry points.
+func readPathFunctions(p *workcensus.Program, fns []*ssa.Function, r *report) map[*ssa.Function]bool {
+	readPkgs := []string{"/pkg/storage", "/pkg/search", "/pkg/resultstream", "/apoc/storage", "/apoc/warmup", "/apoc/trigger"}
+	isEntry := func(fn *ssa.Function) bool {
+		if fn.Parent() != nil || fn.Pkg == nil || !token.IsExported(fn.Name()) {
+			return false
+		}
+		path := strings.TrimPrefix(fn.Pkg.Pkg.Path(), module)
+		if path == "/pkg/cypher" {
+			return fn.Name() == "Get" && fn.Signature.Recv() != nil && strings.Contains(fn.Signature.Recv().Type().String(), "QueryCache")
+		}
+		if strings.HasPrefix(fn.Name(), "NOR160Control") {
+			return true // planted controls are judged as read paths
+		}
+		known := false
+		for _, rp := range readPkgs {
+			if path == rp {
+				known = true
+			}
+		}
+		if !known {
+			return false
+		}
+		for _, verb := range readVerb {
+			if strings.HasPrefix(fn.Name(), verb) {
+				return true
+			}
+		}
+		return false
+	}
+	reach := map[*ssa.Function]bool{}
+	var queue []*ssa.Function
+	for _, fn := range fns {
+		if isEntry(fn) {
+			r.ReadEntries++
+			reach[fn] = true
+			queue = append(queue, fn)
+		}
+	}
+	for len(queue) > 0 {
+		fn := queue[0]
+		queue = queue[1:]
+		var next []*ssa.Function
+		if node := p.CallGraph.Nodes[fn]; node != nil {
+			for _, edge := range node.Out {
+				next = append(next, edge.Callee.Func)
+			}
+		}
+		next = append(next, fn.AnonFuncs...)
+		for _, callee := range next {
+			if callee != nil && !reach[callee] && inModule(callee) {
+				reach[callee] = true
+				queue = append(queue, callee)
+			}
+		}
+	}
+	r.ReadReach = len(reach)
+	return reach
+}
+
 // retains: fn stores a delivery-derived value into memory that outlives the call
 // (a field, global, captured variable or append into one).
 func retains(fn *ssa.Function, roots map[ssa.Value]bool) bool {
@@ -1459,12 +1523,18 @@ func main() {
 	}
 	sort.Strings(r.OwnerDispatch)
 
+	// Read paths: every function the call graph reaches from a public read
+	// entry point of the reading packages (storage, search, result streams,
+	// APOC graph/warmup/trigger, the query-result caches). Sections 9 and 11
+	// judge copies there; write staging is a different contract.
+	readReach := readPathFunctions(p, fns, &r)
+
 	// 9: copies that may be dropped: a structural copy (or a copying exit) whose
 	// result can reach the function's end or the next loop iteration without
 	// being delivered, on a path decided by a condition the copy does not decide.
 	exits := copyingExits(fns)
 	for _, fn := range fns {
-		if copierNames[fullName(fn)] {
+		if copierNames[fullName(fn)] || !readReach[fn] {
 			continue
 		}
 		for _, b := range fn.Blocks {
@@ -1491,7 +1561,7 @@ func main() {
 	// 11: copies of copies: a copier applied to a value another copier or a
 	// copying exit already produced in the same function.
 	for _, fn := range fns {
-		if copierNames[fullName(fn)] {
+		if copierNames[fullName(fn)] || !readReach[fn] {
 			continue
 		}
 		var copies []*ssa.Call
