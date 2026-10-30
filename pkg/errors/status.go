@@ -260,9 +260,10 @@ func renderTerminalView(view *terminalView, render func(localization.Message) st
 	for _, record := range view.records {
 		primary, diagnostic := messageText(record.primary), messageText(record.diagnostic)
 		if primary != "" {
+			// PLANTED DROP (r24 mutant M1, never merged): the WAL diagnostic
+			// of a record with a primary is not rendered.
 			appendText(record.code + ": " + primary)
 			appendText(messageText(record.detail))
-			appendText(diagnostic)
 		} else if diagnostic != "" {
 			appendText(record.code + ": " + diagnostic)
 		}
