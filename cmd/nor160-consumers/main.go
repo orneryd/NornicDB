@@ -166,6 +166,10 @@ func (s *NOR160ControlHits) GetDispatched(k string) *NOR160ControlHit {
 	return nor160ControlDeliver(s.hits[k], false)
 }
 
+func (s *NOR160ControlHits) GetDispatchedAgain(k string) *NOR160ControlHit {
+	return nor160ControlDeliverAgain(s.hits[k], false)
+}
+
 // K6: a copy of a node decoded for this read, and a copy of a copy.
 func (c *NOR160ControlCache) GetDecodedCopy(id NodeID) *Node {
 	return copyNode(&Node{ID: id, Properties: map[string]interface{}{"k": []interface{}{int64(1)}}})
@@ -708,6 +712,60 @@ func (c *NOR160ControlCache) GetSlottedCopied(id NodeID, early bool) (*Node, err
 	}
 	return copyNode(c.nodes[id]), nil
 }
+
+// Read scope. A conditional copy whose result is only encoded (clean); the
+// same shape returned from an exported read (K4, must report); write staging
+// that drops its copy on an error (clean); a copy dropped inside a method that
+// reaches a read exit only through an interface (K1, must report).
+func nor160ControlPrepare(n *Node) *Node {
+	if len(n.Labels) == 0 {
+		return n
+	}
+	c := copyNode(n)
+	c.Labels = nil
+	return c
+}
+
+func nor160ControlEncode(n *Node) []byte { return []byte(nor160ControlPrepare(n).ID) }
+
+func nor160ControlPrepareRead(n *Node) *Node {
+	if len(n.Labels) == 0 {
+		return n
+	}
+	c := copyNode(n)
+	c.Labels = nil
+	return c
+}
+
+func (c *NOR160ControlCache) GetPrepared(id NodeID) *Node { return nor160ControlPrepareRead(c.nodes[id]) }
+
+func (c *NOR160ControlCache) nor160Stage(n *Node) error {
+	staged := copyNode(n)
+	if staged.ID == "" {
+		return ErrInvalidData
+	}
+	c.nodes[n.ID] = staged
+	return nil
+}
+
+func (c *NOR160ControlCache) PutStaged(n *Node) error { return c.nor160Stage(n) }
+
+type nor160ControlGetter interface {
+	nor160GetVia(id NodeID, hidden func(*Node) bool) *Node
+}
+
+func (c *NOR160ControlCache) nor160GetVia(id NodeID, hidden func(*Node) bool) *Node {
+	n := copyNode(c.nodes[id])
+	if hidden(n) {
+		return nil
+	}
+	return n
+}
+
+func (c *NOR160ControlCache) GetViaInterface(id NodeID, hidden func(*Node) bool) *Node {
+	var g nor160ControlGetter = c
+	return g.nor160GetVia(id, hidden)
+}
 `
 
 const cypherControlFile = `package cypher
@@ -794,6 +852,10 @@ var controls = []control{
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlotted", false},
 	{"K0", "(*" + storagePkg + ".NOR160ControlCache).GetSlottedCopied", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCrossCopy", false},
+	{"K4", storagePkg + ".nor160ControlPrepare", true},
+	{"K4", storagePkg + ".nor160ControlPrepareRead", false},
+	{"K1e", "(*" + storagePkg + ".NOR160ControlCache).nor160Stage", true},
+	{"K1", "(*" + storagePkg + ".NOR160ControlCache).nor160GetVia", false},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherDrops", true},
 	{"K1", module + "/pkg/cypher.NOR160ControlCypherCopyReceived", true},
 	{"K1", "(*" + module + "/pkg/cypher.NOR160ControlCypherCache).Get", false},
@@ -916,8 +978,9 @@ func (s *fnState) val(v ssa.Value) org {
 }
 
 type analysis struct {
-	candidates []string                // every function found deciding between a value and its copy
-	owners     map[*ssa.Function]owner // the single owner of each entity type
+	reach      map[*ssa.Function]map[ssa.Value]bool // values that reach a public read exit
+	candidates []string                             // every function found deciding between a value and its copy
+	owners     map[*ssa.Function]owner              // the single owner of each entity type
 	slots      map[*ssa.Function]map[*ssa.Alloc]bool
 	cellRoot   bool // mayDrop is following callback-filled variables
 	p          *workcensus.Program
@@ -3386,6 +3449,429 @@ func derefType(t types.Type) types.Type {
 	return t
 }
 
+// ---------------------------------------------------------------- read scope
+
+type fieldKey struct {
+	strct *types.Named
+	field int
+}
+
+type readScope struct {
+	ret, param, cb, cell map[*ssa.Function][]bool
+	field                map[fieldKey]bool
+	under                map[*ssa.Function]bool // runs under a read exit
+}
+
+func flags(m map[*ssa.Function][]bool, fn *ssa.Function, n int) []bool {
+	if m[fn] == nil {
+		m[fn] = make([]bool, n)
+	}
+	return m[fn]
+}
+
+// exitResult and exitCallback: a public read exit hands entity values out
+// through its results or its entity callbacks.
+func exitResult(fn *ssa.Function, i int) bool {
+	rs := fn.Signature.Results()
+	return exported(fn) && i < rs.Len() && family(rs.At(i).Type())
+}
+
+func exitCallback(fn *ssa.Function, k int) bool {
+	if !exported(fn) || k >= len(fn.Params) {
+		return false
+	}
+	sig, ok := fn.Params[k].Type().Underlying().(*types.Signature)
+	if !ok {
+		return false
+	}
+	for i := 0; i < sig.Params().Len(); i++ {
+		if family(sig.Params().At(i).Type()) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExit(fn *ssa.Function) bool {
+	for i := 0; i < fn.Signature.Results().Len(); i++ {
+		if exitResult(fn, i) {
+			return true
+		}
+	}
+	for k := range fn.Params {
+		if exitCallback(fn, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldOf: the struct field an address names, when its base is not local.
+func fieldOf(addr ssa.Value) (fieldKey, bool) {
+	fa, ok := addr.(*ssa.FieldAddr)
+	if !ok || localBase(fa.X) != nil {
+		return fieldKey{}, false
+	}
+	n, _ := structOf(pointee(fa.X.Type()))
+	if n == nil {
+		return fieldKey{}, false
+	}
+	return fieldKey{n, fa.Field}, true
+}
+
+// containerField: the retention field a non-local container value was loaded from.
+func containerField(v ssa.Value) (fieldKey, bool) {
+	if ld, ok := v.(*ssa.UnOp); ok && ld.Op == token.MUL {
+		return fieldOf(ld.X)
+	}
+	return fieldKey{}, false
+}
+
+// reachSet: the values of fn that can reach a public read exit, backwards
+// from its sinks.
+func (a *analysis) reachSet(fn *ssa.Function, rs *readScope) map[ssa.Value]bool {
+	set := map[ssa.Value]bool{}
+	add := func(v ssa.Value) bool {
+		if v == nil || set[v] {
+			return false
+		}
+		if _, ok := v.(*ssa.Const); ok {
+			return false
+		}
+		set[v] = true
+		return true
+	}
+	slots := a.resultSlots(fn)
+	free := map[*ssa.FreeVar]int{}
+	for i, fv := range fn.FreeVars {
+		free[fv] = i
+	}
+	sinkCall := func(c *ssa.CallCommon, call ssa.CallInstruction) {
+		args := callArgs(c)
+		if pv, ok := c.Value.(*ssa.Parameter); ok {
+			if k := paramIndex(fn, pv); k >= 0 && (exitCallback(fn, k) || flags(rs.cb, fn, len(fn.Params))[k]) {
+				for _, arg := range c.Args {
+					add(arg)
+				}
+			}
+		}
+		for _, g := range a.calleesOf(call) {
+			pg := rs.param[g]
+			for j, arg := range args {
+				if j < len(pg) && pg[j] {
+					add(arg)
+				}
+			}
+		}
+	}
+	// Sinks.
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			switch x := ins.(type) {
+			case *ssa.Return:
+				for i, r := range x.Results {
+					if exitResult(fn, i) || flags(rs.ret, fn, len(x.Results))[i] {
+						add(r)
+					}
+				}
+			case *ssa.Store:
+				if fv, ok := x.Addr.(*ssa.FreeVar); ok {
+					if i, ok := free[fv]; ok && flags(rs.cell, fn, len(fn.FreeVars))[i] {
+						add(x.Val)
+					}
+				}
+				if k, ok := fieldOf(storeBase(x.Addr)); ok && rs.under[fn] && rs.field[k] {
+					add(x.Val)
+				}
+				if fa, ok := x.Addr.(*ssa.FieldAddr); ok {
+					if k, ok := fieldOf(fa); ok && rs.under[fn] && rs.field[k] {
+						add(x.Val)
+					}
+				}
+			case *ssa.MapUpdate:
+				if k, ok := containerField(x.Map); ok && rs.under[fn] && rs.field[k] {
+					add(x.Value)
+				}
+			case ssa.CallInstruction:
+				sinkCall(x.Common(), x)
+			}
+		}
+	}
+	// Backwards to a fixpoint.
+	for iter := 0; iter < 24; iter++ {
+		changed := false
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				switch x := ins.(type) {
+				case *ssa.Store:
+					if al, ok := x.Addr.(*ssa.Alloc); ok && slots[al] {
+						// A result slot: the return statement's value.
+						for _, r := range *al.Referrers() {
+							if ld, ok := r.(*ssa.UnOp); ok && set[ld] {
+								changed = add(x.Val) || changed
+							}
+						}
+						continue
+					}
+					if base := localBase(storeBase(x.Addr)); base != nil && set[base] {
+						changed = add(x.Val) || changed
+					}
+					if al, ok := x.Addr.(*ssa.Alloc); ok && set[al] {
+						changed = add(x.Val) || changed
+					}
+				case *ssa.MapUpdate:
+					if base := localBase(x.Map); base != nil && set[base] {
+						changed = add(x.Value) || changed
+					}
+				}
+				v, ok := ins.(ssa.Value)
+				if !ok || !set[v] {
+					continue
+				}
+				switch x := v.(type) {
+				case *ssa.Phi:
+					for _, e := range x.Edges {
+						changed = add(e) || changed
+					}
+				case *ssa.ChangeType:
+					changed = add(x.X) || changed
+				case *ssa.MakeInterface:
+					changed = add(x.X) || changed
+				case *ssa.Convert:
+					changed = add(x.X) || changed
+				case *ssa.ChangeInterface:
+					changed = add(x.X) || changed
+				case *ssa.TypeAssert:
+					changed = add(x.X) || changed
+				case *ssa.Slice:
+					changed = add(x.X) || changed
+				case *ssa.Extract:
+					changed = add(x.Tuple) || changed
+				case *ssa.Field:
+					changed = add(x.X) || changed
+				case *ssa.FieldAddr:
+					changed = add(x.X) || changed
+				case *ssa.IndexAddr:
+					changed = add(x.X) || changed
+				case *ssa.Index:
+					changed = add(x.X) || changed
+				case *ssa.Lookup:
+					changed = add(x.X) || changed
+				case *ssa.Range:
+					changed = add(x.X) || changed
+				case *ssa.Next:
+					changed = add(x.Iter) || changed
+				case *ssa.UnOp:
+					if x.Op == token.MUL {
+						changed = add(x.X) || changed
+						if b := localBase(storeBase(x.X)); b != nil {
+							changed = add(b) || changed
+						}
+					}
+				case *ssa.Call:
+					c := x.Common()
+					if bi, ok := c.Value.(*ssa.Builtin); ok {
+						if bi.Name() == "append" {
+							for _, arg := range c.Args {
+								changed = add(arg) || changed
+							}
+						}
+						continue
+					}
+					args := callArgs(c)
+					for _, g := range a.calleesOf(x) {
+						sg := a.sums[g]
+						if sg == nil {
+							continue
+						}
+						for _, r := range sg.Ret {
+							for j, arg := range args {
+								if (r.Params|r.Delivered)&bit(j) != 0 {
+									changed = add(arg) || changed
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return set
+}
+
+// computeReadScope: the flow facts to a fixpoint, then each function's reach set.
+func (a *analysis) computeReadScope() {
+	rs := &readScope{ret: map[*ssa.Function][]bool{}, param: map[*ssa.Function][]bool{}, cb: map[*ssa.Function][]bool{}, cell: map[*ssa.Function][]bool{}, field: map[fieldKey]bool{}, under: map[*ssa.Function]bool{}}
+	// Functions that run under a read exit.
+	var queue []*ssa.Function
+	for _, fn := range a.fns {
+		if isExit(fn) {
+			rs.under[fn] = true
+			queue = append(queue, fn)
+		}
+	}
+	for len(queue) > 0 {
+		fn := queue[0]
+		queue = queue[1:]
+		for _, b := range fn.Blocks {
+			for _, ins := range b.Instrs {
+				if call, ok := ins.(ssa.CallInstruction); ok {
+					for _, g := range a.calleesOf(call) {
+						if !rs.under[g] {
+							rs.under[g] = true
+							queue = append(queue, g)
+						}
+					}
+				}
+				if mc, ok := ins.(*ssa.MakeClosure); ok {
+					if g, ok := mc.Fn.(*ssa.Function); ok && !rs.under[g] {
+						rs.under[g] = true
+						queue = append(queue, g)
+					}
+				}
+			}
+		}
+	}
+	set := func(m map[*ssa.Function][]bool, fn *ssa.Function, n, i int) bool {
+		f := flags(m, fn, n)
+		if i >= len(f) || f[i] {
+			return false
+		}
+		f[i] = true
+		return true
+	}
+	sets := map[*ssa.Function]map[ssa.Value]bool{}
+	for round := 0; round < 40; round++ {
+		changed := false
+		for _, fn := range a.fns {
+			r := a.reachSet(fn, rs)
+			sets[fn] = r
+			for j, p := range fn.Params {
+				if r[p] {
+					changed = set(rs.param, fn, len(fn.Params), j) || changed
+				}
+			}
+			for _, b := range fn.Blocks {
+				for _, ins := range b.Instrs {
+					switch x := ins.(type) {
+					case *ssa.MakeClosure:
+						g, ok := x.Fn.(*ssa.Function)
+						if !ok {
+							continue
+						}
+						for i, bnd := range x.Bindings {
+							if r[bnd] {
+								changed = set(rs.cell, g, len(g.FreeVars), i) || changed
+							}
+						}
+					case *ssa.UnOp:
+						if x.Op == token.MUL && r[x] {
+							if k, ok := fieldOf(x.X); ok && !rs.field[k] {
+								rs.field[k], changed = true, true
+							}
+						}
+					}
+					call, ok := ins.(ssa.CallInstruction)
+					if !ok {
+						continue
+					}
+					args := callArgs(call.Common())
+					for _, g := range a.calleesOf(call) {
+						nres := g.Signature.Results().Len()
+						if v, ok := call.(*ssa.Call); ok {
+							if nres == 1 && r[v] {
+								changed = set(rs.ret, g, nres, 0) || changed
+							}
+							if v.Referrers() != nil {
+								for _, u := range *v.Referrers() {
+									if ex, ok := u.(*ssa.Extract); ok && r[ex] {
+										changed = set(rs.ret, g, nres, ex.Index) || changed
+									}
+								}
+							}
+						}
+						for k, arg := range args {
+							if k >= len(g.Params) {
+								continue
+							}
+							if _, isFunc := arg.Type().Underlying().(*types.Signature); !isFunc {
+								continue
+							}
+							reaches := false
+							if pk := paramIndex(fn, arg); pk >= 0 && (exitCallback(fn, pk) || flags(rs.cb, fn, len(fn.Params))[pk]) {
+								reaches = true
+							}
+							if h := a.funcOf(arg); h != nil {
+								for _, pr := range rs.param[h] {
+									reaches = reaches || pr
+								}
+							}
+							if reaches {
+								changed = set(rs.cb, g, len(g.Params), k) || changed
+							}
+						}
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	a.reach = sets
+}
+
+// inReadScope: a member at pos in fn concerns a value that reaches a reader.
+// With no instruction at pos (a function-level member), it counts.
+func (a *analysis) inReadScope(fn *ssa.Function, pos token.Pos) bool {
+	r := a.reach[fn]
+	s := a.states[fn]
+	found := false
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instrs {
+			if ins.Pos() != pos {
+				continue
+			}
+			found = true
+			var roots []ssa.Value
+			switch x := ins.(type) {
+			case *ssa.Return:
+				roots = append(roots, x.Results...)
+			case *ssa.Store:
+				roots = append(roots, x.Val)
+			case *ssa.MapUpdate:
+				roots = append(roots, x.Value)
+			case ssa.Value:
+				roots = append(roots, x)
+			case ssa.CallInstruction:
+				roots = append(roots, callArgs(x.Common())...)
+			}
+			if len(roots) == 0 {
+				return true
+			}
+			if s == nil {
+				return true
+			}
+			for v := range a.derived(fn, s, roots, true) {
+				if r[v] {
+					return true
+				}
+			}
+			// The population a reached element belongs to, and a reached
+			// container holding the value.
+			for _, root := range roots {
+				if r[root] {
+					return true
+				}
+			}
+		}
+	}
+	return !found
+}
+
 // ---------------------------------------------------------------- report
 
 type hit struct {
@@ -3407,6 +3893,7 @@ type report struct {
 	SummaryRounds   int               `json:"summary_rounds"`
 	Converged       bool              `json:"summaries_converged"`
 	Owners          []string          `json:"owners"`
+	OutOfScope      map[string]int    `json:"out_of_read_scope"`
 	OwnerCandidates []string          `json:"owner_candidates"`
 	Counts          map[string]int    `json:"counts"`
 	Hits            []hit             `json:"hits"`
@@ -3611,8 +4098,14 @@ func main() {
 	ownerReports := a.ownerChecks()
 	overwrite := a.overwrites()
 	callbackCopy := a.copiesToCallback()
+	a.computeReadScope()
 	seenHit := map[string]bool{}
+	outOfScope := map[string]int{}
 	add := func(class string, fn *ssa.Function, p token.Pos, detail string) {
+		if !strings.HasPrefix(detail, "a retained value") && !a.inReadScope(fn, p) {
+			outOfScope[class]++
+			return
+		}
 		file, line := pos(fn, p)
 		key := class + "|" + fullName(fn) + "|" + file + fmt.Sprint(line) + "|" + detail
 		if seenHit[key] {
@@ -4081,6 +4574,7 @@ func main() {
 		}
 		r.Controls[c.class+" "+c.fn] = state
 	}
+	r.OutOfScope = outOfScope
 	data, err := json.MarshalIndent(r, "", " ")
 	if err != nil {
 		panic(err)
