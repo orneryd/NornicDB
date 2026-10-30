@@ -158,7 +158,7 @@ func TestSubstituteWithWhereLabelTests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, substituteWithWhereLabelTests(tc.input, values))
+			assert.Equal(t, tc.want, substituteWithWhereLabelTests(originalBraceView(tc.input), values))
 		})
 	}
 }
@@ -223,7 +223,7 @@ func TestEvaluateWithWhereConditionConcurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			tc := predicates[i%len(predicates)]
-			got := exec.evaluateWithWhereCondition(ctx, tc.clause, values)
+			got := exec.evaluateWithWhereCondition(ctx, originalBraceView(tc.clause), values)
 			assert.Equal(t, tc.want, got, "predicate %q under concurrency", tc.clause)
 		}(i)
 	}
@@ -326,7 +326,7 @@ func TestEvaluateWithWhereConditionResolvesBoundProperties(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, exec.evaluateWithWhereCondition(ctx, tc.clause, tc.values))
+			assert.Equal(t, tc.want, exec.evaluateWithWhereCondition(ctx, originalBraceView(tc.clause), tc.values))
 		})
 	}
 }

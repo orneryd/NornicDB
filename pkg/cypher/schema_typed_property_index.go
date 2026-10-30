@@ -10,10 +10,10 @@ import (
 
 func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	kind := storage.IndexKindText
-	if startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
+	if startsWithKeywords(statementBraceView(ctx, cypher), "CREATE", "POINT INDEX") {
 		kind = storage.IndexKindPoint
 	}
-	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE "+string(kind)+" INDEX")
+	parsed, err := e.parseCreateIndexDDL(statementBraceView(ctx, cypher), "CREATE "+string(kind)+" INDEX")
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, c
 	if name == "" {
 		name = fmt.Sprintf("index_%s_%s_%s", label, parsed.properties[0], lowerASCII(string(kind)))
 	}
-	create, err := e.admitIndexCreation(cypher, name, string(kind), label, parsed.properties, entityType)
+	create, err := e.admitIndexCreation(statementBraceView(ctx, cypher), name, string(kind), label, parsed.properties, entityType)
 	if err != nil {
 		return nil, err
 	}

@@ -35,7 +35,9 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -101,11 +103,12 @@ func (h *IndexHint) String() string {
 //	// hints = [{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}]
 //	// cleanQuery = "MATCH (n:Person)  WHERE n.name = 'Alice' RETURN n"
 func ParseIndexHints(query string) ([]IndexHint, string) {
+	view := inputBraceView(context.Background(), query, cyphertext.AcceptedSource)
 	var hints []IndexHint
 	var clean strings.Builder
 	pos := 0
 	for {
-		usingIdx := keywordIndexFrom(query, "USING", pos, defaultKeywordScanOpts())
+		usingIdx := keywordIndexFrom(query, "USING", pos, defaultKeywordScanOpts(view))
 		if usingIdx < 0 {
 			clean.WriteString(query[pos:])
 			break

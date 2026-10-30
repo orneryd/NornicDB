@@ -38,8 +38,8 @@ type traversalOptRow struct {
 // optionalMatchClause is a single OPTIONAL MATCH clause: its relationship
 // pattern and the optional trailing WHERE predicate.
 type optionalMatchClause struct {
-	pattern string
-	where   string
+	pattern braceView
+	where   braceView
 }
 
 // optionalClauseEndpoints is the fully parsed form of one OPTIONAL MATCH
@@ -54,8 +54,8 @@ type optionalClauseEndpoints struct {
 	direction string // "out", "in", or "both", relative to source
 }
 
-func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, predicate string, row traversalOptRow) bool {
-	if strings.TrimSpace(predicate) == "" {
+func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, predicate braceView, row traversalOptRow) bool {
+	if predicate.trim().empty() {
 		return true
 	}
 	graphValues := util.SafePreallocSum(len(row.nodes), len(row.rels))
@@ -71,9 +71,9 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 	}
 	predicate = substituteWithWhereLabelTests(predicate, values)
 	if value, evaluated := e.evaluateRowExpressionWithContext(ctx, predicate, pipelineRow(values)); evaluated {
-		return predicateValueIsTrue(ctx, value, predicate)
+		return predicateValueIsTrue(ctx, value, predicate.text())
 	}
-	return predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels), predicate)
+	return predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels), predicate.text())
 }
 
 // splitOptionalMatchClauses splits the text that follows the first
@@ -81,26 +81,26 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 // individual clauses. Each clause's own WHERE predicate is separated from its
 // pattern. The first clause has no leading "OPTIONAL MATCH" keyword because
 // the caller consumed it.
-func splitOptionalMatchClauses(section string) []optionalMatchClause {
+func splitOptionalMatchClauses(section braceView) []optionalMatchClause {
 	var clauses []optionalMatchClause
-	rest := strings.TrimSpace(section)
-	for rest != "" {
+	rest := section.trim()
+	for !rest.empty() {
 		clauseText := rest
 		next := findMultiWordKeywordIndex(rest, "OPTIONAL", "MATCH")
 		if next > 0 {
-			clauseText = strings.TrimSpace(rest[:next])
-			after := rest[next:]
+			clauseText = rest.window(0, next).trim()
+			after := rest.window(next, len(rest.text()))
 			mIdx := findKeywordIndex(after, "MATCH")
-			rest = strings.TrimSpace(after[mIdx+len("MATCH"):])
+			rest = after.window(mIdx+len("MATCH"), len(after.text())).trim()
 		} else {
-			rest = ""
+			rest = rest.window(0, 0)
 		}
-		clause := optionalMatchClause{pattern: clauseText}
+		clause := optionalMatchClause{pattern: clauseText, where: clauseText.window(0, 0)}
 		if wIdx := findKeywordIndex(clauseText, "WHERE"); wIdx > 0 {
-			clause.where = strings.TrimSpace(clauseText[wIdx+len("WHERE"):])
-			clause.pattern = strings.TrimSpace(clauseText[:wIdx])
+			clause.where = clauseText.window(wIdx+len("WHERE"), len(clauseText.text())).trim()
+			clause.pattern = clauseText.window(0, wIdx).trim()
 		}
-		if clause.pattern != "" {
+		if !clause.pattern.empty() {
 			clauses = append(clauses, clause)
 		}
 	}
@@ -111,9 +111,10 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 // MATCH pattern, e.g. "rel" from "(a)-[rel:INHERITS]->(b)". Anonymous
 // relationships ("[:TYPE]", "[*1..2]") contribute nothing. A backtick-quoted
 // variable (`r r`) is returned as written.
-func extractRelationshipVariables(matchClause string) []string {
+func extractRelationshipVariables(view braceView) []string {
+	matchClause := view.text()
 	var vars []string
-	for i, end := readRelationshipBracket(matchClause, 0, requireClosedRelationship); i >= 0; i, end = readRelationshipBracket(matchClause, end+1, requireClosedRelationship) {
+	for i, end := readRelationshipBracket(view, 0, requireClosedRelationship); i >= 0; i, end = readRelationshipBracket(view, end+1, requireClosedRelationship) {
 		j := i + 1
 		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
@@ -126,7 +127,7 @@ func extractRelationshipVariables(matchClause string) []string {
 			next++
 		}
 		if next < len(matchClause) &&
-			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{' || matchClause[next] == '$') {
+			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || cyphertext.IsOpenBrace(matchClause[next]) || matchClause[next] == '$') {
 			vars = append(vars, name)
 		}
 	}
@@ -136,11 +137,12 @@ func extractRelationshipVariables(matchClause string) []string {
 // parseOptionalClauseEndpoints parses one OPTIONAL MATCH relationship pattern
 // into both endpoint node patterns plus relationship variable, type, and
 // direction. It returns an error for patterns without two node endpoints.
-func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
+func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, view braceView) (optionalClauseEndpoints, error) {
 	eps := optionalClauseEndpoints{direction: "both"}
 	// Anonymous relationships (-->, <--, --) become bracketed ones, so the
 	// relationship bracket below always carries the direction.
-	pattern = normalizeAnonymousTraversalRelationships(pattern)
+	view = normalizeAnonymousTraversalView(view)
+	pattern := view.text()
 
 	openIdx := strings.Index(pattern, "(")
 	if openIdx < 0 {
@@ -151,13 +153,14 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
 	var parseErr error
-	eps.source, parseErr = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	eps.source, parseErr = e.parseNodePattern(ctx, view.window(openIdx, closeIdx+1))
 	if parseErr != nil {
 		return eps, parseErr
 	}
 
-	rest := pattern[closeIdx+1:]
-	if relOpen, relClose := readRelationshipBracket(rest, 0, requireClosedRelationship); relOpen >= 0 {
+	restView := view.window(closeIdx+1, len(pattern))
+	rest := restView.text()
+	if relOpen, relClose := readRelationshipBracket(restView, 0, requireClosedRelationship); relOpen >= 0 {
 		// The arrows around the relationship give the direction.
 		if strings.HasSuffix(strings.TrimSpace(rest[:relOpen]), "<-") {
 			eps.direction = "in"
@@ -169,8 +172,9 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 		relStr := rest[relOpen+1 : relClose]
 		if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
 			eps.relVar = strings.TrimSpace(relStr[:colonIdx])
-			relType := strings.TrimSpace(relStr[colonIdx+1:])
-			if propIdx := strings.Index(relType, "{"); propIdx >= 0 {
+			relTypeView := restView.window(relOpen+1+colonIdx+1, relClose).trim()
+			relType := relTypeView.text()
+			if propIdx, _, _, found := relTypeView.firstBrace(); found {
 				relType = strings.TrimSpace(relType[:propIdx])
 			}
 			if starIdx := strings.Index(relType, "*"); starIdx >= 0 {
@@ -182,7 +186,8 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 		} else {
 			eps.relVar = strings.TrimSpace(relStr)
 		}
-		rest = rest[relClose+1:]
+		restView = restView.window(relClose+1, len(rest))
+		rest = restView.text()
 	}
 	tOpen := strings.Index(rest, "(")
 	if tOpen < 0 {
@@ -192,7 +197,7 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if tClose < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.target, parseErr = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	eps.target, parseErr = e.parseNodePattern(ctx, restView.window(tOpen, tClose+1))
 	if parseErr != nil {
 		return eps, parseErr
 	}

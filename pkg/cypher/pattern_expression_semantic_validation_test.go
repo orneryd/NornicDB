@@ -33,9 +33,9 @@ func TestPatternExpressionsAreRejectedOutsideWhere(t *testing.T) {
 }
 
 func TestPatternComprehensionsRemainValidProjectionExpressions(t *testing.T) {
-	require.False(t, containsIllegalProjectedPatternExpression("[p = (n)-->() | p]"))
-	require.False(t, containsIllegalProjectedPatternExpression("[x IN nodes(p) | size([(x)-->(:Y) | 1])]"))
-	require.True(t, containsIllegalProjectedPatternExpression("(n)-[]->()"))
+	require.False(t, containsIllegalProjectedPatternExpression(originalBraceView("[p = (n)-->() | p]")))
+	require.False(t, containsIllegalProjectedPatternExpression(originalBraceView("[x IN nodes(p) | size([(x)-->(:Y) | 1])]")))
+	require.True(t, containsIllegalProjectedPatternExpression(originalBraceView("(n)-[]->()")))
 }
 
 func TestWithProjectionRequiresUniqueNamedExpressions(t *testing.T) {

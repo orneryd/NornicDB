@@ -152,7 +152,7 @@ func TestParseTraversalPatternStateMachine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.parseTraversalPatternStateMachine(ctx, tt.pattern)
+			result := exec.parseTraversalPatternStateMachine(ctx, originalBraceView(tt.pattern))
 
 			if tt.expectNil {
 				assert.Nil(t, result)
@@ -387,7 +387,7 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.evaluateWhereOnPath(ctx, tt.whereClause, pathContext)
+			result := exec.evaluateWhereOnPath(ctx, originalBraceView(tt.whereClause), pathContext)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -442,22 +442,22 @@ func TestFilterPathsByWhere(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("filter by end node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "i.name = 'Informal Register (tú)'", nil)
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, expressionBraceView("i.name = 'Informal Register (tú)'"), nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("filter by start node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score < 90", nil)
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, expressionBraceView("e.score < 90"), nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("no filter", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "", nil)
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, originalBraceView(""), nil)
 		assert.Len(t, filtered, 2)
 	})
 
 	t.Run("filter all out", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score > 100", nil)
+		filtered := exec.filterPathsByWhere(ctx, paths, matches, expressionBraceView("e.score > 100"), nil)
 		assert.Len(t, filtered, 0)
 	})
 }

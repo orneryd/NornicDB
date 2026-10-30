@@ -400,7 +400,7 @@ func TestGh713AggregatePrefixScanning(t *testing.T) {
 	} {
 		t.Run(test.expression, func(t *testing.T) {
 			var calls []string
-			for _, span := range findAggregateSpans(test.expression) {
+			for _, span := range findAggregateSpans(originalBraceView(test.expression)) {
 				calls = append(calls, test.expression[span.start:span.end])
 			}
 			require.Equal(t, test.calls, calls)
@@ -409,13 +409,13 @@ func TestGh713AggregatePrefixScanning(t *testing.T) {
 	for _, name := range traversalAggFnNames {
 		for _, prefix := range []string{name.lower, name.upper} {
 			expression := prefix + "(n)"
-			spans := findAggregateSpans(expression)
+			spans := findAggregateSpans(originalBraceView(expression))
 			require.Equal(t, []aggregateSpan{{start: 0, end: len(expression)}}, spans)
-			require.Empty(t, findAggregateSpans("apoc."+expression))
+			require.Empty(t, findAggregateSpans(originalBraceView("apoc."+expression)))
 		}
 	}
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		if spans := findAggregateSpans("n.NAME + 'COUNT'"); len(spans) != 0 {
+		if spans := findAggregateSpans(expressionBraceView("n.NAME + 'COUNT'")); len(spans) != 0 {
 			panic("unexpected aggregate")
 		}
 	}))
@@ -426,7 +426,7 @@ func BenchmarkGh713AggregatePrefixScanning(b *testing.B) {
 		b.Run(expression, func(b *testing.B) {
 			b.ReportAllocs()
 			for iteration := 0; iteration < b.N; iteration++ {
-				findAggregateSpans(expression)
+				findAggregateSpans(originalBraceView(expression))
 			}
 		})
 	}
@@ -449,7 +449,7 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, ok = parseCartesianNullTerm("a.name = 1")
 		require.False(t, ok)
 
-		parts := splitTopLevelAndConjuncts("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
+		parts := splitTopLevelAndConjuncts(expressionBraceView("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]"))
 		require.Equal(t, []string{"a.x = 1", "'x AND y' = 'x AND y'", "[1,2] = [1,2]"}, parts)
 
 		vv, pp, ok := parseCartesianVarProp(" a.`p` ")
@@ -592,13 +592,13 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 			},
 		}
 
-		out := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
+		out := exec.applyCartesianWherePushdown(context.Background(), patternMatches, expressionBraceView("a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id"))
 		require.Len(t, out[0].nodes, 1)
 		require.Equal(t, storage.NodeID("a1"), out[0].nodes[0].ID)
 		require.Len(t, out[1].nodes, 1)
 		require.Equal(t, storage.NodeID("b1"), out[1].nodes[0].ID)
 
-		conflicted := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.v IS NULL AND a.v IS NOT NULL")
+		conflicted := exec.applyCartesianWherePushdown(context.Background(), patternMatches, expressionBraceView("a.v IS NULL AND a.v IS NOT NULL"))
 		require.Empty(t, conflicted[0].nodes)
 	})
 }
@@ -813,12 +813,12 @@ func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {
 	require.NoError(t, err)
 	nodeMap := map[string]*storage.Node{"a": a, "b": b}
 
-	require.True(t, exec.evaluateWhereForContext(ctx, "(a)-[:R]->(b)", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:R]-(a)", nodeMap))
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)<-[:R]-(b)", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 1 AND b.x = 2", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 3 OR b.x = 2", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "NOT a.x = 3", nodeMap))
+	require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView("(a)-[:R]->(b)"), nodeMap))
+	require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView("(b)<-[:R]-(a)"), nodeMap))
+	require.False(t, exec.evaluateWhereForContext(ctx, originalBraceView("(a)<-[:R]-(b)"), nodeMap))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.x = 1 AND b.x = 2"), nodeMap))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.x = 3 OR b.x = 2"), nodeMap))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("NOT a.x = 3"), nodeMap))
 }
 
 func TestCartesianOffsetArithmeticExact(t *testing.T) {

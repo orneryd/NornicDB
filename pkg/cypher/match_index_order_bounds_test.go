@@ -53,7 +53,7 @@ func TestImpliedPropertyBounds(t *testing.T) {
 		"n.t > 3 OR n.t > 7":                      lower(int64(3), false),
 		"n.t < 3 OR n.t < 7":                      upper(int64(7), false),
 	} {
-		require.Equal(t, want, impliedPropertyBounds("n", "t", where, params), where)
+		require.Equal(t, want, impliedPropertyBounds("n", "t", originalBraceView(where), params), where)
 	}
 }
 

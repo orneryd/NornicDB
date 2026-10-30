@@ -10,7 +10,7 @@ import (
 func TestIdentityFunctionNamesPreserveCodeUnits(t *testing.T) {
 	units := []string{"\xed\xa0\x80", "\xed\xa0\x81", "\xed\xb0\x80", "\ufffd", `\ud800`, "😀"}
 	mu.Lock()
-	previous := map[string]Func{}
+	previous := map[string]registeredFunction{}
 	present := map[string]bool{}
 	for _, unit := range units {
 		for _, key := range []string{"identity_units." + unit, strings.ToLower("identity_units." + unit)} {

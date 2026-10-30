@@ -23,7 +23,12 @@ import (
 // compiler turns the modulo into a single AND.
 const bfsCancelCheckMask = 0xFF
 
-func extractShortestPathCall(cypher string) (string, string, int, bool) {
+func extractShortestPathCall(view braceView) (string, braceView, int, bool) {
+	name, span, index, found := shortestPathCallSpan(view.text())
+	return name, view.spanWindow(span), index, found
+}
+
+func shortestPathCallSpan(cypher string) (string, cyphertext.Span, int, bool) {
 	upperCypher := upperASCII(cypher)
 	// Upper-case literals avoid upperASCII(funcName) allocations on every
 	// statement; the compiler places this constant slice in static data.
@@ -50,17 +55,17 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 			closeParen := findMatchingParen(cypher, openParen)
 			if closeParen < 0 {
 				if upperFunc == "ALLSHORTESTPATHS" {
-					return "allShortestPaths", "", idx, false
+					return "allShortestPaths", cyphertext.Span{}, idx, false
 				}
-				return "shortestPath", "", idx, false
+				return "shortestPath", cyphertext.Span{}, idx, false
 			}
 			if upperFunc == "ALLSHORTESTPATHS" {
-				return "allShortestPaths", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
+				return "allShortestPaths", cyphertext.TrimWhitespaceSpan(cypher, cyphertext.Span{Start: openParen + 1, End: closeParen}), idx, true
 			}
-			return "shortestPath", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
+			return "shortestPath", cyphertext.TrimWhitespaceSpan(cypher, cyphertext.Span{Start: openParen + 1, End: closeParen}), idx, true
 		}
 	}
-	return "", "", -1, false
+	return "", cyphertext.Span{}, -1, false
 }
 
 // evaluateShortestPathValue evaluates shortestPath(...) / allShortestPaths(...)
@@ -71,7 +76,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 // (shortestPathsBetween, #863). The value evaluator and the row evaluator
 // (WHERE) both call it. handled=false lets the ordinary evaluator report its
 // own error when the argument is not a traversal pattern.
-func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName string, pattern braceView, nodes map[string]*storage.Node) (interface{}, bool, error) {
 	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil {
 		return nil, false, nil
@@ -97,7 +102,7 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	}
 	pathVariable := generatedVariablePrefix + "sp_path"
 	startVariable, endVariable := match.StartNode.variable, match.EndNode.variable
-	plan, ok := shortestPathPlanContext(ctx, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, "")
+	plan, ok := shortestPathPlanContext(ctx, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, pattern.window(0, 0))
 	if !ok {
 		if ctx.Err() != nil {
 			return nil, true, ctx.Err()

@@ -49,12 +49,13 @@ var typePredicateOperators = []struct {
 // splitTypePredicate splits `operand IS [NOT] :: TYPE` at its top-level type
 // predicate operator. ok is false when expr is not a type predicate; err is
 // a SyntaxError for a type that cannot be parsed.
-func splitTypePredicate(expr string) (operand string, negated bool, spec cypherTypeSpec, ok bool, err error) {
+func splitTypePredicate(view braceView) (operand string, negated bool, spec cypherTypeSpec, ok bool, err error) {
+	expr := view.text()
 	if !strings.Contains(expr, "::") && !containsFold(expr, " TYPED ") {
 		return "", false, cypherTypeSpec{}, false, nil
 	}
 	for _, operator := range typePredicateOperators {
-		left, right, found := splitByOperatorOutsideCase(expr, operator.text, true, true)
+		left, right, found := splitByOperatorOutsideCase(view, operator.text, true, true)
 		if !found || strings.TrimSpace(left) == "" {
 			continue
 		}

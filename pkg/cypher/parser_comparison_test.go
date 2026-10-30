@@ -150,7 +150,7 @@ func benchmarkParserValidationIsolation(b *testing.B, parserName string, validat
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.query)))
 			if parserName == "Nornic" {
-				if err := exec.validateSyntax(context.Background(), tc.query, false, syntaxNativeCore); err != nil {
+				if err := exec.validateSyntax(context.Background(), originalBraceView(tc.query), false, syntaxNativeCore); err != nil {
 					b.Fatalf("preflight native syntax validation failed for %s: %v", tc.name, err)
 				}
 			} else {
@@ -173,7 +173,7 @@ func benchmarkParserValidationIsolation(b *testing.B, parserName string, validat
 func BenchmarkParserValidationIsolation(b *testing.B) {
 	exec := &StorageExecutor{}
 	benchmarkParserValidationIsolation(b, "Nornic", func(query string) error {
-		return exec.validateSyntax(context.Background(), query, false, syntaxNativeCore)
+		return exec.validateSyntax(context.Background(), originalBraceView(query), false, syntaxNativeCore)
 	})
 	benchmarkParserValidationIsolation(b, "ANTLR", antlrparser.Validate)
 }

@@ -7,23 +7,24 @@ import (
 
 import "strings"
 
-func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
+func validateReturnOrderBySemanticScope(ctx context.Context, clause braceView) error {
 	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)
 }
 
 // Retained imports are available throughout a subquery, including a DISTINCT
 // or aggregating horizon's ORDER BY. They remain outside its projection key.
-func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
+func validateReturnOrderBySemanticScopeIn(ctx context.Context, view braceView, retained typeScope) error {
+	bodyView := view.clauseBody("RETURN")
+	body := bodyView.text()
+	orderIndex := topLevelKeywordIndex(bodyView, "ORDER BY")
 	if orderIndex < 0 {
 		return nil
 	}
-	projectionBody := strings.TrimSpace(body[:orderIndex])
-	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
+	projectionBody := bodyView.window(0, orderIndex).trim()
+	orderBody := bodyView.window(keywordEndAt(body, orderIndex, "ORDER BY"), len(body)).trim()
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
-			orderBody = strings.TrimSpace(orderBody[:index])
+			orderBody = orderBody.window(0, index).trim()
 		}
 	}
 	projectionBody, distinct := cutDistinct(projectionBody)
@@ -36,9 +37,9 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	// star: a * item projects every variable in scope, so ORDER BY may use
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
 	star := false
-	for _, item := range splitTopLevelComma(projectionBody) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
-		expression, alias := itemSource.expression, itemSource.alias
+	for _, item := range projectionBody.commaViews() {
+		product := readProjectionItemSource(ctx, item, projectionAdmitted)
+		expression, alias := product.expression, product.alias
 		if expression == "*" {
 			star = true
 			continue
@@ -46,9 +47,9 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
 		}
-		if containsAggregateFunc(expression) {
+		if containsAggregateFunc(product.view) {
 			hasProjectionAggregate = true
-			for _, call := range semanticAggregateCalls(expression) {
+			for _, call := range semanticAggregateCalls(product.view) {
 				projectedAggregates[canonicalSemanticExpression(call)] = struct{}{}
 			}
 			continue
@@ -57,14 +58,14 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 			directExpressions[reference] = struct{}{}
 			continue
 		}
-		for _, reference := range semanticFreeReferences(expression) {
+		for _, reference := range semanticFreeReferences(product.view) {
 			complexReferences[reference] = struct{}{}
 		}
 	}
 
 	for _, term := range parseOrderByClause(orderBody) {
-		expression := term.column
-		hasOrderAggregate := containsAggregateFunc(expression)
+		expression := term.view.text()
+		hasOrderAggregate := containsAggregateFunc(term.view)
 		if hasOrderAggregate && !hasProjectionAggregate {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -76,11 +77,12 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 			continue
 		}
 		if hasOrderAggregate {
-			for _, call := range semanticAggregateCalls(expression) {
+			for _, span := range findAggregateSpans(term.view) {
+				call := strings.TrimSpace(expression[span.start:span.end])
 				if _, projected := projectedAggregates[canonicalSemanticExpression(call)]; projected {
 					continue
 				}
-				references := semanticFreeReferences(call)
+				references := semanticFreeReferences(term.view.window(span.start, span.end).trim())
 				if len(references) > 0 {
 					return createUndefinedVariableError(strings.SplitN(references[0], ".", 2)[0])
 				}
@@ -91,11 +93,11 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 				)
 			}
 		}
-		scalarExpression := expression
+		scalarExpression := term.view
 		if hasOrderAggregate {
-			scalarExpression = removeAggregateCalls(expression)
+			scalarExpression = term.view.mask(removeAggregateCalls(term.view))
 		}
-		for _, reference := range semanticFreeReferencesIn(expression, scalarExpression) {
+		for _, reference := range semanticFreeReferencesIn(term.view, scalarExpression) {
 			if _, projectedAlias := aliases[reference]; projectedAlias {
 				continue
 			}
@@ -126,8 +128,9 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 
 // semanticAggregateCalls is the text of expression's aggregate calls
 // (findAggregateSpans).
-func semanticAggregateCalls(expression string) []string {
-	spans := findAggregateSpans(expression)
+func semanticAggregateCalls(view braceView) []string {
+	expression := view.text()
+	spans := findAggregateSpans(view)
 	calls := make([]string, 0, len(spans))
 	for _, span := range spans {
 		calls = append(calls, strings.TrimSpace(expression[span.start:span.end]))
@@ -156,51 +159,52 @@ func canonicalSemanticExpression(expression string) string {
 	return normalized.String()
 }
 
-func validateReturnAggregationSemantics(ctx context.Context, body string) error {
+func validateReturnAggregationSemantics(ctx context.Context, body braceView) error {
 	return validateReturnAggregationSemanticsIn(ctx, body, nil)
 }
 
 // validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
 // with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
 // enclosing query's variables aren't grouping keys.
-func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
+func validateReturnAggregationSemanticsIn(ctx context.Context, bodyView braceView, outer typeScope) error {
+	body := bodyView.text()
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(bodyView, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
+	bodyView = bodyView.window(0, end).trim()
+	bodyView, _ = cutDistinct(bodyView)
 	directExpressions := make(map[string]struct{})
 	aliases := make(map[string]struct{})
-	expressions := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
-		expression, alias := itemSource.expression, itemSource.alias
-		expressions = append(expressions, expression)
+	expressions := make([]braceView, 0)
+	for _, item := range bodyView.commaViews() {
+		product := readProjectionItemSource(ctx, item, projectionAdmitted)
+		expression, alias := product.expression, product.alias
+		expressions = append(expressions, product.view)
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
 		}
-		if !containsAggregateFunc(expression) {
+		if !containsAggregateFunc(product.view) {
 			if reference := directSemanticReference(expression); reference != "" {
 				directExpressions[reference] = struct{}{}
 			}
 		}
 	}
-	for _, expression := range expressions {
-		if !containsAggregateFunc(expression) {
+	for _, input := range expressions {
+		if !containsAggregateFunc(input) {
 			continue
 		}
-		if aggregateContains(expression, containsAggregateFunc) {
+		if aggregateContains(input, containsAggregateFunc) {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"NestedAggregation",
 				"aggregate functions cannot contain aggregate functions",
 			)
 		}
-		if aggregateContains(expression, func(inner string) bool {
-			return containsFunctionCallNamed(inner, "rand")
+		if aggregateContains(input, func(inner braceView) bool {
+			return containsFunctionCallNamed(inner.text(), "rand")
 		}) {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -211,7 +215,7 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 		// What the projection reads outside its aggregates: removeAggregateCalls
 		// blanks them in place, so a local's scope is read where it is
 		// (x + size(collect([x IN l | x])) reads the outer x).
-		for _, reference := range semanticFreeReferencesIn(expression, removeAggregateCalls(expression)) {
+		for _, reference := range semanticFreeReferencesIn(input, input.mask(removeAggregateCalls(input))) {
 			if _, constant := outer[strings.SplitN(reference, ".", 2)[0]]; constant {
 				continue
 			}
@@ -235,11 +239,12 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 // of expression's aggregate calls (findAggregateSpans: a qualified function
 // such as apoc.coll.sum is not an aggregate, and a subquery's aggregates are
 // its own).
-func aggregateContains(expression string, predicate func(string) bool) bool {
-	for _, span := range findAggregateSpans(expression) {
+func aggregateContains(view braceView, predicate func(braceView) bool) bool {
+	expression := view.text()
+	for _, span := range findAggregateSpans(view) {
 		call := expression[span.start:span.end]
 		open := strings.IndexByte(call, '(')
-		if predicate(call[open+1 : len(call)-1]) {
+		if predicate(view.window(span.start+open+1, span.end-1)) {
 			return true
 		}
 	}
@@ -276,7 +281,7 @@ func directSemanticReference(expression string) string {
 	return ""
 }
 
-func semanticExpressionReferences(expression string) []string {
+func semanticExpressionReferences(expression braceView) []string {
 	references := make([]string, 0, 2)
 	forEachSemanticExpressionReference(expression, func(reference string, _ int) {
 		references = append(references, reference)
@@ -286,7 +291,8 @@ func semanticExpressionReferences(expression string) []string {
 
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
-func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+func forEachSemanticExpressionReference(view braceView, visit func(reference string, at int)) {
+	expression := view.text()
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -327,7 +333,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if cursor < len(expression) && expression[cursor] == '(' {
 			continue
 		}
-		if cursor < len(expression) && expression[cursor] == ':' {
+		if view.syntax.product.MapKeyAt(view.source, cyphertext.Span{Start: start, End: next}) {
 			continue
 		}
 		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
@@ -374,7 +380,7 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 // inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
-func semanticFreeReferences(expression string) []string {
+func semanticFreeReferences(expression braceView) []string {
 	return semanticFreeReferencesIn(expression, expression)
 }
 
@@ -382,8 +388,8 @@ func semanticFreeReferences(expression string) []string {
 // scopes read from scopes, a text of the same length text was blanked from
 // (removeAggregateCalls): blanking reduce(acc = 0, y IN collect(x) | …)'s
 // list would leave no reduce to bind y.
-func semanticFreeReferencesIn(scopes, text string) []string {
-	locals := newLocalReader(scopes)
+func semanticFreeReferencesIn(scopes, text braceView) []string {
+	locals := newLocalReader(scopes.text())
 	free := make([]string, 0, 2)
 	// maskSemanticBraceBodies keeps offsets: each one is the scopes text's.
 	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference string, at int) {
@@ -396,47 +402,34 @@ func semanticFreeReferencesIn(scopes, text string) []string {
 
 // maskSemanticBraceBodies blanks every top-level {...} of expression, and the
 // COUNT / EXISTS / COLLECT keyword of a subquery before one.
-func maskSemanticBraceBodies(expression string) string {
-	if strings.IndexByte(expression, '{') < 0 {
-		return expression
+func maskSemanticBraceBodies(view braceView) braceView {
+	if _, _, _, found := view.firstBrace(); !found {
+		return view
 	}
 	// Classify operands before blanking their bodies, using the same lexical
 	// reader as evaluation so a comment cannot expose COUNT as a variable.
-	expression = maskSubqueryBodies(expression)
+	view = view.mask(maskSubqueryBodies(view))
+	expression := view.text()
 	masked := []byte(expression)
 	for index := 0; index < len(expression); index++ {
-		switch cypherStringLexicalByte(expression[index]) {
-		case cypherStringQuoteClass:
+		switch {
+		case (cypherStringLexicalByte(expression[index])) == cypherStringQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
 			continue
-		case '{':
+		case cyphertext.IsOpenBrace(cypherStringLexicalByte(expression[index])):
 		default:
 			continue
 		}
-		close := cyphertext.FindMatchingDelimiter(expression, index, '{', '}', cyphertext.OpeningDelimiter)
-		if close < 0 {
+		close, found := view.close(index)
+		if !found {
 			break
 		}
 		for blank := index; blank <= close; blank++ {
 			masked[blank] = ' '
 		}
-		end := index
-		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
-			end--
-		}
-		start := end
-		for start > 0 && cyphertext.NamePartAt(expression, start-1) {
-			start--
-		}
-		switch upperASCII(expression[start:end]) {
-		case "COUNT", "EXISTS", "COLLECT":
-			for blank := start; blank < end; blank++ {
-				masked[blank] = ' '
-			}
-		}
 		index = close
 	}
-	return string(masked)
+	return view.mask(string(masked))
 }
 
 // isSemanticLiteralWord reports whether an identifier-shaped word is a
@@ -457,9 +450,9 @@ func isSemanticLiteralWord(value string) bool {
 
 // removeAggregateCalls blanks expression's aggregate calls
 // (findAggregateSpans), leaving what the projection reads outside them.
-func removeAggregateCalls(expression string) string {
-	result := []byte(expression)
-	for _, span := range findAggregateSpans(expression) {
+func removeAggregateCalls(view braceView) string {
+	result := []byte(view.text())
+	for _, span := range findAggregateSpans(view) {
 		for blank := span.start; blank < span.end; blank++ {
 			result[blank] = ' '
 		}

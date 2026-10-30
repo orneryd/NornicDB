@@ -21,7 +21,7 @@ func TestParseMergeProperties(t *testing.T) {
 		"r": {ID: "r1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"weight": int64(7)}},
 	}
 
-	out := parsedTestValue(exec.parseMergeProperties(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx))
+	out := parsedTestValue(exec.parseMergeProperties(ctx, expressionBraceView("{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}"), nodeCtx, relCtx))
 	require.EqualValues(t, int64(42), out["number"])
 	require.Equal(t, "name", out["text"])
 	require.Equal(t, "n.name", out["literal"])
@@ -31,8 +31,8 @@ func TestParseMergeProperties(t *testing.T) {
 	// matching (#810), which it can't do for a value that was dropped.
 	require.Contains(t, out, "gone")
 	require.Nil(t, out["gone"])
-	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx)))
-	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, "", nodeCtx, relCtx)))
+	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, expressionBraceView("{}"), nodeCtx, relCtx)))
+	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, originalBraceView(""), nodeCtx, relCtx)))
 }
 
 func TestExecuteMergeWithContext_AnonymousNodePatternAndChainedNoSpace(t *testing.T) {
@@ -74,15 +74,15 @@ func TestMergeReturnClauseCountHandling_Branches(t *testing.T) {
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": r}),
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": nil}),
 	}
-	result, err := exec.projectMergeReturn(ctx, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
+	result, err := exec.projectMergeReturn(ctx, rows, originalBraceView("RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"c_all", "c_n", "c_r"}, result.Columns)
 	require.Equal(t, [][]interface{}{{int64(2), int64(2), int64(1)}}, result.Rows)
 
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
+	result, err = exec.projectMergeReturn(ctx, rows, originalBraceView("RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1"))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN DISTINCT n.name AS name")
+	result, err = exec.projectMergeReturn(ctx, rows, originalBraceView("RETURN DISTINCT n.name AS name"))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
 }

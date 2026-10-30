@@ -111,11 +111,11 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 		"MATCH (a:Doc), (b:Doc) WHERE a.id = b.id",
 		"MATCH (a:Doc), (b:Doc {id: a.id})",
 	} {
-		_, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{}}, clause)
+		_, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{}}, originalBraceView(clause))
 		require.NoError(t, err)
 		require.False(t, supported, clause)
 	}
-	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
+	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, originalBraceView("MATCH (a:Doc {id: $id}), (b:Doc)"))
 	require.NoError(t, err)
 	require.True(t, supported)
 	retained, completed := materializePipelineSource(context.Background(), source)
@@ -133,7 +133,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 		return false
 	}))
 	require.Equal(t, 1, visited)
-	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
+	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, originalBraceView("MATCH (a:Doc), (b:Doc)"))
 	require.NoError(t, err)
 	require.True(t, supported)
 	empty, completed := materializePipelineSource(context.Background(), nullSource)
@@ -141,7 +141,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	require.Empty(t, empty)
 	canceled, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
 	cancel()
-	canceledSource, supported, err := exec.pipelineNodeProductSource(canceled, []pipelineRow{{}}, "MATCH (a:Doc), (b:Doc)")
+	canceledSource, supported, err := exec.pipelineNodeProductSource(canceled, []pipelineRow{{}}, originalBraceView("MATCH (a:Doc), (b:Doc)"))
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.False(t, canceledSource(func(pipelineRow) bool { t.Error("canceled source yielded a row"); return true }))
@@ -153,7 +153,7 @@ func TestComprehensionStrictPredicateAcrossExecutionRoutes(t *testing.T) {
 	for _, expression := range []string{"[x IN [1,2] WHERE x + 1]", "[x IN [1,2] WHERE x + 1 | x]"} {
 		t.Run(expression, func(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.Background())
-			exec.evaluateExpressionWithContextFull(ctx, expression, nil, nil, nil, nil, nil, 0)
+			exec.evaluateExpressionWithContextFull(ctx, originalBraceView(expression), nil, nil, nil, nil, nil, 0)
 			require.Error(t, getExpressionFailure(ctx))
 			for _, prefix := range []string{"RETURN ", "CREATE (n:StrictComprehension) RETURN "} {
 				_, err := exec.Execute(context.Background(), prefix+expression, nil)

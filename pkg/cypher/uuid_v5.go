@@ -9,13 +9,13 @@ import (
 // uuid.v5, a NornicDB extension (Neo4j and APOC have no name-based UUID):
 // a key that MERGE can deduplicate on.
 func init() {
-	cypherfn.Register("uuid.v5", fnUUIDv5)
+	cypherfn.RegisterInvocation("uuid.v5", fnUUIDv5)
 }
 
 // fnUUIDv5 is uuid.v5(namespace, name): the version 5 (SHA-1, name-based)
 // UUID of name in namespace (RFC 9562), a UUID or its text. The same
 // namespace and name always give the same UUID. Null in, null out.
-func fnUUIDv5(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnUUIDv5(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("uuid.v5", "2", len(args))
 	}

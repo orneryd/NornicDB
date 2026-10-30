@@ -107,7 +107,7 @@ func TestRowPredicateCaseExpectedResults(t *testing.T) {
 				rowValueProgramsDisabled.Store(text)
 				ctx := withExpressionFailureSlot(context.Background())
 				row := map[string]interface{}{"x": int64(1), "y": int64(2), "z": int64(0), rowStatementContextKey: ctx}
-				got := compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+				got := compileRowPredicateProgram(originalBraceView(tc.expression)).holds(exec, ctx, row)
 				rowValueProgramsDisabled.Store(false)
 				if tc.errorText != "" {
 					require.ErrorContains(t, getExpressionFailure(ctx), tc.errorText)
@@ -139,9 +139,9 @@ func TestPerRowReviewUndecidedErrorsRemainErrors(t *testing.T) {
 func TestPerRowReviewSubscriptReceiverBoundary(t *testing.T) {
 	for _, expression := range []string{"[1,null] = [1.0,null]", "[1] <> [2]", "x + [1]"} {
 		open := closingBracketGroupStart(expression)
-		require.Equal(t, -1, rowSubscriptReceiverStart(expression, open), expression)
+		require.Equal(t, -1, rowSubscriptReceiverStart(originalBraceView(expression), open), expression)
 	}
 	for _, expression := range []string{"[1,2][0]", "x[0]", "m[x[0]]", "(x + y)[0]"} {
-		require.GreaterOrEqual(t, rowSubscriptStart(expression), 1, expression)
+		require.GreaterOrEqual(t, rowSubscriptStart(originalBraceView(expression)), 1, expression)
 	}
 }

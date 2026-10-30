@@ -82,14 +82,14 @@ func TestRowPredicateCombinesEqualityWithParenthesizedAlternative(t *testing.T) 
 			"textKey":    "other",
 		}},
 	}
-	require.False(t, exec.evaluateRowPredicate(context.Background(), `o.textKey128 = "needle"`, row))
+	require.False(t, exec.evaluateRowPredicate(context.Background(), expressionBraceView(`o.textKey128 = "needle"`), row))
 	value, ok := rowValue(t, exec, `"unique-key" IS NOT NULL AND o.textKey = "unique-key"`, row)
 	require.True(t, ok)
 	require.Equal(t, false, value)
 	require.False(t, exec.evaluateRowPredicate(context.Background(),
-		`("unique-key" IS NOT NULL AND o.textKey = "unique-key")`, row))
+		originalBraceView(`("unique-key" IS NOT NULL AND o.textKey = "unique-key")`), row))
 	require.False(t, exec.evaluateRowPredicate(context.Background(),
-		`o.textKey128 = "needle" OR ("unique-key" IS NOT NULL AND o.textKey = "unique-key")`, row))
+		expressionBraceView(`o.textKey128 = "needle" OR ("unique-key" IS NOT NULL AND o.textKey = "unique-key")`), row))
 }
 
 func TestRowPredicateCombinesNumericBounds(t *testing.T) {
@@ -98,7 +98,7 @@ func TestRowPredicateCombinesNumericBounds(t *testing.T) {
 		"other": &storage.Node{Properties: map[string]interface{}{"age": int64(25)}},
 	}
 	require.True(t, exec.evaluateRowPredicate(context.Background(),
-		"other.age > 24 AND other.age < 26", row))
+		expressionBraceView("other.age > 24 AND other.age < 26"), row))
 }
 
 func TestNonBooleanWhereExpressionsReturnClassifiedErrors(t *testing.T) {
@@ -177,7 +177,7 @@ func TestPathWhereRejectsNonBooleanProperty(t *testing.T) {
 		"n": {Properties: map[string]interface{}{"id": "string"}},
 	}}
 
-	require.False(t, exec.evaluateWhereOnPath(ctx, "n.id", pathContext))
+	require.False(t, exec.evaluateWhereOnPath(ctx, expressionBraceView("n.id"), pathContext))
 	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
 }
 
@@ -185,7 +185,7 @@ func TestBindingWhereRejectsNonBooleanResult(t *testing.T) {
 	exec := &StorageExecutor{}
 	ctx := withExpressionFailureSlot(context.Background())
 
-	require.False(t, exec.evaluateBindingWhereGeneric(ctx, binding{}, "1", nil))
+	require.False(t, exec.evaluateBindingWhereGeneric(ctx, binding{}, expressionBraceView("1"), nil))
 	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
 }
 

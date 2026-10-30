@@ -458,7 +458,7 @@ func TestAnalyzeNodeScan(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			op := exec.analyzeNodeScan(tt.query)
+			op := exec.analyzeNodeScan(originalBraceView(tt.query))
 			require.Equal(t, tt.expectedType, op.OperatorType)
 		})
 	}

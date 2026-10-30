@@ -27,7 +27,7 @@ import (
 //
 // A nil source means the rows are already materialized, so the row source is
 // derived from them; a caller with a replayable source passes it explicitly.
-func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause braceView, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if source == nil {
 		source = pipelineRowsSource(rows)
 	}
@@ -45,43 +45,47 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	}
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
-	body := strings.TrimSpace(clause)
-	orderTerms := parseOrderByTerms(body)
+	bodyView := clause.trim()
+	body := bodyView.text()
+	orderTerms := parseOrderByTerms(bodyView)
 	withSkip, withLimit := 0, -1
-	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
+	if skipIndex := topLevelKeywordIndex(bodyView, "SKIP"); skipIndex >= 0 {
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(bodyView, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 		withSkip = value
 	}
-	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
+	if limitIndex := topLevelKeywordIndex(bodyView, "LIMIT"); limitIndex >= 0 {
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(bodyView, "LIMIT"), rows)
 		if !ok {
 			return nil, false
 		}
 		withLimit = value
 	}
-	postWithWhere := ""
-	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
-		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
-		body = strings.TrimSpace(body[:whereIdx])
+	postWithWhere := bodyView.window(0, 0)
+	if whereIdx := topLevelKeywordIndex(bodyView, "WHERE"); whereIdx >= 0 {
+		postWithWhere = bodyView.window(whereIdx+len("WHERE"), len(body)).trim()
+		bodyView = bodyView.window(0, whereIdx).trim()
+		body = bodyView.text()
 	}
 	// WITH … [ORDER BY …] SKIP / LIMIT n WHERE p filters the rows SKIP /
 	// LIMIT keep, as Neo4j does ("take the first n, then filter"). Without
 	// SKIP / LIMIT the filter can run per row, before ordering: the result is
 	// the same.
-	windowedWhere := ""
-	if postWithWhere != "" && (withSkip > 0 || withLimit >= 0) {
-		windowedWhere, postWithWhere = postWithWhere, ""
+	windowedWhere := bodyView.window(0, 0)
+	if !postWithWhere.empty() && (withSkip > 0 || withLimit >= 0) {
+		windowedWhere, postWithWhere = postWithWhere, bodyView.window(0, 0)
 	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
+		if index := topLevelKeywordIndex(bodyView, keyword); index >= 0 {
+			bodyView = bodyView.window(0, index).trim()
+			body = bodyView.text()
 		}
 	}
 	withDistinct := false
-	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
+	bodyView, withDistinct = cutDistinct(bodyView.clauseBody("WITH"))
+	body = bodyView.text()
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
@@ -102,52 +106,58 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		}
 		return e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), true
 	}
-	items := splitTopLevelComma(body)
+	items := bodyView.commaViews()
 	if len(items) == 0 {
 		return rows, true
 	}
-	if strings.TrimSpace(items[0]) == "*" {
+	if items[0].text() == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(ctx, pipelineWildcardColumns(rows), items[1:])
+		items = starProjectionItems(ctx, bodyView, pipelineWildcardColumns(rows), items[1:])
 	}
 
 	type withProjection struct {
-		expr          string
-		alias         string
-		aggregate     bool
-		aggregateName string
-		aggregateExpr string
-		distinct      bool
+		view, aggregateView braceView
+		expr                string
+		alias               string
+		aggregate           bool
+		aggregateName       string
+		aggregateExpr       string
+		distinct            bool
 	}
 	projections := make([]withProjection, 0, len(items))
 	projectionAliases := make([]string, 0, len(items))
 	hasAggregate := false
 	for _, rawItem := range items {
-		item := strings.TrimSpace(rawItem)
+		item := rawItem.text()
 		if item == "" || item == "{}" {
 			continue
 		}
-		itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
-		expr, alias := itemSource.expression, itemSource.alias
+		expressionView, alias, valid := projectionItemView(ctx, rawItem)
+		if !valid {
+			return nil, false
+		}
+		expr := expressionView.text()
 		if expr == "" {
 			return nil, false
 		}
-		projection := withProjection{expr: expr, alias: alias}
-		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
+		projection := withProjection{expr: expr, alias: alias, view: expressionView}
+		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expressionView); aggregate {
 			if !strings.Contains(upperASCII(item), " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
 			projection.aggregateName = aggregateName
-			projection.aggregateExpr = aggregateExpr
+			projection.aggregateExpr = aggregateExpr.text()
+			projection.aggregateView = aggregateExpr
 			projection.distinct = distinct
 			hasAggregate = true
-		} else if pipelineExpressionContainsAggregate(expr) {
+		} else if pipelineExpressionContainsAggregate(expressionView) {
 			if !strings.Contains(upperASCII(item), " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
 			projection.aggregateExpr = expr
+			projection.aggregateView = expressionView
 			hasAggregate = true
 		}
 		projections = append(projections, projection)
@@ -156,22 +166,22 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	if hasAggregate {
 		aggregates := make([]returnProjection, len(projections))
 		for index, projection := range projections {
-			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
+			aggregates[index] = returnProjection{view: projection.view, aggregateView: projection.aggregateView, expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate, aggregateName: projection.aggregateName, aggregateExpr: projection.aggregateExpr, distinct: projection.distinct}
 		}
 		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
 		if !ok {
 			return nil, false
 		}
 		if len(orderTerms) > 0 {
-			expressions := make([]string, len(projections))
+			expressions := make([]braceView, len(projections))
 			for index, projection := range projections {
-				expressions[index] = projection.expr
+				expressions[index] = projection.view
 			}
-			orderTerms = alignOrderTerms(orderTerms, expressions)
+			orderTerms = alignOrderTerms(clause, orderTerms, expressions)
 		}
 
 		out := make([]pipelineRow, 0, len(groups))
-		needsOrderScopes := len(orderTerms) > 0 || postWithWhere != "" || withDistinct || windowedWhere != ""
+		needsOrderScopes := len(orderTerms) > 0 || !postWithWhere.empty() || withDistinct || !windowedWhere.empty()
 		var orderScopes []pipelineRow
 		if needsOrderScopes {
 			orderScopes = make([]pipelineRow, 0, len(groups))
@@ -213,7 +223,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 			for name, value := range newRow {
 				orderScope[name] = value
 			}
-			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
+			if !postWithWhere.empty() && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
 				continue
 			}
 			out = append(out, newRow)
@@ -232,14 +242,14 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		return projections[index].expr, projections[index].alias
 	})
 	out := make([]pipelineRow, 0, len(rows))
-	needsOrderScopes := len(orderTerms) > 0 || withDistinct || windowedWhere != ""
+	needsOrderScopes := len(orderTerms) > 0 || withDistinct || !windowedWhere.empty()
 	var orderScopes []pipelineRow
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
+	rowPlan := pipelineRowWith{where: postWithWhere.text(), whereView: postWithWhere, view: clause, imports: pipelineImports(ctx)}
 	for _, projection := range projections {
-		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
+		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{expression: projection.expr, alias: projection.alias, view: projection.view})
 	}
 	rowPlan.retainRows, rowPlan.skipValidation = true, true
 	if needsOrderScopes {
@@ -273,8 +283,8 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 // filterPipelineWindow applies SKIP / LIMIT to rows, then keeps the rows of
 // the window whose scope (the row's projected and incoming values) satisfies
 // whereClause: the WHERE after WITH … SKIP / LIMIT.
-func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause string) []pipelineRow {
-	if whereClause == "" {
+func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause braceView) []pipelineRow {
+	if whereClause.empty() {
 		return applyPipelineWindow(rows, skip, limit)
 	}
 	start, end := 0, len(rows)
@@ -296,23 +306,25 @@ func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes
 	return filtered
 }
 
-func pipelinePaginationExpression(body, keyword string) string {
-	index := topLevelKeywordIndex(body, keyword)
+func pipelinePaginationExpression(view braceView, keyword string) braceView {
+	body := view.text()
+	index := topLevelKeywordIndex(view, keyword)
 	if index < 0 {
-		return ""
+		return view.window(0, 0)
 	}
-	expression := strings.TrimSpace(body[index+len(keyword):])
+	expressionView := view.window(index+len(keyword), len(body)).trim()
+	expression := expressionView.text()
 	end := len(expression)
 	// WITH … SKIP / LIMIT n WHERE p: the WHERE isn't part of n.
 	for _, nextKeyword := range []string{"SKIP", "LIMIT", "WHERE"} {
-		if nextIndex := topLevelKeywordIndex(expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
+		if nextIndex := topLevelKeywordIndex(expressionView, nextKeyword); nextIndex >= 0 && nextIndex < end {
 			end = nextIndex
 		}
 	}
-	return strings.TrimSpace(expression[:end])
+	return expressionView.window(0, end).trim()
 }
 
-func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expression string, rows []pipelineRow) (int, bool) {
+func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expression braceView, rows []pipelineRow) (int, bool) {
 	// SKIP / LIMIT see the statement's parameters ($l) whatever the
 	// projection kept in the row.
 	values := e.parameterRow(ctx)
@@ -375,25 +387,36 @@ func orderedProjectionExpressions(terms []orderByTerm, count int, item func(inde
 // reads the projected value, as in Neo4j, where a function name's case and
 // the whitespace between tokens don't change an expression. Terms are
 // returned unchanged (not copied) when nothing differs.
-func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
-	spellings := aggregateCallSpellings(expressions)
+func alignOrderTerms(base braceView, terms []orderByTerm, expressions []braceView) []orderByTerm {
+	retained := map[string]braceView{}
+	spellings := aggregateCallSpellings(expressions, func(index int, span aggregateSpan, key string) {
+		retained[key] = expressions[index].window(span.start, span.end).trim()
+	})
 	var aligned []orderByTerm
 	for index, term := range terms {
-		column := respellAggregateCalls(term.column, spellings)
+		view := term.view
+		column := respellAggregateCalls(term.view, spellings, func(start, end int, key string) {
+			view = base.assembleCode([]braceView{view.window(0, start), retained[key], view.window(end, len(view.text()))}, "")
+		})
 		key := stripExpressionWhitespace(column)
-		for _, expression := range expressions {
+		for offset, expressionView := range expressions {
+			expression := expressionView.text()
 			if expression != column && stripExpressionWhitespace(expression) == key {
 				column = expression
+				view = expressions[offset]
 				break
 			}
 		}
 		if column == term.column {
 			continue
 		}
+		if view.text() != column {
+			panic("cypher: sort spelling producer lost its retained output pieces")
+		}
 		if aligned == nil {
 			aligned = append([]orderByTerm(nil), terms...)
 		}
-		aligned[index].column = column
+		aligned[index].column, aligned[index].view = column, view
 	}
 	if aligned == nil {
 		return terms
@@ -403,14 +426,20 @@ func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
 
 // aggregateCallSpellings maps the key (aggregateCallKey) of each aggregate
 // call in expressions to its text there. Nil when there is none.
-func aggregateCallSpellings(expressions []string) map[string]string {
+func aggregateCallSpellings(expressionViews []braceView, observe ...func(int, aggregateSpan, string)) map[string]string {
 	var spellings map[string]string
-	for _, expression := range expressions {
-		for _, call := range semanticAggregateCalls(expression) {
+	for index, view := range expressionViews {
+		expression := view.text()
+		for _, span := range findAggregateSpans(view) {
+			call := strings.TrimSpace(expression[span.start:span.end])
 			if spellings == nil {
 				spellings = make(map[string]string)
 			}
-			spellings[aggregateCallKey(call)] = call
+			key := aggregateCallKey(call)
+			spellings[key] = call
+			for _, visit := range observe {
+				visit(index, span, key)
+			}
 		}
 	}
 	return spellings
@@ -418,10 +447,19 @@ func aggregateCallSpellings(expressions []string) map[string]string {
 
 // respellAggregateCalls writes each aggregate call of text that spellings
 // holds as spellings spells it: COUNT(distinct n) as count(DISTINCT n).
-func respellAggregateCalls(text string, spellings map[string]string) string {
-	for _, call := range semanticAggregateCalls(text) {
-		if spelling, ok := spellings[aggregateCallKey(call)]; ok && spelling != call {
-			text = strings.Replace(text, call, spelling, 1)
+func respellAggregateCalls(view braceView, spellings map[string]string, observe ...func(int, int, string)) string {
+	text := view.text()
+	for _, call := range semanticAggregateCalls(view) {
+		key := aggregateCallKey(call)
+		if spelling, ok := spellings[key]; ok && spelling != call {
+			at := strings.Index(text, call)
+			if at < 0 {
+				continue
+			}
+			for _, visit := range observe {
+				visit(at, at+len(call), key)
+			}
+			text = text[:at] + spelling + text[at+len(call):]
 		}
 	}
 	return text
@@ -499,7 +537,7 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		for termIndex, term := range terms {
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
-			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
+			value, ok := e.evaluateRowExpressionWithContext(ctx, term.view, scopes[index])
 			if !ok {
 				return false
 			}
@@ -539,8 +577,8 @@ func applyPipelineWindow(rows []pipelineRow, skip, limit int) []pipelineRow {
 	return rows
 }
 
-func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelineRow, whereClause string) []pipelineRow {
-	if whereClause == "" {
+func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelineRow, whereClause braceView) []pipelineRow {
+	if whereClause.empty() {
 		return rows
 	}
 	filtered := rows[:0]
@@ -586,58 +624,59 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
-func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
+func parsePipelineAggregate(view braceView) (name string, inner braceView, distinct, ok bool) {
+	view = view.trim()
+	expr := view.text()
 	// An aggregate is a function call: without a parenthesis there is none.
 	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
-		return "", "", false, false
+		return "", braceView{}, false, false
 	}
 	open := strings.Index(expr, "(")
 	if open < 0 {
-		return "", "", false, false
+		return "", braceView{}, false, false
 	}
 	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
-	argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
-	inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
-	distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
-	if inner == "" {
-		return "", "", false, false
+	close := findMatchingCallParen(expr, open)
+	if close < 0 {
+		return "", braceView{}, false, false
+	}
+	inner = view.window(open+1, close).trim()
+	var modifier cyphertext.FunctionArgumentModifier
+	inner, modifier = inner.argumentSource(cyphertext.DistinctArgumentModifier)
+	distinct = modifier == cyphertext.DistinctArgumentModifier
+	if inner.empty() {
+		return "", braceView{}, false, false
 	}
 	return name, inner, distinct, true
 }
 
-func pipelineExpressionContainsAggregate(expr string) bool {
-	if strings.IndexByte(expr, '(') < 0 {
+func pipelineExpressionContainsAggregate(view braceView) bool {
+	if strings.IndexByte(view.text(), '(') < 0 {
 		return false
 	}
-	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
+	return len(findAggregateSpans(view.trim())) > 0
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
-	return e.evaluatePipelineAggregateExpressionWithContext(context.Background(), rows, expr)
+func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, view braceView) (interface{}, bool) {
+	return e.evaluatePipelineAggregateExpressionWithContext(withBraceView(context.Background(), view), rows, view)
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx context.Context, rows []pipelineRow, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
+func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx context.Context, rows []pipelineRow, view braceView) (interface{}, bool) {
+	view = view.trim()
+	expr := view.text()
+	if name, inner, distinct, ok := parsePipelineAggregate(view); ok {
 		return e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+	if entries, valid := view.keyedEntries(); valid {
 		result := make(map[string]interface{})
-		if inner == "" {
-			return result, true
+		resolved := true
+		for _, entry := range entries {
+			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, entry.value)
+			resolved = resolved && ok
+			result[entry.key()] = value
 		}
-		for _, pair := range splitTopLevelComma(inner) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
-			if separator <= 0 {
-				return nil, false
-			}
-			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, pair[separator+1:])
-			if !ok {
-				return nil, false
-			}
-			result[key] = value
+		if !resolved {
+			return nil, false
 		}
 		return result, true
 	}
@@ -645,9 +684,9 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if inner == "" {
 			return []interface{}{}, true
 		}
-		if _, _, _, _, comprehension := parseListComprehension(inner); !comprehension {
+		if _, _, _, _, comprehension := parseListComprehension(view.window(1, len(expr)-1).trim()); !comprehension {
 			result := make([]interface{}, 0)
-			for _, item := range splitTopLevelComma(inner) {
+			for _, item := range view.window(1, len(expr)-1).commaViews() {
 				value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, item)
 				if !ok {
 					return nil, false
@@ -657,7 +696,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			return result, true
 		}
 	}
-	if spans := findAggregateSpans(expr); len(spans) > 0 {
+	if spans := findAggregateSpans(view); len(spans) > 0 {
 		values := make(pipelineRow, len(spans))
 		// Mixed aggregate expressions are evaluated after isolating aggregate
 		// calls, but their non-aggregate terms still resolve against the group's
@@ -669,10 +708,10 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 				values[name] = value
 			}
 		}
-		var rewritten strings.Builder
-		last := 0
+		rewritten := view
+		delta := 0
 		for index, span := range spans {
-			name, inner, distinct, ok := parsePipelineAggregate(expr[span.start:span.end])
+			name, inner, distinct, ok := parsePipelineAggregate(view.window(span.start, span.end))
 			if !ok {
 				return nil, false
 			}
@@ -681,31 +720,29 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 				return nil, false
 			}
 			placeholder := traversalAggPlaceholder(index)
-			rewritten.WriteString(expr[last:span.start])
-			rewritten.WriteString(placeholder)
+			rewritten = rewritten.replace(span.start+delta, span.end+delta, placeholder)
+			delta += len(placeholder) - (span.end - span.start)
 			values[placeholder] = value
-			last = span.end
 		}
-		rewritten.WriteString(expr[last:])
-		return e.evaluateRowExpressionWithContext(ctx, rewritten.String(), values)
+		return e.evaluateRowExpressionWithContext(ctx, rewritten, values)
 	}
 	if len(rows) == 0 {
-		return e.evaluateRowExpressionWithContext(ctx, expr, pipelineRow{})
+		return e.evaluateRowExpressionWithContext(ctx, view, pipelineRow{})
 	}
-	return e.evaluateRowExpressionWithContext(ctx, expr, rows[0])
+	return e.evaluateRowExpressionWithContext(ctx, view, rows[0])
 }
 
 // evaluatePipelineAggregate applies an aggregate to one logical group. Null
 // inputs are ignored by every standard aggregate, including collect().
-func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name string, expr braceView, distinct bool) (interface{}, bool) {
 	return e.evaluatePipelineAggregateWithContext(context.Background(), rows, name, expr, distinct)
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name string, expr braceView, distinct bool) (interface{}, bool) {
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
-	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
+	state := pipelineAggregateState{name: name, expression: expr.text(), view: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
 	for _, row := range rows {
 		if !state.add(ctx, e, row) {
 			return nil, false
@@ -742,11 +779,11 @@ func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) strin
 //
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
-func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause braceView) (*ExecuteResult, bool) {
 	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause braceView, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
 	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(ctx, clause), source, rowsValidated, preparedGroups...)
 }
 
@@ -778,7 +815,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(ctx, result, modifiers)
+		result, err := e.applyResultModifiers(ctx, result, plan.modifiersView)
 		return result, err == nil
 	}
 	projs, hasAggregate := plan.projections, plan.hasAggregate
@@ -800,13 +837,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		// a projection's expression text as its value (count(*) in
 		// RETURN k, count(*) AS c ORDER BY count(*) DESC, k), as after an
 		// aggregating WITH.
-		orderTerms := parseOrderByTerms(modifiers)
+		orderTerms := parseOrderByTerms(plan.modifiersView)
 		if len(orderTerms) > 0 {
-			expressions := make([]string, len(projs))
+			expressions := make([]braceView, len(projs))
 			for index, projection := range projs {
-				expressions[index] = projection.expr
+				expressions[index] = projection.view
 			}
-			orderTerms = alignOrderTerms(orderTerms, expressions)
+			orderTerms = alignOrderTerms(plan.view, orderTerms, expressions)
 		}
 		var projectedRows, orderScopes []pipelineRow
 		for _, group := range groups {
@@ -839,12 +876,12 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			orderScopes = append(orderScopes, scope)
 		}
 		if len(orderTerms) > 0 {
-			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
+			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, plan.modifiersView, returnDistinct)
 		}
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(ctx, result, modifiers)
+		result, err := e.applyResultModifiers(ctx, result, plan.modifiersView)
 		return result, err == nil
 	}
 
@@ -867,7 +904,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 
 	// ORDER BY and DISTINCT see the incoming row with the projection over
 	// it; the merged scope is built only when one of them needs it.
-	orderTerms := parseOrderByTerms(modifiers)
+	orderTerms := parseOrderByTerms(plan.modifiersView)
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
 		return projs[index].expr, projs[index].alias
 	})
@@ -880,7 +917,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	for _, row := range rows {
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
-			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+			val, ok := e.evaluateRowExpressionWithContext(ctx, p.view, row)
 			if !ok {
 				pipelineItemUnevaluable(ctx, p.expr)
 				return nil, false
@@ -903,13 +940,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		}
 		orderScopes = append(orderScopes, scope)
 	}
-	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
+	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, plan.modifiersView, returnDistinct)
 }
 
 // finishPipelineReturn applies DISTINCT, ORDER BY (each row's terms read in
 // orderScopes[i]), SKIP and LIMIT to a RETURN's projected rows and writes
 // them to result in its column order.
-func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
+func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers braceView, returnDistinct bool) (*ExecuteResult, bool) {
 	if returnDistinct {
 		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), projectedRows, orderScopes, result.Columns)
 	}
@@ -988,7 +1025,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	if idx < len(originalClauses) {
 		original = originalClauses[idx]
 	}
-	plan := returnProjectionPlanFor(ctx, original.text, original)
+	plan := returnProjectionPlanFor(ctx, original.input(ctx), original)
 	if plan == nil {
 		return nil, nil, true, unresolvedStatementError()
 	}
@@ -997,7 +1034,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.
-	if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
+	if err := e.validatePipelineProjectionValues(ctx, rows, clause.input(ctx), "RETURN"); err != nil {
 		return nil, nil, true, err
 	}
 	var validationErr error
@@ -1005,7 +1042,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		input := source
 		source = func(yield func(pipelineRow) bool) bool {
 			return input(func(row pipelineRow) bool {
-				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.text, "RETURN"); err != nil {
+				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.input(ctx), "RETURN"); err != nil {
 					validationErr = err
 					return false
 				}

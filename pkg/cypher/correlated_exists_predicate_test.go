@@ -33,10 +33,10 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 	}
 
 	exists := func(row map[string]interface{}) bool {
-		value, recognized, err := exec.rowSubqueryValue(ctx, "EXISTS", `
+		value, recognized, err := exec.rowSubqueryValue(ctx, "EXISTS", originalBraceView(`
 		MATCH (fn)-[:RUNS_IN]->(o:Workload)
 		WHERE o.id <> w.id
-	`, row)
+	`), row)
 		require.NoError(t, err)
 		require.True(t, recognized)
 		return value.(bool)

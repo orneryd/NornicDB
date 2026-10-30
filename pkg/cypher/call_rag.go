@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -251,20 +252,23 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			return nil, localizedError(localization.CypherSubqueriesWhereFilterInvalid("db.retrieve"), nil)
 		}
 		if strings.TrimSpace(where) != "" {
-			where, err := desugarRetrievalWhere(ctx, where)
+			// This is decoded request data, an independent expression input.
+			// Its original product is created once here, before any rewrite.
+			source := cyphertext.NormalizeSource(where)
+			view, err := desugarRetrievalWhere(ctx, braceView{syntax: readOriginalBraceSyntax(source, true), source: source})
 			if err != nil {
 				return nil, err
 			}
-			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+			whereCtx := withBraceView(context.WithoutCancel(ctx), view)
+			opts.Where = e.compileNodeWhereFilter(whereCtx, "node", view)
 			if opts.Graph || opts.Relationships {
 				// One predicate serves both kinds: a node candidate reads
 				// relationship, start and end as null, a relationship
 				// candidate reads node as null.
-				whereCtx := context.WithoutCancel(ctx)
 				nodeScope := valueBindingsLayer(whereCtx, 3)
 				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
-				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)
-				opts.RelationshipWhere = e.compileRelationshipWhereFilter(whereCtx, where)
+				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", view)
+				opts.RelationshipWhere = e.compileRelationshipWhereFilter(whereCtx, view)
 			}
 		}
 	}
@@ -869,15 +873,17 @@ func continuationResultMetadata(value any) map[string]any {
 // ((m:Coll WHERE m.id IN $ids)), label expressions and the other pattern
 // forms every route reads. The predicate is rewritten as the expression of
 // RETURN <where> AS …, and taken back from it.
-func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
-	where, _ = canonicalizeFunctionAliases(where)
+func desugarRetrievalWhere(ctx context.Context, view braceView) (braceView, error) {
+	_, aliases := canonicalizeFunctionAliases(view.text())
+	view = view.rewrite(aliases)
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
-	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
+	wrapped := view.wrap(prefix, suffix)
+	rewritten, rewrite, err := desugarLabelExpressionView(wrapped, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
-		return "", err
+		return braceView{}, err
 	}
 	if rewrite == nil || !strings.HasPrefix(rewritten, prefix) || !strings.HasSuffix(rewritten, suffix) {
-		return where, nil
+		return view, nil
 	}
-	return rewritten[len(prefix) : len(rewritten)-len(suffix)], nil
+	return wrapped.rewrite(rewrite).window(len(prefix), len(rewritten)-len(suffix)), nil
 }

@@ -11,7 +11,7 @@ import (
 
 func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	ctx context.Context,
-	expr string,
+	view braceView,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -20,6 +20,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	allPathNodes []*storage.Node,
 	pathLength int,
 ) interface{} {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	// Property Access: n.property
 	// ========================================
 	if dotIdx := strings.Index(expr, "."); dotIdx > 0 {
@@ -118,14 +120,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// Only a complete list literal enters the checked list-value boundary.
 	// Subscripts and expressions over lists stay with the row evaluator.
 	if isListLiteral(expr) {
-		value, err := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		value, err := e.checkedPropertyExpression(ctx, view, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		recordExpressionFailure(ctx, err)
 		return value
 	}
 
 	// Map literal {key: value}
-	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		value, err := e.parseProperties(ctx, expr)
+	if startsBrace(expr) && endsBrace(expr) {
+		value, err := e.parseProperties(ctx, view)
 		recordExpressionFailure(ctx, err)
 		return value
 	}

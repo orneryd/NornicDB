@@ -16,6 +16,8 @@ import (
 type reduceForm struct {
 	accumulator, initial, variable, list, step, predicate string
 	all                                                   bool
+	arguments                                             braceView
+	initialSpan, listSpan, stepSpan, predicateSpan        cyphertext.Span
 }
 
 // isReduceFormFunction reports reduce and allReduce, case-insensitively,
@@ -27,10 +29,27 @@ func isReduceFormFunction(name string) bool {
 // parseReduceForm reads the arguments of a reduce or allReduce call; ok is
 // false when they don't have the function's form (allReduce takes a
 // predicate, reduce doesn't).
-func parseReduceForm(function, arguments string) (reduceForm, bool) {
+func parseReduceForm(function string, argumentView braceView) (reduceForm, bool) {
+	argumentView = argumentView.withoutComments()
+	form, valid := readReduceSyntax(function, argumentView.text())
+	form.arguments = argumentView
+	return form, valid
+}
+
+// readReduceForm owns binding syntax and its operand extents. Metadata readers
+// consume those extents; evaluators bind them to their carried Source above.
+// It makes no brace-role, map-entry or admission decision. Author: #1663 lane.
+func readReduceForm(function, arguments string) (reduceForm, bool) {
+	return readReduceSyntax(function, StripComments(arguments))
+}
+
+func readReduceSyntax(function, arguments string) (reduceForm, bool) {
 	form := reduceForm{all: equalFoldASCII(function, "allreduce")}
-	var buffer [3]string
-	parts := appendTopLevelComma(buffer[:0], arguments)
+	spans := topLevelCommaSpans(arguments)
+	parts := make([]string, len(spans))
+	for i, span := range spans {
+		parts[i] = arguments[span.Start:span.End]
+	}
 	if want := map[bool]int{false: 2, true: 3}[form.all]; len(parts) != want {
 		return form, false
 	}
@@ -44,6 +63,7 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 		return form, false
 	}
 	form.accumulator, form.initial = accumulator.Value, strings.TrimSpace(assignment[equals+1:])
+	form.initialSpan = cyphertext.Span{Start: spans[0].Start + equals + 1, End: spans[0].End}
 	iteration := strings.TrimSpace(parts[1])
 	variable, ok := cyphertext.ScanIdentifier(iteration, 0)
 	if !ok {
@@ -54,16 +74,20 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 		return form, false
 	}
 	rest = rest[len("IN"):]
+	restStart := spans[1].End - len(rest)
 	pipe := rowTopLevelPipeIndex(rest)
 	if pipe < 0 {
 		return form, false
 	}
 	form.variable, form.list, form.step = variable.Value, strings.TrimSpace(rest[:pipe]), strings.TrimSpace(rest[pipe+1:])
+	form.listSpan = cyphertext.Span{Start: restStart, End: restStart + pipe}
+	form.stepSpan = cyphertext.Span{Start: restStart + pipe + 1, End: spans[1].End}
 	if form.initial == "" || form.list == "" || form.step == "" {
 		return form, false
 	}
 	if form.all {
 		form.predicate = parts[2]
+		form.predicateSpan = spans[2]
 	}
 	return form, true
 }
@@ -83,13 +107,14 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 // (runReduceForm).
 type reduceAppendPlan struct {
 	terms []string // t1 … tn
+	views []braceView
 	// bound are the texts of the step's sums: a row binding of the same name
 	// would answer one of them instead (bound), so the plan is not used then.
 	bound []string
 }
 
 // reduceAppendPlans caches each step's plan; nil when the step has none.
-var reduceAppendPlans = newBoundedCache[string, *reduceAppendPlan](1024, boundedCacheStringShardIndex)
+var reduceAppendPlans = newBoundedCache[*cyphertext.Source, *reduceAppendPlan](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
 // reduceAppendDisabled turns the plans off, so that every step is
 // evaluated whole. Tests use it to compare the two.
@@ -99,7 +124,8 @@ var reduceAppendDisabled atomic.Bool
 // the step so that it splits the step as every evaluator does; nil when
 // the step isn't such a sum.
 func (form reduceForm) appendPlan() *reduceAppendPlan {
-	key := form.accumulator + "\x00" + form.step
+	stepView := form.arguments.spanWindow(form.stepSpan)
+	key := stepView.source
 	if plan, cached := reduceAppendPlans.get(key); cached {
 		return plan
 	}
@@ -109,9 +135,10 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 	// arithmetic split doesn't skip; a step with one has no plan.
 	if !containsIdentifierToken(strings.ToLower(form.step), "case") {
 		compiler := rowValueCompiler{}
-		node, _ = compiler.compile(form.step)
+		node, _ = compiler.compile(stepView)
 	}
 	var terms, texts []string
+	var views []braceView
 	for node != nil {
 		node = rowValueShape(node)
 		if bound, ok := node.(*rowBoundNode); ok {
@@ -124,12 +151,14 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 			break
 		}
 		terms = append(terms, sum.rightText)
+		views = append(views, sum.rightView)
 		if sum.leftText == form.accumulator {
 			for i, j := 0, len(terms)-1; i < j; i, j = i+1, j-1 {
 				terms[i], terms[j] = terms[j], terms[i]
+				views[i], views[j] = views[j], views[i]
 			}
 			if !termsNameAccumulator(terms, form.accumulator) {
-				plan = &reduceAppendPlan{terms: terms, bound: texts}
+				plan = &reduceAppendPlan{terms: terms, views: views, bound: texts}
 			}
 			break
 		}

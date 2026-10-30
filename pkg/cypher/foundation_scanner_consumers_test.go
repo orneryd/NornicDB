@@ -24,13 +24,13 @@ func TestFoundationScannerConsumers(t *testing.T) {
 		for _, source := range []string{"n.`a,b`, n.x", "n.a /* , ) */, n.x", "[1,2], n.x", "{a:1,b:2}, n.x", "'a,b', 1e-3"} {
 			require.Len(t, splitTopLevelComma(source), 2, source)
 		}
-		require.Len(t, e.parseOrderBySpecs("n.`a,b`, n.x DESC", []string{"n.`a,b`", "n.x"}), 2)
-		specs := e.parseOrderBySpecs("n.`a b` DESC /* , */, n.x", []string{"n.`a b`", "n.x"})
+		require.Len(t, e.parseOrderBySpecs(expressionBraceView("n.`a,b`, n.x DESC"), []string{"n.`a,b`", "n.x"}), 2)
+		specs := e.parseOrderBySpecs(expressionBraceView("n.`a b` DESC /* , */, n.x"), []string{"n.`a b`", "n.x"})
 		require.Len(t, specs, 2)
 		require.True(t, specs[0].descending)
 		nodes := []*storage.Node{{Properties: map[string]interface{}{"a,b": int64(2)}}, {Properties: map[string]interface{}{"a,b": int64(1)}}}
-		require.EqualValues(t, 1, e.orderNodes(nodes, "n", "n.`a,b`")[0].Properties["a,b"])
-		indexed, ok := e.parseNodeOrderSpecs("n.`a,b` DESC /* , */, n.x", "n")
+		require.EqualValues(t, 1, e.orderNodes(nodes, "n", expressionBraceView("n.`a,b`"))[0].Properties["a,b"])
+		indexed, ok := e.parseNodeOrderSpecs(expressionBraceView("n.`a,b` DESC /* , */, n.x"), "n")
 		require.True(t, ok)
 		require.Len(t, indexed, 2)
 		require.Equal(t, "a,b", indexed[0].propName)
@@ -38,24 +38,24 @@ func TestFoundationScannerConsumers(t *testing.T) {
 	t.Run("list token closure and exponents", func(t *testing.T) {
 		for _, source := range []string{"'open", "\"open"} {
 			require.NotPanics(t, func() {
-				end, kind, _ := staticListOperand(source, 0, nil)
+				end, kind, _ := staticListOperand(originalBraceView(source), 0, nil)
 				require.LessOrEqual(t, end, len(source))
 				require.Empty(t, kind)
 			})
 		}
 		for _, source := range []string{"'a\\'b'", "\"a,b\"", "1e-3", "2E+4"} {
-			end, _, _ := staticListOperand(source+" IN []", 0, nil)
+			end, _, _ := staticListOperand(originalBraceView(source+" IN []"), 0, nil)
 			require.Equal(t, len(source), end, source)
 		}
 		require.Equal(t, []string{"1e-3 ", "+", " 2E+4"}, splitArithmeticExpression("1e-3 + 2E+4"))
 	})
 	t.Run("relationship readers", func(t *testing.T) {
 		pattern := "(a {note:'-[:FAKE]->(bad)'})-[:`R|]` /* ] */]->(`b:c`)"
-		hops := e.parseRelationshipHops(pattern, "a")
+		hops := e.parseRelationshipHops(originalBraceView(pattern), "a")
 		require.Len(t, hops, 1)
 		require.Equal(t, []string{"R|]"}, hops[0].relTypes)
 		require.True(t, hops[0].outgoing)
-		require.Equal(t, []string{"R|]"}, e.extractRelTypesFromPattern(pattern, "-["))
+		require.Equal(t, []string{"R|]"}, e.extractRelTypesFromPattern(originalBraceView(pattern), "-["))
 		require.Equal(t, "b:c", e.extractTargetVariable(pattern, "a"))
 		require.Equal(t, "a:b", e.extractTargetVariable("(`a:b` {note:'('})<-[:R]-(b)", "b"))
 	})
@@ -101,6 +101,6 @@ func TestFoundationUseDiagnosticAndDynamicControl(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "graph.byName", use.Function)
-	require.Equal(t, []string{"$db"}, use.Args)
+	require.Equal(t, []string{"$db"}, useArgumentTexts(use.Arguments))
 	require.Equal(t, "RETURN 1", rest)
 }

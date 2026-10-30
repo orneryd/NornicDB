@@ -85,16 +85,17 @@ func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right
 // the expression, its parts evaluated through evaluateRowValue. A
 // rowValueProgram keeps the decisions it makes about a text and calls it
 // for the forms it doesn't compile.
-func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	expr = strings.TrimSpace(expr)
+func (e *StorageExecutor) evaluateRowValueText(view braceView, values map[string]interface{}) (interface{}, bool, error) {
+	view = view.trim()
+	expr := view.text()
 	if expr == "" {
 		return nil, false, nil
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
-		return e.evaluateRowValue(inner, values)
+	if _, ok := stripEnclosingExpressionParentheses(expr); ok {
+		return e.evaluateRowValue(view.window(1, len(expr)-1), values)
 	}
-	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
-		caseValue, ok, err := e.evaluateRowCaseExpression(strings.TrimSpace(expr[:caseEnd]), values)
+	if caseEnd := leadingCaseExpressionEnd(view); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(view) {
+		caseValue, ok, err := e.evaluateRowCaseExpression(view.window(0, caseEnd).trim(), values)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -104,7 +105,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			scope[name] = value
 		}
 		scope[caseBinding] = caseValue
-		return e.evaluateRowValue(caseBinding+expr[caseEnd:], scope)
+		return e.evaluateRowValue(view.replace(0, caseEnd, caseBinding), scope)
 	}
 	if value, ok := values[expr]; ok && !isLiteralKeyword(expr) {
 		return value, true, nil
@@ -113,7 +114,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// Resolve the complete pattern before scalar operator parsing sees them.
 	if isRelationshipPatternOperand(expr) {
 		ctx := rowStatementContextOrBackground(values)
-		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, expr, values); recognized {
+		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, view, values); recognized {
 			return matched, true, getExpressionFailure(ctx)
 		}
 	}
@@ -135,10 +136,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true, nil
 	}
-	if value, matched, err := e.evaluateRowSubqueryAtom(expr, values); matched {
+	if value, matched, err := e.evaluateRowSubqueryAtom(view, values); matched {
 		return value, err == nil, err
 	}
-	if value, matched, err := e.evaluateRowPatternComprehensionAtom(expr, values); matched {
+	if value, matched, err := e.evaluateRowPatternComprehensionAtom(view, values); matched {
 		return value, err == nil, err
 	}
 	if variable, labels, labelPredicate := parseWithWhereLabelTest(expr); labelPredicate {
@@ -148,17 +149,17 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		return entityHasAllLabelsOrTypes(value, labels), true, nil
 	}
-	if isCaseExpression(expr) {
-		return e.evaluateRowCaseExpression(expr, values)
+	if isCaseExpression(view) {
+		return e.evaluateRowCaseExpression(view, values)
 	}
-	if value, matched, resolved, err := e.evaluateRowMapProjection(expr, values); matched {
+	if value, matched, resolved, err := e.evaluateRowMapProjection(view, values); matched {
 		return value, resolved, err
 	}
 	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
-		result, err := e.materializePropertyMap(rowMapContext(values), expr, values, true, true)
+		result, err := e.materializePropertyMap(rowMapContext(values), view, values, true, true)
 		return result, err == nil, err
 	}
-	if value, matched, ok, err := e.evaluateRowListComprehension(expr, values); matched {
+	if value, matched, ok, err := e.evaluateRowListComprehension(view, values); matched {
 		return value, ok, err
 	}
 
@@ -166,48 +167,49 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		if inner == "" {
 			return []interface{}{}, true, nil
 		}
-		items := splitTopLevelComma(inner)
+		items := view.window(1, len(expr)-1).commaViews()
 		return rowListLiteral(len(items), func(i int) (interface{}, bool, error) {
 			return e.evaluateRowValue(items[i], values)
 		})
 	}
 
-	if value, matched, ok, err := e.evaluateRowQuantifier(expr, values, e.evaluateRowValue); matched {
+	if value, matched, ok, err := e.evaluateRowQuantifier(view, values, e.evaluateRowValue); matched {
 		return value, ok, err
 	}
 
 	var callFacts1 functionCallFacts
 	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok {
 		function, argument := callFacts1.name, callFacts1.inner
+		argumentView := view.window(callFacts1.arguments.Start, callFacts1.arguments.End)
 
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
 			temporalContext = context.Background()
 		}
-		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) (interface{}, bool, error) {
+		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner braceView) (interface{}, bool, error) {
 			return e.evaluateRowValue(inner, values)
-		}, expr); handled {
+		}, view); handled {
 			return value, callErr == nil, callErr
 		}
-		if value, matched, resolved, err := e.evaluateRowMathFunction(function, argument, values); matched {
+		if value, matched, resolved, err := e.evaluateRowMathFunction(function, argumentView, values); matched {
 			return value, resolved, err
 		}
-		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
+		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argumentView, values); matched {
 			return value, resolved, err
 		}
 		if isGDSFunctionName(lowerASCII(function)) {
-			value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+			value, _, resolved, err := e.evaluateRowGraphFunction(function, argumentView, values)
 			return value, resolved, err
 		}
 		switch lowerASCII(function) {
 		case "exists":
 			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
 				ctx := rowStatementContextOrBackground(values)
-				matched, recognized := e.evaluateRowRelationshipPattern(ctx, argument, values)
+				matched, recognized := e.evaluateRowRelationshipPattern(ctx, argumentView, values)
 				return matched, recognized, getExpressionFailure(ctx)
 			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
-			value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+			value, _, resolved, err := e.evaluateRowGraphFunction(function, argumentView, values)
 			return value, resolved, err
 		case "shortestpath", "allshortestpaths":
 			nodes := make(map[string]*storage.Node, len(values))
@@ -220,24 +222,24 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if search == nil {
 				search = context.Background()
 			}
-			value, handled, err := e.evaluateShortestPathValue(withValueBindings(search, values), function, argument, nodes)
+			value, handled, err := e.evaluateShortestPathValue(withValueBindings(search, values), function, argumentView, nodes)
 			return value, handled, err
 		case "startnode", "endnode":
-			if value, handled, err := e.rowRelationshipEndpoint(function, argument, values); handled || err != nil {
+			if value, handled, err := e.rowRelationshipEndpoint(function, argumentView, values); handled || err != nil {
 				return value, handled, err
 			}
 		case "reduce", "allreduce":
-			return e.evaluateRowReduce(function, argument, values, e.evaluateRowValue)
+			return e.evaluateRowReduce(function, argumentView, values, e.evaluateRowValue)
 		case "coalesce":
 			// EXISTS subqueries are non-null booleans and end coalesce
 			// immediately.
-			operands := splitTopLevelComma(argument)
+			operands := argumentView.commaViews()
 			return cypherfn.Coalesce(len(operands), func(index int) (interface{}, bool, error) {
-				trimmed := strings.TrimSpace(operands[index])
+				trimmed := operands[index].trim()
 				return e.evaluateRowValue(trimmed, values)
 			})
 		case "length":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -258,10 +260,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
 		case "range":
-			parts := e.splitFunctionArgs(argument)
+			parts := argumentView.commaViews()
 			arguments := make([]interface{}, len(parts))
 			for index, part := range parts {
-				value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), values)
+				value, resolved, err := e.evaluateRowValue(part, values)
 				if err != nil {
 					return nil, false, err
 				}
@@ -276,7 +278,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return result, true, nil
 		case "head", "last", "reverse", "size":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -292,7 +294,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return result, true, nil
 		case "nodes", "relationships":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -316,7 +318,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return nodes, hasNodes, nil
 		case "properties":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -345,7 +347,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return object, isMap, nil
 			}
 		case "keys":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -377,7 +379,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return keys, true, nil
 		case "labels":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -390,7 +392,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return result, true, nil
 		case "type":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValue(argumentView, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -401,7 +403,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		// Registered functions evaluate arguments in this row and statement's
 		// context, including nested graph expressions, just like specialized calls.
-		if value, handled, resolved, err := e.evaluateRowGraphFunction(function, argument, values); handled {
+		if value, handled, resolved, err := e.evaluateRowGraphFunction(function, argumentView, values); handled {
 			return value, resolved, err
 		}
 	}
@@ -409,9 +411,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// OR, XOR, AND and NOT (evaluateLogicalExpression). NOT binds less
 	// tightly than comparisons and postfix predicates, so NOT a = b, NOT a
 	// IS NULL and NOT a IN xs negate the whole remainder.
-	_, _, isOr := splitByOperatorOutsideCase(expr, " OR ", true, true)
-	if value, logical, ok, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
-		if isOr && rowOperandRecordsFailure(operand) {
+	_, _, isOr := splitByOperatorOutsideCase(view, " OR ", true, true)
+	if value, logical, ok, err := evaluateLogicalExpression(view, func(operand braceView) (interface{}, bool, error) {
+		if isOr && rowOperandRecordsFailure(operand.text()) {
 			return deferredRowOperand(values, func(scope map[string]interface{}) (interface{}, bool, error) {
 				return e.evaluateRowValue(operand, scope)
 			})
@@ -425,12 +427,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	// =~ raises a type or pattern error, which the comparison chain can't.
-	if left, right, regex := splitByOperatorOutsideCase(expr, "=~", false, true); regex {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+	if left, right, regex := splitByOperatorOutsideCase(view, "=~", false, true); regex {
+		leftValue, leftOK, err := e.evaluateRowValue(view.window(0, len(left)), values)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValue(view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -446,24 +448,24 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		return matched, true, nil
 	}
-	result, comparison, resolved, err := evaluateComparisonChain(expr, func(operand string) (interface{}, bool, error) {
+	result, comparison, resolved, err := evaluateComparisonChain(view, func(operand braceView) (interface{}, bool, error) {
 		return e.evaluateRowValue(operand, values)
 	}, compareCypherPredicateValue, rowIsCypher25(values), e.graphIdentityDomain())
 	if comparison {
 		return result, resolved, err
 	}
-	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(expr); isTypePredicate {
+	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(view); isTypePredicate {
 		if err != nil {
 			return nil, false, err
 		}
-		value, ok, err := e.evaluateRowValue(operand, values)
+		value, ok, err := e.evaluateRowValue(view.window(0, len(operand)), values)
 		if err != nil || !ok {
 			return nil, false, err
 		}
 		return evaluateTypePredicate(value, negated, spec), true, nil
 	}
 	if operand, negated, form, isNormalization := splitNormalizationPredicate(expr); isNormalization {
-		value, ok, err := e.evaluateRowValue(operand, values)
+		value, ok, err := e.evaluateRowValue(view.window(0, len(operand)), values)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -476,7 +478,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if operand, nullTest := nullPredicateOperand(expr, strings.TrimSpace(predicate.suffix)); nullTest {
+		if operand, nullTest := nullPredicateOperand(view, strings.TrimSpace(predicate.suffix)); nullTest {
 			value, ok, err := e.evaluateRowValue(operand, values)
 			if err != nil {
 				return nil, false, err
@@ -488,15 +490,15 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 	}
 
-	if left, right, ok := splitByOperatorOutsideCase(expr, " NOT IN ", true, true); ok {
-		value, evaluated, err := e.evaluateRowMembershipValue(left, right, values)
+	if left, right, ok := splitByOperatorOutsideCase(view, " NOT IN ", true, true); ok {
+		value, evaluated, err := e.evaluateRowMembershipValue(view.window(0, len(left)), view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil || !evaluated || value == nil {
 			return value, evaluated, err
 		}
 		return !value.(bool), true, nil
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expr, " IN ", true, true); ok {
-		return e.evaluateRowMembershipValue(left, right, values)
+	if left, right, ok := splitByOperatorOutsideCase(view, " IN ", true, true); ok {
+		return e.evaluateRowMembershipValue(view.window(0, len(left)), view.window(len(expr)-len(right), len(expr)), values)
 	}
 
 	for _, predicate := range []struct {
@@ -507,15 +509,15 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		{operator: " ENDS WITH ", match: strings.HasSuffix},
 		{operator: " CONTAINS ", match: strings.Contains},
 	} {
-		left, right, matched := splitByOperatorOutsideCase(expr, predicate.operator, true, true)
+		left, right, matched := splitByOperatorOutsideCase(view, predicate.operator, true, true)
 		if !matched {
 			continue
 		}
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValue(view.window(0, len(left)), values)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValue(view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -525,18 +527,18 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return rowStringPredicateValue(leftValue, rightValue, predicate.match), true, nil
 	}
 
-	if open := rowSubscriptStart(expr); open > 0 {
-		return e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+	if open := rowSubscriptStart(view); open > 0 {
+		return e.evaluateCypherSubscript(view.window(0, open), view.window(open+1, len(expr)-1).trim(), func(part braceView) (interface{}, bool, error) {
 			return e.evaluateRowValue(part, values)
 		})
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "+-"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValue(view.window(0, len(left)), values)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValue(view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -547,11 +549,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValue(view.window(0, len(left)), values)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValue(view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -567,11 +569,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if left, right, _, ok := splitRowArithmeticTier(expr, "^"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValue(view.window(0, len(left)), values)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValue(view.window(len(expr)-len(right), len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -593,7 +595,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if len(expr) > 1 && (expr[0] == '-' || expr[0] == '+') {
-		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[1:]), values)
+		value, ok, err := e.evaluateRowValue(view.window(1, len(expr)), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -642,10 +644,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			dot += next + 1
 		}
-		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+		if endpoint := endpointPropertyNode(view.window(0, dot).trim(), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
 			return endpoint.eval(e, values, nil)
 		}
-		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
+		base, ok, err := e.evaluateRowValue(view.window(0, dot), values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -654,7 +656,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return evaluateRowPropertyResult(base, chain, e)
 		}
 	}
-	return e.evaluateRowFallback(expr, values, rowFallbackValue)
+	return e.evaluateRowFallback(view, values, rowFallbackValue)
 }
 
 // splitRowArithmeticTier splits at the rightmost top-level operator in one
@@ -662,14 +664,24 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 // so evaluating the left side recursively preserves source order even when a
 // tier contains different operators.
 func splitRowArithmeticTier(expr, operators string) (left, right string, operator byte, ok bool) {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	operatorIndex, operator, ok := rowArithmeticTierOperator(expr, operators)
+	if !ok {
+		return "", "", 0, false
+	}
+	return strings.TrimSpace(expr[:operatorIndex]), strings.TrimSpace(expr[operatorIndex+1:]), operator, true
+}
+
+// rowArithmeticTierOperator is the offset of expr's last top-level binary
+// operator of this tier: the one owner of the tier split.
+func rowArithmeticTierOperator(expr, operators string) (operatorIndex int, operator byte, ok bool) {
+	parenDepth, bracketDepth, braceDepth := 0, 0, cyphertext.BraceDepth(0)
 	var operatorMask [4]uint64
 	for _, candidate := range operators {
 		if candidate < 256 {
 			operatorMask[candidate>>6] |= uint64(1) << (candidate & 63)
 		}
 	}
-	operatorIndex := -1
+	operatorIndex = -1
 	for index := 0; index < len(expr); index++ {
 		current := expr[index]
 		if current == '/' {
@@ -678,27 +690,27 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 				continue
 			}
 		}
-		switch cypherLexicalByte(current) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(current)) == cypherQuoteClass:
 			index = skipCypherQuotedText(expr, index, current) - 1
 			continue
-		case '(':
+		case (cypherLexicalByte(current)) == '(':
 			parenDepth++
 			continue
-		case ')':
+		case (cypherLexicalByte(current)) == ')':
 			parenDepth--
 			continue
-		case '[':
+		case (cypherLexicalByte(current)) == '[':
 			bracketDepth++
 			continue
-		case ']':
+		case (cypherLexicalByte(current)) == ']':
 			bracketDepth--
 			continue
-		case '{':
-			braceDepth++
+		case cyphertext.IsOpenBrace(cypherLexicalByte(current)):
+			braceDepth.Open()
 			continue
-		case '}':
-			braceDepth--
+		case cyphertext.IsCloseBrace(cypherLexicalByte(current)):
+			braceDepth.Close(false)
 			continue
 		}
 		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || operatorMask[current>>6]&(uint64(1)<<(current&63)) == 0 {
@@ -711,9 +723,9 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 		operator = current
 	}
 	if operatorIndex < 0 {
-		return "", "", 0, false
+		return -1, 0, false
 	}
-	return strings.TrimSpace(expr[:operatorIndex]), strings.TrimSpace(expr[operatorIndex+1:]), operator, true
+	return operatorIndex, operator, true
 }
 
 func rowArithmeticSignIsUnary(expr string, index int) bool {
@@ -728,7 +740,7 @@ func rowArithmeticSignIsUnary(expr string, index int) bool {
 		cyphertext.IsDigit(expr[previous-1]) && cyphertext.IsDigit(expr[index+1]) {
 		return true
 	}
-	return strings.ContainsRune("([{,:+-*/%^=<>|", rune(expr[previous]))
+	return syntaxByteInSet("([{,:+-*/%^=<>|", expr[previous])
 }
 
 // compareCypherOrderedValues orders two values for the comparison operators
@@ -950,16 +962,17 @@ func cypherListSlice(base, lower, upper interface{}, hasLower, hasUpper bool) (i
 // evaluateRowCaseExpression evaluates CASE against the complete heterogeneous
 // row. This keeps CASE semantics available after WITH/UNWIND and in the
 // converged pipeline, where bindings are not limited to graph entities.
-func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	parsed, err := parseCaseExpression(expr)
+func (e *StorageExecutor) evaluateRowCaseExpression(view braceView, values map[string]interface{}) (interface{}, bool, error) {
+	parsed, err := parseCaseExpression(view)
 	if err != nil {
 		return nil, false, nil
 	}
-	return runCaseExpression(parsed, rowIsCypher25(values), func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
-		value, ok, err := e.evaluateRowValue(text, values)
+	return runCaseExpression(parsed, rowIsCypher25(values), func(part caseValuePart, index int, text string) (interface{}, bool, error) {
+		partView := view.spanWindow(parsed.partSpan(part, index))
+		value, ok, err := e.evaluateRowValue(partView, values)
 		if part == caseWhen && !parsed.isSimple && err == nil && !ok {
-			ctx := rowStatementContextOrBackground(values)
-			return e.evaluateRowPredicate(ctx, text, values), true, getExpressionFailure(ctx)
+			ctx := withBraceView(rowStatementContextOrBackground(values), partView)
+			return e.evaluateRowPredicate(ctx, partView, values), true, getExpressionFailure(ctx)
 		}
 		return value, ok, err
 	})
@@ -968,15 +981,18 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 // evaluateRowListComprehension evaluates a comprehension against typed row
 // bindings. The loop value remains a node, relationship, map, path, or scalar;
 // it is never converted to query text.
-func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']')
+func (e *StorageExecutor) evaluateRowListComprehension(view braceView, values map[string]interface{}) (interface{}, bool, bool, error) {
+	_, enclosed := stripEnclosingRowDelimiter(view.text(), '[', ']')
 	if !enclosed {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, projection, matched := parseListComprehension(inner)
+	innerView := view.window(1, len(view.text())-1).trim()
+	parts, matched := parseListComprehensionSpans(innerView)
 	if !matched {
 		return nil, false, false, nil
 	}
+	variable := parts.variable
+	listExpression, predicate, projection := innerView.spanWindow(parts.list), innerView.spanWindow(parts.predicate), innerView.spanWindow(parts.projection)
 	listValue, ok, err := e.evaluateRowValue(listExpression, values)
 	if err != nil {
 		return nil, true, false, err
@@ -987,7 +1003,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if listValue == nil {
 		return nil, true, true, nil
 	}
-	if predicate == "" && projection == "" {
+	if predicate.text() == "" && projection.text() == "" {
 		// [x IN v] is v itself, list or not, as in Neo4j.
 		return listValue, true, true, nil
 	}
@@ -998,37 +1014,53 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	}
 	var holds func() (bool, bool, error)
 	switch {
-	case predicate != "" && containsRelationshipPattern(predicate):
+	case predicate.text() != "" && containsRelationshipPattern(predicate.text()):
 		// A pattern predicate reads the graph: the row predicate evaluator
 		// tests it as WHERE does (#907).
 		holds = func() (bool, bool, error) {
 			ctx := withExpressionFailureSlot(rowStatementContextOrBackground(scope))
-			held := e.evaluateRowPredicateText(ctx, predicate, scope)
+			held := e.evaluateRowPredicateText(withBraceView(ctx, predicate), predicate, scope)
 			return held, true, getExpressionFailure(ctx)
 		}
-	case predicate != "":
+	case predicate.text() != "":
 		holds = func() (bool, bool, error) {
 			return rowConditionHolds(e.evaluateRowValue(predicate, scope))
 		}
 	}
 	var project func() (interface{}, bool, error)
-	if projection != "" {
+	if projection.text() != "" {
 		project = func() (interface{}, bool, error) { return e.evaluateRowValue(projection, scope) }
 	}
 	value, resolved, err := rowComprehensionLoop(coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, holds, project)
 	return value, true, resolved, err
 }
 
-func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
-	// The declaration as every reader reads it (bindingDeclaration): x IN[1]
-	// and x /* … */ IN l too.
-	variable, _, listStart, declared := bindingDeclaration(inner, 0)
-	if !declared {
+// comprehensionSpans is emitted by the existing grammar reader, before any
+// consumer slices its input. Empty optional operands have empty extents.
+type comprehensionSpans struct {
+	variable                    string
+	list, predicate, projection cyphertext.Span
+}
+
+func parseListComprehension(view braceView) (variable, listExpression, predicate, projection string, ok bool) {
+	inner := view.text()
+	parts, ok := parseListComprehensionSpans(view)
+	if !ok {
 		return "", "", "", "", false
 	}
+	return parts.variable, strings.TrimSpace(inner[parts.list.Start:parts.list.End]), strings.TrimSpace(inner[parts.predicate.Start:parts.predicate.End]), strings.TrimSpace(inner[parts.projection.Start:parts.projection.End]), true
+}
+
+func parseListComprehensionSpans(view braceView) (comprehensionSpans, bool) {
+	inner := view.text()
+	variable, _, listStart, declared := bindingDeclaration(inner, 0)
+	if !declared {
+		return comprehensionSpans{}, false
+	}
 	rest := inner[listStart:]
-	whereIndex := findListComprehensionToken(rest, " WHERE ")
-	pipeIndex := findListComprehensionToken(rest, "|")
+	restView := view.window(listStart, len(inner))
+	whereIndex := findListComprehensionToken(restView, " WHERE ")
+	pipeIndex := findListComprehensionToken(restView, "|")
 	endList := len(rest)
 	if whereIndex >= 0 && whereIndex < endList {
 		endList = whereIndex
@@ -1036,53 +1068,59 @@ func parseListComprehension(inner string) (variable, listExpression, predicate, 
 	if pipeIndex >= 0 && pipeIndex < endList {
 		endList = pipeIndex
 	}
-	listExpression = strings.TrimSpace(rest[:endList])
-	if listExpression == "" {
-		return "", "", "", "", false
+	parts := comprehensionSpans{variable: variable, list: cyphertext.Span{Start: listStart, End: listStart + endList}}
+	if strings.TrimSpace(inner[parts.list.Start:parts.list.End]) == "" {
+		return comprehensionSpans{}, false
 	}
 	if whereIndex >= 0 {
-		conditionEnd := len(rest)
+		end := len(rest)
 		if pipeIndex > whereIndex {
-			conditionEnd = pipeIndex
+			end = pipeIndex
 		}
-		predicate = strings.TrimSpace(rest[whereIndex+len(" WHERE ") : conditionEnd])
-		if predicate == "" {
-			return "", "", "", "", false
+		parts.predicate = cyphertext.Span{Start: listStart + whereIndex + len(" WHERE "), End: listStart + end}
+		if strings.TrimSpace(inner[parts.predicate.Start:parts.predicate.End]) == "" {
+			return comprehensionSpans{}, false
 		}
 	}
 	if pipeIndex >= 0 {
-		projection = strings.TrimSpace(rest[pipeIndex+1:])
-		if projection == "" {
-			return "", "", "", "", false
+		parts.projection = cyphertext.Span{Start: listStart + pipeIndex + 1, End: len(inner)}
+		if strings.TrimSpace(inner[parts.projection.Start:parts.projection.End]) == "" {
+			return comprehensionSpans{}, false
 		}
 	}
-	return variable, listExpression, predicate, projection, true
+	return parts, true
 }
-
-func findListComprehensionToken(expression, token string) int {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+func findListComprehensionToken(view braceView, token string) int {
+	expression := view.text()
+	parenDepth, bracketDepth := 0, 0
 	for index := 0; index < len(expression); index++ {
 		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
 			index = end - 1
 			continue
 		}
 		current := expression[index]
-		switch current {
-		case '(':
+		switch {
+		case current == '(':
 			parenDepth++
-		case ')':
+		case current == ')':
 			parenDepth--
-		case '[':
+		case current == '[':
 			bracketDepth++
-		case ']':
+		case current == ']':
 			bracketDepth--
-		case '{':
-			braceDepth++
-		case '}':
-			braceDepth--
+		case cyphertext.IsOpenBrace(current):
+			close, found := view.close(index)
+			if !found {
+				return -1
+			}
+			index = close
+			continue
 		}
-		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) &&
-			!insideCaseBlock(expression, index) {
+		matched := index+len(token) <= len(expression) && expression[index:index+len(token)] == token
+		if len(token) > 2 && token[0] == ' ' && token[len(token)-1] == ' ' && index+len(token) <= len(expression) {
+			matched = expression[index] == ' ' && expression[index+len(token)-1] == ' ' && cyphertext.KeywordEnd(expression, index+1, token[1:len(token)-1], cyphertext.CypherWord) == index+len(token)-1
+		}
+		if parenDepth == 0 && bracketDepth == 0 && matched && !insideCaseBlock(view, index) {
 			return index
 		}
 	}
@@ -1095,29 +1133,32 @@ func isBinaryRowSubtraction(left string) bool {
 		return false
 	}
 	last := left[len(left)-1]
-	return !strings.ContainsRune("+-*/%(<>=,", rune(last))
+	return !syntaxByteInSet("+-*/%(<>=,", last)
 }
 
 // rowValueEvaluator evaluates an expression over a row: the row evaluator
 // (evaluateRowValue), or, for a scope whose expressions hold subqueries, the
 // context evaluator (rowSubqueryValue).
-type rowValueEvaluator func(expr string, values map[string]interface{}) (interface{}, bool, error)
+type rowValueEvaluator func(expr braceView, values map[string]interface{}) (interface{}, bool, error)
 
 // evaluateRowQuantifier is all / any / none / single(x IN list WHERE p) for a
 // row, each predicate evaluated by evaluate with x bound; matched is false for
 // any other expression.
-func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowQuantifier(view braceView, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, bool, error) {
+	expr := view.text()
 	var callFacts2 functionCallFacts
 	isFunction := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts2)
-	function, inner := callFacts2.name, callFacts2.inner
+	function := callFacts2.name
 	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
+	parts, parsed := parseQuantifierSpans(view.window(callFacts2.arguments.Start, callFacts2.arguments.End))
 	if !parsed {
 		return nil, true, false, nil
 	}
+	args := view.functionArguments()
+	variable, listExpression, predicate := parts.variable, args.spanWindow(parts.list), args.spanWindow(parts.predicate)
 	listValue, ok, err := evaluate(listExpression, values)
 	if err != nil {
 		return nil, true, false, err
@@ -1321,40 +1362,44 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 // conditions read as the predicate's own (#699). The blocks' values are bound
 // first, once per predicate, as the context evaluator substitutes them
 // (evaluateExpressionWithCASESubstituted).
-func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateMode(ctx, expression, values)
+func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	ctx = withBraceView(ctx, view)
+	return e.evaluateRowPredicateMode(ctx, view, values)
 }
 
 // evaluateMatchRowPredicate is the MATCH-clause entry into the same shared
 // evaluator: null drops the row, while predicate conversion and runtime
 // type errors are shared across clause positions.
-func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicate(ctx, expression, values)
+func (e *StorageExecutor) evaluateMatchRowPredicate(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	ctx = withBraceView(ctx, view)
+	return e.evaluateRowPredicate(ctx, view, values)
 }
 
-func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expression string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
 	// A predicate already planned as complete is evaluated from its plan:
 	// the scans below look for forms it doesn't have, and run once per row.
-	if plan, cached := rowPredicatePlans.get(expression); cached && plan != nil && plan.complete {
+	if plan, cached := rowPredicatePlans.get(view.source); cached && plan != nil && plan.complete {
 		return e.evaluateRowPredicatePlan(ctx, plan, values)
 	}
 	// A predicate evaluated before is evaluated from its program: the
 	// decisions below, read from its text once (row_predicate_program.go).
-	if program := rowPredicateProgramFor(expression); program != nil {
+	if program := rowPredicateProgramFor(view); program != nil {
 		return program.holds(e, ctx, values)
 	}
 	// CASE stays in the value program at its original operand position,
 	// including on the first row.
-	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		program := compileRowPredicateProgram(expression)
-		rowPredicatePrograms.put(expression, program)
+	if mayContainCaseKeyword(expression) && len(caseBlockSpans(view)) > 0 {
+		program := compileRowPredicateProgram(view)
+		rowPredicatePrograms.put(view.source, program)
 		return program.holds(e, ctx, values)
 	}
 	values, contextBound := rowValuesWithStatementContext(ctx, expression, values)
 	if contextBound {
 		defer delete(values, rowStatementContextKey)
 	}
-	return e.evaluateRowPredicateParts(ctx, expression, values)
+	return e.evaluateRowPredicateParts(ctx, view, values)
 }
 
 // rowValuesWithStatementContext returns a row predicate's values with the
@@ -1402,8 +1447,12 @@ func rowPredicateNeedsStatementContext(expression string) bool {
 
 // evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
 // blocks are bound; it recurses into its OR / AND / NOT parts.
-func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, expression string, values map[string]interface{}) bool {
-	expression = strings.TrimSpace(expression)
+func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
+	view = view.trim()
+	expression = view.text()
+	ctx = withBraceView(ctx, view)
 	if expression == "" {
 		return false
 	}
@@ -1415,12 +1464,12 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// prefix from those recognizers, silently falling through to the
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.evaluateRowPredicateParts(ctx, inner, values)
+	if _, ok := stripEnclosingExpressionParentheses(expression); ok {
+		return e.evaluateRowPredicateParts(ctx, view.window(1, len(expression)-1), values)
 	}
-	strictLogical := rowPredicateIsStrictLogical(expression)
+	strictLogical := rowPredicateIsStrictLogical(view)
 	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
-		value, evaluated, err := e.evaluateRowValue(expression, values)
+		value, evaluated, err := e.evaluateRowValue(view, values)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return false
@@ -1429,26 +1478,28 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			return predicateValueIsTrue(ctx, value, expression)
 		}
 	}
-	return e.evaluateRowPredicatePartsFromSubqueries(ctx, expression, values)
+	return e.evaluateRowPredicatePartsFromSubqueries(ctx, view, values)
 }
 
 // rowPredicateIsStrictLogical reports a predicate evaluateRowPredicateParts
 // evaluates whole with the row value evaluator first: one with arithmetic
 // that is a NOT or an XOR, or an AND / OR with an operand of a type the
 // static checker can't tell.
-func rowPredicateIsStrictLogical(expression string) bool {
-	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
+func rowPredicateIsStrictLogical(view braceView) bool {
+	expression := view.text()
+	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(view, "XOR") >= 0
 	if mayContainArithmetic(expression) && !strictLogical {
 		checker := staticOperatorChecker{}
 		for _, operator := range []string{" AND ", " OR "} {
-			if left, right, found := splitByOperatorOutsideCase(expression, operator, true, true); found {
-				for _, operand := range []string{left, right} {
+			if left, right, found := splitByOperatorOutsideCase(view, operator, true, true); found {
+				for _, operandView := range []braceView{view.window(0, len(left)), view.window(len(expression)-len(right), len(expression))} {
+					operand := operandView.text()
 					if mayContainArithmetic(operand) {
 						continue
 					}
-					typeInfo, _ := checker.check(operand)
+					typeInfo, _ := checker.check(operandView)
 					if !typeInfo.known() {
-						typeInfo, _ = checker.checkAtom(operand)
+						typeInfo, _ = checker.checkAtom(operandView)
 					}
 					if !typeInfo.known() {
 						strictLogical = true
@@ -1463,12 +1514,14 @@ func rowPredicateIsStrictLogical(expression string) bool {
 // evaluateRowPredicatePartsFromSubqueries is evaluateRowPredicateParts
 // after the strict logical evaluation: subqueries, label tests, the
 // predicate plan, then the text.
-func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Context, expression string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
 	// COUNT { … } + 1 > 1, …) are evaluated where they stand by the row
 	// evaluator (#1055), unless AND / OR / XOR split the predicate: then each
 	// side evaluates its own.
-	if plan := planRowSubqueries(expression); plan != nil && !plan.logical {
+	if plan := planRowSubqueries(view); plan != nil && !plan.logical {
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
@@ -1477,7 +1530,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 				return plan.integerComparison.holds(count)
 			}
 		}
-		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, expression, values); evaluated {
+		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, view, values); evaluated {
 			return holds
 		}
 	}
@@ -1486,22 +1539,24 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 	}
 	// AND parts that compare or null-test simple operands are parsed once per
 	// predicate text (planRowPredicate), not once per row.
-	if plan := planRowPredicate(expression); plan != nil {
+	if plan := planRowPredicate(view); plan != nil {
 		return e.evaluateRowPredicatePlan(ctx, plan, values)
 	}
-	return e.evaluateRowPredicateText(ctx, expression, values)
+	return e.evaluateRowPredicateText(ctx, view, values)
 }
 
 // rowPredicateWithSubqueries evaluates a predicate holding subquery
 // expressions with the row evaluator, which evaluates each subquery where it
 // stands; evaluated is false when the row evaluator doesn't handle the
 // predicate. An error is recorded on ctx and the predicate doesn't hold.
-func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
+func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, view braceView, values map[string]interface{}) (bool, bool) {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
 	values, contextBound := rowValuesWithStatementContext(ctx, expression, values)
 	if contextBound {
 		defer delete(values, rowStatementContextKey)
 	}
-	value, evaluated, err := e.evaluateRowValue(expression, values)
+	value, evaluated, err := e.evaluateRowValue(view, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true
@@ -1515,11 +1570,13 @@ func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expres
 // evaluateRowPredicateText is evaluateRowPredicate without the predicate plan:
 // the predicate is evaluated from its text. A planned part whose operand the
 // plan can't resolve directly is evaluated here.
-func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
 	// OR, XOR, AND and NOT (evaluateLogicalExpression) over the operands'
 	// values (rowPredicateValue); the result is read as a predicate.
-	if value, logical, ok, err := evaluateLogicalExpression(expression, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand) || isRelationshipPatternOperand(operand), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+	if value, logical, ok, err := evaluateLogicalExpression(view, func(operand braceView) (interface{}, bool, error) {
+		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand.text()) || isRelationshipPatternOperand(operand.text()), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return e.evaluateRowValue(operand, scope)
 		}, true)
 	}); logical {
@@ -1529,34 +1586,36 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		}
 		return ok && predicateValueIsTrue(ctx, value, expression)
 	}
-	return e.evaluateRowPredicateTextFromSubqueries(ctx, expression, values)
+	return e.evaluateRowPredicateTextFromSubqueries(ctx, view, values)
 }
 
 // evaluateRowPredicateTextFromSubqueries is evaluateRowPredicateText for a
 // predicate without a top-level logical operator.
-func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Context, expression string, values map[string]interface{}) bool {
-	if plan := planRowSubqueries(expression); plan != nil {
-		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, expression, values); evaluated {
+func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Context, view braceView, values map[string]interface{}) bool {
+	expression := view.text()
+	ctx = withBraceView(ctx, view)
+	if plan := planRowSubqueries(view); plan != nil {
+		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, view, values); evaluated {
 			return holds
 		}
 	}
 	if isRelationshipPatternOperand(expression) {
-		if value, resolved := e.rowPredicateOperand(ctx, expression, values); resolved {
+		if value, resolved := e.rowPredicateOperand(ctx, view, values); resolved {
 			return predicateValueIsTrue(ctx, value, expression)
 		}
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, " STARTS WITH ", true, true); ok {
-		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.HasPrefix)
+	if left, right, ok := splitByOperatorOutsideCase(view, " STARTS WITH ", true, true); ok {
+		return e.evaluateRowStringPredicate(ctx, view.window(0, len(left)), view.window(len(expression)-len(right), len(expression)), values, strings.HasPrefix)
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, " ENDS WITH ", true, true); ok {
-		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.HasSuffix)
+	if left, right, ok := splitByOperatorOutsideCase(view, " ENDS WITH ", true, true); ok {
+		return e.evaluateRowStringPredicate(ctx, view.window(0, len(left)), view.window(len(expression)-len(right), len(expression)), values, strings.HasSuffix)
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, " CONTAINS ", true, true); ok {
-		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.Contains)
+	if left, right, ok := splitByOperatorOutsideCase(view, " CONTAINS ", true, true); ok {
+		return e.evaluateRowStringPredicate(ctx, view.window(0, len(left)), view.window(len(expression)-len(right), len(expression)), values, strings.Contains)
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, "=~", false, true); ok {
-		leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
-		rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
+	if left, right, ok := splitByOperatorOutsideCase(view, "=~", false, true); ok {
+		leftValue, leftOK := e.rowPredicateOperand(ctx, view.window(0, len(left)), values)
+		rightValue, rightOK := e.rowPredicateOperand(ctx, view.window(len(expression)-len(right), len(expression)), values)
 		if !leftOK || !rightOK {
 			return false
 		}
@@ -1567,32 +1626,32 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		}
 		return matched == true
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, " NOT IN ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(view, " NOT IN ", true, true); ok {
 		// x NOT IN list holds only when the membership is known false; a null
 		// membership (null x, null list, or a null element without a match)
 		// drops the row.
-		membership, known := e.rowPredicateMembership(ctx, left, right, values)
+		membership, known := e.rowPredicateMembership(ctx, view.window(0, len(left)), view.window(len(expression)-len(right), len(expression)), values)
 		return known && membership == false
 	}
-	if left, right, ok := splitByOperatorOutsideCase(expression, " IN ", true, true); ok {
-		membership, known := e.rowPredicateMembership(ctx, left, right, values)
+	if left, right, ok := splitByOperatorOutsideCase(view, " IN ", true, true); ok {
+		membership, known := e.rowPredicateMembership(ctx, view.window(0, len(left)), view.window(len(expression)-len(right), len(expression)), values)
 		return known && membership == true
 	}
-	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(expression); isTypePredicate {
+	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(view); isTypePredicate {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return false
 		}
-		value, ok := e.rowPredicateOperand(ctx, operand, values)
+		value, ok := e.rowPredicateOperand(ctx, view.window(0, len(operand)), values)
 		return ok && evaluateTypePredicate(value, negated, spec)
 	}
 	if operand, negated, form, isNormalization := splitNormalizationPredicate(expression); isNormalization {
-		value, ok := e.rowPredicateOperand(ctx, operand, values)
+		value, ok := e.rowPredicateOperand(ctx, view.window(0, len(operand)), values)
 		matched, known := evaluateNormalizationPredicate(value, negated, form).(bool)
 		return ok && known && matched
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
-		if left, nullTest := nullPredicateOperand(expression, strings.TrimSpace(operator)); nullTest {
+		if left, nullTest := nullPredicateOperand(view, strings.TrimSpace(operator)); nullTest {
 			value, ok := e.rowPredicateOperand(ctx, left, values)
 			if !ok {
 				value = nil
@@ -1600,8 +1659,8 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 			return nullEvaluationHandler(operator == " IS NOT NULL").evaluate(value)
 		}
 	}
-	comparisonResult, comparison, resolved, err := evaluateComparisonChain(expression, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand) || isRelationshipPatternOperand(operand), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+	comparisonResult, comparison, resolved, err := evaluateComparisonChain(view, func(operand braceView) (interface{}, bool, error) {
+		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand.text()) || isRelationshipPatternOperand(operand.text()), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return e.evaluateRowValue(operand, scope)
 		}, false)
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain())
@@ -1613,7 +1672,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		matched, known := comparisonResult.(bool)
 		return resolved && known && matched
 	}
-	value, ok := e.rowPredicateOperand(ctx, expression, values)
+	value, ok := e.rowPredicateOperand(ctx, view, values)
 	if !ok {
 		return false
 	}
@@ -1664,23 +1723,25 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 // OR, XOR or NOT: its expression value (rowPredicateOperand), or, for a
 // predicate form only the predicate evaluator reads (a pattern, EXISTS),
 // whether it holds.
-func (e *StorageExecutor) rowPredicateValue(ctx context.Context, operand string, values map[string]interface{}) interface{} {
-	if value, resolved := e.rowPredicateOperand(ctx, operand, values); resolved {
+func (e *StorageExecutor) rowPredicateValue(ctx context.Context, view braceView, values map[string]interface{}) interface{} {
+	if value, resolved := e.rowPredicateOperand(ctx, view, values); resolved {
 		return value
 	}
-	return e.evaluateRowPredicateParts(ctx, operand, values)
+	return e.evaluateRowPredicateParts(ctx, view, values)
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is
 // the statement's: it is recorded on ctx, and the operand is unresolved, so
 // the predicate doesn't hold.
-func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, view braceView, values map[string]interface{}) (interface{}, bool) {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	if isRelationshipPatternOperand(expr) {
-		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, expr, values); recognized {
+		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, view, values); recognized {
 			return matched, getExpressionFailure(ctx) == nil
 		}
 	}
-	value, ok, err := e.evaluateRowValue(expr, values)
+	value, ok, err := e.evaluateRowValue(view, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -1690,7 +1751,7 @@ func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, 
 
 // rowPredicateMembership is left IN right for a row predicate, recording an
 // operand's error on ctx.
-func (e *StorageExecutor) rowPredicateMembership(ctx context.Context, left, right string, values map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) rowPredicateMembership(ctx context.Context, left, right braceView, values map[string]interface{}) (interface{}, bool) {
 	value, ok, err := e.evaluateRowMembershipValue(left, right, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -1739,11 +1800,11 @@ func rowIdentityPayload(value interface{}) (interface{}, bool) {
 // rowRelationshipEndpoint evaluates startNode(r) / endNode(r), reading bound
 // variables directly and sharing argument validation with the context evaluator.
 // Non-variable arguments use the regular row expression evaluator.
-func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
-	value, resolved := values[strings.TrimSpace(argument)]
+func (e *StorageExecutor) rowRelationshipEndpoint(function string, argument braceView, values map[string]interface{}) (interface{}, bool, error) {
+	value, resolved := values[argument.trim().text()]
 	if !resolved {
 		var err error
-		value, resolved, err = e.evaluateRowValue(strings.TrimSpace(argument), values)
+		value, resolved, err = e.evaluateRowValue(argument.trim(), values)
 		if err != nil || !resolved {
 			return nil, resolved, err
 		}
@@ -1849,7 +1910,7 @@ func containsRelationshipPattern(expression string) bool {
 	return false
 }
 
-func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowMembershipValue(left, right braceView, values map[string]interface{}) (interface{}, bool, error) {
 	needle, leftOK, err := e.evaluateRowValue(left, values)
 	if err != nil {
 		return nil, false, err
@@ -1861,7 +1922,7 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left), e.graphIdentityDomain())
+	value, ok := rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left.text()), e.graphIdentityDomain())
 	return value, ok, nil
 }
 
@@ -1900,7 +1961,7 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool, domains 
 	return false, true
 }
 
-func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {
+func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right braceView, values map[string]interface{}, predicate func(string, string) bool) bool {
 	leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
 	rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
 	return leftOK && rightOK && evaluateRowStringPredicateValues(leftValue, rightValue, predicate)

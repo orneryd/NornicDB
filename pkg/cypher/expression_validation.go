@@ -22,13 +22,14 @@ import (
 // that isn't a list is a list of that one value (coerceToUnwindItems). Variables
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
-func validateListOperands(cypher string, params map[string]interface{}) error {
+func validateListOperands(view braceView, params map[string]interface{}) error {
+	cypher := view.text()
 	return forEachListOperand(cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if coercingIterationDeclaration(cypher, in) {
+		if coercingIterationDeclaration(view, in) {
 			return nil
 		}
-		end, typeName, parameter := staticListOperand(cypher, start, params)
+		end, typeName, parameter := staticListOperand(view, start, params)
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil
 		}
@@ -78,11 +79,12 @@ func wholeListOperand(text string, end int) bool {
 // and subquery bodies. FOREACH (x IN n | …) is not a type error in Neo4j (it
 // runs once). A list element declaration (`[n IN list | …]`) is not itself
 // an operand and cannot change the type of a separate `IN n` operand.
-func graphListOperandTypeError(text string, scope matchSemanticScope) error {
-	return staticListOperandTypeError(text, staticTypeScope{kinds: scope})
+func graphListOperandTypeError(view braceView, scope matchSemanticScope) error {
+	return staticListOperandTypeError(view, staticTypeScope{kinds: scope})
 }
 
-func staticListOperandTypeError(text string, scope staticTypeScope) error {
+func staticListOperandTypeError(view braceView, scope staticTypeScope) error {
+	text := view.text()
 	if len(scope.kinds) == 0 && len(scope.values) == 0 {
 		return nil
 	}
@@ -97,7 +99,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if coercingIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
+		if coercingIterationDeclaration(view, in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -114,8 +116,9 @@ func mayBeListType(typeName string) bool {
 // coercingIterationDeclaration reports whether IN belongs to a scalar-coercing
 // iteration header: FOREACH (x IN ...) or FOR x IN .... A separate membership
 // expression inside either clause still requires a list operand.
-func coercingIterationDeclaration(text string, in int) bool {
-	opts := defaultKeywordScanOpts()
+func coercingIterationDeclaration(view braceView, in int) bool {
+	text := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	for _, header := range [...]struct {
@@ -204,11 +207,11 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		if binding.close == len(text) {
 			return binding, false
 		}
-		form, ok := parseReduceForm(function, text[open+1:binding.close])
+		form, ok := readReduceForm(function, text[open+1:binding.close])
 		if !ok {
 			return binding, false
 		}
-		comma := open + 1 + findTopLevelOperator(text[open+1:binding.close], ",", false, true)
+		comma := open + 1 + findTopLevelSymbol(text[open+1:binding.close], ",", false, true)
 		binding.scope = localScopeStart(text, comma+1, binding.close, true, false)
 		accumulator := queryGapEnd(text, open+1)
 		equals := open + 1 + strings.IndexByte(text[open+1:comma], '=')
@@ -281,7 +284,6 @@ func bindingDeclaration(text string, from int) (name string, at, list int, ok bo
 // text[from:close]: its first top-level | (pipe) or WHERE (where), or close
 // when it has neither ([v IN l] binds v nowhere).
 func localScopeStart(text string, from, close int, pipe, where bool) int {
-	depth := 0
 	for index := from; index < close; index++ {
 		switch c := text[index]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
@@ -292,16 +294,26 @@ func localScopeStart(text string, from, close int, pipe, where bool) int {
 				index = end - 1
 				continue
 			}
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
 		case '|':
-			if pipe && depth == 0 {
+			if pipe {
 				return index
 			}
+		default:
+			// A nested group can't hold the binding's own | or WHERE: the
+			// shared delimiter matcher skips it whole.
+			if closer := cyphertext.DelimiterCloser(c); closer != 0 {
+				end := cyphertext.FindMatchingDelimiter(text[:close], index, rune(c), rune(closer), cyphertext.OpeningDelimiter)
+				if end < 0 {
+					return close
+				}
+				index = end
+				continue
+			}
+			if c == ')' || c == ']' || cyphertext.IsCloseBrace(c) {
+				return close
+			}
 		}
-		if where && depth == 0 && index+5 <= close && strings.EqualFold(text[index:index+5], "WHERE") &&
+		if where && index+5 <= close && strings.EqualFold(text[index:index+5], "WHERE") &&
 			!cyphertext.NamePartAt(text, index-1) && (index+5 == len(text) || !cyphertext.NamePartAt(text, index+5)) {
 			return index
 		}
@@ -398,7 +410,8 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
-func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
+func localBindingOperand(view braceView, at int, name string, scope staticTypeScope) staticOperand {
+	text := view.text()
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
 		return staticOperand{}
@@ -410,8 +423,8 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 	if span[0] <= 0 || span[1] <= span[0] || span[1] > len(text) {
 		return staticOperand{}
 	}
-	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	source := view.window(span[0], span[1]).trim()
+	inner := withLocalTypes(scope, view, span[0])
 	types := typeScopeOf(inner)
 	if binding.element[index] {
 		return listElementOperand(types, inner, source)
@@ -421,8 +434,8 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 }
 
 // localBindingKind is localBindingOperand's binding kind.
-func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
-	return localBindingOperand(text, at, name, scope).bindingKind()
+func localBindingKind(view braceView, at int, name string, scope staticTypeScope) matchBindingKind {
+	return localBindingOperand(view, at, name, scope).bindingKind()
 }
 
 // withLocalTypes is scope with each name a local binds around offset at of
@@ -430,7 +443,8 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
-func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+func withLocalTypes(scope staticTypeScope, view braceView, at int) staticTypeScope {
+	text := view.text()
 	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
@@ -439,7 +453,7 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = localBindingOperand(view, at, name, scope)
 	}
 	if types == nil {
 		return scope
@@ -663,7 +677,8 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 // staticListOperand reads the operand of a list position starting at start
 // and returns where it ends and, when its type is static and not a list, that
 // type's Neo4j name (with the parameter's name for a parameter).
-func staticListOperand(cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+func staticListOperand(view braceView, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+	cypher := view.text()
 	if start >= len(cypher) {
 		return start, "", ""
 	}
@@ -689,8 +704,8 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 			return end, "", ""
 		}
 	case c == '{':
-		close := cyphertext.FindMatchingDelimiter(cypher, start, '{', '}', cyphertext.OpeningDelimiter)
-		if close < 0 {
+		close, found := view.close(start)
+		if !found {
 			return start, "", ""
 		}
 		end = close + 1
@@ -730,7 +745,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 	// The operator check types the operand (a variable or a property is
 	// known per row); a list position rejects a type with no list or null
 	// alternative.
-	operand := (staticTypeScope{}).operandOf(cypher[start:end])
+	operand := (staticTypeScope{}).operandOf(view.window(start, end))
 	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
 		return end, "", ""
 	}
@@ -748,13 +763,14 @@ func isCypherListParameter(value interface{}) bool {
 // validateStaticBooleanOperands rejects statically-known non-boolean operands
 // before execution. Expressions whose type depends on a row remain subject to
 // runtime validation by the row evaluator.
-func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, expression string) error {
-	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.validateStaticBooleanOperands(ctx, inner)
+func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, view braceView) error {
+	view = view.trim()
+	expression := view.text()
+	if _, ok := stripEnclosingExpressionParentheses(expression); ok {
+		return e.validateStaticBooleanOperands(ctx, view.window(1, len(expression)-1))
 	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
-		operand := strings.TrimSpace(expression[len("NOT "):])
+		operand := view.window(len("NOT "), len(expression)).trim()
 		if err := e.validateStaticBooleanOperands(ctx, operand); err != nil {
 			return err
 		}
@@ -770,11 +786,11 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
 		// Only the expression's own operators: not those inside a list, a
 		// comprehension, a map or a CASE.
-		left, right, found := splitByOperatorOutsideCase(expression, operator, true, true)
+		left, right, found := splitByOperatorOutsideCase(view, operator, true, true)
 		if !found {
 			continue
 		}
-		for _, operand := range []string{left, right} {
+		for _, operand := range []braceView{view.window(0, len(left)), view.window(len(expression)-len(right), len(expression))} {
 			if err := e.validateStaticBooleanOperands(ctx, operand); err != nil {
 				return err
 			}
@@ -791,10 +807,12 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 	return nil
 }
 
-func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, expression string) (interface{}, bool) {
-	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		expression = inner
+func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, view braceView) (interface{}, bool) {
+	view = view.trim()
+	expression := view.text()
+	if _, ok := stripEnclosingExpressionParentheses(expression); ok {
+		view = view.window(1, len(expression)-1)
+		expression = view.text()
 	}
 	if value, literal := parseLiteralValueFromComputedRow(expression); literal {
 		return value, true
@@ -802,13 +820,13 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if len(expressionVariables(expression)) > 0 {
 		return nil, false
 	}
-	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") {
-		value, err := e.evaluateMapLiteralFromValues(ctx, expression, nil)
+	if enclosingMapText(view) {
+		value, err := e.evaluateMapLiteralFromValues(ctx, view, nil)
 		recordExpressionFailure(ctx, err)
 		return value, err == nil
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND ", "<=", ">=", "<>", "!=", "=", "<", ">"} {
-		if _, _, found := splitByOperatorWithOptions(expression, operator, true, true); found {
+		if _, _, found := splitByOperatorWithOptions(view, operator, true, true); found {
 			return true, true
 		}
 	}
@@ -816,7 +834,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") || strings.HasPrefix(upper, "NOT ") {
 		return true, true
 	}
-	value, defined := e.evaluateExpressionWithContextDefined(ctx, expression, nil, nil)
+	value, defined := e.evaluateExpressionWithContextDefined(ctx, view, nil, nil)
 	if !defined {
 		return nil, false
 	}
@@ -825,7 +843,8 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 
 // validateListComprehensionVariables rejects a property expression where
 // Cypher requires a local iterator name, including nested projections.
-func validateListComprehensionVariables(text string) error {
+func validateListComprehensionVariables(view braceView) error {
+	text := view.text()
 	for index := 0; index < len(text); index++ {
 		if isCypherQuoteByte(text[index]) {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
@@ -839,8 +858,9 @@ func validateListComprehensionVariables(text string) error {
 			break
 		}
 		inner := text[index+1 : close]
-		in := findListComprehensionToken(inner, " IN ")
-		pipe := findListComprehensionToken(inner, "|")
+		innerView := view.window(index+1, close)
+		in := findListComprehensionToken(innerView, " IN ")
+		pipe := findListComprehensionToken(innerView, "|")
 		_, _, _, declared := bindingDeclaration(inner, 0)
 		emptyIterator := matchKeywordAt(inner, queryGapEnd(inner, 0), "IN")
 		if pipe >= 0 && (in >= 0 && pipe > in || emptyIterator) && !patternComprehensionHead(inner) && !declared {

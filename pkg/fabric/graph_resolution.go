@@ -16,7 +16,7 @@ import (
 // graph.byElementId take a STRING: the evaluator returns one string per
 // expression, or Neo4j's error for an argument that isn't one (the Cypher
 // executor owns value types and their names).
-type GraphArgumentEvaluator func(ctx context.Context, expressions []string, params map[string]interface{}) ([]string, error)
+type GraphArgumentEvaluator func(ctx context.Context, expressions []*cyphertext.Source, params map[string]interface{}) ([]string, error)
 
 // GraphNotFoundError is Neo4j's Neo.ClientError.Database.DatabaseNotFound
 // "Graph not found: <name>" for a graph reference that names no graph.
@@ -77,19 +77,22 @@ func (e *FabricExecutor) resolveDynamicGraph(ctx context.Context, f *FragmentExe
 		return "", &GraphReferenceError{Code: "Neo.ClientError.Statement.SyntaxError",
 			Message: localization.CypherCommandRoutingGraphFunctionUnknown(f.Graph.Function)}
 	}
-	if len(f.Graph.Args) != 1 {
+	if len(f.Graph.Arguments) != 1 {
 		return "", &GraphReferenceError{Code: "Neo.ClientError.Statement.SyntaxError",
-			Message: graphFunctionParameterCount(f.Graph.Function, len(f.Graph.Args))}
+			Message: graphFunctionParameterCount(f.Graph.Function, len(f.Graph.Arguments))}
 	}
 	if e.evaluateGraphArguments == nil {
 		return "", fmt.Errorf("dynamic graph reference %s can't be evaluated", f.Graph.Text())
 	}
-	values, err := e.evaluateGraphArguments(ctx, f.Graph.Args, params)
+	if len(f.GraphArguments) != len(f.Graph.Arguments) {
+		return "", fmt.Errorf("dynamic graph reference %s lost its argument Source windows", f.Graph.Text())
+	}
+	values, err := e.evaluateGraphArguments(ctx, f.GraphArguments, params)
 	if err != nil {
 		return "", err
 	}
-	if len(values) != len(f.Graph.Args) {
-		return "", fmt.Errorf("dynamic graph reference %s: %d arguments evaluated to %d values", f.Graph.Text(), len(f.Graph.Args), len(values))
+	if len(values) != len(f.Graph.Arguments) {
+		return "", fmt.Errorf("dynamic graph reference %s: %d arguments evaluated to %d values", f.Graph.Text(), len(f.Graph.Arguments), len(values))
 	}
 	value := values[0]
 	if function == "graph.byname" {

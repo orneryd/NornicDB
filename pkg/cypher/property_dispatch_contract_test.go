@@ -24,7 +24,7 @@ func TestPropertyDispatchApplicabilityAndResolution(t *testing.T) {
 		{"properties", "{}", true, true, false},
 		{"size", "[1]", true, true, false},
 	} {
-		_, handled, resolved, err := e.evaluateRowGraphFunction(tc.name, tc.argument, pipelineRow{})
+		_, handled, resolved, err := e.evaluateRowGraphFunction(tc.name, originalBraceView(tc.argument), pipelineRow{})
 		require.Equal(t, tc.handled, handled, tc.name+tc.argument)
 		require.Equal(t, tc.resolved, resolved, tc.name+tc.argument)
 		require.Equal(t, tc.failed, err != nil, tc.name+tc.argument)
@@ -95,18 +95,18 @@ func TestPropertyDispatchArgumentFailureBoundary(t *testing.T) {
 		{"properties(1)", false},
 		{"1 / 0", true},
 	} {
-		value, handled, resolved, err := e.evaluateRowGraphFunction("property_dispatch_discard_error", tc.argument, pipelineRow{})
+		value, handled, resolved, err := e.evaluateRowGraphFunction("property_dispatch_discard_error", originalBraceView(tc.argument), pipelineRow{})
 		require.Nil(t, value)
 		require.True(t, handled)
 		require.False(t, resolved)
 		require.Equal(t, tc.failed, err != nil)
 	}
-	value, handled, resolved, err := e.evaluateRowGraphFunction("coalesce", "1, 1 / 0", pipelineRow{})
+	value, handled, resolved, err := e.evaluateRowGraphFunction("coalesce", expressionBraceView("1, 1 / 0"), pipelineRow{})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.True(t, resolved)
 	require.Equal(t, int64(1), value)
 	require.PanicsWithValue(t, "registry defect", func() {
-		_, _, _, _ = e.evaluateRowGraphFunction("property_dispatch_panic", "", pipelineRow{})
+		_, _, _, _ = e.evaluateRowGraphFunction("property_dispatch_panic", originalBraceView(""), pipelineRow{})
 	})
 }

@@ -28,7 +28,7 @@ func TestInlinePatternWhereFunctionArgumentIsNotANode(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH(s:ZG2 {id:'a'}) RETURN s.id AS v", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
-	require.Equal(t, []string{"s", "x", "t"}, extractNodeVariables("(s)-[r WHERE size(kinds) = 0 AND exists((x))]->(t)"))
+	require.Equal(t, []string{"s", "x", "t"}, extractNodeVariables(originalBraceView("(s)-[r WHERE size(kinds) = 0 AND exists((x))]->(t)")))
 	require.True(t, functionCallParenAt("size(kinds)", 4))
 	require.False(t, functionCallParenAt("MATCH(n)", 5))
 	require.False(t, functionCallParenAt("(n)", 0))
@@ -55,5 +55,5 @@ func TestParenthesisedSubqueryOperandIsNotANode(t *testing.T) {
 		}
 		require.Equal(t, want, result.Rows, query)
 	}
-	require.Equal(t, []string{"a", "b"}, extractNodeVariables("(EXISTS { MATCH (q) } AND (a)-[:R]->(b))"))
+	require.Equal(t, []string{"a", "b"}, extractNodeVariables(originalBraceView("(EXISTS { MATCH (q) } AND (a)-[:R]->(b))")))
 }

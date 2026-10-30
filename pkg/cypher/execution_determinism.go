@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
@@ -73,9 +74,10 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if depth >= 16 {
 		return policy
 	}
-	text = classificationText(text)
+	ctx, view := canonicalBraceView(ctx, text)
+	text = view.text()
 	trimmed := strings.TrimSpace(text)
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
 	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return policy
@@ -101,7 +103,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		if body == "" {
 			return errNonDeterministicExecution
 		}
-		args := splitTopLevelComma(body)
+		args := view.window(open+1, close).commaViews()
 		if volatility == functionTemporalTruncation && len(args) < 2 {
 			return errNonDeterministicExecution
 		}
@@ -140,7 +142,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		if len(declaration.CypherInputs) == 0 {
 			continue
 		}
-		var arguments []string
+		var arguments []braceView
 		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 		if err != nil {
 			return policy
@@ -148,7 +150,10 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
 			start, _ := node.Span()
 			if start == at && (node.Rule() == cypherantlr.CypherParserRULE_queryCallSt || node.Rule() == cypherantlr.CypherParserRULE_standaloneCall) {
-				arguments = procedureArgumentTextsFromSyntax(node)
+				for _, expression := range procedureArgumentSyntax(node) {
+					start, end := expression.Span()
+					arguments = append(arguments, view.window(start, end))
+				}
 			}
 			return nil
 		})
@@ -224,7 +229,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 				if !isText {
 					return policy
 				}
-				dependency.child = compileExecutionPolicy(ctx, inner, depth+1)
+				dependency.child = compileExecutionPolicy(withBraceInputSource(ctx, inner), inner, depth+1)
 				if !dependency.child.cacheable {
 					return policy
 				}
@@ -255,7 +260,13 @@ func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings e
 		return false
 	}
 	if policy.generation != globalProcedureRegistry.generation.Load() {
-		return cachedExecutionPolicy(ctx, policy.text).allows(ctx, bindings, depth)
+		source, found := cyphertext.SourceView(ctx)
+		if !found {
+			ctx = withBraceInputSource(ctx, policy.text)
+			source, _ = cyphertext.SourceView(ctx)
+		}
+		ctx, view := canonicalBraceView(ctx, source.Text)
+		return cachedExecutionPolicy(ctx, view.text()).allows(ctx, bindings, depth)
 	}
 	if !policy.cacheable {
 		return false
@@ -303,6 +314,10 @@ func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings e
 				childBindings.count++
 			}
 			child := input.child
+			childText := ""
+			if child != nil {
+				childText = child.text
+			}
 			if child == nil {
 				var value any
 				var known bool
@@ -318,9 +333,10 @@ func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings e
 				if !known || !isText {
 					return false
 				}
-				child = cachedExecutionPolicy(ctx, inner)
+				childText = inner
+				child = cachedExecutionPolicy(withBraceInputSource(ctx, inner), inner)
 			}
-			if !child.allows(ctx, childBindings, depth+1) {
+			if !child.allows(withBraceInputSource(ctx, childText), childBindings, depth+1) {
 				return false
 			}
 		}
@@ -329,5 +345,7 @@ func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings e
 }
 
 func deterministicExecution(ctx context.Context, text string, depth int) bool {
+	ctx, view := canonicalBraceView(ctx, text)
+	text = view.text()
 	return cachedExecutionPolicy(ctx, text).allows(ctx, newExecutionBindings(ctx), depth)
 }

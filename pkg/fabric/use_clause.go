@@ -98,36 +98,74 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 		return UseClauseReference{}, "", false, err
 	}
 	source := cyphertext.NewSource(ctx, query, stage)
+	result, rest, hasUse, err := readUseClauseSource(ctx, source, inSubquery, true)
+	clause = result.UseClauseReference
+	if err != nil {
+		return clause, "", hasUse, err
+	}
+	if !hasUse {
+		return clause, query, false, nil
+	}
+	span, _ := rest.OriginalSpan(cyphertext.Span{End: len(rest.Text)}, cyphertext.SourceExtent)
+	return clause, source.Original[span.Start:span.End], true, nil
+}
+
+// UseClauseSourceReference retains the existing original-coordinate record and
+// its grammar-produced argument windows. No consumer rebuilds those windows.
+type UseClauseSourceReference struct {
+	UseClauseReference
+	ArgumentViews []*cyphertext.Source
+}
+
+// ReadUseClauseSource consumes the producer's actual Source. The original
+// Span/Text metadata keeps its release meaning; argument evaluation uses the
+// carried windows and remaining is a window of the same source.
+func ReadUseClauseSource(ctx context.Context, source *cyphertext.Source, inSubquery bool) (UseClauseSourceReference, *cyphertext.Source, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return UseClauseSourceReference{}, nil, false, err
+	}
+	return readUseClauseSource(ctx, source, inSubquery, false)
+}
+
+func readUseClauseSource(ctx context.Context, source *cyphertext.Source, inSubquery, original bool) (clause UseClauseSourceReference, remaining *cyphertext.Source, hasUse bool, err error) {
 	if source.Err != nil {
-		return UseClauseReference{}, "", false, source.Err
+		return UseClauseSourceReference{}, nil, false, source.Err
 	}
 	leading := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
 	trailing := max(leading, len(strings.TrimRightFunc(source.Text, cyphertext.IsWhitespace)))
 	view := source.Window(leading, trailing)
 	trimmed := view.Text
 	if !startsWithWordFold(trimmed, "USE") {
-		return UseClauseReference{}, query, false, nil
+		return UseClauseSourceReference{}, source, false, nil
 	}
-	reference, readErr := cypherantlr.ReadUseReference(ctx, view)
+	var reference cypherantlr.UseReference
+	var argumentViews []*cyphertext.Source
+	var readErr error
+	if original {
+		reference, readErr = cypherantlr.ReadUseReference(ctx, view)
+	} else {
+		product, err := cypherantlr.ReadUseReferenceView(ctx, view)
+		reference, argumentViews, readErr = product.Reference, product.Arguments, err
+	}
 	if readErr != nil {
 		if ctx.Err() != nil {
-			return UseClauseReference{}, "", true, ctx.Err()
+			return UseClauseSourceReference{}, nil, true, ctx.Err()
 		}
 		var position *cypherantlr.UseReferenceError
 		if errors.As(readErr, &position) {
 			input := inputToken(trimmed, position.Offset)
 			switch {
 			case position.Function:
-				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphFunctionArgument(input))
+				return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphFunctionArgument(input))
 			case position.NamePart:
-				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphNamePart(input))
+				return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphNamePart(input))
 			default:
-				return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(input))
+				return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(input))
 			}
 		}
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(trimmed, skipSpacesAndComments(trimmed, len("USE")))))
+		return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference(inputToken(trimmed, skipSpacesAndComments(trimmed, len("USE")))))
 	}
-	clause = UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args, Arguments: reference.Arguments}, End: reference.End}
+	clause = UseClauseSourceReference{UseClauseReference: UseClauseReference{UseClause: UseClause{Name: reference.Name, Function: reference.Function, Args: reference.Args, Arguments: reference.Arguments}, End: reference.End}, ArgumentViews: argumentViews}
 	end := reference.AcceptedEnd
 
 	next := skipSpacesAndComments(trimmed, end)
@@ -137,33 +175,32 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 		// statement is Neo4j's "Expected exactly one statement per query
 		// but got: <n>".
 		if more := statementsAfter(trimmed[next:]); more > 0 {
-			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingMultipleStatements(1 + more))
+			return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingMultipleStatements(1 + more))
 		}
 		next = len(trimmed)
 	}
 	if next >= len(trimmed) {
 		if inSubquery {
-			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseSubqueryMustConclude())
+			return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseSubqueryMustConclude())
 		}
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseQueryCannotConclude())
+		return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseQueryCannotConclude())
 	}
 	word, _, ok := scanWord(trimmed, next)
 	if !ok || !cypherantlr.IsUseClauseFollower(word, inSubquery) {
 		if inSubquery {
-			return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidSubqueryClauseAfterGraph(inputToken(trimmed, next)))
+			return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidSubqueryClauseAfterGraph(inputToken(trimmed, next)))
 		}
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseInvalidClauseAfterGraph(inputToken(trimmed, next)))
+		return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseInvalidClauseAfterGraph(inputToken(trimmed, next)))
 	}
 	if strings.EqualFold(word, "USE") {
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseNotFirstClause())
+		return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseNotFirstClause())
 	}
 	if !inSubquery && IsAdministrationCommand(trimmed[next:]) {
-		return UseClauseReference{}, "", true, useSyntaxError(localization.CypherCommandRoutingUseAdministrationCommand())
+		return UseClauseSourceReference{}, nil, true, useSyntaxError(localization.CypherCommandRoutingUseAdministrationCommand())
 	}
 	restStart := end + len(trimmed[end:]) - len(strings.TrimLeftFunc(trimmed[end:], cyphertext.IsWhitespace))
 	restEnd := max(restStart, len(strings.TrimRightFunc(trimmed, cyphertext.IsWhitespace)))
-	restSpan, _ := view.OriginalSpan(cyphertext.Span{Start: restStart, End: restEnd}, cyphertext.SourceExtent)
-	return clause, source.Original[restSpan.Start:restSpan.End], true, nil
+	return clause, view.Window(restStart, restEnd), true, nil
 }
 
 // IsAdministrationCommand reports whether the statement is one of Neo4j's
@@ -374,25 +411,22 @@ func doubleQuoteStringLiterals(expression string) string {
 
 func useKeywordAt(query string, at int) bool { return keywordAt(query, at, "USE") }
 
-// splitAtTopLevelUse splits query at the first top-level USE after any other
+// splitSourceAtTopLevelUse splits query at the first top-level USE after any other
 // text, with indexTopLevelKeyword as the one reader of quote, comment and
 // nesting traversal. It returns the original source before and from USE; a
 // leading USE stays with parseLeadingUse, and a query without such a USE
 // returns empty strings and false.
-func splitAtTopLevelUse(query string, isName ClauseKeywordNameReader) (string, string, bool) {
+func splitSourceAtTopLevelUse(source planningSource) (string, string, bool) {
+	query := source.text()
 	start := 0
 	for {
-		idx := indexTopLevelKeyword(query[start:], "USE")
+		idx := source.topLevelKeyword(start, "USE")
 		if idx < 0 {
 			return "", "", false
 		}
-		at := start + idx
+		at := idx
 		// Leading USE is already handled by parseLeadingUse.
 		if strings.TrimSpace(query[:at]) == "" {
-			start = at + len("USE")
-			continue
-		}
-		if !clauseKeywordAt(query, at, "USE", isName) {
 			start = at + len("USE")
 			continue
 		}

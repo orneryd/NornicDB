@@ -89,7 +89,7 @@ type staticOperatorChecker struct {
 	// checked holds the results of one local scope's checks by text
 	// (checkScoped): its function-argument check and its operator check
 	// type the same arguments, and each nested scope is typed once.
-	checked map[string]staticCheckResult
+	checked map[*cyphertext.Source]staticCheckResult
 }
 
 // staticCheckResult is one check's result.
@@ -411,59 +411,64 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // check returns the static type of expression and the first operator type
 // error in it. Its result is proven or unknown (gateProven): a type only a
 // verified rule produced can reach a consumer.
-func (checker staticOperatorChecker) check(expression string) (staticOperand, error) {
+func (checker staticOperatorChecker) check(view braceView) (staticOperand, error) {
+	view = view.trim()
 	if checker.checked == nil {
-		operand, err := checker.derive(expression)
+		operand, err := checker.derive(view)
 		return gateProven(operand), err
 	}
-	expression = strings.TrimSpace(expression)
-	if result, done := checker.checked[expression]; done {
+	if result, done := checker.checked[view.source]; done {
 		return result.operand, result.err
 	}
-	operand, err := checker.derive(expression)
+	operand, err := checker.derive(view)
 	operand = gateProven(operand)
-	checker.checked[expression] = staticCheckResult{operand: operand, err: err}
+	checker.checked[view.source] = staticCheckResult{operand: operand, err: err}
 	return operand, err
 }
 
 // derive is check before its gate. CASE, list comprehensions, quantifiers,
 // pattern expressions and subqueries are not looked into: they bind their
 // own variables.
-func (checker staticOperatorChecker) derive(expression string) (staticOperand, error) {
-	expression = strings.TrimSpace(expression)
+func (checker staticOperatorChecker) derive(view braceView) (staticOperand, error) {
+	view = view.trim()
+	expression := view.text()
 	if expression == "" {
 		return staticOperand{}, nil
 	}
-	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
-		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, nil); !projection {
+	if receiver, projected := staticMapProjectionReceiver(view); projected && receiver != "" {
+		if _, _, projection := mapProjectionSplit(view, mapProjectionStatic, nil); !projection {
 			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 				localization.CypherCoreMapProjectionReceiver(receiver))
 		}
 	}
+	if receiver, literal := literalProjectionReceiver(view); literal {
+		return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+			localization.CypherCoreMapProjectionReceiver(receiver))
+	}
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		return checker.checkAtom(expression)
+		return checker.checkAtom(view)
 	}
-	if expression[0] == '{' && cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
-		return checker.checkAtom(expression)
+	if enclosingMapText(view) {
+		return checker.checkAtom(view)
 	}
-	if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); projection {
-		return checker.checkAtom(expression)
+	if _, _, projection := mapProjectionSplit(view, mapProjectionStatic, &checker.scope); projection {
+		return checker.checkAtom(view)
 	}
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
-	if !expressionTextAccepted(checker.maskMapProjections(expression), expressionTextOperator) {
+	if !expressionTextAccepted(checker.maskMapProjections(view), expressionTextOperator) {
 		// A function call or subquery expression over a pattern still has
 		// its result type (size([(n)-->() | 1]) is an Integer).
-		return staticPatternExpressionType(expression), nil
+		return staticPatternExpressionType(view), nil
 	}
-	if inner, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
-		return checker.check(inner)
+	if _, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
+		return checker.check(view.window(1, len(expression)-1))
 	}
 	if startsWithKeywordFold(expression, "CASE") {
-		end := leadingCaseExpressionEnd(expression)
-		if isCaseExpression(expression) && end == len(expression) {
-			if parsed, err := parseCaseExpression(expression); err == nil {
-				return checker.checkCase(parsed)
+		end := leadingCaseExpressionEnd(view)
+		if isCaseExpression(view) && end == len(expression) {
+			if parsed, err := parseCaseExpression(view); err == nil {
+				return checker.checkCase(view, parsed)
 			}
 			return staticOperand{}, nil
 		}
@@ -474,10 +479,10 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	// The expression's own operators are found outside its CASE blocks
 	// ([x] + CASE WHEN a OR b = c THEN [] END is a list, not a Boolean).
-	scan := maskCaseBlocks(expression)
+	scan := maskCaseBlocks(view)
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
 		if index := infixKeywordIndex(scan, keyword); index > 0 {
-			for _, side := range [2]string{expression[:index], expression[keywordEndAt(expression, index, keyword):]} {
+			for _, side := range []braceView{view.window(0, index), view.window(keywordEndAt(expression, index, keyword), len(expression))} {
 				operand, err := checker.check(side)
 				if err != nil {
 					return staticOperand{}, err
@@ -491,7 +496,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	// A bare NOT is a variable named not (WITH [1] AS not ... x IN not).
 	if startsWithKeywordFold(expression, "NOT") && strings.TrimSpace(expression[len("NOT"):]) != "" {
-		operand, err := checker.check(expression[len("NOT"):])
+		operand, err := checker.check(view.window(len("NOT"), len(expression)))
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -506,7 +511,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	if index := infixKeywordIndex(scan, "IS"); index > 0 {
 		rest := strings.TrimSpace(expression[index+len("IS"):])
 		if !startsWithKeywordFold(rest, "NULL") && !startsWithKeywordFold(strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(rest), "NOT")), "NULL") {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.check(view.window(0, index)); err != nil {
 				return staticOperand{}, err
 			}
 			return provenOperand("Boolean"), nil
@@ -514,10 +519,10 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	for _, keyword := range staticComparisonKeywords {
 		if index := infixKeywordIndex(scan, keyword); index > 0 {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.check(view.window(0, index)); err != nil {
 				return staticOperand{}, err
 			}
-			right, err := checker.check(expression[keywordEndAt(expression, index, keyword):])
+			right, err := checker.check(view.window(keywordEndAt(expression, index, keyword), len(expression)))
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -528,8 +533,8 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 	}
 	for _, operator := range staticComparisonOperators {
-		if left, right, found := splitAtOperator(expression, operator, findTopLevelOperator(scan, operator, false, true)); found && left != "" && right != "" {
-			for _, side := range [2]string{left, right} {
+		if left, right, found := splitAtOperator(expression, operator, findTopLevelSymbol(scan.text(), operator, false, true)); found && left != "" && right != "" {
+			for _, side := range []braceView{view.window(0, len(left)), view.window(len(expression)-len(right), len(expression))} {
 				operand, err := checker.check(side)
 				if err != nil {
 					return staticOperand{}, err
@@ -542,29 +547,28 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
-		left, right, operator, arithmetic := splitRowArithmeticTier(scan, tier)
+		left, _, operator, arithmetic := splitRowArithmeticTier(scan.text(), tier)
 		if !arithmetic {
 			continue
 		}
 		// CASE bodies are atomic to the enclosing expression. Use the masked
 		// boundary, then derive operands from their original source.
-		position := len(left) + strings.IndexByte(scan[len(left):], operator)
-		left, right = strings.TrimSpace(expression[:position]), strings.TrimSpace(expression[position+1:])
-		if !staticArithmeticOperandText(left) || !staticArithmeticOperandText(right) {
+		position := len(left) + strings.IndexByte(scan.text()[len(left):], operator)
+		if !staticArithmeticOperandText(view.window(0, position)) || !staticArithmeticOperandText(view.window(position+1, len(expression))) {
 			return staticOperand{}, nil
 		}
-		leftType, err := checker.check(left)
+		leftType, err := checker.check(view.window(0, position))
 		if err != nil {
 			return staticOperand{}, err
 		}
-		rightType, err := checker.check(right)
+		rightType, err := checker.check(view.window(position+1, len(expression)))
 		if err != nil {
 			return staticOperand{}, err
 		}
 		return checkOperator(operator, leftType, rightType, checker.scope.cypher25)
 	}
 	if (expression[0] == '-' || expression[0] == '+') && len(expression) > 1 {
-		operand, err := checker.check(expression[1:])
+		operand, err := checker.check(view.window(1, len(expression)))
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -582,15 +586,15 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 		return unaryOperand(operand), nil
 	}
-	return checker.checkAtom(expression)
+	return checker.checkAtom(view)
 }
 
 // checkCase type-checks a CASE expression: a searched CASE's conditions must
 // be booleans. Its result retains every possible branch type, so a function
 // signature is rejected only when none of the alternatives fits.
-func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOperand, error) {
+func (checker staticOperatorChecker) checkCase(view braceView, parsed *caseExpression) (staticOperand, error) {
 	if parsed.isSimple {
-		if _, err := checker.check(parsed.testExpression); err != nil {
+		if _, err := checker.check(view.spanWindow(parsed.testSpan)); err != nil {
 			return staticOperand{}, err
 		}
 	}
@@ -603,8 +607,9 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 	// … [1] END) is any type).
 	var single staticOperand
 	branches := 0
-	merge := func(text string) error {
-		operand, err := checker.check(text)
+	merge := func(input braceView) error {
+		text := input.text()
+		operand, err := checker.check(input)
 		if err != nil {
 			return err
 		}
@@ -647,11 +652,11 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 	}
 	for _, when := range parsed.whenClauses {
 		if parsed.isSimple {
-			if _, err := checker.check(when.value); err != nil {
+			if _, err := checker.check(view.spanWindow(when.conditionSpan)); err != nil {
 				return staticOperand{}, err
 			}
 		} else {
-			condition, err := checker.check(when.condition)
+			condition, err := checker.check(view.spanWindow(when.conditionSpan))
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -659,12 +664,12 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 				return staticOperand{}, err
 			}
 		}
-		if err := merge(when.result); err != nil {
+		if err := merge(view.spanWindow(when.resultSpan)); err != nil {
 			return staticOperand{}, err
 		}
 	}
 	if strings.TrimSpace(parsed.elseResult) != "" {
-		if err := merge(parsed.elseResult); err != nil {
+		if err := merge(view.spanWindow(parsed.elseSpan)); err != nil {
 			return staticOperand{}, err
 		}
 	}
@@ -690,15 +695,16 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 // infixKeywordIndex is the first top-level occurrence of an infix keyword
 // (AND, OR, XOR) that follows a complete operand: a word of its name where
 // an operand is expected is a variable (or > 1 OR or < 3).
-func infixKeywordIndex(s, keyword string) int {
-	opts := defaultKeywordScanOpts()
+func infixKeywordIndex(view braceView, keyword string) int {
+	s := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipBraces = true
 	for from := 0; from < len(s); {
 		index := keywordIndexFrom(s, keyword, from, opts)
 		if index < 0 {
 			return -1
 		}
-		if functionNameStartsAt(s, index) && !caseOperandExpectedBefore(s, index) {
+		if functionNameStartsAt(s, index) && !caseOperandExpectedBefore(view, index) {
 			return index
 		}
 		from = index + len(keyword)
@@ -706,9 +712,10 @@ func infixKeywordIndex(s, keyword string) int {
 	return -1
 }
 
-func maskCaseBlocks(expression string) string {
+func maskCaseBlocks(view braceView) braceView {
+	expression := view.text()
 	if !mayContainCaseKeyword(expression) {
-		return expression
+		return view
 	}
 	var masked []byte
 	for index := 0; index < len(expression); index++ {
@@ -723,7 +730,7 @@ func maskCaseBlocks(expression string) string {
 		if !matchKeywordAt(expression, index, "CASE") || (index > 0 && (cyphertext.NamePartAt(expression, index-1) || expression[index-1] == '.')) {
 			continue
 		}
-		end := leadingCaseExpressionEnd(expression[index:])
+		end := leadingCaseExpressionEnd(view.window(index, len(expression)))
 		if end <= len("CASE END") {
 			continue
 		}
@@ -736,9 +743,9 @@ func maskCaseBlocks(expression string) string {
 		index += end - 1
 	}
 	if masked == nil {
-		return expression
+		return view
 	}
-	return string(masked)
+	return view.mask(string(masked))
 }
 
 // staticPostfixSplit splits the trailing subscript or property access off an
@@ -749,25 +756,25 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 	last := -1
 	depth := 0
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; cypherLexicalByte(character) {
-		case cypherQuoteClass:
+		switch character := expression[index]; {
+		case (cypherLexicalByte(character)) == cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, character) - 1
-		case '/':
+		case (cypherLexicalByte(character)) == '/':
 			if end := queryCommentEnd(expression, index); end >= 0 {
 				index = end - 1
 			}
-		case '(', '{':
-			depth++
-		case ')', '}':
-			depth--
-		case '[':
+		case (cypherLexicalByte(character)) == '(', cyphertext.IsOpenBrace(cypherLexicalByte(character)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(character), false)
+		case (cypherLexicalByte(character)) == ')', cyphertext.IsCloseBrace(cypherLexicalByte(character)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(character), false)
+		case (cypherLexicalByte(character)) == '[':
 			if depth == 0 && index > 0 {
 				last, subscript = index, true
 			}
 			depth++
-		case ']':
+		case (cypherLexicalByte(character)) == ']':
 			depth--
-		case '.':
+		case (cypherLexicalByte(character)) == '.':
 			if depth == 0 && index > 0 && index+1 < len(expression) && cyphertext.NameStartAt(expression, index+1) {
 				last, subscript = index, false
 			}
@@ -797,7 +804,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 // the static checks and every evaluator (evaluateRowValue,
 // validateRowSubscriptTypes, the context evaluator, applyArraySuffix).
 func staticSliceBounds(inner string) (from, to string, slice bool) {
-	if separator := findTopLevelOperator(inner, "..", false, true); separator >= 0 {
+	if separator := findTopLevelSymbol(inner, "..", false, true); separator >= 0 {
 		return inner[:separator], inner[separator+2:], true
 	}
 	return "", "", false
@@ -805,8 +812,9 @@ func staticSliceBounds(inner string) (from, to string, slice bool) {
 
 // checkPostfix type-checks a subscript (receiver[inner]), a slice
 // (receiver[from..to]) or a property access (receiver.key).
-func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, subscript bool) (staticOperand, error) {
-	receiver, err := checker.check(receiverText)
+func (checker staticOperatorChecker) checkPostfix(receiverView, innerView braceView, subscript bool) (staticOperand, error) {
+	receiverText, inner := receiverView.text(), innerView.text()
+	receiver, err := checker.check(receiverView)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -824,7 +832,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		return staticOperand{}, nil
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
-		for _, bound := range [2]string{from, to} {
+		for _, bound := range []braceView{innerView.window(0, len(from)), innerView.window(len(inner)-len(to), len(inner))} {
 			operand, err := checker.check(bound)
 			if err != nil {
 				return staticOperand{}, err
@@ -843,7 +851,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		// (WHERE n.x[1..] is a list coercion error in Neo4j).
 		return provenOperand("List<T>"), nil
 	}
-	key, err := checker.check(inner)
+	key, err := checker.check(innerView)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -921,18 +929,19 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 // arithmetic (expressionTextOperand policy), a subscript or slice of one
 // ([1, 2.5][0] + 'a' is a String), a whole CASE or a COUNT { } / COLLECT { } /
 // EXISTS { } expression: an operator split at a pattern's arrow is none.
-func staticArithmeticOperandText(text string) bool {
-	text = strings.TrimSpace(text)
-	if expressionTextAccepted(text, expressionTextOperand) {
+func staticArithmeticOperandText(view braceView) bool {
+	view = view.trim()
+	text := view.text()
+	if expressionTextAccepted(view, expressionTextOperand) {
 		return true
 	}
 	if receiver, _, _, postfix := staticPostfixSplit(text); postfix {
-		return staticArithmeticOperandText(receiver)
+		return staticArithmeticOperandText(view.window(0, len(receiver)))
 	}
-	if _, subquery := staticSubqueryExpressionOperand(text); subquery {
+	if _, subquery := staticSubqueryExpressionOperand(view); subquery {
 		return true
 	}
-	return isCaseExpression(text) && leadingCaseExpressionEnd(text) == len(text)
+	return isCaseExpression(view) && leadingCaseExpressionEnd(view) == len(text)
 }
 
 // staticSubqueryExpressionTypes are the result types of COUNT { }, COLLECT { }
@@ -942,14 +951,15 @@ var staticSubqueryExpressionTypes = map[string]string{"COUNT": "Integer", "COLLE
 // staticPatternExpressionType is the result type of an expression the
 // operator check doesn't read (it holds a pattern): a whole function call's
 // or subquery expression's, or unknown.
-func staticPatternExpressionType(expression string) staticOperand {
+func staticPatternExpressionType(view braceView) staticOperand {
+	expression := view.text()
 	var callFacts1 functionCallFacts
 	if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1); call && callFacts1.name != "" {
 		function, arguments := callFacts1.name, callFacts1.inner
 
 		return provenOperand(staticFunctionResultType(function, arguments))
 	}
-	operand, _ := staticSubqueryExpressionOperand(expression)
+	operand, _ := staticSubqueryExpressionOperand(view)
 	return operand
 }
 
@@ -958,7 +968,9 @@ func staticPatternExpressionType(expression string) staticOperand {
 // subquery is false for any other expression. Neo4j types COLLECT { … } as
 // List<T> whatever its body returns (toUpper(head(COLLECT { RETURN 1 AS x }))
 // is admitted).
-func staticSubqueryExpressionOperand(expression string) (operand staticOperand, subquery bool) {
+func staticSubqueryExpressionOperand(view braceView) (operand staticOperand, subquery bool) {
+	view = view.trim()
+	expression := view.text()
 	name, ok := cyphertext.ScanIdentifier(expression, 0)
 	if !ok {
 		return staticOperand{}, false
@@ -971,8 +983,10 @@ func staticSubqueryExpressionOperand(expression string) (operand staticOperand, 
 	for open < len(expression) && cyphertext.IsWhitespaceAt(expression, open) {
 		open++
 	}
-	if open < len(expression) && expression[open] == '{' && isSubqueryBrace(expression, open) && cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
-		return provenOperand(typeName), true
+	if open < len(expression) && view.isBody(open) {
+		if close, complete := view.close(open); complete && close == len(expression)-1 {
+			return provenOperand(typeName), true
+		}
 	}
 	return staticOperand{}, false
 }
@@ -981,45 +995,88 @@ func staticSubqueryExpressionOperand(expression string) (operand staticOperand, 
 // expression that ends in a braced item list (receiver{…}); projected is false
 // when it doesn't. Neo4j projects only a variable: any other receiver (a
 // literal, a call, n.prop, a map literal) is a SyntaxError.
-func staticMapProjectionReceiver(expression string) (receiver string, projected bool) {
-	if !strings.HasSuffix(expression, "}") {
+func staticMapProjectionReceiver(view braceView) (receiver string, projected bool) {
+	view = view.trim()
+	if input, _, projected := view.projectionView(); projected {
+		receiver = strings.TrimSpace(input.text())
+		if !endsWithOperand(receiver) {
+			// After a keyword (RETURN distinct {.a}, RETURN limit {.a}) only the
+			// scope can say whether the name is a variable: the projection split
+			// with the checker's scope decides it.
+			return "", false
+		}
+		return receiver, true
+	}
+	// The owner reads a brace after a literal, call, list or map as a map
+	// literal ('x'{.a}, f(1){.a}, [1, 2]{.a}, {a: 1}{.a}). When it ends the
+	// expression, that operand is still the receiver Neo4j rejects.
+	text, open := view.text(), -1
+	view.braceOccurrences(func(opening, closing int, fact braceFact) {
+		if closing == len(text)-1 && fact.kind == literalBrace {
+			open = opening
+		}
+	})
+	if open <= 0 {
 		return "", false
 	}
-	for open := 0; open < len(expression); open++ {
-		switch cypherStringLexicalByte(expression[open]) {
-		case cypherStringQuoteClass:
-			open = skipQuotedSemanticText(expression, open) - 1
-		case '(', '[':
-			opening, closingDelimiter := '(', ')'
-			if expression[open] == '[' {
-				opening, closingDelimiter = '[', ']'
+	receiver = strings.TrimSpace(text[:open])
+	if receiver == "" || !balancedReceiver(receiver) {
+		return "", false
+	}
+	if last := receiver[len(receiver)-1]; !isCypherQuoteByte(last) && last != ')' && last != ']' && !cyphertext.IsCloseBrace(last) {
+		return "", false
+	}
+	return receiver, true
+}
+
+// balancedReceiver reports whether every delimiter text opens is closed in
+// it, so a brace after it is at the expression's own level ((1{.a} is not).
+func balancedReceiver(text string) bool {
+	for at := 0; at < len(text); at++ {
+		if end, opaque := cyphertext.SkipToken(text, at); opaque {
+			at = end - 1
+			continue
+		}
+		c := text[at]
+		if closer := cyphertext.DelimiterCloser(c); closer != 0 {
+			end := cyphertext.FindMatchingDelimiter(text, at, rune(c), rune(closer), cyphertext.OpeningDelimiter)
+			if end < 0 {
+				return false
 			}
-			closing := cyphertext.FindMatchingDelimiter(expression, open, opening, closingDelimiter, cyphertext.OpeningDelimiter)
-			if closing < 0 {
-				return "", false
-			}
-			open = closing
-		case '{':
-			if cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
-				receiver = strings.TrimSpace(expression[:open])
-				_, subqueryName := staticSubqueryExpressionTypes[upperASCII(receiver)]
-				if !endsWithOperand(receiver) && (!subqueryName || isSubqueryBrace(expression, open)) {
-					// After an operator, a comma or a keyword ({a: 1} + x,
-					// x = {a: 1}, THEN {a: 1}, and EXISTS / COUNT / COLLECT
-					// { … } subqueries) the brace opens a map literal or a
-					// subquery.
-					return "", false
-				}
-				return receiver, true
-			}
-			closing := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter)
-			if closing < 0 {
-				return "", false
-			}
-			open = closing
+			at = end
+			continue
+		}
+		if c == ')' || c == ']' || cyphertext.IsCloseBrace(c) {
+			return false
 		}
 	}
-	return "", false
+	return true
+}
+
+// literalProjectionReceiver finds a map projection anywhere in view whose
+// receiver is true, false or null (toString(true{k: 1}), CASE WHEN c THEN
+// null{.a} END). Those words can't name a variable, so the projection is a
+// SyntaxError wherever it sits, not only when it ends the expression.
+func literalProjectionReceiver(view braceView) (receiver string, literal bool) {
+	text := view.text()
+	view.braceOccurrences(func(opening, _ int, fact braceFact) {
+		if literal || fact.kind != projectionBrace {
+			return
+		}
+		end := cyphertext.TrimWhitespaceSpan(text, cyphertext.Span{End: opening}).End
+		start := end
+		for start > 0 && cyphertext.NamePartAt(text, start-1) {
+			start--
+		}
+		if start == end || start > 0 && strings.IndexByte("`.$", text[start-1]) >= 0 {
+			return
+		}
+		switch word := text[start:end]; {
+		case strings.EqualFold(word, "true"), strings.EqualFold(word, "false"), strings.EqualFold(word, "null"):
+			receiver, literal = word, true
+		}
+	})
+	return receiver, literal
 }
 
 // staticProjectable reports whether a value of a static type, or of one of
@@ -1048,7 +1105,7 @@ func endsWithOperand(text string) bool {
 	}
 	last := text[len(text)-1]
 	switch {
-	case isCypherQuoteByte(last) || last == ')' || last == ']' || last == '}':
+	case isCypherQuoteByte(last) || last == ')' || last == ']' || cyphertext.IsCloseBrace(last):
 		return true
 	case !cyphertext.NamePartAt(text, len(text)-1):
 		return false
@@ -1071,15 +1128,15 @@ func endsWithOperand(text string) bool {
 // Only a type mismatch of the second check counts: a plus read as unary
 // that wasn't (a variable named distinct before a binary plus) leaves text
 // that can only fail to parse, so it can't reject a valid statement.
-func checkedWithoutUnaryPlus(cypher string, cypher25 bool, check func(string) error) error {
-	if err := check(cypher); err != nil || cypher25 {
+func checkedWithoutUnaryPlus(view braceView, cypher25 bool, check func(braceView) error) error {
+	if err := check(view); err != nil || cypher25 {
 		return err
 	}
-	rewritten, unaryPlus := withoutUnaryPlus(cypher)
+	rewritten, unaryPlus := withoutUnaryPlus(view.text())
 	if !unaryPlus {
 		return nil
 	}
-	err := check(rewritten)
+	err := check(view.mask(rewritten))
 	var detailed interface{ BoltErrorDetail() string }
 	if errors.As(err, &detailed) && detailed.BoltErrorDetail() == "InvalidArgumentType" {
 		return err
@@ -1135,7 +1192,7 @@ func unaryPlusAt(before string) bool {
 		return true
 	}
 	switch last := before[len(before)-1]; {
-	case strings.IndexByte("(,[{:=<>+-*/%^|", last) >= 0:
+	case syntaxByteInSet("(,[{:=<>+-*/%^|", last):
 		return true
 	case !cyphertext.NamePartAt(before, len(before)-1):
 		return false
@@ -1160,11 +1217,13 @@ func endsWithKeywordFold(text, keyword string) bool {
 // expression (a name, a keyword's only when the scope binds it, then a brace
 // that doesn't open a subquery), so its braces don't hide the operators
 // around it.
-func (checker staticOperatorChecker) maskMapProjections(expression string) string {
-	if strings.IndexByte(expression, '{') < 0 {
-		return expression
+func (checker staticOperatorChecker) maskMapProjections(view braceView) braceView {
+	expression := view.text()
+	if firstLiveBrace(expression) < 0 {
+		return view
 	}
 	masked := []byte(expression)
+	var edits []cyphertext.SourceEdit
 	for index := 0; index < len(expression); index++ {
 		switch c := expression[index]; {
 		case isCypherStringQuoteByte(c):
@@ -1176,28 +1235,39 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 			}
 			index = next - 1
 			open := skipSpaces(expression, next)
-			if open >= len(expression) || expression[open] != '{' || isSubqueryBrace(expression, open) {
+			if open >= len(expression) {
+				continue
+			}
+			fact, present := view.at(open)
+			if !present || fact.kind != projectionBrace {
 				continue
 			}
 			if isCypherKeyword(name) && !checker.scope.bound(normalizeProjectionColumnName(name)) {
 				continue
 			}
-			end := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter)
-			if end < 0 {
-				return expression
+			end, complete := view.close(open)
+			if !complete {
+				return view
 			}
 			for blank := open; blank <= end; blank++ {
 				masked[blank] = ' '
 			}
+			span := cyphertext.Span{Start: open, End: end + 1}
+			edits = append(edits, cyphertext.SourceEdit{Original: span, Accepted: span})
 			index = end
 		}
 	}
-	return string(masked)
+	if len(edits) == 0 {
+		return view
+	}
+	return braceView{syntax: view.syntax, source: view.source.RewriteWithCopies(string(masked), edits, nil)}
 }
 
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
-func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkAtom(view braceView) (staticOperand, error) {
+	view = view.trim()
+	expression := view.text()
 	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
@@ -1211,22 +1281,27 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		operand.parameter = name
 		return operand.proved(), nil
 	}
-	if operand, subquery := staticSubqueryExpressionOperand(expression); subquery {
+	if operand, subquery := staticSubqueryExpressionOperand(view); subquery {
 		return operand, nil
 	}
 	if receiver, inner, subscript, postfix := staticPostfixSplit(expression); postfix {
-		return checker.checkPostfix(receiver, inner, subscript)
+		innerEnd := len(expression)
+		if subscript {
+			innerEnd--
+		}
+		return checker.checkPostfix(view.window(0, len(receiver)), view.window(innerEnd-len(inner), innerEnd), subscript)
 	}
-	if pattern, projection, comprehension := splitPatternComprehension(expression); comprehension {
-		return checker.checkPatternComprehension(pattern, projection)
+	if pattern, projection, comprehension := splitPatternComprehensionSpans(view); comprehension {
+		return checker.checkPatternComprehension(view.spanWindow(pattern), view.spanWindow(projection))
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
-			return checker.checkListComprehension(variable, list, predicate, projection)
+		innerView := view.window(1, len(expression)-1).trim()
+		if parts, comprehension := parseListComprehensionSpans(innerView); comprehension {
+			return checker.checkListComprehension(parts.variable, innerView.spanWindow(parts.list), innerView.spanWindow(parts.predicate), innerView.spanWindow(parts.projection))
 		}
 		var elements []staticOperand
 		if strings.TrimSpace(inner) != "" {
-			for _, item := range splitTopLevelComma(inner) {
+			for _, item := range view.window(1, len(expression)-1).commaViews() {
 				element, err := checker.check(item)
 				if err != nil {
 					return staticOperand{}, err
@@ -1236,35 +1311,35 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return listLiteralOperand(elements), nil
 	}
-	if expression[0] == '{' && cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
+	if entries, valid := view.keyedEntries(); valid {
 		mapOperand := provenOperand("Map")
-		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
-			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				value, err := checker.check(pair[separator+1:])
-				if err != nil {
-					return staticOperand{}, err
+		for _, entry := range entries {
+			value, err := checker.check(entry.value)
+			if err != nil {
+				return staticOperand{}, err
+			}
+			if checker.scope.cypher25 && value.typeName() != "" {
+				if mapOperand.members == nil {
+					mapOperand.members = make(map[string]staticOperand)
 				}
-				if checker.scope.cypher25 && value.typeName() != "" {
-					if mapOperand.members == nil {
-						mapOperand.members = make(map[string]staticOperand)
-					}
-					mapOperand.members[normalizePropertyKey(pair[:separator])] = value
-				}
+				mapOperand.members[entry.key()] = value
 			}
 		}
 		return mapOperand, nil
 	}
-	if variable, items, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); projection {
+	if variableView, entries, projection := mapProjectionSplit(view, mapProjectionStatic, &checker.scope); projection {
+		variable := simpleSemanticIdentifier(variableView.text())
 		// In Cypher 5 a temporal value or duration projects its fields;
 		// reading one it doesn't have is a runtime error, as for d.field.
 		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.known() && !staticProjectable(receiver.typeName(), checker.scope.cypher25) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
-		for _, item := range splitTopLevelComma(items) {
-			if separator := findTopLevelMapKeyValueSeparator(item); separator > 0 {
-				if _, err := checker.check(item[separator+1:]); err != nil {
-					return staticOperand{}, err
-				}
+		for _, entry := range entries {
+			if entry.record.Kind == propertyBraceEntry || entry.record.Kind == wildcardBraceEntry {
+				continue
+			}
+			if _, err := checker.check(entry.value); err != nil {
+				return staticOperand{}, err
 			}
 		}
 		return provenOperand("Map"), nil
@@ -1274,25 +1349,26 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		function, arguments := callFacts2.name, callFacts2.inner
 
 		if isQuantifierFunction(lowerASCII(function)) {
-			if variable, list, predicate, ok := parseQuantifierArguments(arguments); ok {
-				_, err := checker.checkListComprehension(variable, list, predicate, "")
+			if parts, ok := parseQuantifierSpans(view.window(callFacts2.arguments.Start, callFacts2.arguments.End)); ok {
+				argsView := view.functionArguments()
+				_, err := checker.checkListComprehension(parts.variable, argsView.spanWindow(parts.list), argsView.spanWindow(parts.predicate), argsView.window(0, 0))
 				return provenOperand("Boolean"), err
 			}
 		}
 		if isReduceFormFunction(function) {
-			if form, ok := parseReduceForm(function, arguments); ok {
-				return checker.checkReduceTypes(form)
+			if form, ok := parseReduceForm(function, view.functionArguments()); ok {
+				return checker.checkReduceTypes(view.functionArguments(), form)
 			}
 		}
 		var operands []staticOperand
 		if !isQuantifierOrReduceFunction(function) {
-			for index, argument := range splitTopLevelComma(arguments) {
+			for index, argument := range view.functionArguments().commaViews() {
 				// normalize(s, NFC) names its normal form, not a variable.
 				if index == 1 && lowerASCII(function) == "normalize" {
 					continue
 				}
 				// An aggregate's DISTINCT isn't part of its argument.
-				argument, _ = cutDistinct(strings.TrimSpace(argument))
+				argument, _ = cutDistinct(argument)
 				operand, err := checker.check(argument)
 				if err != nil {
 					return staticOperand{}, err
@@ -1305,7 +1381,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		if operand, derived := derivedFunctionOperand(lowerASCII(function), operands); derived && operand.typeName() != "" {
 			return operand, nil
 		}
-		if _, _, _, aggregate := parsePipelineAggregate(expression); aggregate {
+		if _, _, _, aggregate := parsePipelineAggregate(view); aggregate {
 			if result := staticFunctionResultType(function, arguments); result != "" {
 				return provenOperand(result), nil
 			}
@@ -1313,7 +1389,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return provenOperand(staticFunctionResultType(function, arguments)), nil
 	}
-	if typeName := staticLiteralType(expression, scalarLiteralOnly); typeName != "" {
+	if typeName := staticLiteralType(view, scalarLiteralOnly); typeName != "" {
 		return provenOperand(typeName), nil
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
@@ -1383,7 +1459,7 @@ func mayContainArithmetic(text string) bool {
 // are type-checked: an operator, subscript or property access that can reject
 // an operand's static type needs one of these characters or keywords.
 func mayNeedStaticTypeCheck(text string) bool {
-	if strings.ContainsAny(text, "+-*/%^[.~{") {
+	if containsSyntaxAny(text, "+-*/%^[.~{") {
 		return true
 	}
 	return containsFold(text, "AND") || containsFold(text, "OR") || containsFold(text, "NOT") ||
@@ -1394,8 +1470,9 @@ func mayNeedStaticTypeCheck(text string) bool {
 // level. Each keyword is read in the whole text's context, so a variable
 // named like one right after the clause word that takes it (WHERE skip{.a}
 // IS NULL, ORDER BY limit.x) isn't taken for that clause.
-func clauseTextUntil(text string, from int, keywords ...string) string {
-	opts := defaultKeywordScanOpts()
+func clauseTextUntil(view braceView, from int, keywords ...string) string {
+	text := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipBraces = true
 	end := len(text)
 	for _, keyword := range keywords {
@@ -1411,127 +1488,119 @@ func clauseTextUntil(text string, from int, keywords ...string) string {
 // UNWIND lists, pattern property values) and that may contain arithmetic.
 // afterProjection is set for the WHERE and ORDER BY of a RETURN / WITH, which
 // see the projection's aliases. It allocates only for clauses with arithmetic.
-func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, clause pipelineClause, visit func(expression string, afterProjection bool) error) error {
-	text := strings.TrimSpace(clause.text)
+func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, clause pipelineClause, visit func(expression braceView, afterProjection bool) error) error {
+	view := clause.input(ctx).trim()
+	text := view.text()
 	if !mayNeedStaticTypeCheck(text) {
 		return nil
 	}
-	visitPatternValues := func(pattern string) error {
-		for index := 0; index < len(pattern); index++ {
-			switch cypherStringLexicalByte(pattern[index]) {
-			case cypherStringQuoteClass:
-				index = skipQuotedSemanticText(pattern, index) - 1
-			case '{':
-				closing := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter)
-				if closing < 0 {
-					return nil
+	visitPatternValues := func(pattern braceView) error {
+		if err := pattern.admission(); err != nil {
+			return err
+		}
+		entries, valid := pattern.patternEntryViews()
+		if !valid {
+			return pattern.admission()
+		}
+		for _, entry := range entries {
+			if mayNeedStaticTypeCheck(entry.value.text()) {
+				if err := visit(entry.value, false); err != nil {
+					return err
 				}
-				if body := pattern[index+1 : closing]; mayNeedStaticTypeCheck(body) {
-					for _, pair := range splitTopLevelComma(body) {
-						if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-							if err := visit(pair[separator+1:], false); err != nil {
-								return err
-							}
-						}
-					}
-				}
-				index = closing
 			}
 		}
 		return nil
 	}
-	visitPredicate := func(body string, afterProjection bool) error {
+	visitPredicate := func(body braceView, after bool) error {
 		where := topLevelKeywordIndex(body, "WHERE")
 		if where < 0 {
 			return nil
 		}
-		predicate := clauseTextUntil(body, where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")
-		if !mayNeedStaticTypeCheck(predicate) {
+		predicate := body.until(where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")
+		if !mayNeedStaticTypeCheck(predicate.text()) {
 			return nil
 		}
-		return visit(predicate, afterProjection)
+		return visit(predicate, after)
 	}
 	switch clause.kind {
 	case pipelineClauseLet:
-		projections, err := parsePipelineLet(clause.text)
+		projections, err := parsePipelineLet(view)
 		if err != nil {
 			return err
 		}
 		for _, projection := range projections {
-			if err := visit(projection.expression, false); err != nil {
+			if err := visit(projection.view, false); err != nil {
 				return err
 			}
 		}
 	case pipelineClauseFilter:
-		return visit(pipelineFilterExpression(clause.text), false)
+		return visit(view.filterExpression(), false)
 	case pipelineClauseReturn, pipelineClauseWith:
 		keyword := "RETURN"
 		if clause.kind == pipelineClauseWith {
 			keyword = "WITH"
 		}
-		projection := clauseTextUntil(text, len(keyword), "WHERE", "ORDER BY", "SKIP", "LIMIT")
-		rest := text[len(keyword)+len(projection):]
+		projection := view.until(len(keyword), "WHERE", "ORDER BY", "SKIP", "LIMIT")
+		rest := view.window(len(keyword)+len(projection.text()), len(text))
 		projection, _ = cutDistinct(projection)
-		if mayNeedStaticTypeCheck(projection) {
-			for _, item := range splitTopLevelComma(projection) {
-				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
-				if mayNeedStaticTypeCheck(expression) {
+		if mayNeedStaticTypeCheck(projection.text()) {
+			for _, item := range projection.commaViews() {
+				expression := item.projectionExpression(ctx)
+				if mayNeedStaticTypeCheck(expression.text()) {
 					if err := visit(expression, false); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if mayNeedStaticTypeCheck(rest) {
-			return forEachProjectedTailExpression(ctx, projection, rest, func(expression string) error {
-				if !mayNeedStaticTypeCheck(expression) {
+		if mayNeedStaticTypeCheck(rest.text()) {
+			return forEachProjectedTailExpression(ctx, projection, rest, func(expression braceView) error {
+				if !mayNeedStaticTypeCheck(expression.text()) {
 					return nil
 				}
 				return visit(expression, true)
 			})
 		}
 	case pipelineClauseMatch, pipelineClauseOptionalMatch:
-		pattern := text
-		if where := topLevelKeywordIndex(text, "WHERE"); where >= 0 {
-			pattern = text[:where]
+		pattern := view
+		if where := topLevelKeywordIndex(view, "WHERE"); where >= 0 {
+			pattern = view.window(0, where)
 		}
 		if err := visitPatternValues(pattern); err != nil {
 			return err
 		}
-		return visitPredicate(text, false)
+		return visitPredicate(view, false)
 	case pipelineClauseCreate, pipelineClauseMerge:
-		pattern := text
+		pattern := view
 		for _, keyword := range [...]string{"ON CREATE SET", "ON MATCH SET"} {
 			if index := findKeywordIndexInContext(pattern, keyword); index >= 0 {
-				pattern = pattern[:index]
+				pattern = pattern.window(0, index)
 			}
 		}
 		return visitPatternValues(pattern)
 	case pipelineClauseSet:
-		for _, assignment := range splitSetAssignments(strings.TrimSpace(text[len("SET"):])) {
-			if operator := strings.Index(assignment, "="); operator > 0 && mayNeedStaticTypeCheck(assignment[operator+1:]) {
-				if err := visit(assignment[operator+1:], false); err != nil {
+		for _, assignment := range view.clauseBody("SET").commaViews() {
+			if operator := strings.Index(assignment.text(), "="); operator > 0 && mayNeedStaticTypeCheck(assignment.text()[operator+1:]) {
+				if err := visit(assignment.window(operator+1, len(assignment.text())), false); err != nil {
 					return err
 				}
 			}
 		}
 	case pipelineClauseUnwind:
-		return visit(unwindSourceExpression(text), false)
+		expression, _, ok := parsePipelineIterationSource(view)
+		if !ok {
+			return nil
+		}
+		return visit(expression, false)
 	}
 	return nil
 }
 
-// forEachProjectedTailExpression calls visit with each expression of a
-// projection's tail (rest, from splitWithProjection: WHERE, ORDER BY, SKIP,
-// LIMIT) that is evaluated with the projected scope: the WHERE predicate and
-// the ORDER BY terms. A term repeating a projection item's expression is the
-// projected column (orderedProjectionExpressions, as the rows are ordered)
-// and is left out; the item itself is checked with the incoming scope
-// (RETURN size(s) AS s ORDER BY size(s)). projection is the item list, with
-// or without its RETURN / WITH [DISTINCT] keyword.
-func forEachProjectedTailExpression(ctx context.Context, projection, rest string, visit func(expression string) error) error {
+// forEachProjectedTailExpression preserves the grammar's tail extents while
+// retaining the existing projected-column binding rules.
+func forEachProjectedTailExpression(ctx context.Context, projection, rest braceView, visit func(expression braceView) error) error {
 	if where := topLevelKeywordIndex(rest, "WHERE"); where >= 0 {
-		if err := visit(clauseTextUntil(rest, where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")); err != nil {
+		if err := visit(rest.until(where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")); err != nil {
 			return err
 		}
 	}
@@ -1539,25 +1608,27 @@ func forEachProjectedTailExpression(ctx context.Context, projection, rest string
 	if order < 0 {
 		return nil
 	}
-	projection = strings.TrimSpace(projection)
+	projection = projection.trim()
 	for _, keyword := range [...]string{"RETURN", "WITH"} {
-		if startsWithKeywordFold(projection, keyword) {
-			projection = projection[len(keyword):]
+		if startsWithKeywordFold(projection.text(), keyword) {
+			projection = projection.clauseBody(keyword)
 			break
 		}
 	}
-	projection, _ = cutDistinct(strings.TrimSpace(projection))
-	items := splitTopLevelComma(projection)
+	projection, _ = cutDistinct(projection)
+	items := projection.commaViews()
 	item := func(index int) (string, string) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(items[index]), projectionAdmitted)
-		return itemSource.expression, itemSource.alias
+		return parseProjectionExprAlias(withBraceView(ctx, items[index]), items[index])
 	}
-	for _, term := range parseOrderByClause(clauseTextUntil(rest, order+len("ORDER BY"), "SKIP", "LIMIT", "WHERE")) {
-		if orderedProjectionExpressions([]orderByTerm{term}, len(items), item) != nil {
-			continue
-		}
-		if err := visit(term.column); err != nil {
-			return err
+	for _, termView := range rest.until(order+len("ORDER BY"), "SKIP", "LIMIT", "WHERE").commaViews() {
+		terms := parseOrderByClause(termView)
+		for _, term := range terms {
+			if orderedProjectionExpressions([]orderByTerm{term}, len(items), item) != nil {
+				continue
+			}
+			if err := visit(termView.window(0, len(term.column))); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1570,12 +1641,12 @@ func forEachProjectedTailExpression(ctx context.Context, projection, rest string
 // (RETURN n.num AS n ORDER BY n + 2).
 func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
 	if clause.kind == pipelineClauseDelete {
-		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
+		if err := staticDeleteTargetTypeError(clause.input(ctx), scope); err != nil {
 			return err
 		}
 	}
-	if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
-		predicate := clauseTextUntil(clause.text, where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")
+	if where := topLevelKeywordIndex(clause.input(ctx), "WHERE"); where >= 0 {
+		predicate := clause.input(ctx).until(where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")
 		predicateScope := scope
 		if projectedScope != nil {
 			predicateScope = projectedScope()
@@ -1590,7 +1661,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		}
 	}
 	if clause.kind == pipelineClauseFilter {
-		predicate := pipelineFilterExpression(clause.text)
+		predicate := clause.input(ctx).filterExpression()
 		checker := staticOperatorChecker{scope: scope, params: params}
 		operand, err := checker.check(predicate)
 		if err != nil {
@@ -1601,7 +1672,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		}
 	}
 	var projected *staticOperatorChecker
-	return e.forEachClauseOperatorExpression(ctx, clause, func(expression string, afterProjection bool) error {
+	return e.forEachClauseOperatorExpression(ctx, clause, func(expression braceView, afterProjection bool) error {
 		checker := staticOperatorChecker{scope: scope, params: params}
 		if afterProjection && projectedScope != nil {
 			if projected == nil {

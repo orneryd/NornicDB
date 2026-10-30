@@ -51,7 +51,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if cached && names == nil && !normalized {
 		return nil
 	}
-	if err := validateExpressionLexicalTokens(cypher); err != nil {
+	if err := validateExpressionLexicalTokens(statementBraceView(ctx, cypher)); err != nil {
 		return err
 	}
 	if cached {
@@ -65,14 +65,14 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateCallSubqueryScopes(ctx, cypher, cypher25); err != nil {
 		return err
 	}
-	if err := validateListComprehensionVariables(cypher); err != nil {
+	if err := validateListComprehensionVariables(statementBraceView(ctx, cypher)); err != nil {
 		return err
 	}
-	if err := validateStaticQuantifierTypes(cypher); err != nil {
+	if err := validateStaticQuantifierTypes(statementBraceView(ctx, cypher)); err != nil {
 		return err
 	}
-	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
-		return validateStaticFunctionArguments(text, cypher25)
+	if err := checkedWithoutUnaryPlus(statementBraceView(ctx, cypher), cypher25, func(view braceView) error {
+		return validateStaticFunctionArguments(view, cypher25)
 	}); err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 			"RETURN projection cannot end with an empty item",
 		)
 	}
-	if invalidAggregationInListComprehension(cypher) {
+	if invalidAggregationInListComprehension(statementBraceView(ctx, cypher)) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidAggregation",
@@ -116,24 +116,25 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				pendingUpdate = true
 			}
 			// Subquery bodies are checked as their own statements.
-			if whereIndex := topLevelKeywordIndex(clause.text, "WHERE"); whereIndex >= 0 &&
-				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.text[whereIndex+len("WHERE"):])) {
+			if whereIndex := topLevelKeywordIndex(clause.input(ctx), "WHERE"); whereIndex >= 0 &&
+				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.view.window(whereIndex+len("WHERE"), len(clause.text)))) {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected identifier in WHERE")
 			}
-			if clause.kind == pipelineClauseWith && withProjectionHasEmptyItem(clause.text) {
+			if clause.kind == pipelineClauseWith && withProjectionHasEmptyItem(clause.view) {
 				return emptyProjectionItemError("WITH")
 			}
 			if clause.kind == pipelineClauseReturn {
-				body := strings.TrimSpace(clause.text[len("RETURN"):])
+				body := clause.view.window(len("RETURN"), len(clause.text)).trim()
 				if err := validateReturnAggregationSemantics(ctx, body); err != nil {
 					return err
 				}
 				// The clause is scanned with its keyword, which tells a
 				// keyword-named first item from a clause (RETURN union[0], #894).
-				clauseText := strings.TrimSpace(clause.text)
+				clauseView := clause.input(ctx).trim()
+				clauseText := clauseView.text()
 				end := len(clauseText)
 				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT", "UNION"} {
-					if index := topLevelKeywordIndex(clauseText, keyword); index >= len("RETURN") && index < end {
+					if index := topLevelKeywordIndex(clauseView, keyword); index >= len("RETURN") && index < end {
 						end = index
 					}
 				}
@@ -141,8 +142,8 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				if projectionHasEmptyItem(items) {
 					return emptyProjectionItemError("RETURN")
 				}
-				projectionItems, _ := cutDistinct(strings.TrimSpace(items))
-				for _, item := range splitTopLevelComma(projectionItems) {
+				projectionItems, _ := cutDistinct(clause.view.trim().window(len("RETURN"), end).trim())
+				for _, item := range projectionItems.commaViews() {
 					itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
 					expression := itemSource.expression
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
@@ -172,7 +173,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	}
 	// Every function a statement calls, in any clause, is known (#1166).
 	// Neo4j reports the statement's other semantic errors first.
-	if err := validateKnownFunctions(cypher); err != nil {
+	if err := validateKnownFunctions(statementBraceView(ctx, cypher)); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -199,9 +200,9 @@ func emptyProjectionItemError(clause string) error {
 
 // withProjectionHasEmptyItem reports whether a WITH clause's item list,
 // before its WHERE / ORDER BY / SKIP / LIMIT, has an empty item.
-func withProjectionHasEmptyItem(clause string) bool {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	return projectionHasEmptyItem(body)
+func withProjectionHasEmptyItem(clause braceView) bool {
+	body, _ := projectionSemanticSourceAndTail(clause, "WITH")
+	return projectionHasEmptyItem(body.text())
 }
 
 // projectionHasEmptyItem reports whether a projection item list has an
@@ -231,28 +232,31 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 	if !containsFold(cypher, "CALL") {
 		return nil
 	}
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		scope := readCallSubqueryScope(ctx, cypher[position:])
+	view := statementBraceView(ctx, cypher)
+	for _, position := range findAllTopLevelPipelineKeywordPositions(view, "CALL") {
+		scopeView := view.window(position, len(cypher))
+		scope := readCallSubqueryScope(withBraceView(ctx, scopeView), scopeView)
 		if scope.invalid {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
 				"CALL imports must contain only variable names")
 		}
 		index := position + scope.bodyOffset
-		imports, scoped := scope.text, scope.scoped
-		if index >= len(cypher) || cypher[index] != '{' {
+		scoped := scope.scoped
+		if index >= len(cypher) || !cyphertext.IsOpenBrace(cypher[index]) {
 			continue // a procedure call
 		}
-		closeBrace := e.findMatchingBrace(cypher, index)
-		if closeBrace < 0 {
+		closeBrace, complete := view.close(index)
+		if !complete {
 			continue
 		}
-		body := strings.TrimSpace(cypher[index+1 : closeBrace])
+		body := view.window(index+1, closeBrace).trim()
 		if stripped, finishes := stripUnionBranchFinishes(ctx, body); finishes {
 			body = stripped
 		}
+		bodyCtx := withBraceView(ctx, body)
 		// A RETURN inside the body projects its columns too: two items of
 		// one name are as malformed there as at the top level.
-		if err := e.validateDuplicateReturnColumnName(ctx, body, nil); err != nil {
+		if err := e.validateDuplicateReturnColumnName(bodyCtx, body.text(), nil); err != nil {
 			return err
 		}
 		// An unscoped body's branches (the body, or each UNION branch)
@@ -262,8 +266,8 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 		// WITH that reads no outer variable at all is checked here.
 		if !scoped {
 			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
-			branches := []string{body}
-			if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union {
+			branches := []braceView{body}
+			if unionBranches, _, _, union := parseTopLevelUnionBranches(bodyCtx, body); union {
 				branches = unionBranches
 			}
 			for index, branch := range branches {
@@ -271,12 +275,12 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 				if _, importing, _ := branchLeadingWithImport(ctx, branch, outer, false); !importing {
 					// A leading WITH that imports nothing is the branch's first
 					// clause: any variable it reads is undefined there.
-					branch = strings.TrimSpace(branch)
-					if startsWithKeywordFold(branch, "WITH") {
+					branch = branch.trim()
+					if startsWithKeywordFold(branch.text(), "WITH") {
 						clause, _ := leadingWithClause(branch)
-						projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-						for _, item := range splitTopLevelComma(projection) {
-							expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
+						projection, _ := projectionSemanticSourceAndTail(clause, "WITH")
+						for _, item := range projection.commaViews() {
+							expression := readProjectionItemSource(ctx, item.trim(), projectionAdmitted).view
 							for _, variable := range expressionFreeVariables(expression) {
 								if !isSemanticLiteralWord(variable) {
 									return createUndefinedVariableError(variable)
@@ -294,37 +298,39 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 				if index > 0 {
 					continue
 				}
-				if clauses, ok := splitPipelineClauses(ctx, branch); ok && len(clauses) > 0 {
-					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
-					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
+				if clauses, ok := splitPipelineClauses(withBraceView(ctx, branch), branch.text()); ok && len(clauses) > 0 {
+					projection, tail := projectionSemanticSourceAndTail(clauses[0].view, "WITH")
+					if !tail.empty() || topLevelKeywordIndex(projection, "AS") >= 0 {
 						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
 							"Importing WITH must contain only simple references to outside variables")
 					}
 				}
 			}
 		}
-		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
+		if scoped && scope.names == nil || startsWithKeywordFold(body.text(), "WITH *") {
 			continue
 		}
 		var retained []string
 		if scoped && len(scope.names) > 0 {
 			retained = scope.names
-			body = "WITH " + imports + " " + body
+			importView := scopeView.spanWindow(scope.textSpan)
+			body = view.assembleCode([]braceView{importView.wrap("WITH ", ""), body}, " ")
 		}
-		if body == "" {
+		if body.empty() {
 			continue
 		}
+		bodyCtx = withBraceView(ctx, body)
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
 		if scoped && len(scope.names) == 0 {
-			if err := e.validateMatchSemanticScopes(ctx, body, cypher25); err != nil {
+			if err := e.validateMatchSemanticScopes(bodyCtx, body.text(), cypher25); err != nil {
 				return err
 			}
 		}
-		if err := e.validateSetSemanticScopes(ctx, body, retained...); err != nil {
+		if err := e.validateSetSemanticScopes(bodyCtx, body.text(), retained...); err != nil {
 			return err
 		}
-		if err := e.validateCallSubqueryScopes(ctx, body, cypher25); err != nil {
+		if err := e.validateCallSubqueryScopes(bodyCtx, body.text(), cypher25); err != nil {
 			return err
 		}
 	}
@@ -389,14 +395,14 @@ func validatePatternExpressionPlacement(ctx context.Context, cypher string) erro
 			if clause.kind == pipelineClauseWith {
 				keyword = "WITH"
 			}
-			for _, item := range splitTopLevelComma(projectionSemanticBody(clause.text, keyword)) {
-				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
-				if containsIllegalProjectedPatternExpression(maskPredicatePatterns(expression)) {
+			for _, item := range projectionSemanticBody(clause.view, keyword).commaViews() {
+				expression := readProjectionItemSource(ctx, item.trim(), projectionAdmitted).view
+				if containsIllegalProjectedPatternExpression(expression.mask(maskPredicatePatterns(expression.text()))) {
 					return invalidPatternExpressionPlacementError()
 				}
 			}
 		case pipelineClauseSet:
-			if containsIllegalProjectedPatternExpression(maskPredicatePatterns(clause.text)) {
+			if containsIllegalProjectedPatternExpression(clause.view.mask(maskPredicatePatterns(clause.text))) {
 				return invalidPatternExpressionPlacementError()
 			}
 		}
@@ -408,12 +414,14 @@ func validatePatternExpressionPlacement(ctx context.Context, cypher string) erro
 // from a legal pattern comprehension. It recursively examines ordinary list
 // expressions while treating `[pattern | projection]` as one valid scalar
 // expression. Relationship brackets (`-[r]->`) are not list delimiters.
-func containsIllegalProjectedPatternExpression(expression string) bool {
-	expression = maskSubqueryBodies(expression)
+func containsIllegalProjectedPatternExpression(view braceView) bool {
+	expression := maskSubqueryBodies(view)
+	view = view.mask(expression)
 	// shortestPath(...) / allShortestPaths(...) are path functions, not
 	// legacy pattern expressions: their pattern argument stays valid in value
 	// position (RETURN / WITH / SET projections).
 	expression = maskPathFunctionCalls(expression)
+	view = view.mask(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
@@ -426,9 +434,9 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 		if containsRelationshipPattern(expression[segmentStart:index]) {
 			return true
 		}
-		candidate := expression[index : close+1]
+		candidate := view.window(index, close+1)
 		if _, _, patternComprehension := splitPatternComprehension(candidate); !patternComprehension {
-			if containsIllegalProjectedPatternExpression(expression[index+1 : close]) {
+			if containsIllegalProjectedPatternExpression(view.window(index+1, close)) {
 				return true
 			}
 		}
@@ -587,10 +595,12 @@ func invalidPatternExpressionPlacementError() error {
 }
 
 func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context, cypher string, names *quotedVariableNames) error {
-	returnPositions := findAllTopLevelPipelineKeywordPositions(cypher, "RETURN")
+	statement := statementBraceView(ctx, cypher)
+	cypher = statement.text()
+	returnPositions := findAllTopLevelPipelineKeywordPositions(statement, "RETURN")
 	unionPositions := append(
-		findAllTopLevelPipelineKeywordPositions(cypher, "UNION"),
-		findAllTopLevelPipelineKeywordPositions(cypher, "UNION ALL")...,
+		findAllTopLevelPipelineKeywordPositions(statement, "UNION"),
+		findAllTopLevelPipelineKeywordPositions(statement, "UNION ALL")...,
 	)
 	for returnIndex, position := range returnPositions {
 		end := len(cypher)
@@ -602,10 +612,11 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 				end = unionPosition
 			}
 		}
-		body := strings.TrimSpace(cypher[position+len("RETURN") : end])
+		body := statement.window(position+len("RETURN"), end).trim()
 		if names != nil {
+			// The restored spelling is text the quoted-name owner composes.
 			originalText, _ := names.OriginalText(cyphertext.Span{Start: position + len("RETURN"), End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
-			body = strings.TrimSpace(originalText)
+			body = inputBraceView(ctx, strings.TrimSpace(originalText), cyphertext.AcceptedSource)
 		}
 		seen := make(map[string]struct{})
 		for _, item := range e.parseReturnItems(ctx, body) {
@@ -628,7 +639,8 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context,
 	return nil
 }
 
-func invalidAggregationInListComprehension(cypher string) bool {
+func invalidAggregationInListComprehension(view braceView) bool {
+	cypher := view.text()
 	for start := 0; start < len(cypher); start++ {
 		if cypher[start] != '[' {
 			continue
@@ -637,8 +649,9 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		if end < 0 {
 			continue
 		}
-		_, _, predicate, projection, comprehension := parseListComprehension(cypher[start+1 : end])
-		if comprehension && (containsAggregateFunc(predicate) || containsAggregateFunc(projection)) {
+		inner := view.window(start+1, end)
+		parts, comprehension := parseListComprehensionSpans(inner)
+		if comprehension && (containsAggregateFunc(inner.spanWindow(parts.predicate).trim()) || containsAggregateFunc(inner.spanWindow(parts.projection).trim())) {
 			return true
 		}
 	}

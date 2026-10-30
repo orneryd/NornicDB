@@ -59,23 +59,23 @@ func TestQuantifiedGroupPredicates(t *testing.T) {
 // quoted text; an unbalanced pattern has no more groups.
 func TestQuantifiedGroupsSpans(t *testing.T) {
 	pattern := "p = shortestPath((s)((x {name: 'a)'})-[r:R WHERE r.k IN $ks]-(y WHERE size(kinds) = 0))+(t))"
-	groups := quantifiedGroups(pattern)
+	groups := quantifiedGroups(originalBraceView(pattern))
 	require.Len(t, groups, 1)
-	require.Equal(t, []string{"r.k IN $ks", "size(kinds) = 0"}, groups[0].predicateTexts(pattern))
+	require.Equal(t, []string{"r.k IN $ks", "size(kinds) = 0"}, groups[0].predicateTexts(originalBraceView(pattern)))
 	require.ElementsMatch(t, []string{"x", "y"}, groups[0].nodes)
 	require.Equal(t, []string{"r"}, groups[0].relationships)
-	masked := maskQuantifiedGroupPredicates(pattern)
+	masked := maskQuantifiedGroupPredicates(originalBraceView(pattern))
 	require.NotContains(t, masked, "$ks")
 	require.NotContains(t, masked, "kinds")
 	require.Contains(t, masked, "'a)'")
 
-	require.Empty(t, quantifiedGroups("(s)((x)-[r]-(y)"))
-	require.Empty(t, elementPredicateSpans("(x)-[r WHERE", 0, len("(x)-[r WHERE")))
-	require.Equal(t, "(s)((x)-[r]-(y))+(t)", maskQuantifiedGroupPredicates("(s)((x)-[r]-(y))+(t)"))
+	require.Empty(t, quantifiedGroups(originalBraceView("(s)((x)-[r]-(y)")))
+	require.Empty(t, elementPredicateSpans(originalBraceView("(x)-[r WHERE"), 0, len("(x)-[r WHERE")))
+	require.Equal(t, "(s)((x)-[r]-(y))+(t)", maskQuantifiedGroupPredicates(originalBraceView("(s)((x)-[r]-(y))+(t)")))
 	// A parenthesised path without a quantifier is not a group.
-	require.Empty(t, quantifiedGroups("((x)-[r WHERE r.k = 1]-(y))"))
+	require.Empty(t, quantifiedGroups(originalBraceView("((x)-[r WHERE r.k = 1]-(y))")))
 	// Quoted text between elements is skipped whole.
-	require.Equal(t, [][2]int{{9, 22}}, elementPredicateSpans("'(z)' (y WHERE y.k = 1)", 0, len("'(z)' (y WHERE y.k = 1)")))
+	require.Equal(t, [][2]int{{9, 22}}, elementPredicateSpans(expressionBraceView("'(z)' (y WHERE y.k = 1)"), 0, len("'(z)' (y WHERE y.k = 1)")))
 }
 
 // TestQuantifiedGroupStepVariablesAreSingletons: inside a quantified group's
@@ -438,7 +438,7 @@ func TestLocalOccurrences(t *testing.T) {
 // no pattern structure, a reference inside a binding's list is the clause's,
 // and a CALL argument keeps its local binding.
 func TestLocalScopeAndPatternStructureReaders(t *testing.T) {
-	require.Equal(t, []string{"s", "t"}, extractNodeVariables(matchPatternStructure("(s WHERE s.k IN (l))-->(t) WHERE (z)")))
+	require.Equal(t, []string{"s", "t"}, extractNodeVariables(matchPatternStructure(originalBraceView("(s WHERE s.k IN (l))-->(t) WHERE (z)"))))
 	require.False(t, localVariableShadowsAt("[r  IN l | r]", 2, "r"))
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_locals")
 	exec := NewStorageExecutor(engine)

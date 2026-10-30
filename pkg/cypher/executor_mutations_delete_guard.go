@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -132,14 +132,14 @@ func hasTopLevelDeleteLabelQualifier(expression string) bool {
 			continue
 		}
 		character := expression[index]
-		switch character {
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
+		switch {
+		case character == '(', character == '[', cyphertext.IsOpenBrace(character):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, character, false)
+		case character == ')', character == ']', cyphertext.IsCloseBrace(character):
 			if depth > 0 {
-				depth--
+				depth = cyphertext.AdvanceDelimiterDepth(depth, character, false)
 			}
-		case ':':
+		case character == ':':
 			if depth == 0 {
 				return true
 			}
@@ -172,12 +172,12 @@ func deleteExpressionRootIdentifier(expression string) string {
 	return name.Value
 }
 
-func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := pipelineClauseBody(clause, keyword)
+func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause pipelineClause, keyword string) {
+	pattern := clause.input(ctx).clauseBody(keyword)
 	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
-		pattern = strings.TrimSpace(pattern[:where])
+		pattern = pattern.window(0, where).trim()
 	}
-	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
+	for _, variable := range executor.extractVariableNamesFromPattern(withBraceView(ctx, pattern), pattern.text()) {
 		if variable != "" {
 			scope[variable] = struct{}{}
 		}
@@ -187,7 +187,7 @@ func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, 
 			scope[variable] = struct{}{}
 		}
 	}
-	if variable := extractPathAssignmentVariable(pattern); variable != "" {
+	if variable := extractPathAssignmentVariable(pattern.text()); variable != "" {
 		scope[variable] = struct{}{}
 	}
 }
@@ -214,12 +214,12 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineUnwindAlias(clause string) string {
+func pipelineUnwindAlias(clause braceView) string {
 	if _, alias, ok := parsePipelineIteration(clause); ok {
 		return normalizeProjectionColumnName(alias)
 	}
 	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
-		return strings.TrimSpace(clause[index+len("AS"):])
+		return strings.TrimSpace(clause.text()[index+len("AS"):])
 	}
 	return ""
 }
@@ -332,13 +332,13 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 // staticDeleteTargetTypeError keeps known non-entity values as compile-time
 // errors, while widened UNWIND map elements remain runtime checks. Strings
 // and lists retain the existing NornicDB DELETE extensions.
-func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+func staticDeleteTargetTypeError(clause braceView, scope staticTypeScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope}
 	for _, target := range targets {
-		operand, err := checker.check(strings.TrimSpace(target))
+		operand, err := checker.check(target)
 		if err != nil {
 			return err
 		}

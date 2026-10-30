@@ -195,16 +195,21 @@ type SetItem struct {
 
 // Parse parses a Cypher query string into a Query AST.
 func (p *Parser) Parse(cypher string) (*Query, error) {
-	ctx, source := cyphertext.WithSource(context.Background(), cypher)
+	return p.ParseSource(cyphertext.NormalizeSource(cypher))
+}
+
+// ParseSource consumes an already carried source; Parse admits independent client text.
+func (p *Parser) ParseSource(source *cyphertext.Source) (*Query, error) {
 	if source.Err != nil {
 		return nil, source.Err
 	}
-	trimmed := strings.TrimSpace(source.Text)
-	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
-	source = source.Window(start, start+len(trimmed))
-	ctx = cyphertext.WithSourceView(ctx, source)
-	cypher = source.Text
-
+	syntax := readBraceSyntax(source)
+	if err := syntax.err; err != nil {
+		return nil, err
+	}
+	source = astTrim(source)
+	ctx := cyphertext.WithSourceView(context.Background(), source)
+	cypher := source.Text
 	query := &Query{
 		Clauses:    make([]Clause, 0),
 		Parameters: make(map[string]any),
@@ -254,7 +259,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		case "RETURN":
 			if returns == nil {
 				builder := NewASTBuilder()
-				for _, fragment := range builder.splitIntoClauses(cypher) {
+				for _, fragment := range builder.splitIntoClauses(braceView{source: source, syntax: syntax}) {
 					if fragment.clauseType == ASTClauseReturn {
 						items, distinct := builder.parseProjection(ctx, source.Window(fragment.startPos, fragment.startPos+len(fragment.text)), len("RETURN"))
 						returns = append(returns, &ASTReturn{Items: items, Distinct: distinct})

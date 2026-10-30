@@ -41,11 +41,13 @@ func TestFabricUseVariableContext(t *testing.T) {
 func TestUseNameContextReader(t *testing.T) {
 	for _, query := range []string{"WITH 7 AS use RETURN use", "WITH 7 AS use WITH DISTINCT use RETURN use", "WITH 7 AS use /* USE fake */ RETURN use"} {
 		at := strings.Index(query, "use")
-		require.True(t, clauseKeywordUsedAsName(query, at, at+3, "USE"))
-		require.Zero(t, testing.AllocsPerRun(100, func() { _ = clauseKeywordUsedAsName(query, at, at+3, "USE") }))
+		require.True(t, clauseKeywordUsedAsName(originalBraceView(query), at, at+3, "USE"))
+		require.Zero(t, testing.AllocsPerRun(100, func() { _ = clauseKeywordUsedAsName(originalBraceView(query), at, at+3, "USE") }))
 	}
 	p := fabric.NewFabricPlanner(nil)
-	p.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
+	p.SetClauseKeywordSourceNameReader(func(source *cyphertext.Source, pos, end int, keyword string) bool {
+		return clauseKeywordUsedAsName(sourceBraceView(source), pos, end, keyword)
+	})
 	single, err := p.SingleGraphStatement(t.Context(), "USE comp CALL { USE comp.one WITH 7 AS use WITH DISTINCT use RETURN use AS k } RETURN k", cyphertext.AcceptedSource)
 	require.NoError(t, err)
 	require.Equal(t, "CALL { WITH 7 AS use WITH DISTINCT use RETURN use AS k } RETURN k", single)

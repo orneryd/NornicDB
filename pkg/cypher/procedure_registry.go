@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 	"sync"
@@ -185,7 +186,7 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 	if len(r.user) == 0 {
 		return false
 	}
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(inputBraceView(context.Background(), query, cyphertext.AcceptedSource))
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false

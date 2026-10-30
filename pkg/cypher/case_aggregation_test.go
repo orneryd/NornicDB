@@ -223,7 +223,7 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateCaseExpression(ctx, tt.expr, nodes, nil, nil, nil, nil, 0)
+			result := exec.evaluateCaseExpression(ctx, originalBraceView(tt.expr), nodes, nil, nil, nil, nil, 0)
 			assert.Equal(t, tt.expected, result, "evaluateCaseExpression(ctx, %q)", tt.expr)
 		})
 	}
@@ -279,7 +279,7 @@ func TestEvaluateConditionContains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
+			result := exec.evaluateCondition(ctx, originalBraceView(tt.condition), nodes, nil)
 			assert.Equal(t, tt.expected, result, "evaluateCondition(ctx, %q)", tt.condition)
 		})
 	}
@@ -312,7 +312,7 @@ func TestParseCaseExpressionUTF8(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ce, err := parseCaseExpression(tt.expr)
+			ce, err := parseCaseExpression(originalBraceView(tt.expr))
 			require.NoError(t, err)
 			require.Len(t, ce.whenClauses, 1)
 			assert.Equal(t, tt.expectedCondition, ce.whenClauses[0].condition, "condition mismatch")
@@ -352,7 +352,7 @@ func TestFindTopLevelKeywordUTF8(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := findTopLevelKeyword(tt.input, tt.keyword)
+			result := findTopLevelKeyword(originalBraceView(tt.input), tt.keyword)
 			assert.Equal(t, tt.expected, result, "findTopLevelKeyword(%q, %q)", tt.input, tt.keyword)
 		})
 	}
@@ -410,7 +410,7 @@ func TestCaseConditionEvaluation(t *testing.T) {
 
 		// Test evaluateExpression directly (this is what resolveReturnItem calls)
 		expr := "CASE WHEN n.issues CONTAINS 'tú' THEN 'found' ELSE 'not found' END"
-		directResult := exec.evaluateExpression(ctx, expr, "n", testNode)
+		directResult := exec.evaluateExpression(ctx, originalBraceView(expr), "n", testNode)
 		t.Logf("Direct evaluateExpression result: %v", directResult)
 		assert.Equal(t, "found", directResult, "Direct evaluateExpression should work")
 
@@ -496,7 +496,7 @@ func TestEvaluateCondition_OperatorAndPredicateMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		ctx := context.Background()
-		got := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
+		got := exec.evaluateCondition(ctx, originalBraceView(tt.condition), nodes, nil)
 		assert.Equal(t, tt.expected, got, "condition=%q", tt.condition)
 	}
 }

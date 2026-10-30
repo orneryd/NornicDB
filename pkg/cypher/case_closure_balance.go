@@ -11,26 +11,27 @@ import (
 // prefix-END ambiguities retain both interpretations until a later keyword or
 // delimiter resolves them. The existing non-balancing keyword reader prevents
 // recursive closure scans and preserves keyword-variable/property handling.
-func casePrefixEndRequired(text string, candidate int) bool {
+func casePrefixEndRequired(view braceView, candidate int) bool {
+	text := view.text()
 	states := []string{""}
 	var parents [][]string
 	candidateDepth := -1
 	for i := 0; i < len(text); {
-		switch cypherLexicalByte(text[i]) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(text[i])) == cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, text[i])
 			continue
-		case '/':
+		case (cypherLexicalByte(text[i])) == '/':
 			if end := queryCommentEnd(text, i); end > i {
 				i = end
 				continue
 			}
-		case '(', '[', '{':
+		case (cypherLexicalByte(text[i])) == '(', (cypherLexicalByte(text[i])) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(text[i])):
 			parents = append(parents, states)
 			states = []string{""}
 			i++
 			continue
-		case ')', ']', '}':
+		case (cypherLexicalByte(text[i])) == ')', (cypherLexicalByte(text[i])) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(text[i])):
 			complete := caseClosureStateContains(states, "")
 			if candidateDepth == len(parents) {
 				return len(states) > 0 && !complete
@@ -58,7 +59,7 @@ func casePrefixEndRequired(text string, candidate int) bool {
 			}
 			candidateDepth = len(parents)
 		} else {
-			states = advanceCaseClosureStates(text, i, word, states)
+			states = advanceCaseClosureStates(view, i, word, states)
 			if len(states) == 0 {
 				return false // Malformed tokens cannot prove an END is required.
 			}
@@ -68,7 +69,8 @@ func casePrefixEndRequired(text string, candidate int) bool {
 	return candidateDepth == 0 && !caseClosureStateContains(states, "")
 }
 
-func advanceCaseClosureStates(text string, at int, word string, states []string) []string {
+func advanceCaseClosureStates(view braceView, at int, word string, states []string) []string {
+	text := view.text()
 	var keyword string
 	switch {
 	case equalFoldASCII(word, "case"):
@@ -85,7 +87,7 @@ func advanceCaseClosureStates(text string, at int, word string, states []string)
 		return states
 	}
 	ambiguousEnd := keyword == "END" && caseEndFollowsBarePrefix(text, at)
-	if !ambiguousEnd && !caseKeywordAtMode(text, at, keyword, false) {
+	if !ambiguousEnd && !caseKeywordAtMode(view, at, keyword, false) {
 		return states
 	}
 

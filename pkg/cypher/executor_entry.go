@@ -127,6 +127,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.txContext = member.transaction
 	}
 
+	if clientText {
+		ctx = context.WithValue(ctx, braceSyntaxKey{}, (*braceSyntax)(nil))
+	}
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
@@ -286,6 +289,15 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
 	}
 	cypher = source.Text
+	// Admit the accepted source's brace syntax on every route, before
+	// any lossy structural rewrite can remove a malformed entry.
+	// General grammar admission still follows the extension rewrites below.
+	ctx, _, braceErr := admitBraceSyntax(ctx, source)
+	if braceErr != nil {
+		e.observeQuery("parse_error", false, slowStart)
+		execSpan.SetAttributes(attribute.String("cypher.op_type", "parse_error"))
+		return nil, braceErr
+	}
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
 	// Transparent routing continues already-admitted text, including generated
@@ -295,6 +307,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 	}
+
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
@@ -366,7 +379,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}
 	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
-		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
+		expanded, expressionRewrites, err := desugarCypher25ExpressionView(statementBraceView(ctx, cypher), cypher25)
 		if err != nil {
 			return nil, err
 		}
@@ -407,8 +420,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
-		cypher = strings.TrimSpace(stripped)
+	if stripped, ok := stripUnionBranchFinishes(ctx, statementBraceView(ctx, cypher)); ok {
+		stripped = stripped.trim()
+		ctx = withBraceView(ctx, stripped)
+		cypher = stripped.text()
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
 	}
@@ -488,7 +503,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
+		return e.executeOnDatabase(ctx, useDB, statementBraceView(ctx, cypher), params, false)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -503,13 +518,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
 		defer func() {
-			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(view braceView) []returnItem { return e.parseReturnItems(ctx, view) })
 		}()
 	}
 
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
 	// WITH * they stand for, once, here; errors are mapped back (#907).
-	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
+	if desugared, orderRewrite := desugarStandaloneOrderClauseView(statementBraceView(ctx, cypher)); orderRewrite != nil {
 		cypher = desugared
 		ctx = withSourceRewrite(ctx, orderRewrite)
 		defer func() { result, retErr = (resultRestoration{source: orderRewrite}).restore(result, retErr, nil) }()
@@ -525,21 +540,29 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			ctx = withFinishedStatement(ctx, modeQuery)
 		}
 		if mode != ModeNormal {
-			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+			_, modeView := executionModeView(statementBraceView(ctx, cypher))
+			modeCtx := withBraceView(ctx, modeView)
+			if err := e.validateSyntax(ctx, modeView, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 				return nil, err
 			}
-			if err := e.validateFabricSemanticScopes(ctx, modeQuery, params); err != nil {
+			if err := e.validateFabricSemanticScopes(modeCtx, modeQuery, params); err != nil {
 				return nil, err
 			}
 			if err := e.statementParametersError(ctx, cypher, params); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
-				return e.executeExplain(ctx, modeQuery)
+				return e.executeExplain(modeCtx, modeView)
 			}
-			return e.executeProfile(ctx, modeQuery)
+			return e.executeProfile(modeCtx, modeView)
 		}
-		info := e.analyzer.Analyze(ctx, cypher)
+		// Map syntax belongs to the whole statement: check it before any
+		// fragment plans or runs, as validateSyntax does on one database. A
+		// fragment that receives no input rows never checks its own maps.
+		if err := validateAdmittedBraceSyntax(ctx, cypher); err != nil {
+			return nil, err
+		}
+		info := e.analyzer.analyzeView(ctx, statementBraceView(ctx, cypher))
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -599,8 +622,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// EXPLAIN / PROFILE USE <graph> …: the graph is resolved as for the
 	// statement itself (Neo4j's DatabaseNotFound for a missing one, #744),
 	// and the plan is the target database's.
-	if mode, inner := parseExecutionMode(cypher); mode != ModeNormal {
-		if use, remaining, hasUse, err := parseUseClause(ctx, inner, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if mode, inner := executionModeView(statementBraceView(ctx, cypher)); mode != ModeNormal {
+		if use, remaining, hasUse, err := parseUseClauseView(ctx, inner, false); hasUse || err != nil {
 			if err != nil {
 				return nil, err
 			}
@@ -611,11 +634,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
+			return e.executeOnDatabase(ctx, use.Name, remaining.wrap(keyword, ""), params, false)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
-	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClauseView(ctx, statementBraceView(ctx, cypher), false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -628,7 +651,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// predicates the local evaluator reads. Route source Cypher first: remote
 	// evaluators do not implement our internal functions. The result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressionView(statementBraceView(ctx, cypher), params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -654,7 +677,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// and so is a statement that reads or writes no graph (RETURN 1,
 	// UNWIND graph.names() AS g RETURN g), which runs on the composite
 	// itself, as in Neo4j.
-	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphText(cypher) {
+	if isCompositeRoot(e.storage) && !isCompositeAllowedCommand(cypher) && statementAccessesGraphView(statementBraceView(ctx, cypher)) {
 		return nil, localizedError(localization.CypherCoreCompositeTargetRequired(), nil)
 	}
 
@@ -747,7 +770,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+	if err := e.validateSyntax(ctx, statementBraceView(ctx, cypher), cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -764,12 +787,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
 	if !finishTerminated {
-		last := lastTopLevelClauseWord(cypher)
+		last := lastTopLevelClauseWord(statementBraceView(ctx, cypher))
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt
 		// it when the text before the trailer is itself a complete statement.
 		if last == "WITH" {
-			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
+			if scope, ok := stripWithEmbeddingSuffix(statementBraceView(ctx, cypher)); ok {
 				switch lastTopLevelClauseWord(scope) {
 				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
 				default:
@@ -792,15 +815,17 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it. EXPLAIN and PROFILE
 	// check the statement they plan, as Neo4j compiles it.
-	_, scopeText := parseExecutionMode(cypher)
-	scopeText, _ = stripWithEmbeddingSuffix(scopeText)
+	_, scopeView := executionModeView(statementBraceView(ctx, cypher))
+	scopeView, _ = stripWithEmbeddingSuffix(scopeView)
 	if finishTerminated {
-		scopeText += " FINISH"
+		scopeView = scopeView.wrap("", " FINISH")
 	}
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
+	scopeText := scopeView.text()
+	scopeCtx := withBraceView(ctx, scopeView)
+	if err := e.validateSemanticScopes(scopeCtx, scopeText); err != nil {
 		return nil, err
 	}
-	admission, admissionErr := e.admitBoundStatement(ctx, scopeText)
+	admission, admissionErr := e.admitBoundStatement(scopeCtx, scopeText)
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
@@ -868,7 +893,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Analyze query - uses cached analysis if available
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
-	info := e.analyzer.Analyze(ctx, cypher)
+	info := e.analyzer.analyzeView(ctx, statementBraceView(ctx, cypher))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -900,7 +925,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// commands bucket as "admin" instead). Single observation point covers
 	// cache-hit early-return AND every downstream execution path so the
 	// counter reflects intent regardless of how the query resolves.
-	opType := classifyOpType(info, false /* isFabric */, isMetadataCommand(cypher, metadataCatalogExecution))
+	opType := classifyOpType(info, false /* isFabric */, isMetadataCommand(statementBraceView(ctx, cypher), metadataCatalogExecution))
 	e.observeQuery(opType, true /* observeDuration */, slowStart)
 	planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
 	planSpan.End()
@@ -952,15 +977,16 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Prefix consumption and dispatch share one reader, including comments
 	// and EOF. A classifier flag must never re-enter the unchanged statement.
 	if info.HasExplain || info.HasProfile {
-		mode, innerQuery := parseExecutionMode(cypher)
+		mode, innerView := executionModeView(statementBraceView(ctx, cypher))
+		innerQuery := innerView.text()
 		if finishTerminated {
 			ctx = withFinishedStatement(ctx, innerQuery)
 		}
 		if mode == ModeExplain {
-			return e.executeExplain(ctx, innerQuery)
+			return e.executeExplain(ctx, innerView)
 		}
 		if mode == ModeProfile {
-			return e.executeProfile(ctx, innerQuery)
+			return e.executeProfile(ctx, innerView)
 		}
 	}
 
@@ -979,7 +1005,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// implicit transactions: they operate on dbManager/metadata, not graph
 	// storage. Routing them through executeWithoutTransaction directly ensures
 	// correct handling and avoids the write path.
-	if isMetadataCommand(cypher, metadataCatalogExecution) || isOrdinarySchemaDDL(cypher) {
+	if isMetadataCommand(statementBraceView(ctx, cypher), metadataCatalogExecution) || isOrdinarySchemaDDL(statementBraceView(ctx, cypher)) {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err

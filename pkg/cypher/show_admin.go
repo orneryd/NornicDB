@@ -166,7 +166,7 @@ var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "susp
 // (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
 func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
-	currentOnly := startsWithKeywords(cypher, "SHOW", "CURRENT USER")
+	currentOnly := startsWithKeywords(statementBraceView(ctx, cypher), "SHOW", "CURRENT USER")
 	var users []UserListing
 	if identity := requestIdentityFromContext(ctx); identity != nil && identity.Users != nil {
 		users = identity.Users()
@@ -189,13 +189,13 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 // unsupportedAdministrationCommandError is Neo4j Community's error for an
 // administration command it doesn't offer (SHOW ROLES, SHOW PRIVILEGES,
 // SHOW USER … PRIVILEGES); SHOW SERVERS is NotSystemDatabaseError.
-func unsupportedAdministrationCommandError(cypher string) error {
+func unsupportedAdministrationCommandError(view braceView) error {
 	code := "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
-	if startsWithKeywords(cypher, "SHOW", "SERVERS") || startsWithKeywords(cypher, "SHOW", "SERVER") {
+	if startsWithKeywords(view, "SHOW", "SERVERS") || startsWithKeywords(view, "SHOW", "SERVER") {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",
-		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(cypher))))
+		localization.CypherAdminUnsupportedAdministrationCommand(showCommandHead(view).text()))
 }
 
 // runningTransaction is one SHOW TRANSACTIONS row: an explicit transaction
@@ -572,20 +572,21 @@ func undefinedVariableError(expression string) (err error, undefined bool) {
 // found); ids holds it as nil. A Cypher 5 statement keeps Neo4j 5.26's
 // TypeError.
 func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command string) ([]interface{}, bool, error) {
-	rest := strings.TrimSpace(head)
-	if startsWithKeywordFold(rest, command) {
-		rest = strings.TrimSpace(rest[len(command):])
+	restView := statementBraceView(ctx, head).trim()
+	if startsWithKeywordFold(restView.text(), command) {
+		restView = afterWord(restView, command)
 	}
 	for _, noun := range []string{"TRANSACTIONS", "TRANSACTION"} {
-		if startsWithKeywordFold(rest, noun) {
-			rest = strings.TrimSpace(rest[len(noun):])
+		if startsWithKeywordFold(restView.text(), noun) {
+			restView = afterWord(restView, noun)
 			break
 		}
 	}
+	rest := restView.text()
 	if rest == "" {
 		return nil, false, nil
 	}
-	value, ok := e.evaluateRowExpressionWithContext(ctx, rest, e.parameterRow(ctx))
+	value, ok := e.evaluateRowExpressionWithContext(ctx, restView, e.parameterRow(ctx))
 	if !ok {
 		// Neo4j names the undefined variable an expression starts with, or
 		// the input that isn't an expression.

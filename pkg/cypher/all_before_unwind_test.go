@@ -69,13 +69,13 @@ func TestProjectionAllContextPreservesKeywordSubscripts(t *testing.T) {
 func TestAllBeforeUnwindDecisionAllocationGuard(t *testing.T) {
 	const query = "WITH 7 AS all WITH all UNWIND [1] AS x RETURN all AS k"
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		source, ok := splitUnwindBody("UNWIND [1] AS x RETURN all AS k")
+		source, ok := splitUnwindBody(originalBraceView("UNWIND [1] AS x RETURN all AS k"))
 		if !ok || source.expression != "[1]" || source.variableWritten != "x" {
 			panic("UNWIND source product")
 		}
 	}))
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		edits, err := projectionAllEdits(query, false)
+		edits, err := projectionAllEdits(originalBraceView(query), false)
 		if err != nil || len(edits) != 0 {
 			panic("lost ALL variable")
 		}

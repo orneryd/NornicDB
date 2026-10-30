@@ -55,11 +55,11 @@ import (
 // the node / relationship) is written, and a null value removes the key.
 // Row bindings from UNWIND / WITH are visible in the value scope.
 // Non-map values are an error (setSourceMap).
-func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
+func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
 	}
-	if err := requireSetParameter(ctx, rightExpr); err != nil {
+	if err := requireSetParameter(ctx, rightExpr.text()); err != nil {
 		return err
 	}
 	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
@@ -153,15 +153,35 @@ func propertyMapForSetValue(value interface{}) (map[string]interface{}, bool) {
 	}
 }
 
-func parseSetAssignmentTarget(target string) (variable string, property string, hasProperty bool) {
-	target = strings.TrimSpace(target)
-	if base, prop, ok := splitPostfixPropertyAccess(target); ok {
+func parseSetAssignmentTarget(target braceView) (variable string, property string, hasProperty bool) {
+	return parseSetAssignmentTargetExtent(target, nil)
+}
+
+// Author: #1663 lane. The existing target grammar retains the operand it
+// selects, including unwrapping parentheses, for Source-taking type consumers.
+func parseSetAssignmentTargetExtent(targetView braceView, span *cyphertext.Span) (variable string, property string, hasProperty bool) {
+	target := targetView.text()
+	extent := cyphertext.TrimWhitespaceSpan(target, cyphertext.Span{End: len(target)})
+	if span != nil {
+		*span = extent
+	}
+	targetView = targetView.spanWindow(extent)
+	target = targetView.text()
+	if base, prop, ok := splitPostfixPropertyAccess(targetView); ok {
+		if span != nil {
+			span.End = span.Start + len(base)
+		}
 		for {
 			inner, wrapped := stripEnclosingExpressionParentheses(base)
 			if !wrapped {
 				break
 			}
-			base = strings.TrimSpace(inner)
+			if span != nil {
+				trimmed := cyphertext.TrimWhitespaceSpan(base, cyphertext.Span{Start: 1, End: len(base) - 1})
+				start := span.Start
+				span.Start, span.End = start+trimmed.Start, start+trimmed.End
+			}
+			base = inner
 		}
 		return strings.TrimSpace(base), prop, true
 	}
@@ -170,35 +190,14 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 		if !wrapped {
 			break
 		}
-		target = strings.TrimSpace(inner)
+		if span != nil {
+			trimmed := cyphertext.TrimWhitespaceSpan(target, cyphertext.Span{Start: 1, End: len(target) - 1})
+			start := span.Start
+			span.Start, span.End = start+trimmed.Start, start+trimmed.End
+		}
+		target = inner
 	}
 	return target, "", false
-}
-
-// splitSetAssignments splits a SET clause into individual assignments,
-// respecting quotes and nesting in (), [] and {} (function calls, list literals
-// such as embeddings, and map literals).
-//
-// # Parameters
-//
-//   - setClause: The SET clause string (without "SET" keyword)
-//
-// # Returns
-//
-//   - Slice of individual assignments
-//
-// # Example
-//
-//	splitSetAssignments("n.name = 'Alice', n.age = 30")
-//	// Returns: ["n.name = 'Alice'", "n.age = 30"]
-//
-//	splitSetAssignments("n.name = concat('a', 'b'), n.x = 1")
-//	// Returns: ["n.name = concat('a', 'b')", "n.x = 1"]
-//
-//	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
-//	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
-func splitSetAssignments(setClause string) []string {
-	return splitTopLevelCommaKeepEmpty(setClause)
 }
 
 // hasConcatOperator checks if the expression has a + operator outside of quotes.
@@ -317,6 +316,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 type setRun struct {
 	variable string
 	text     string
+	view     braceView
 }
 
 // appendSetClauseRuns appends the stretches of a SET body to runs (a
@@ -325,32 +325,25 @@ type setRun struct {
 // SET n.a = 1, m.b = n.a reads the new n.a, while SET n.a = 1, n.b = n.a
 // reads the old one (#907). A chained SET clause (SET a SET b) starts new
 // stretches. A stretch's text is a slice of the body. assignments, when not nil, are body's assignments already split
-// (splitSetAssignments): they are used when body is one SET clause.
-func appendSetClauseRuns(runs []setRun, body string, assignments []string) []setRun {
-	for segment, next, ok := nextChainedSetClause(body, 0); ok; segment, next, ok = nextChainedSetClause(body, next) {
+// (setAssignmentViews): they are used when body is one SET clause.
+func appendSetClauseRuns(runs []setRun, body braceView) []setRun {
+	for segment, next, ok := nextChainedSetView(body, 0); ok; segment, next, ok = nextChainedSetView(body, next) {
+		segment = segment.withoutComments()
 		open := false
-		start, searchFrom := 0, 0
-		items := assignments
-		if items == nil || next < len(body) || segment != strings.TrimSpace(body) {
-			items = splitSetAssignments(segment)
-		}
-		for _, assignment := range items {
-			assignment = strings.TrimSpace(assignment)
-			if assignment == "" {
+		start := 0
+		for _, span := range commaPartSpans(segment.text(), true) {
+			assignment := segment.spanWindow(span)
+			if assignment.empty() {
 				continue
 			}
-			at := searchFrom
-			if found := strings.Index(segment[searchFrom:], assignment); found >= 0 {
-				at = searchFrom + found
-			}
-			searchFrom = at + len(assignment)
-			target, _, _, _ := splitSetAssignment(assignment)
+			target := readSetAssignment(assignment).target
 			if open && runs[len(runs)-1].variable == target {
-				runs[len(runs)-1].text = segment[start:searchFrom]
+				runs[len(runs)-1].view = segment.window(start, span.End)
+				runs[len(runs)-1].text = runs[len(runs)-1].view.text()
 				continue
 			}
-			runs = append(runs, setRun{variable: target, text: assignment})
-			start, open = at, true
+			runs = append(runs, setRun{variable: target, text: assignment.text(), view: assignment})
+			start, open = span.Start, true
 		}
 	}
 	return runs
@@ -403,9 +396,9 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 		var written int
 		var err error
 		if node != nil {
-			written, err = e.applySetToNodeWithContext(ctx, node, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToNodeWithContext(ctx, node, run.variable, run.view, nodes, rels)
 		} else {
-			written, err = e.applySetToRelationshipWithContext(ctx, relationship, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToRelationshipWithContext(ctx, relationship, run.variable, run.view, nodes, rels)
 		}
 		states[target].written += written
 		if err != nil {

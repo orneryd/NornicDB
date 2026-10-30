@@ -237,7 +237,7 @@ func TestSelectedPathSearchStorage(t *testing.T) {
 // The search stops when the statement is cancelled.
 func TestSelectedPathSearchCancelled(t *testing.T) {
 	exec, ctx := newShortestSelectorExecutor(t)
-	plan, _, ok := compileSelectedPathPlan("(a)(()-[:T]-())+(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]-())+(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	result, err := exec.Execute(ctx, "MATCH (a:S {id: 1}) RETURN a", nil)
 	require.NoError(t, err)
@@ -319,9 +319,9 @@ func TestSelectedPathSearchLengthBound(t *testing.T) {
 		"MATCH (s:G {x: 0, y: 0}) MATCH p = SHORTEST 1 (s)(()-[:E]-())+(t)" + returns:                             {i(1600, 78)},
 	})
 
-	plan, _, ok := compileSelectedPathPlan("(s)(()-[:E]-())+(t)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(s)(()-[:E]-())+(t)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
-	corner, err := grid.pipelineMatchRows(ctx, pipelineRow{}, "MATCH (s:G {x: 0, y: 0})")
+	corner, err := grid.pipelineMatchRows(ctx, pipelineRow{}, originalBraceView("MATCH (s:G {x: 0, y: 0})"))
 	require.NoError(t, err)
 	source := corner[0]["s"].(*storage.Node)
 	search := grid.newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
@@ -425,13 +425,13 @@ func TestSelectedPathSearchShortestPathRoutes(t *testing.T) {
 // ordinary evaluator.
 func TestSelectedPathSearchShortestPathUnreadable(t *testing.T) {
 	exec, ctx := newShortestSelectorExecutor(t)
-	_, ok, err := exec.parseShortestPathMatch(ctx, "p = shortestPath((a)-[:$(t)*]->(b))")
+	_, ok, err := exec.parseShortestPathMatch(ctx, expressionBraceView("p = shortestPath((a)-[:$(t)*]->(b))"))
 	require.True(t, ok)
 	require.Error(t, err)
-	_, handled, err := exec.evaluateShortestPathValue(ctx, "shortestPath", "(a)-[:$(t)*]->(b)", nil)
+	_, handled, err := exec.evaluateShortestPathValue(ctx, "shortestPath", originalBraceView("(a)-[:$(t)*]->(b)"), nil)
 	require.True(t, handled)
 	require.Error(t, err)
-	_, handled, err = exec.evaluateShortestPathValue(ctx, "shortestPath", "(a)-->(b)-->(c)", nil)
+	_, handled, err = exec.evaluateShortestPathValue(ctx, "shortestPath", originalBraceView("(a)-->(b)-->(c)"), nil)
 	require.False(t, handled)
 	require.NoError(t, err)
 }
@@ -441,10 +441,10 @@ func TestSelectedPathSearchHelpers(t *testing.T) {
 	for _, pattern := range []string{"", "(a", "(a)-->", "-->(a)", "(a)-->-->(b)", "(a) x", "(a)(b)", "(a)-[r->(b)",
 		"(a)((x)-->(y))(b)", "(a)(((x)-->(y))+)+(b)", "(a)((x)-->)+(b)", "(a $p)", "(a)-[:``]->(b)", "(a)-[:$(t)]->(b)",
 		"(a)-[r $p]->(b)", "(a:)", "(a)--[r]->(b)", "(a)-[r]--(b)"} {
-		_, ok := parsePathPatternItems(pattern, false)
+		_, ok := parsePathPatternItems(originalBraceView(pattern), false)
 		require.False(t, ok, pattern)
 	}
-	items, ok := parsePathPatternItems("(a:L WHERE a.x = 1)-[r:T WHERE r.w > 1]->(b)-[:T*2]->(c)-[*..3]-(d)<-[:U*2..]-(e)", false)
+	items, ok := parsePathPatternItems(originalBraceView("(a:L WHERE a.x = 1)-[r:T WHERE r.w > 1]->(b)-[:T*2]->(c)-[*..3]-(d)<-[:U*2..]-(e)"), false)
 	require.True(t, ok)
 	require.Equal(t, []string{"a.x = 1"}, items[0].predicates)
 	require.Equal(t, "(a:L )", items[0].text)
@@ -457,31 +457,31 @@ func TestSelectedPathSearchHelpers(t *testing.T) {
 	require.Equal(t, 7, atoiOr("x", 7))
 	require.Equal(t, 7, atoiOr("99999999999", 7))
 	require.Equal(t, 12, atoiOr("12", 7))
-	require.Nil(t, propertyMapPredicates("v", ""))
-	require.Empty(t, propertyMapPredicates("v", "{x}"))
-	require.Equal(t, []string{"v.`a b` = (1)", "v.`c` = ('x')"}, propertyMapPredicates("v", "{`a b`: 1, c: 'x'}"))
+	require.Nil(t, propertyMapPredicates("v", originalBraceView("")))
+	require.Empty(t, propertyMapPredicates("v", expressionBraceView("{x}")))
+	require.Equal(t, []string{"v.`a b` = (1)", "v.`c` = ('x')"}, propertyMapPredicates("v", expressionBraceView("{`a b`: 1, c: 'x'}")))
 
 	for term, want := range map[string]bool{"a:L": true, "{a: 1}": false, "n.a": false, "$a": false, "'a'": false,
 		"[a IN l]": true, "f(a)": true, "ab": false, "{k: a}": true, "(a)": true} {
-		require.Equal(t, want, readsPatternVariable(term, "a"), term)
+		require.Equal(t, want, readsPatternVariable(originalBraceView(term), "a"), term)
 	}
-	require.False(t, readsPatternVariable("x", ""))
+	require.False(t, readsPatternVariable(expressionBraceView("x"), ""))
 
 	for term, want := range map[string]pathLengthBound{
-		"length(p) <= 3": {bound: "3"}, "length(p) < $k": {bound: "$k", strict: true}, "3 >= length(p)": {bound: "3"},
-		"3 > length(p)": {bound: "3", strict: true}, "size('<=') >= length(p)": {bound: "size('<=')"},
-		"length(p) <= [1][0]": {bound: "[1][0]"}, "length(p) <= size([x IN [1] WHERE x < 2])": {bound: "size([x IN [1] WHERE x < 2])"},
+		"length(p) <= 3": {bound: expressionBraceView("3")}, "length(p) < $k": {bound: expressionBraceView("$k"), strict: true}, "3 >= length(p)": {bound: expressionBraceView("3")},
+		"3 > length(p)": {bound: expressionBraceView("3"), strict: true}, "size('<=') >= length(p)": {bound: expressionBraceView("size('<=')")},
+		"length(p) <= [1][0]": {bound: originalBraceView("[1][0]")}, "length(p) <= size([x IN [1] WHERE x < 2])": {bound: expressionBraceView("size([x IN [1] WHERE x < 2])")},
 	} {
-		bound, ok := pathLengthBoundOf(term, "p")
+		bound, ok := pathLengthBoundOf(originalBraceView(term), "p")
 		require.True(t, ok, term)
 		require.Equal(t, want, bound, term)
 	}
 	for _, term := range []string{"length(p) >= 3", "length(q) <= 3", "length(p) <= length(p)", "length(p) <= 2 <= 3",
 		"x <> length(p)", "length(p) = 2"} {
-		_, ok := pathLengthBoundOf(term, "p")
+		_, ok := pathLengthBoundOf(originalBraceView(term), "p")
 		require.False(t, ok, term)
 	}
-	_, ok = pathLengthBoundOf("length(p) <= 3", "")
+	_, ok = pathLengthBoundOf(expressionBraceView("length(p) <= 3"), "")
 	require.False(t, ok)
 
 	for _, check := range []struct {
@@ -513,15 +513,15 @@ func TestSelectedPathSearchHelpers(t *testing.T) {
 
 	for pattern, want := range map[string]int{"(a)(()-->()){2,3}(b)-->(c)": 4, "(a)-[*1..2]->(b)": 2, "(a)-[*1..]->(b)": -1,
 		"(a)(()-->()-->())+(b)": -1, "(a)": 0} {
-		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
+		plan, _, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 		require.True(t, ok, pattern)
 		require.Equal(t, want, plan.forward.maxLength, pattern)
 	}
-	plan, filters, ok := compileSelectedPathPlan("(a)-[*2..16777216]->(b)", "p", "", []string{"", "length(p) <= 2"})
+	plan, filters, ok := compileSelectedPathPlan(originalBraceView("(a)-[*2..16777216]->(b)"), "p", originalBraceView(""), originalBraceViews("", "length(p) <= 2"))
 	require.True(t, ok)
 	require.Equal(t, []string{"length(p) <= 2"}, filters)
 	require.Len(t, plan.lengthBounds, 1)
-	_, _, ok = compileSelectedPathPlan("(a", "p", "", nil)
+	_, _, ok = compileSelectedPathPlan(originalBraceView("(a"), "p", originalBraceView(""), nil)
 	require.False(t, ok)
 }
 

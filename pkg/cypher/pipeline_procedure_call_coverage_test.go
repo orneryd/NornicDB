@@ -59,30 +59,39 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	ctx := context.Background()
 	rows := []pipelineRow{{"x": int64(1)}}
 
-	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)", nil)
+	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, originalBraceView("CALL cov.echo(x)"), nil)
 	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
 	require.True(t, ok)
 	require.Nil(t, out)
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed", nil)
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, originalBraceView("CALL cov.echo(count(x)) YIELD echoed"), nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "aggregate")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed", nil)
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, originalBraceView("CALL cov.echo(x % 0) YIELD echoed"), nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/ by zero")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed", nil)
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, originalBraceView("CALL cov.fail(x) YIELD echoed"), nil)
 	require.True(t, ok)
 	require.Error(t, err)
 
-	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1", nil)
+	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, originalBraceView("CALL cov.echo(x) YIELD echoed WHERE echoed > 1"), nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"echoed"}, yielded)
 	require.Equal(t, []pipelineRow{{"x": int64(2), "echoed": int64(2)}}, out)
+}
+
+// explicitProcedureArgumentTexts reads the argument views of a new statement.
+func explicitProcedureArgumentTexts(ctx context.Context, text string) []string {
+	views := explicitProcedureArgumentViews(ctx, originalBraceView(text))
+	if views == nil {
+		return nil
+	}
+	return viewTexts(views)
 }
 
 func TestExplicitProcedureArgumentTexts_EmptyAndNested(t *testing.T) {
@@ -109,12 +118,12 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 
 	spec, found := globalProcedureRegistry.Get("cov.echo")
 	require.True(t, found)
-	_, err := extractProcedureInvocationArguments(ctx, spec.Spec, "CALL cov.echo(count(1))")
+	_, err := extractProcedureInvocationArguments(ctx, spec.Spec, originalBraceView("CALL cov.echo(count(1))"))
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	malformed := "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1"
-	require.Nil(t, parseYieldClause(t.Context(), malformed))
+	require.Nil(t, parseYieldClause(t.Context(), originalBraceView(malformed)))
 	_, err = exec.Execute(ctx, malformed, nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
@@ -129,7 +138,7 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 		"CALL cov.echo(1) YIELD echoed SKIP -1",
 		"CALL cov.echo(1) YIELD echoed LIMIT -1",
 	} {
-		yield := parseYieldClause(t.Context(), call)
+		yield := parseYieldClause(t.Context(), originalBraceView(call))
 		require.NotNil(t, yield, call)
 		require.Error(t, exec.validateYieldModifiers(context.Background(), yield, true), call)
 	}

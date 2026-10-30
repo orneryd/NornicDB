@@ -243,12 +243,12 @@ func TestValueSemanticsParsingForms(t *testing.T) {
 	for expression, want := range map[string]string{
 		"[1, 2]{.a}": "[1, 2]", "f(1){.a}": "f(1)", "m {.a}": "m", "'x'{.a}": "'x'", "{a: 1}{.a}": "{a: 1}",
 	} {
-		receiver, projected := staticMapProjectionReceiver(expression)
+		receiver, projected := staticMapProjectionReceiver(originalBraceView(expression))
 		require.True(t, projected, expression)
 		require.Equal(t, want, receiver, expression)
 	}
 	for _, expression := range []string{"x + {a: 1}", "THEN {a: 1}", "COUNT { (n)-->() }", "EXISTS { MATCH (n) }", "COLLECT { MATCH (n) RETURN n }", "{a: 1", "(1{.a}", "{a: {b: 1}", "x", "x}"} {
-		_, projected := staticMapProjectionReceiver(expression)
+		_, projected := staticMapProjectionReceiver(originalBraceView(expression))
 		require.False(t, projected, expression)
 	}
 	for _, expression := range []string{"x.normalized", "normalized", "n.`is normalized`"} {

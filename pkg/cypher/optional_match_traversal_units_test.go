@@ -57,9 +57,9 @@ func TestGh713TraversalProjectionUsesSharedFailureBoundary(t *testing.T) {
 				}
 				var value interface{}
 				if route == "compiled" {
-					value = exec.compileTraversalProjection(ctx, test.expression)(row)
+					value = exec.compileTraversalProjection(ctx, originalBraceView(test.expression))(row)
 				} else {
-					value = exec.evaluateTraversalRowExpression(ctx, test.expression, row)
+					value = exec.evaluateTraversalRowExpression(ctx, originalBraceView(test.expression), row)
 				}
 				require.Equal(t, test.value, value)
 				if test.code == "" {
@@ -138,7 +138,7 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	t.Run("unaliased aggregate", func(t *testing.T) {
 		executor, ctx := newUnitExecutor(t)
 		items := []returnItem{{expr: "count(*)", alias: "count(*)"}}
-		plan := returnProjectionPlanFor(ctx, "RETURN count(*)")
+		plan := returnProjectionPlanFor(ctx, originalBraceView("RETURN count(*)"))
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)
 		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
@@ -194,12 +194,12 @@ func TestGh713PipelineSumNumericTypes(t *testing.T) {
 }
 
 func TestExtractRelationshipVariables_Shapes(t *testing.T) {
-	require.Equal(t, []string{"r"}, extractRelationshipVariables("(a)-[r]->(b)"), "bare variable")
-	require.Equal(t, []string{"r"}, extractRelationshipVariables("(a)-[r:T]->(b)"), "typed variable")
-	require.Equal(t, []string{"r"}, extractRelationshipVariables("(a)-[r*1..3]->(b)"), "variable-length variable")
-	require.Empty(t, extractRelationshipVariables("(a)-[:T]->(b)"), "anonymous typed relationship")
-	require.Empty(t, extractRelationshipVariables("(a)-[*2]->(b)"), "anonymous variable-length")
-	require.Equal(t, []string{"r1", "r2"}, extractRelationshipVariables("(a)-[r1:X]->(b)<-[r2:Y]-(c)"), "chain")
+	require.Equal(t, []string{"r"}, extractRelationshipVariables(originalBraceView("(a)-[r]->(b)")), "bare variable")
+	require.Equal(t, []string{"r"}, extractRelationshipVariables(originalBraceView("(a)-[r:T]->(b)")), "typed variable")
+	require.Equal(t, []string{"r"}, extractRelationshipVariables(originalBraceView("(a)-[r*1..3]->(b)")), "variable-length variable")
+	require.Empty(t, extractRelationshipVariables(originalBraceView("(a)-[:T]->(b)")), "anonymous typed relationship")
+	require.Empty(t, extractRelationshipVariables(originalBraceView("(a)-[*2]->(b)")), "anonymous variable-length")
+	require.Equal(t, []string{"r1", "r2"}, extractRelationshipVariables(originalBraceView("(a)-[r1:X]->(b)<-[r2:Y]-(c)")), "chain")
 }
 
 func TestInvertOptionalDirection(t *testing.T) {
@@ -219,33 +219,33 @@ func TestIsSimpleTraversalIdentifier(t *testing.T) {
 func TestParseOptionalClauseEndpoints_ErrorsAndRelForms(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 
-	_, err := exec.parseOptionalClauseEndpoints(ctx, "no parens here")
+	_, err := exec.parseOptionalClauseEndpoints(ctx, expressionBraceView("no parens here"))
 	require.Error(t, err, "no node endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a")
+	_, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a"))
 	require.Error(t, err, "unterminated source endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->")
+	_, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r:T]->"))
 	require.Error(t, err, "no target endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->(b")
+	_, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r:T]->(b"))
 	require.Error(t, err, "unterminated target endpoint")
 
-	eps, err := exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T {w:1}]->(b)")
+	eps, err := exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r:T {w:1}]->(b)"))
 	require.NoError(t, err)
 	require.Equal(t, "T", eps.relType, "props stripped from relationship type")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T*1..2]->(b)")
+	eps, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r:T*1..2]->(b)"))
 	require.NoError(t, err)
 	require.Equal(t, "T", eps.relType, "variable-length hops stripped from type")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r*1..2]->(b)")
+	eps, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r*1..2]->(b)"))
 	require.NoError(t, err)
 	require.Equal(t, "r", eps.relVar, "variable-length without type keeps the variable")
 	require.Empty(t, eps.relType)
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r]->(b)")
+	eps, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)-[r]->(b)"))
 	require.NoError(t, err)
 	require.Equal(t, "r", eps.relVar, "bare relationship variable")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)<-[:T]-(b)")
+	eps, err = exec.parseOptionalClauseEndpoints(ctx, originalBraceView("(a)<-[:T]-(b)"))
 	require.NoError(t, err)
 	require.Equal(t, "in", eps.direction)
 }
@@ -340,34 +340,34 @@ func TestFastTraversalExprValue_AllShapes(t *testing.T) {
 }
 
 func TestScanOptionalPatternShape_QuoteAware(t *testing.T) {
-	groups, brackets := scanOptionalPatternShape(`(a)-[r:T {p:'([('}]->(b)`)
+	groups, brackets := scanOptionalPatternShape(originalBraceView(`(a)-[r:T {p:'([('}]->(b)`))
 	require.Equal(t, 2, groups, "parens inside quoted strings are not node groups")
 	require.Equal(t, 1, brackets, "brackets inside quoted strings are not rel sections")
 
-	groups, brackets = scanOptionalPatternShape(`(a {s:"x(\"y["})`)
+	groups, brackets = scanOptionalPatternShape(originalBraceView(`(a {s:"x(\"y["})`))
 	require.Equal(t, 1, groups)
 	require.Equal(t, 0, brackets)
 
 	// A bracketless hop is one relationship, so (a)-->(b) takes the seeded
 	// single-hop path like (a)-[]->(b).
 	for _, pattern := range []string{"(a)-->(b)", "(a)<--(b)", "(a)--(b)", "(a)<-->(b)", "(a)-[r:T]->(b)"} {
-		groups, brackets = scanOptionalPatternShape(pattern)
+		groups, brackets = scanOptionalPatternShape(originalBraceView(pattern))
 		require.Equal(t, [2]int{2, 1}, [2]int{groups, brackets}, pattern)
 	}
-	groups, brackets = scanOptionalPatternShape("(a)-->(b)<--(c)")
+	groups, brackets = scanOptionalPatternShape(originalBraceView("(a)-->(b)<--(c)"))
 	require.Equal(t, [2]int{3, 2}, [2]int{groups, brackets})
 }
 
 func TestFirstParenGroup(t *testing.T) {
-	require.Equal(t, "(a:L)", firstParenGroup("(a:L)-[r]->(b)"))
-	require.Equal(t, "", firstParenGroup("no group"))
-	require.Equal(t, "", firstParenGroup("(unterminated"))
+	require.Equal(t, "(a:L)", firstParenGroup(originalBraceView("(a:L)-[r]->(b)")))
+	require.Equal(t, "", firstParenGroup(expressionBraceView("no group")))
+	require.Equal(t, "", firstParenGroup(originalBraceView("(unterminated")))
 }
 
 func TestEnsureLeadingNodeNamed(t *testing.T) {
-	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed("(a:L)-[:T]->(b)"), "named pattern unchanged")
-	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed("(:L)-[:T]->(:M)"), "anonymous pattern gets a synthetic variable")
-	require.Equal(t, "no parens", ensureLeadingNodeNamed("no parens"), "patterns without a node group pass through")
+	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed(originalBraceView("(a:L)-[:T]->(b)")), "named pattern unchanged")
+	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed(originalBraceView("(:L)-[:T]->(:M)")), "anonymous pattern gets a synthetic variable")
+	require.Equal(t, "no parens", ensureLeadingNodeNamed(expressionBraceView("no parens")), "patterns without a node group pass through")
 }
 
 func TestCandidateAgreesWithRow(t *testing.T) {
@@ -384,37 +384,37 @@ func TestCandidateAgreesWithRow(t *testing.T) {
 }
 
 func TestFindAggregateSpans_Boundaries(t *testing.T) {
-	require.Empty(t, findAggregateSpans("discount(x)"), "word boundary: discount is not count")
-	require.Empty(t, findAggregateSpans(`'count(x)'`), "aggregates inside string literals are ignored")
-	require.Empty(t, findAggregateSpans("count(x"), "unbalanced call is not a span")
-	require.Len(t, findAggregateSpans("count (x)"), 1, "whitespace before parens tolerated")
-	require.Len(t, findAggregateSpans("count(sum(x))"), 1, "nested aggregate reported as one outer span")
-	require.Len(t, findAggregateSpans("{c: count(*), s: sum(x)}"), 2, "aggregates inside map literals located")
+	require.Empty(t, findAggregateSpans(expressionBraceView("discount(x)")), "word boundary: discount is not count")
+	require.Empty(t, findAggregateSpans(expressionBraceView(`'count(x)'`)), "aggregates inside string literals are ignored")
+	require.Empty(t, findAggregateSpans(expressionBraceView("count(x")), "unbalanced call is not a span")
+	require.Len(t, findAggregateSpans(expressionBraceView("count (x)")), 1, "whitespace before parens tolerated")
+	require.Len(t, findAggregateSpans(expressionBraceView("count(sum(x))")), 1, "nested aggregate reported as one outer span")
+	require.Len(t, findAggregateSpans(expressionBraceView("{c: count(*), s: sum(x)}")), 2, "aggregates inside map literals located")
 
-	spans := findAggregateSpans("1 + count(x)")
+	spans := findAggregateSpans(expressionBraceView("1 + count(x)"))
 	require.Len(t, spans, 1)
 	require.Equal(t, "count(x)", "1 + count(x)"[spans[0].start:spans[0].end])
 }
 
 func TestParseTraversalAggregateCall_Forms(t *testing.T) {
 	for _, expression := range []string{"notacall", "bogus(x)", "count(x) + 1", "count()"} {
-		_, _, _, ok := parsePipelineAggregate(expression)
+		_, _, _, ok := parsePipelineAggregate(originalBraceView(expression))
 		require.False(t, ok, expression)
 	}
 
-	name, inner, distinct, ok := parsePipelineAggregate("count(*)")
+	name, inner, distinct, ok := parsePipelineAggregate(expressionBraceView("count(*)"))
 	require.True(t, ok)
 	require.Equal(t, "count", name)
 	require.Equal(t, "*", inner)
 	require.False(t, distinct)
 
-	name, inner, distinct, ok = parsePipelineAggregate("sum(DISTINCT x.v)")
+	name, inner, distinct, ok = parsePipelineAggregate(expressionBraceView("sum(DISTINCT x.v)"))
 	require.True(t, ok)
 	require.Equal(t, "sum", name)
 	require.True(t, distinct)
 	require.Equal(t, "x.v", inner)
 
-	name, inner, distinct, ok = parsePipelineAggregate("stdevp(x.v)")
+	name, inner, distinct, ok = parsePipelineAggregate(expressionBraceView("stdevp(x.v)"))
 	require.True(t, ok)
 	require.Equal(t, "stdevp", name)
 	require.Equal(t, "x.v", inner)
@@ -507,7 +507,7 @@ func TestTryCompileTraversalExpr_LiteralsAndFallbacks(t *testing.T) {
 	empty := traversalOptRow{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}}
 
 	eval := func(expr string) interface{} {
-		return exec.compileTraversalProjection(ctx, expr)(empty)
+		return exec.compileTraversalProjection(ctx, originalBraceView(expr))(empty)
 	}
 	require.Equal(t, "lit", eval("'lit'"))
 	require.Equal(t, "dq", eval(`"dq"`))
@@ -517,13 +517,13 @@ func TestTryCompileTraversalExpr_LiteralsAndFallbacks(t *testing.T) {
 	require.EqualValues(t, 42, eval("42"))
 	require.Equal(t, 3.5, eval("3.5"))
 
-	_, ok := exec.tryCompileTraversalExpr(ctx, "")
+	_, ok := exec.tryCompileTraversalExpr(ctx, originalBraceView(""))
 	require.False(t, ok, "empty expression is not compilable")
-	_, ok = exec.tryCompileTraversalExpr(ctx, "a + b")
+	_, ok = exec.tryCompileTraversalExpr(ctx, expressionBraceView("a + b"))
 	require.False(t, ok, "operator expressions fall back to the evaluator")
-	_, ok = exec.tryCompileTraversalFunctionCall(ctx, "(x)")
+	_, ok = exec.tryCompileTraversalFunctionCall(ctx, originalBraceView("(x)"))
 	require.False(t, ok, "not a call")
-	_, ok = exec.tryCompileTraversalExpr(ctx, "CASE WHEN a THEN 1 ELSE 2 END")
+	_, ok = exec.tryCompileTraversalExpr(ctx, expressionBraceView("CASE WHEN a THEN 1 ELSE 2 END"))
 	require.False(t, ok, "CASE expressions are left to the evaluator")
 }
 
@@ -817,8 +817,8 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 				rows = append(rows, row)
 				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
 			}
-			items := executor.parseReturnItems(t.Context(), test.expr+" AS value")
-			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
+			items := executor.parseReturnItems(t.Context(), originalBraceView(test.expr+" AS value"))
+			shared, err := executor.projectMergeReturn(ctx, bindings, originalBraceView("RETURN "+test.expr+" AS value"))
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)
 			legacy, err := executor.aggregateTraversalOptionalRows(ctx, rows, items)
@@ -829,8 +829,8 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 }
 
 func TestExtractRelationshipVariables_Whitespace(t *testing.T) {
-	require.Equal(t, []string{"r"}, extractRelationshipVariables("(a)-[ r :T ]->(b)"), "whitespace around the variable is tolerated")
-	require.Empty(t, extractRelationshipVariables("(a)-[ :T ]->(b)"), "whitespace before an anonymous type yields no variable")
+	require.Equal(t, []string{"r"}, extractRelationshipVariables(originalBraceView("(a)-[ r :T ]->(b)")), "whitespace around the variable is tolerated")
+	require.Empty(t, extractRelationshipVariables(originalBraceView("(a)-[ :T ]->(b)")), "whitespace before an anonymous type yields no variable")
 }
 
 // TestTraversalOptionalMatch_NullSeedPropagatesThroughChain: a variable
@@ -870,14 +870,14 @@ func TestTraversalOptionalMatch_AnonymousSeedPattern(t *testing.T) {
 }
 
 func TestFindAggregateSpans_NameWithoutCall(t *testing.T) {
-	require.Empty(t, findAggregateSpans("a + count"), "an aggregate name with no argument list is not a span")
-	require.Empty(t, findAggregateSpans("count"), "a bare trailing aggregate name is not a span")
+	require.Empty(t, findAggregateSpans(expressionBraceView("a + count")), "an aggregate name with no argument list is not a span")
+	require.Empty(t, findAggregateSpans(expressionBraceView("count")), "a bare trailing aggregate name is not a span")
 }
 
 func TestApplySingleNodeOptionalClause_NoParenGroup(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 	rows := []traversalOptRow{{nodes: map[string]*storage.Node{"a": {ID: "n1"}}, rels: map[string]*storage.Edge{}}}
-	out, err := exec.applySingleNodeOptionalClause(ctx, rows, optionalMatchClause{pattern: "garbage"})
+	out, err := exec.applySingleNodeOptionalClause(ctx, rows, (optionalMatchFixture{pattern: "garbage"}).retained())
 	require.NoError(t, err)
 	require.Equal(t, rows, out, "a pattern without a node group passes rows through")
 }
@@ -885,12 +885,12 @@ func TestApplySingleNodeOptionalClause_NoParenGroup(t *testing.T) {
 func TestApplyGeneralOptionalClause_EdgeInputs(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 
-	out, err := exec.applyGeneralOptionalClause(ctx, nil, optionalMatchClause{pattern: "(x:L)-[:T]->(y:M)"})
+	out, err := exec.applyGeneralOptionalClause(ctx, nil, (optionalMatchFixture{pattern: "(x:L)-[:T]->(y:M)"}).retained())
 	require.NoError(t, err)
 	require.Empty(t, out, "no left rows: nothing to join")
 
 	rows := []traversalOptRow{{nodes: map[string]*storage.Node{"a": {ID: "n1"}}, rels: map[string]*storage.Edge{}}}
-	out, err = exec.applyGeneralOptionalClause(ctx, rows, optionalMatchClause{pattern: "novars"})
+	out, err = exec.applyGeneralOptionalClause(ctx, rows, (optionalMatchFixture{pattern: "novars"}).retained())
 	require.NoError(t, err)
 	require.Equal(t, rows, out, "a pattern with no variables and no node group passes rows through")
 }
@@ -899,7 +899,7 @@ func TestCompiledVarProjection_UnboundFallsBackToEvaluator(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 	ctx = withExpressionFailureSlot(ctx)
 	row := traversalOptRow{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}}
-	compiled := exec.compileTraversalProjection(ctx, "zzz.prop")(row)
+	compiled := exec.compileTraversalProjection(ctx, expressionBraceView("zzz.prop"))(row)
 	require.Nil(t, compiled, "an unbound variable projection must not return query text")
 	requireStatusCode(t, getExpressionFailure(ctx), "Neo.ClientError.Statement.SyntaxError")
 }
@@ -925,15 +925,15 @@ func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
 		nodes: map[string]*storage.Node{"n": nil},
 		rels:  map[string]*storage.Edge{},
 	}
-	require.True(t, exec.evaluateRowPredicate(ctx, "n IS NULL", pipelineRow{"n": nil}))
+	require.True(t, exec.evaluateRowPredicate(ctx, expressionBraceView("n IS NULL"), pipelineRow{"n": nil}))
 	caseExpression := `CASE WHEN n IS NULL THEN null ELSE {value: n.value} END`
-	parsed, err := parseCaseExpression(caseExpression)
+	parsed, err := parseCaseExpression(originalBraceView(caseExpression))
 	require.NoError(t, err)
 	require.Equal(t, "n IS NULL", parsed.whenClauses[0].condition)
 	direct, evaluated := rowValue(t, exec, caseExpression, pipelineRow{"n": nil})
 	require.True(t, evaluated)
 	require.Nil(t, direct)
-	project := exec.compileTraversalProjection(ctx, caseExpression)
+	project := exec.compileTraversalProjection(ctx, originalBraceView(caseExpression))
 	require.Nil(t, project(row))
 }
 

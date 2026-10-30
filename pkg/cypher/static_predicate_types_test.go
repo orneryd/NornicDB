@@ -54,11 +54,11 @@ func TestStaticPredicateTypesMatchNeo4j(t *testing.T) {
 // its step, wherever it is read.
 func TestStaticFunctionResultType(t *testing.T) {
 	require.Equal(t, "", staticFunctionResultType("REDUCE", "a = 0, x IN l | a + x"))
-	require.Equal(t, "Integer", staticTextType("reduce(a = 0, x IN [1] | a + x)"))
-	require.Equal(t, "String", staticTextType("reduce(a = '', x IN [1] | a + x)"))
+	require.Equal(t, "Integer", staticTextType(expressionBraceView("reduce(a = 0, x IN [1] | a + x)")))
+	require.Equal(t, "String", staticTextType(expressionBraceView("reduce(a = '', x IN [1] | a + x)")))
 	// An initial value of no known type leaves the result unknown.
-	require.Equal(t, "", staticTextType("reduce(a = $p, x IN [1] | a + x)"))
+	require.Equal(t, "", staticTextType(expressionBraceView("reduce(a = $p, x IN [1] | a + x)")))
 	// Neo4j types reduce as its accumulator, whatever its step.
-	require.Equal(t, "Integer", staticTextType("reduce(a = 1, x IN l | x)"))
+	require.Equal(t, "Integer", staticTextType(expressionBraceView("reduce(a = 1, x IN l | x)")))
 	require.Equal(t, "Date", staticFunctionResultType("date.truncate", "'day', d"))
 }

@@ -102,7 +102,7 @@ func TestBoundNodeLookupShape(t *testing.T) {
 		{"OPTIONAL MATCH (s:S {id: o.ref})", false},
 		{"MATCH (s:S {id: o.ref}) WITH s WHERE s.n > 1", false},
 	} {
-		require.Equal(t, test.ok, parseBoundNodeShape(t.Context(), test.body).ok, test.body)
+		require.Equal(t, test.ok, parseBoundNodeShape(t.Context(), originalBraceView(test.body)).ok, test.body)
 	}
 	exec := boundNodeLookupGraph(t)
 	o, err := exec.storage.GetNode("o0")
@@ -110,10 +110,10 @@ func TestBoundNodeLookupShape(t *testing.T) {
 	s, err := exec.storage.GetNode("s1")
 	require.NoError(t, err)
 	ctx := context.Background()
-	count, ok := exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o}, false)
+	count, ok := exec.boundNodeLookupCount(ctx, originalBraceView("MATCH (s:S {id: o.ref})"), map[string]interface{}{"o": o}, false)
 	require.True(t, ok)
 	require.Equal(t, int64(1), count)
-	_, ok = exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o, "s": s}, false)
+	_, ok = exec.boundNodeLookupCount(ctx, originalBraceView("MATCH (s:S {id: o.ref})"), map[string]interface{}{"o": o, "s": s}, false)
 	require.False(t, ok, "a bound variable is a join, the pipeline's")
 }
 

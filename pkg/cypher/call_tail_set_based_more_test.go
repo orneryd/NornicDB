@@ -9,13 +9,13 @@ import (
 )
 
 func TestCallTailReturnOptionsAndVersionNonDevCommit(t *testing.T) {
-	ret, orderBy, limit, skip := splitCallTailProjectionModifiers("n ORDER BY n.name ASC LIMIT not_int SKIP 3")
+	ret, orderBy, limit, skip := splitCallTailProjectionModifiers(expressionBraceView("n ORDER BY n.name ASC LIMIT not_int SKIP 3"))
 	require.Equal(t, "n", ret)
 	require.Equal(t, "ORDER BY n.name ASC", orderBy)
 	require.Equal(t, "not_int", limit)
 	require.Equal(t, "3", skip)
 
-	ret, orderBy, limit, skip = splitCallTailProjectionModifiers("n SKIP 1 LIMIT 2")
+	ret, orderBy, limit, skip = splitCallTailProjectionModifiers(expressionBraceView("n SKIP 1 LIMIT 2"))
 	require.Equal(t, "n", ret)
 	require.Equal(t, "", orderBy)
 	require.Equal(t, "2", limit)

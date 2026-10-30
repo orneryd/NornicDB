@@ -14,7 +14,7 @@ func TestConversionRejectsInvalidTypedValuesInsideListComprehension(t *testing.T
 	}
 
 	_, _, err := executor.evaluateRowValue(
-		"[value IN values | toBoolean(value)]",
+		originalBraceView("[value IN values | toBoolean(value)]"),
 		row,
 	)
 	require.Error(t, err)

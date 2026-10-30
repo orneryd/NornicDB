@@ -23,7 +23,7 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(newTestMemoryEngine(t))
-			types, clause, err := e.callSubqueryReturnTypes(t.Context(), tc.call, tc.branches, typeScope{}, false)
+			types, clause, err := e.callSubqueryReturnTypes(t.Context(), originalBraceView(tc.call), originalBraceViews(tc.branches...), typeScope{}, false)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, clause)
 			if tc.unknown {
@@ -48,7 +48,7 @@ func TestPipelineClauseProductCacheIsolation(t *testing.T) {
 	require.False(t, first.ok)
 	require.Nil(t, first.clauses)
 	require.Equal(t, "RETURN abs(-1) AS x", first.firstReturn)
-	first.firstReturn = "mutated"
+	first.firstReturn = expressionBraceView("mutated")
 	require.Equal(t, "RETURN abs(-1) AS x", cachedPipelineClauses(ctx, opaque, true).firstReturn)
 	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, opaque)
 	require.False(t, ok)

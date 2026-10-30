@@ -39,11 +39,12 @@ const (
 
 // labelExpression is a parsed label expression.
 type labelExpression struct {
-	kind       labelExpressionKind
-	name       string
-	operands   []*labelExpression
-	expression string
-	any        bool
+	kind           labelExpressionKind
+	name           string
+	operands       []*labelExpression
+	expression     string
+	expressionSpan cyphertext.Span
+	any            bool
 }
 
 // labelExpressionOfNames is the conjunction of names, the legacy :A:B form.
@@ -286,6 +287,7 @@ func parseLabelExpression(text string) (*labelExpression, bool) {
 // labelChain is a pattern's or colon test's label chain as written after
 // its first colon (or IS): the expression and how it was spelled.
 type labelChain struct {
+	view braceView
 	expr *labelExpression
 	end  int // length of the text it covers
 	// colons: a colon joined two labels (A:B; the tightest conjunction, so
@@ -466,7 +468,8 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 		p.pos = closing + 1
 		p.usedDynamic = true
 		p.usedDynamicAny = p.usedDynamicAny || any
-		return &labelExpression{kind: labelExpressionDynamic, expression: strings.TrimSpace(p.text[open+1 : closing]), any: any}, true
+		span := cyphertext.TrimWhitespaceSpan(p.text, cyphertext.Span{Start: open + 1, End: closing})
+		return &labelExpression{kind: labelExpressionDynamic, expression: p.text[span.Start:span.End], expressionSpan: span, any: any}, true
 	case '(':
 		saved := p.pos
 		p.pos = at + 1
@@ -641,10 +644,10 @@ func cypherStringLiteral(text string) string {
 // conjunction of the names, $any(e) by their disjunction. constant is false,
 // with no expression, when resolve can't read some term before the rows
 // exist (its value depends on them).
-func (x *labelExpression) resolveDynamic(resolve func(expression string) (value interface{}, constant bool, err error)) (resolved *labelExpression, constant bool, err error) {
+func (x *labelExpression) resolveDynamic(resolve func(expression cyphertext.Span) (value interface{}, constant bool, err error)) (resolved *labelExpression, constant bool, err error) {
 	switch x.kind {
 	case labelExpressionDynamic:
-		value, constant, err := resolve(x.expression)
+		value, constant, err := resolve(x.expressionSpan)
 		if err != nil || !constant {
 			return nil, false, err
 		}

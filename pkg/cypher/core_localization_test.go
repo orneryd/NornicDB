@@ -29,7 +29,7 @@ func TestCypherCoreRepresentativeErrorsHaveTypedIdentityAndExactEnglish(t *testi
 	})
 
 	t.Run("case expression", func(t *testing.T) {
-		_, err := parseCaseExpression("CASE END")
+		_, err := parseCaseExpression(expressionBraceView("CASE END"))
 		requireCypherCoreLocalizedError(t, err, "cyphercore.case_when_required", "CASE expression must have at least one WHEN clause")
 	})
 

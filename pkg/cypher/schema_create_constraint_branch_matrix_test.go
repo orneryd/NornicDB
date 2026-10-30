@@ -166,7 +166,7 @@ func TestMonster531FulltextTargetAdmission(t *testing.T) {
 	} {
 		t.Run(test.pattern, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-			parsed, err := exec.parseCreateFulltextIndexDDL("CREATE FULLTEXT INDEX ft FOR (n:" + test.pattern + ") ON EACH [n.t]")
+			parsed, err := exec.parseCreateFulltextIndexDDL(originalBraceView("CREATE FULLTEXT INDEX ft FOR (n:" + test.pattern + ") ON EACH [n.t]"))
 			if test.labels == nil {
 				require.Error(t, err)
 			} else {

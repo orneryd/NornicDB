@@ -13,8 +13,9 @@ const (
 )
 
 type functionCallFacts struct {
-	name  string
-	inner string
+	name      string
+	inner     string
+	arguments cyphertext.Span
 }
 
 // inspectFunctionCall owns standalone call shape and matching delimiters.
@@ -24,8 +25,10 @@ type functionCallFacts struct {
 // optional and populated on success, so boolean recognition needs no result
 // product or additional allocation.
 func inspectFunctionCall(source string, purpose functionCallPurpose, expectedName string, facts *functionCallFacts) bool {
+	left := 0
 	switch purpose {
 	case qualifiedFunctionCall:
+		left = len(source) - len(strings.TrimLeftFunc(source, cyphertext.IsWhitespace))
 		source = strings.TrimSpace(source)
 	case namedFunctionCall:
 		if !hasFuncStart(source, expectedName) {
@@ -53,6 +56,7 @@ func inspectFunctionCall(source string, purpose functionCallPurpose, expectedNam
 	if facts != nil {
 		facts.name = name
 		facts.inner = source[open+1 : close]
+		facts.arguments = cyphertext.Span{Start: left + open + 1, End: left + close}
 	}
 	return true
 }

@@ -19,7 +19,7 @@ func TestRangeValidationDoesNotMaterializeValues(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	err := executor.validateRangeCalls("range(1, 200000)", pipelineRow{})
+	err := executor.validateRangeCalls(expressionBraceView("range(1, 200000)"), pipelineRow{})
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256*1024))
@@ -275,7 +275,7 @@ func TestRangeIteratorStopsAtIntegerBoundaries(t *testing.T) {
 func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, expression := range []string{"range(1, 3)", "[1, 2, 3]"} {
-		values, resolved := executor.pipelineUnwindValues(context.Background(), expression, pipelineRow{})
+		values, resolved := executor.pipelineUnwindValues(context.Background(), originalBraceView(expression), pipelineRow{})
 		require.True(t, resolved)
 		for value := range values {
 			require.Equal(t, int64(1), value)
@@ -284,7 +284,7 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	}
 	for _, expression := range []string{"range(1, 2, 0)", "range(missing_function(), 2)", "missing_function()"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		_, resolved := executor.pipelineUnwindValues(ctx, expression, pipelineRow{})
+		_, resolved := executor.pipelineUnwindValues(ctx, originalBraceView(expression), pipelineRow{})
 		require.False(t, resolved, expression)
 		require.Error(t, getExpressionFailure(ctx))
 	}
@@ -366,7 +366,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 
 func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	projections := returnProjectionPlanFor(t.Context(), "RETURN count(*) AS total").projections
+	projections := returnProjectionPlanFor(t.Context(), originalBraceView("RETURN count(*) AS total")).projections
 	for _, canceled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))

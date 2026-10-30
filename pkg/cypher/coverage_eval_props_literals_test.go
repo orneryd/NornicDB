@@ -53,7 +53,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 
 	call := func(expr string) interface{} {
 		return e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, expr, strings.ToLower(expr),
+			ctx, originalBraceView(expr), strings.ToLower(expr),
 			nodes, rels, paths, nil, nil, 0,
 		)
 	}
@@ -70,7 +70,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	t.Run("nil node property access returns nil", func(t *testing.T) {
 		nodesNil := map[string]*storage.Node{"p": nil}
 		require.Nil(t, e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "p.name", "p.name", nodesNil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("p.name"), "p.name", nodesNil, nil, nil, nil, nil, 0,
 		))
 	})
 
@@ -82,7 +82,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 			},
 		}
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "p.has_embedding", "p.has_embedding", nodesEmbed, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("p.has_embedding"), "p.has_embedding", nodesEmbed, nil, nil, nil, nil, 0,
 		)
 		require.Equal(t, true, got)
 	})
@@ -95,7 +95,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 			},
 		}
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "p.has_embedding", "p.has_embedding", nodesEmbed, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("p.has_embedding"), "p.has_embedding", nodesEmbed, nil, nil, nil, nil, 0,
 		)
 		require.Equal(t, false, got, "EmbedMeta override beats ChunkEmbeddings inspection")
 	})
@@ -111,7 +111,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	t.Run("nil edge property access returns nil", func(t *testing.T) {
 		relsNil := map[string]*storage.Edge{"r": nil}
 		require.Nil(t, e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "r.since", "r.since", nil, relsNil, nil, nil, nil, 0,
+			ctx, expressionBraceView("r.since"), "r.since", nil, relsNil, nil, nil, nil, 0,
 		))
 	})
 
@@ -126,14 +126,14 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 
 	t.Run("a value-scope variable returns its value", func(t *testing.T) {
 		valueCtx := withValueBindings(ctx, map[string]interface{}{"v": int64(42), "m": map[string]interface{}{"a": int64(1)}})
-		require.Equal(t, int64(42), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, "v", "v", nodes, rels, paths, nil, nil, 0))
-		require.Equal(t, int64(1), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, "m.a", "m.a", nodes, rels, paths, nil, nil, 0))
+		require.Equal(t, int64(42), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, expressionBraceView("v"), "v", nodes, rels, paths, nil, nil, 0))
+		require.Equal(t, int64(1), e.evaluateExpressionWithContextFullPropsLiterals(valueCtx, expressionBraceView("m.a"), "m.a", nodes, rels, paths, nil, nil, 0))
 	})
 
 	t.Run("nil node variable returns nil", func(t *testing.T) {
 		nodesNil := map[string]*storage.Node{"p": nil}
 		require.Nil(t, e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "p", "p", nodesNil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("p"), "p", nodesNil, nil, nil, nil, nil, 0,
 		))
 	})
 
@@ -144,7 +144,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	t.Run("nil edge variable returns nil", func(t *testing.T) {
 		relsNil := map[string]*storage.Edge{"r": nil}
 		require.Nil(t, e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "r", "r", nil, relsNil, nil, nil, nil, 0,
+			ctx, expressionBraceView("r"), "r", nil, relsNil, nil, nil, nil, 0,
 		))
 	})
 
@@ -178,7 +178,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	for _, tc := range literalCases {
 		t.Run("literal/"+tc.name, func(t *testing.T) {
 			got := e.evaluateExpressionWithContextFullPropsLiterals(
-				ctx, tc.expr, strings.ToLower(tc.expr),
+				ctx, originalBraceView(tc.expr), strings.ToLower(tc.expr),
 				nil, nil, nil, nil, nil, 0,
 			)
 			require.Equal(t, tc.want, got)
@@ -187,7 +187,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 
 	t.Run("array literal parsed via parseArrayValue", func(t *testing.T) {
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "[1, 2, 3]", "[1, 2, 3]",
+			ctx, originalBraceView("[1, 2, 3]"), "[1, 2, 3]",
 			nil, nil, nil, nil, nil, 0,
 		)
 		require.NotNil(t, got)
@@ -195,7 +195,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 
 	t.Run("map literal parsed via parseProperties", func(t *testing.T) {
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "{k: 'v'}", "{k: 'v'}",
+			ctx, expressionBraceView("{k: 'v'}"), "{k: 'v'}",
 			nil, nil, nil, nil, nil, 0,
 		)
 		require.NotNil(t, got)
@@ -207,7 +207,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	// ====================== fallback paths ======================
 	t.Run("unresolved bare identifier returns nil", func(t *testing.T) {
 		require.Nil(t, e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "unknown", "unknown",
+			ctx, expressionBraceView("unknown"), "unknown",
 			nil, nil, nil, nil, nil, 0,
 		))
 	})
@@ -215,7 +215,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	t.Run("aggregation function in expr context returns nil", func(t *testing.T) {
 		for _, fn := range []string{"count(*)", "sum(x)", "avg(x)", "min(x)", "max(x)", "collect(x)"} {
 			got := e.evaluateExpressionWithContextFullPropsLiterals(
-				ctx, fn, strings.ToLower(fn),
+				ctx, originalBraceView(fn), strings.ToLower(fn),
 				nil, nil, nil, nil, nil, 0,
 			)
 			require.Nil(t, got, "aggregation %s must return nil in expression context", fn)
@@ -225,7 +225,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 	t.Run("unknown expression records an error", func(t *testing.T) {
 		ctx := withExpressionFailureSlot(context.Background())
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "?? weirdsymbols", "?? weirdsymbols",
+			ctx, expressionBraceView("?? weirdsymbols"), "?? weirdsymbols",
 			nil, nil, nil, nil, nil, 0,
 		)
 		require.Nil(t, got)
@@ -239,7 +239,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 			"row": map[string]interface{}{"name": "Bob"},
 		}
 		got := e2.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "row.name", "row.name", nil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("row.name"), "row.name", nil, nil, nil, nil, nil, 0,
 		)
 		require.Equal(t, "Bob", got)
 	})
@@ -250,7 +250,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 			"row": map[string]interface{}{"name": "Bob"},
 		}
 		got := e2.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "row.missing", "row.missing", nil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("row.missing"), "row.missing", nil, nil, nil, nil, nil, 0,
 		)
 		require.Nil(t, got)
 	})
@@ -261,7 +261,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 			"row": &storage.Node{Properties: map[string]any{"name": "Carol"}},
 		}
 		got := e2.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "row.name", "row.name", nil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("row.name"), "row.name", nil, nil, nil, nil, nil, 0,
 		)
 		require.Equal(t, "Carol", got)
 	})
@@ -271,7 +271,7 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 		bound := map[string]interface{}{"k": "v"}
 		e2.fabricRecordBindings = map[string]interface{}{"row": bound}
 		got := e2.evaluateExpressionWithContextFullPropsLiterals(
-			ctx, "row", "row", nil, nil, nil, nil, nil, 0,
+			ctx, expressionBraceView("row"), "row", nil, nil, nil, nil, nil, 0,
 		)
 		require.Equal(t, bound, got)
 	})

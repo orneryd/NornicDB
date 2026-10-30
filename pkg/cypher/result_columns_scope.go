@@ -155,16 +155,16 @@ func mergeProjectedNames(incoming, retained resultmetadata.Names) resultmetadata
 	return addProjectedNames(incoming, retained)
 }
 
-func projectedProcedureNames(ctx context.Context, source string) resultmetadata.Names {
+func projectedProcedureNames(ctx context.Context, source braceView) resultmetadata.Names {
 	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
 		return resultmetadata.Unknown()
 	}
-	return projectedProcedureNodeNames(clause)
+	return projectedProcedureNodeNames(source, clause)
 }
 
-func projectedProcedureNodeNames(clause cypherantlr.SyntaxNode) resultmetadata.Names {
-	if yield := yieldFromSyntax(clause); yield != nil && !yield.yieldAll {
+func projectedProcedureNodeNames(view braceView, clause cypherantlr.SyntaxNode) resultmetadata.Names {
+	if yield := yieldFromSyntax(view, clause); yield != nil && !yield.yieldAll {
 		columns := make([]string, 0, len(yield.items))
 		for _, item := range yield.items {
 			columns = append(columns, item.column())

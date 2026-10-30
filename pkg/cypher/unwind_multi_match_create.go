@@ -48,7 +48,7 @@ type matchClauseSpec struct {
 	label      string
 	propName   string
 	rowField   string // set for the simple row.<field> form used by older batch helpers
-	lookupExpr string
+	lookupExpr braceView
 	bindingVar string
 	byID       bool
 }
@@ -87,50 +87,51 @@ type createEdgeSpec struct {
 // (result, true, err) on success, (nil, false, nil) if the shape doesn't
 // match (caller falls back), or (nil, true, err) on mid-execution error.
 func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
-	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
+	ctx context.Context, unwindVar string, items []interface{}, restQuery braceView,
 ) (*ExecuteResult, bool, error) {
 	// Bail on shapes we don't handle.
-	trimmed := strings.TrimSpace(restQuery)
+	restQuery = restQuery.trim()
+	trimmed := restQuery.text()
 	if trimmed == "" {
 		return nil, false, nil
 	}
 
-	mutationPart := trimmed
-	returnPart := ""
-	if returnIdx := findKeywordIndexInContext(trimmed, "RETURN"); returnIdx >= 0 {
-		mutationPart = strings.TrimSpace(trimmed[:returnIdx])
-		returnPart = strings.TrimSpace(trimmed[returnIdx:])
+	mutationView := restQuery
+	if returnIdx := findKeywordIndexInContext(restQuery, "RETURN"); returnIdx >= 0 {
+		mutationView = restQuery.window(0, returnIdx).trim()
+		returnPart := restQuery.window(returnIdx, len(trimmed)).trim()
 		_, ok := parseUnwindBatchCountReturn(ctx, returnPart)
 		if !ok {
 			return nil, false, nil
 		}
 	}
-	if withIdx := findKeywordIndexInContext(mutationPart, "WITH"); withIdx >= 0 {
-		withClause := strings.TrimSpace(mutationPart[withIdx+len("WITH"):])
+	mutationPart := mutationView.text()
+	if withIdx := findKeywordIndexInContext(mutationView, "WITH"); withIdx >= 0 {
+		withClause := mutationView.window(withIdx+len("WITH"), len(mutationPart)).trim()
 		if !isSimpleWithPassthroughClause(withClause) {
 			return nil, false, nil
 		}
-		mutationPart = strings.TrimSpace(mutationPart[:withIdx])
+		mutationView = mutationView.window(0, withIdx).trim()
+		mutationPart = mutationView.text()
 	}
 	if mutationPart == "" {
 		return nil, false, nil
 	}
 
-	upper := upperASCII(mutationPart)
 	// nested UNWIND / SET / MERGE / DELETE / REMOVE / FOREACH disqualify
 	// this fast path. RETURN and a simple passthrough WITH are handled above.
 	disqualifiers := []string{"SET", "MERGE", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"}
 	for _, d := range disqualifiers {
-		if findKeywordIndex(upper, d) >= 0 {
+		if findKeywordIndex(mutationView, d) >= 0 {
 			return nil, false, nil
 		}
 	}
 	// Nested UNWIND.
-	if findKeywordIndex(upper, "UNWIND") >= 0 {
+	if findKeywordIndex(mutationView, "UNWIND") >= 0 {
 		return nil, false, nil
 	}
 
-	plan, ok := parseUnwindMultiMatchCreatePlan(mutationPart, unwindVar)
+	plan, ok := parseUnwindMultiMatchCreatePlan(mutationView, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -181,21 +182,22 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	return result, handled, err
 }
 
-func isSimpleWithPassthroughClause(clause string) bool {
-	trimmed := strings.TrimSpace(clause)
+func isSimpleWithPassthroughClause(clause braceView) bool {
+	trimmed := clause.trim().text()
 	if trimmed == "" || strings.HasPrefix(trimmed, ",") || strings.HasSuffix(trimmed, ",") {
 		return false
 	}
-	parts := splitTopLevelComma(clause)
+	parts := clause.commaViews()
 	if len(parts) == 0 {
 		return false
 	}
 	for _, raw := range parts {
-		token := strings.TrimSpace(raw)
+		tokenView := raw.trim()
+		token := tokenView.text()
 		if token == "" {
 			return false
 		}
-		asIdx := findKeywordIndexInContext(token, "AS")
+		asIdx := findKeywordIndexInContext(tokenView, "AS")
 		if asIdx >= 0 {
 			lhs := strings.TrimSpace(token[:asIdx])
 			rhs := strings.TrimSpace(token[asIdx+2:])
@@ -221,8 +223,8 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 			return normalizePropValue(v), true
 		}
 	}
-	expr := strings.TrimSpace(match.lookupExpr)
-	if expr == "" {
+	expr := match.lookupExpr.trim()
+	if expr.empty() {
 		return nil, false
 	}
 	if value, ok := e.evaluateBatchLookupExprFast(expr, match.bindingVar, bindingValue, bindingMap); ok {
@@ -233,58 +235,60 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	if match.bindingVar != "" {
 		values[match.bindingVar] = bindingValue
 	}
-	value, resolved, err := e.evaluateExpressionFromValuesResult(rowStatementContextOrBackground(values), expr, values)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(withBraceView(rowStatementContextOrBackground(values), expr), expr, values)
 	return normalizePropValue(value), resolved && err == nil
 }
 
-func (e *StorageExecutor) evaluateBatchLookupExprFast(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchLookupExprFast(expr braceView, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
 	if value, ok := evaluateBatchLookupOperand(expr, bindingVar, bindingValue, bindingMap); ok {
 		return value, true
 	}
 	return e.evaluateBatchArithmeticLookupExpr(expr, bindingVar, bindingValue, bindingMap)
 }
 
-func (e *StorageExecutor) evaluateBatchArithmeticLookupExpr(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchArithmeticLookupExpr(expr braceView, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+	expr = expr.trim()
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " + ", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('+', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "+", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('+', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "*", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('*', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "/", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('/', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "%", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('%', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " - ", true, false); ok {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('-', left, leftOK, right, rightOK)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && strings.TrimSpace(leftExpr) != "" {
-		left, leftOK := evaluateBatchLookupOperand(leftExpr, bindingVar, bindingValue, bindingMap)
-		right, rightOK := evaluateBatchLookupOperand(rightExpr, bindingVar, bindingValue, bindingMap)
+		left, leftOK := evaluateBatchLookupOperand(expr.window(0, len(leftExpr)), bindingVar, bindingValue, bindingMap)
+		right, rightOK := evaluateBatchLookupOperand(expr.window(len(expr.text())-len(rightExpr), len(expr.text())), bindingVar, bindingValue, bindingMap)
 		return e.evaluateArithmeticLookupResult('-', left, leftOK, right, rightOK)
 	}
 	return nil, false
 }
 
-func evaluateBatchLookupOperand(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
+func evaluateBatchLookupOperand(view braceView, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+	view = view.trim()
+	expr := view.text()
 	if expr == "" {
 		return nil, false
 	}
@@ -327,13 +331,14 @@ func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals 
 // parseUnwindMultiMatchCreatePlan parses the mutation body into structured
 // clauses. Returns (plan, true) on success, (empty, false) if the shape is
 // unsupported (any ambiguity means fallback).
-func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMatchCreatePlan, bool) {
+func parseUnwindMultiMatchCreatePlan(input braceView, unwindVar string) (unwindMultiMatchCreatePlan, bool) {
 	plan := unwindMultiMatchCreatePlan{}
+	restQuery := input.text()
 
 	// Split into clauses on MATCH/CREATE boundaries. We use the existing
 	// position-finder so word boundaries are respected.
-	matchPositions := findAllTopLevelPipelineKeywordPositions(restQuery, "MATCH")
-	createPositions := findAllTopLevelPipelineKeywordPositions(restQuery, "CREATE")
+	matchPositions := findAllTopLevelPipelineKeywordPositions(input, "MATCH")
+	createPositions := findAllTopLevelPipelineKeywordPositions(input, "CREATE")
 
 	type boundary struct {
 		pos  int
@@ -363,7 +368,7 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 		if i+1 < len(boundaries) {
 			end = boundaries[i+1].pos
 		}
-		body := strings.TrimSpace(restQuery[b.pos:end])
+		body := input.window(b.pos, end).trim()
 		if b.kind == 0 {
 			matches, ok := parseSimpleMatchClauseList(body, unwindVar)
 			if !ok {
@@ -399,13 +404,21 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 }
 
 // parseSimpleMatchClause parses `MATCH (var:Label {prop: unwindVar.field})`.
-func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
-	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
-	body = strings.TrimPrefix(body, "match")
-	body = strings.TrimSpace(body)
-	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
+func parseSimpleMatchClause(clause braceView, unwindVar string) (matchClauseSpec, bool) {
+	bodyView := clause
+	if strings.HasPrefix(bodyView.text(), "MATCH") {
+		bodyView = bodyView.window(len("MATCH"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	if strings.HasPrefix(bodyView.text(), "match") {
+		bodyView = bodyView.window(len("match"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	body := bodyView.text()
+	if whereIdx := findKeywordIndexInContext(bodyView, "WHERE"); whereIdx >= 0 {
 		pattern := strings.TrimSpace(body[:whereIdx])
-		whereExpr := strings.TrimSpace(body[whereIdx+len("WHERE"):])
+		whereView := bodyView.window(whereIdx+len("WHERE"), len(body)).trim()
+		whereExpr := whereView.text()
 		if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
 			return matchClauseSpec{}, false
 		}
@@ -423,14 +436,15 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 		if len(equals) != 2 || !strings.EqualFold(strings.TrimSpace(equals[0]), "elementId("+varName+")") {
 			return matchClauseSpec{}, false
 		}
-		right := strings.TrimSpace(equals[1])
+		rightView := whereView.window(strings.Index(whereExpr, "=")+1, len(whereExpr)).trim()
+		right := rightView.text()
 		if !referencesUnwindBinding(right, unwindVar) {
 			return matchClauseSpec{}, false
 		}
 		rowField, _ := simpleUnwindFieldRef(right, unwindVar)
-		return matchClauseSpec{variable: varName, label: label, rowField: rowField, lookupExpr: right, bindingVar: unwindVar, byID: true}, true
+		return matchClauseSpec{variable: varName, label: label, rowField: rowField, lookupExpr: rightView, bindingVar: unwindVar, byID: true}, true
 	}
-	return parseSimpleMatchPattern(body, unwindVar)
+	return parseSimpleMatchPattern(bodyView, unwindVar)
 }
 
 // parseSimpleMatchClauseList parses `MATCH p1, p2, ...`: one or more
@@ -438,24 +452,30 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 // wiring shape `MATCH (n:L {id: p[0]}), (m:L {id: p[1]})`). A WHERE clause
 // only covers the single-pattern elementId form, which is delegated to
 // parseSimpleMatchClause.
-func parseSimpleMatchClauseList(clause, unwindVar string) ([]matchClauseSpec, bool) {
-	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
-	body = strings.TrimPrefix(body, "match")
-	body = strings.TrimSpace(body)
-	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
+func parseSimpleMatchClauseList(clause braceView, unwindVar string) ([]matchClauseSpec, bool) {
+	bodyView := clause
+	if strings.HasPrefix(bodyView.text(), "MATCH") {
+		bodyView = bodyView.window(len("MATCH"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	if strings.HasPrefix(bodyView.text(), "match") {
+		bodyView = bodyView.window(len("match"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	if whereIdx := findKeywordIndexInContext(bodyView, "WHERE"); whereIdx >= 0 {
 		m, ok := parseSimpleMatchClause(clause, unwindVar)
 		if !ok {
 			return nil, false
 		}
 		return []matchClauseSpec{m}, true
 	}
-	patterns := splitTopLevelComma(body)
+	patterns := bodyView.commaViews()
 	if len(patterns) == 0 {
 		return nil, false
 	}
 	matches := make([]matchClauseSpec, 0, len(patterns))
 	for _, pattern := range patterns {
-		m, ok := parseSimpleMatchPattern(strings.TrimSpace(pattern), unwindVar)
+		m, ok := parseSimpleMatchPattern(pattern.trim(), unwindVar)
 		if !ok {
 			return nil, false
 		}
@@ -466,7 +486,9 @@ func parseSimpleMatchClauseList(clause, unwindVar string) ([]matchClauseSpec, bo
 
 // parseSimpleMatchPattern parses one `(var:Label {prop: expr})` pattern,
 // the property-equality half of parseSimpleMatchClause.
-func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
+func parseSimpleMatchPattern(view braceView, unwindVar string) (matchClauseSpec, bool) {
+	view = view.trim()
+	body := view.text()
 	if !strings.HasPrefix(body, "(") {
 		return matchClauseSpec{}, false
 	}
@@ -474,18 +496,14 @@ func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
 	if closeIdx < 0 || closeIdx != len(body)-1 {
 		return matchClauseSpec{}, false
 	}
-	inner := strings.TrimSpace(body[1:closeIdx])
+	innerView := view.window(1, closeIdx).trim()
+	inner := innerView.text()
 	// Must be `var:Label {prop: var.field}`.
-	braceIdx := strings.Index(inner, "{")
-	if braceIdx < 0 {
+	braceIdx, closeBrace, _, present := innerView.firstBrace()
+	if !present {
 		return matchClauseSpec{}, false
 	}
 	head := strings.TrimSpace(inner[:braceIdx])
-	closeBrace := strings.LastIndex(inner, "}")
-	if closeBrace < 0 {
-		return matchClauseSpec{}, false
-	}
-	propsBody := strings.TrimSpace(inner[braceIdx+1 : closeBrace])
 	parts := strings.SplitN(head, ":", 2)
 	if len(parts) != 2 {
 		return matchClauseSpec{}, false
@@ -495,16 +513,11 @@ func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
 	if !isSimpleIdentifier(varName) || !isSimpleIdentifier(label) {
 		return matchClauseSpec{}, false
 	}
-	// propsBody must be a single `key: var.field` pair (no commas).
-	if strings.Contains(propsBody, ",") {
+	entries, valid := innerView.window(braceIdx, closeBrace+1).keyedEntries()
+	if !valid || len(entries) != 1 {
 		return matchClauseSpec{}, false
 	}
-	colonIdx := strings.Index(propsBody, ":")
-	if colonIdx <= 0 {
-		return matchClauseSpec{}, false
-	}
-	propName := strings.TrimSpace(propsBody[:colonIdx])
-	expr := strings.TrimSpace(propsBody[colonIdx+1:])
+	propName, expr := entries[0].key(), entries[0].value.text()
 	if !isSimpleIdentifier(propName) {
 		return matchClauseSpec{}, false
 	}
@@ -517,7 +530,7 @@ func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
 		label:      label,
 		propName:   propName,
 		rowField:   field,
-		lookupExpr: expr,
+		lookupExpr: entries[0].value,
 		bindingVar: unwindVar,
 	}, true
 }
@@ -559,14 +572,21 @@ func referencesUnwindBinding(expr, unwindVar string) bool {
 
 // parseSimpleCreateClause returns either a node spec or edge spec. kind is
 // 'n' for node, 'e' for edge, or 0 if unrecognised.
-func parseSimpleCreateClause(clause, unwindVar string) (createNodeSpec, createEdgeSpec, byte, bool) {
-	body := strings.TrimSpace(strings.TrimPrefix(clause, "CREATE"))
-	body = strings.TrimPrefix(body, "create")
-	body = strings.TrimSpace(body)
+func parseSimpleCreateClause(clause braceView, unwindVar string) (createNodeSpec, createEdgeSpec, byte, bool) {
+	bodyView := clause
+	if strings.HasPrefix(bodyView.text(), "CREATE") {
+		bodyView = bodyView.window(len("CREATE"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	if strings.HasPrefix(bodyView.text(), "create") {
+		bodyView = bodyView.window(len("create"), len(bodyView.text()))
+	}
+	bodyView = bodyView.trim()
+	body := bodyView.text()
 
 	// Edge form: (a)-[:TYPE]->(b)  or  (a)-[:TYPE {...}]->(b)
 	if isRelationshipPatternOperand(body) {
-		edge, ok := parseSimpleCreateEdge(body, unwindVar)
+		edge, ok := parseSimpleCreateEdge(bodyView, unwindVar)
 		if !ok {
 			return createNodeSpec{}, createEdgeSpec{}, 0, false
 		}
@@ -574,14 +594,15 @@ func parseSimpleCreateClause(clause, unwindVar string) (createNodeSpec, createEd
 	}
 
 	// Node form: (var:Label {props})
-	node, ok := parseSimpleCreateNode(body, unwindVar)
+	node, ok := parseSimpleCreateNode(bodyView, unwindVar)
 	if !ok {
 		return createNodeSpec{}, createEdgeSpec{}, 0, false
 	}
 	return node, createEdgeSpec{}, 'n', true
 }
 
-func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
+func parseSimpleCreateNode(view braceView, unwindVar string) (createNodeSpec, bool) {
+	body := view.text()
 	if !strings.HasPrefix(body, "(") {
 		return createNodeSpec{}, false
 	}
@@ -589,17 +610,14 @@ func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
 	if closeIdx < 0 || closeIdx != len(body)-1 {
 		return createNodeSpec{}, false
 	}
-	inner := strings.TrimSpace(body[1:closeIdx])
-	braceIdx := strings.Index(inner, "{")
-	if braceIdx < 0 {
+	innerView := view.window(1, closeIdx).trim()
+	inner := innerView.text()
+	braceIdx, closeBrace, _, found := innerView.firstBrace()
+	if !found {
 		return createNodeSpec{}, false
 	}
 	head := strings.TrimSpace(inner[:braceIdx])
-	closeBrace := strings.LastIndex(inner, "}")
-	if closeBrace < 0 {
-		return createNodeSpec{}, false
-	}
-	propsBody := strings.TrimSpace(inner[braceIdx+1 : closeBrace])
+	props := innerView.window(braceIdx, closeBrace+1)
 	parts := strings.SplitN(head, ":", 2)
 	if len(parts) != 2 {
 		return createNodeSpec{}, false
@@ -609,7 +627,7 @@ func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
 	if !isSimpleIdentifier(varName) || !isSimpleIdentifier(label) {
 		return createNodeSpec{}, false
 	}
-	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)
+	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(props, unwindVar)
 	if !ok {
 		return createNodeSpec{}, false
 	}
@@ -621,7 +639,8 @@ func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
 	}, true
 }
 
-func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) {
+func parseSimpleCreateEdge(view braceView, unwindVar string) (createEdgeSpec, bool) {
+	body := view.text()
 	// Only handle outgoing arrow form: (start)-[:TYPE [{props}]]->(end).
 	arrowIdx := strings.Index(body, "]->")
 	if arrowIdx < 0 {
@@ -650,25 +669,23 @@ func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) {
 		return createEdgeSpec{}, false
 	}
 	// Relationship: body[lBracketIdx+2 : arrowIdx] — `:TYPE` or `:TYPE {props}`.
-	rel := strings.TrimSpace(body[lBracketIdx+2 : arrowIdx])
+	relView := view.window(lBracketIdx+2, arrowIdx).trim()
+	rel := relView.text()
 	if !strings.HasPrefix(rel, ":") {
 		return createEdgeSpec{}, false
 	}
-	rel = strings.TrimSpace(rel[1:])
+	relView = relView.window(1, len(rel)).trim()
+	rel = relView.text()
 	relType := rel
-	propsBody := ""
-	if braceIdx := strings.Index(rel, "{"); braceIdx >= 0 {
+	props := relView.window(0, 0)
+	if braceIdx, closeBrace, _, found := relView.firstBrace(); found {
 		relType = strings.TrimSpace(rel[:braceIdx])
-		closeBrace := strings.LastIndex(rel, "}")
-		if closeBrace < 0 {
-			return createEdgeSpec{}, false
-		}
-		propsBody = strings.TrimSpace(rel[braceIdx+1 : closeBrace])
+		props = relView.window(braceIdx, closeBrace+1)
 	}
 	if !isSimpleIdentifier(relType) {
 		return createEdgeSpec{}, false
 	}
-	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)
+	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(props, unwindVar)
 	if !ok {
 		return createEdgeSpec{}, false
 	}
@@ -684,42 +701,34 @@ func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) {
 // parsePropsBodyForUnwindFastPath parses `k1: unwindVar.f1, k2: 42, k3: 'str'`.
 // Values may be `row.field` references or simple scalars (int / float / string /
 // bool / null). If any value doesn't fit these forms, returns ok=false.
-func parsePropsBodyForUnwindFastPath(propsBody, unwindVar string) (map[string]string, map[string]any, bool) {
-	propsBody = strings.TrimSpace(propsBody)
-	if propsBody == "" {
-		return map[string]string{}, map[string]any{}, true
-	}
+func parsePropsBodyForUnwindFastPath(props braceView, unwindVar string) (map[string]string, map[string]any, bool) {
 	rowRefs := map[string]string{}
 	literals := map[string]any{}
-	for _, pair := range splitTopLevelComma(propsBody) {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
+	if props.empty() {
+		return rowRefs, literals, true
+	} // absent optional property map
+	supported := true
+	entries, err := props.requireKeyedEntries()
+	for _, entry := range entries {
+		key, expr := entry.key(), entry.value.text()
+		if !isSimpleIdentifier(key) {
+			supported = false
 			continue
 		}
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			return nil, nil, false
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
-		expr := strings.TrimSpace(pair[colon+1:])
-		if !isSimpleIdentifier(key) {
-			return nil, nil, false
-		}
-		// row.field reference?
 		if dot := strings.Index(expr, "."); dot > 0 {
-			base := strings.TrimSpace(expr[:dot])
-			field := strings.TrimSpace(expr[dot+1:])
+			base, field := strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])
 			if base == unwindVar && isSimpleIdentifier(field) {
 				rowRefs[key] = field
 				continue
 			}
 		}
-		// Scalar literal.
-		if v, ok := parseLiteralScalarForPipeline(expr); ok {
-			literals[key] = v
+		if value, ok := parseLiteralScalarForPipeline(expr); ok {
+			literals[key] = value
 			continue
 		}
-		// Unsupported expression — bail.
+		supported = false
+	}
+	if err != nil || !supported {
 		return nil, nil, false
 	}
 	return rowRefs, literals, true

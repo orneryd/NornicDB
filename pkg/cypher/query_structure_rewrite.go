@@ -32,27 +32,35 @@ import (
 const whenBranchVariable = generatedVariablePrefix + "when"
 
 type structureRewriter struct {
-	ctx     context.Context
-	query   string
-	edits   []labelRewriteEdit
-	columns statementColumner
+	ctx       context.Context
+	query     string
+	edits     []labelRewriteEdit
+	columns   statementColumner
+	braceView braceView
+	nextBrace int
 }
 
 // statementColumner names a statement's result columns
-// (StorageExecutor.StatementResultColumnsContext). An interface, not a method value, so
+// (StorageExecutor.statementResultColumns). An interface, not a method value, so
 // Execute passes the executor to desugarQueryStructure without allocating.
 type statementColumner interface {
-	StatementResultColumnsContext(ctx context.Context, query string, stage SourceStage) ([]string, error)
+	statementResultColumns(ctx context.Context, view braceView) ([]string, error)
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when it has none. columns names a query's result columns.
 func desugarQueryStructure(ctx context.Context, query string, columns statementColumner) (string, *queryRewrite, error) {
+	view := statementBraceView(ctx, query)
+	query = view.text()
+	if view.syntax.err != nil {
+		return query, nil, view.syntax.err
+	}
+	ctx = context.WithValue(cyphertext.WithSourceView(ctx, view.source), braceSyntaxKey{}, view.syntax)
 	if !mayUseQueryStructure(query) {
 		return query, nil, nil
 	}
-	r := &structureRewriter{ctx: ctx, query: query, columns: columns}
+	r := &structureRewriter{ctx: ctx, query: query, columns: columns, braceView: view}
 	if err := r.region(0, len(query), false); err != nil {
 		return query, nil, err
 	}
@@ -66,48 +74,36 @@ func desugarQueryStructure(ctx context.Context, query string, columns statementC
 // mayUseQueryStructure is desugarQueryStructure's quick check: NEXT or WHEN
 // appear, or a brace starts the statement or follows UNION.
 func mayUseQueryStructure(query string) bool {
-	if strings.Contains(query, "{") {
-		opener := &labelExpressionRewriter{query: query}
-		for index := 0; index < len(query); index++ {
-			if isCypherQuoteByte(query[index]) {
-				index = skipCypherQuotedText(query, index, query[index]) - 1
-				continue
-			}
-			if query[index] == '{' && opener.opensSubquery(index) {
-				if next := skipSpaces(query, index+1); next < len(query) && query[next] == '{' {
-					return true
-				}
-			}
-		}
-	}
-	return indexASCIIFold(query, "next") >= 0 || indexASCIIFold(query, "when") >= 0 || strings.HasPrefix(strings.TrimSpace(query), "{") ||
-		indexASCIIFold(query, "union") >= 0
+	return firstLiveBrace(query) >= 0 || indexASCIIFold(query, "next") >= 0 || indexASCIIFold(query, "when") >= 0 || indexASCIIFold(query, "union") >= 0
 }
 
 func (r *structureRewriter) edit(start, end int, text string) {
 	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text})
 }
 
+func (r *structureRewriter) editPredicate(start, end int, text rewritePredicate) {
+	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text.text, copies: text.copies, constructed: text.constructed, entries: text.entries})
+}
+
 // rewrittenRegionText materializes the exact execution edits for a region
 // before asking the schema owner about it. Query composition is lowered by this
 // rewriter once; the schema owner never receives half-lowered conditional text.
-func (r *structureRewriter) rewrittenRegionText(start, end, firstEdit int) string {
-	edits := make([]labelRewriteEdit, len(r.edits)-firstEdit)
-	for index, edit := range r.edits[firstEdit:] {
-		edit.start -= start
-		edit.end -= start
-		edits[index] = edit
+func (r *structureRewriter) rewrittenRegion(start, end, firstEdit int) (context.Context, string) {
+	region := rewrittenSourceRegion(r.query, start, end, r.edits[firstEdit:])
+	view := r.braceView.source.RewriteWithCopies(region.text, []cyphertext.SourceEdit{{Original: cyphertext.Span{Start: 0, End: len(r.query)}, Accepted: cyphertext.Span{Start: 0, End: len(region.text)}}}, region.copies)
+	ctx := withBraceConstructions(cyphertext.WithSourceView(r.ctx, view), view, region.constructed)
+	current, _ := cyphertext.SourceView(ctx)
+	declared, err := current.WithEntryDeclarations(region.entries)
+	if err != nil {
+		panic(err)
 	}
-	text, _ := applyLabelRewriteEdits(r.query[start:end], edits, true)
-	return text
+	ctx = cyphertext.WithSourceView(ctx, declared)
+	return ctx, region.text
 }
 
 // queryStructureClauseStarts are the words that start a query part after
 // NEXT (a NEXT followed by anything else is a name).
-var queryStructureClauseStarts = []string{
-	"MATCH", "OPTIONAL", "WITH", "RETURN", "UNWIND", "CALL", "CREATE", "MERGE", "DELETE", "DETACH", "SET", "REMOVE",
-	"FOREACH", "LOAD", "FILTER", "LET", "FOR", "FINISH", "USE", "WHEN", "INSERT", "ORDER", "SKIP", "LIMIT", "OFFSET",
-}
+var queryStructureClauseStarts = cyphertext.QueryStructureClauseStarts
 
 // topLevelWord is a word at a region's top level.
 type topLevelWord struct {
@@ -167,14 +163,20 @@ func (r *structureRewriter) region(start, end int, distinct bool) error {
 	}
 	if len(nexts) > 0 {
 		first := skipASCIISpaces(r.query, start, end)
-		r.edit(first, first, strings.Repeat("CALL (*) { ", len(nexts)))
+		parts := make([]braceConstructionPart, 0, len(nexts))
+		for i := range nexts {
+			parts = append(parts, braceConstructionPart{id: r.nextBrace + len(nexts) - 1 - i, at: i*len("CALL (*) { ") + len("CALL (*) "), opening: true, kind: subqueryBrace})
+		}
+		r.edits = append(r.edits, labelRewriteEdit{start: first, end: first, text: strings.Repeat("CALL (*) { ", len(nexts)), braceParts: parts})
 	}
+	firstBrace := r.nextBrace
+	r.nextBrace += len(nexts)
 	segmentStart := start
-	for _, next := range nexts {
+	for i, next := range nexts {
 		if err := r.segment(segmentStart, next.start, false); err != nil {
 			return err
 		}
-		r.edit(next.start, next.end, "}")
+		r.edits = append(r.edits, labelRewriteEdit{start: next.start, end: next.end, text: "}", braceParts: []braceConstructionPart{{id: firstBrace + i, at: 0}}})
 		segmentStart = next.end
 	}
 	// The parts before a NEXT run in CALLs; the last stays at this level.
@@ -188,8 +190,9 @@ func (r *structureRewriter) startsQueryPart(from, end int) bool {
 	if at >= end {
 		return false
 	}
-	if r.query[at] == '{' {
-		return true
+	if cyphertext.IsOpenBrace(r.query[at]) {
+		fact, found := r.braceView.at(at)
+		return found && fact.kind == subqueryBrace
 	}
 	for _, keyword := range queryStructureClauseStarts {
 		if matchKeywordAt(r.query[:end], at, keyword) {
@@ -248,7 +251,9 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 	for _, p := range parts {
 		open := skipASCIISpaces(r.query, p.start, p.end)
 		close := skipBackSpaces(r.query, p.end) - 1
-		if open < p.end && r.query[open] == '{' && cyphertext.FindMatchingDelimiter(r.query[:p.end], open, '{', '}', cyphertext.OpeningDelimiter) == close {
+		fact, braced := r.braceView.at(open)
+		ownerClose, matched := r.braceView.close(open)
+		if open < p.end && braced && matched && ownerClose == close && fact.kind == subqueryBrace {
 			wrap := outerAll && r.hasDistinctUnion(open+1, close)
 			// Dropped braces put the part's UNIONs in this union; braces
 			// around a single query hold no UNION to change.
@@ -257,11 +262,12 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 				return err
 			}
 			if wrap {
-				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit), AcceptedSource)
+				regionCtx, regionText := r.rewrittenRegion(open+1, close, firstEdit)
+				columns, err := r.columns.statementResultColumns(regionCtx, statementBraceView(regionCtx, regionText))
 				if err != nil {
 					return err
 				}
-				r.edit(open, open+1, "CALL (*) {")
+				r.editPredicate(open, open+1, wrapRewritePredicate("CALL (*) ", copiedPredicate(r.query, cyphertext.Span{Start: open, End: open + 1}), ""))
 				r.edit(close+1, close+1, returnColumnsText(columns))
 			} else {
 				r.edit(open, open+1, "")
@@ -290,17 +296,17 @@ func (r *structureRewriter) hasDistinctUnion(start, end int) bool {
 
 // subqueries rewrites the subquery bodies in q[start:end].
 func (r *structureRewriter) subqueries(start, end int) error {
-	opener := &labelExpressionRewriter{query: r.query}
 	for i := start; i < end; i++ {
-		switch c := r.query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := r.query[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(r.query[:end], i, c) - 1
-		case '{':
-			if !opener.opensSubquery(i) {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			fact, found := r.braceView.at(i)
+			if !found || fact.kind != subqueryBrace {
 				continue
 			}
-			close := cyphertext.FindMatchingDelimiter(r.query[:end], i, '{', '}', cyphertext.OpeningDelimiter)
-			if close < 0 {
+			close, matched := r.braceView.close(i)
+			if !matched || close >= end {
 				return nil
 			}
 			if err := r.region(i+1, close, false); err != nil {
@@ -327,14 +333,14 @@ func (r *structureRewriter) conditional(start, end int) error {
 		return nil
 	}
 	var columns []string
-	var cases strings.Builder
-	cases.WriteString("UNWIND [CASE")
+	cases := []rewritePredicate{generatedPredicate("UNWIND [CASE")}
 	for index, branch := range branches {
 		firstEdit := len(r.edits)
 		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
-		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit), AcceptedSource)
+		regionCtx, regionText := r.rewrittenRegion(branch.bodyStart, branch.bodyEnd, firstEdit)
+		bodyColumns, err := r.columns.statementResultColumns(regionCtx, statementBraceView(regionCtx, regionText))
 		if err != nil {
 			return err
 		}
@@ -351,22 +357,26 @@ func (r *structureRewriter) conditional(start, end int) error {
 		}
 		number := strconv.Itoa(index + 1)
 		if branch.conditionEnd > branch.conditionStart {
-			cases.WriteString(" WHEN " + r.query[branch.conditionStart:branch.conditionEnd] + " THEN " + number)
+			cases = append(cases, wrapRewritePredicate(" WHEN ", copiedPredicate(r.query, cyphertext.Span{Start: branch.conditionStart, End: branch.conditionEnd}), " THEN "+number))
 		} else {
-			cases.WriteString(" ELSE " + number)
+			cases = append(cases, generatedPredicate(" ELSE "+number))
 		}
 	}
-	cases.WriteString(" END] AS " + whenBranchVariable + " CALL (*) { ")
+	cases = append(cases, generatedPredicate(" END] AS "+whenBranchVariable+" CALL (*) { "))
+	caseText := joinRewritePredicates(cases, "")
+	constructionID := r.nextBrace
+	r.nextBrace++
 	for index, branch := range branches {
 		guard := "FILTER " + whenBranchVariable + " = " + strconv.Itoa(index+1) + " "
 		if index == 0 {
-			r.edit(branch.keywordStart, branch.bodyStart, cases.String()+guard)
+			r.edits = append(r.edits, labelRewriteEdit{start: branch.keywordStart, end: branch.bodyStart, text: caseText.text + guard, copies: caseText.copies, constructed: caseText.constructed, entries: caseText.entries,
+				braceParts: []braceConstructionPart{{id: constructionID, at: len(caseText.text) - 2, opening: true, kind: subqueryBrace}}})
 		} else {
 			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " UNION ALL "+guard)
 		}
 	}
 	last := branches[len(branches)-1].bodyEnd
-	r.edit(last, last, " }"+returnColumnsText(columns))
+	r.edits = append(r.edits, labelRewriteEdit{start: last, end: last, text: " }" + returnColumnsText(columns), braceParts: []braceConstructionPart{{id: constructionID, at: 1}}})
 	return nil
 }
 

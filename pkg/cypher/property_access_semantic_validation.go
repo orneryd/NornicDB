@@ -28,7 +28,7 @@ var propertyAccessStaticTypes = map[string]bool{
 // access would reject is accessed ($m.a) or projected ($m AS m), so
 // parameterized statements on hot paths cost one scan.
 func validateStaticPropertyAccessParameters(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if len(params) == 0 || !strings.ContainsAny(cypher, ".{[") || !parameterMayRejectPropertyAccess(cypher, params) {
+	if len(params) == 0 || !containsSyntaxAny(cypher, ".{[") || !parameterMayRejectPropertyAccess(cypher, params) {
 		return nil
 	}
 	return validatePropertyAccessTypes(ctx, cypher, params)
@@ -37,24 +37,25 @@ func validateStaticPropertyAccessParameters(ctx context.Context, cypher string, 
 // validatePropertyAccessTypes walks the clauses, tracking the static types of
 // the variables WITH and UNWIND bind, and checks every property access.
 func validatePropertyAccessTypes(ctx context.Context, cypher string, params map[string]interface{}) error {
-	return validatePropertyAccessClauses(ctx, cypher, nil, params)
+	return validatePropertyAccessClauses(ctx, statementBraceView(ctx, cypher), nil, params)
 }
 
 // validatePropertyAccessClauses is validatePropertyAccessTypes for a
 // statement or a subquery body that sees the outer variables' types. The
 // outer map is never modified. Declaration validity belongs to the shared
 // semantic scope walk; this visitor only tracks property receiver types.
-func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map[string]string, params map[string]interface{}) error {
+func validatePropertyAccessClauses(ctx context.Context, view braceView, outer map[string]string, params map[string]interface{}) error {
+	cypher := view.text()
+	ctx = withBraceView(ctx, view)
 	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
 	types := outer
 	for _, clause := range clauses {
-		text := clause.text
 		switch clause.kind {
 		case pipelineClauseLet:
-			projections, err := parsePipelineLet(text)
+			projections, err := parsePipelineLet(clause.view)
 			if err != nil {
 				return err
 			}
@@ -63,14 +64,14 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 				next[name] = typeName
 			}
 			for _, projection := range projections {
-				if err := checkExpressionPropertyAccesses(ctx, projection.expression, types, params); err != nil {
+				if err := checkExpressionPropertyAccesses(ctx, projection.view, types, params); err != nil {
 					return err
 				}
-				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
+				next[projection.alias] = propertyAccessExpressionType(projection.view, types, params)
 			}
 			types = next
 		case pipelineClauseFilter:
-			if err := checkExpressionPropertyAccesses(ctx, pipelineFilterExpression(text), types, params); err != nil {
+			if err := checkExpressionPropertyAccesses(ctx, clause.view.filterExpression(), types, params); err != nil {
 				return err
 			}
 		case pipelineClauseWith, pipelineClauseReturn:
@@ -78,15 +79,15 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			if clause.kind == pipelineClauseReturn {
 				keyword = "RETURN"
 			}
-			body, tail := projectionSemanticBodyAndTail(text, keyword)
+			body, tail := projectionSemanticSourceAndTail(clause.view, keyword)
 			if err := checkExpressionPropertyAccesses(ctx, body, types, params); err != nil {
 				return err
 			}
 			next := types
 			if clause.kind == pipelineClauseWith {
 				next = map[string]string{}
-				for _, raw := range splitTopLevelComma(body) {
-					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+				for _, raw := range body.commaViews() {
+					itemSource := readProjectionItemSource(ctx, raw.trim(), projectionAdmitted)
 					expression, alias := itemSource.expression, itemSource.alias
 					if expression == "*" {
 						for variable, typeName := range types {
@@ -102,12 +103,12 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 						continue
 					}
 					name = normalizeProjectionColumnName(name)
-					next[name] = propertyAccessExpressionType(expression, types, params)
+					next[name] = propertyAccessExpressionType(itemSource.view, types, params)
 				}
 			}
 			// WHERE and ORDER BY see the projection's names; ORDER BY also
 			// sees the names it replaced.
-			if tail != "" {
+			if !tail.empty() {
 				visible := make(map[string]string, len(types)+len(next))
 				for variable, typeName := range types {
 					visible[variable] = typeName
@@ -121,7 +122,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			}
 			types = next
 		case pipelineClauseUnwind:
-			expression, alias, ok := parsePipelineIteration(text)
+			expression, alias, ok := parsePipelineIterationSource(clause.view)
 			if !ok {
 				continue
 			}
@@ -144,11 +145,11 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 				types = next
 			}
 		default:
-			if err := checkPropertyAccesses(ctx, text, types, params); err != nil {
+			if err := checkPropertyAccesses(ctx, clause.view, types, params); err != nil {
 				return err
 			}
 			if clause.kind == pipelineClauseSet {
-				if err := setClauseSourceTypeError(text, types, params); err != nil {
+				if err := setClauseSourceTypeError(clause.view, types, params); err != nil {
 					return err
 				}
 			}
@@ -158,32 +159,18 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 }
 
 // projectionSemanticBody is the projection items of a WITH / RETURN clause.
-func projectionSemanticBody(clause, keyword string) string {
-	body, _ := projectionSemanticBodyAndTail(clause, keyword)
+func projectionSemanticBody(clause braceView, keyword string) braceView {
+	body, _ := projectionSemanticSourceAndTail(clause, keyword)
 	return body
-}
-
-// projectionSemanticBodyAndTail splits a WITH / RETURN clause into its
-// projection items (after DISTINCT) and the WHERE / ORDER BY / SKIP / LIMIT
-// that follow. The clause is scanned with its keyword, which tells a
-// keyword-named first item from a clause (WITH where WHERE where = 3, #894).
-func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
-	end := len(clause)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(clause, suffix); index >= len(keyword) && index < end {
-			end = index
-		}
-	}
-	body, _ := cutDistinct(clause[len(keyword):end])
-	return body, clause[end:]
 }
 
 // propertyAccessExpressionType is the static type of a projected or unwound
 // expression: a parameter's (when checking with parameter values), the type
 // of the variable it copies, or the operator check's. A list comprehension is a
 // list of a type this check doesn't infer (List<T>). "" is unknown.
-func propertyAccessExpressionType(expression string, types map[string]string, params map[string]interface{}) string {
-	expression = strings.TrimSpace(expression)
+func propertyAccessExpressionType(view braceView, types map[string]string, params map[string]interface{}) string {
+	view = view.trim()
+	expression := view.text()
 	if expression == "" {
 		return ""
 	}
@@ -202,7 +189,7 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 	}
 	// Every other expression (CASE, a computed list, a call, arithmetic) is
 	// typed by the static operand owner, which keeps a union's alternatives.
-	if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
+	if typeName := (staticTypeScope{values: types}).staticExpressionType(view); typeName != "" {
 		return typeName
 	}
 	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
@@ -241,28 +228,29 @@ func rejectsPropertyAccess(typeName string) bool {
 // with its own variables shadowing the scope; a pattern comprehension and a
 // subquery body (EXISTS / COUNT / COLLECT / CALL { … }) see the outer
 // variables' types.
-func checkPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
-	return scanPropertyAccesses(ctx, text, types, params, false)
+func checkPropertyAccesses(ctx context.Context, view braceView, types map[string]string, params map[string]interface{}) error {
+	return scanPropertyAccesses(ctx, view, types, params, false)
 }
 
 // checkExpressionPropertyAccesses is checkPropertyAccesses for text that
 // holds only expressions (projection items, WHERE, ORDER BY, an UNWIND list),
 // where name { … } is a map projection: Neo4j's "Type mismatch: expected
 // Map, Node or Relationship but was Integer" for a base without properties.
-func checkExpressionPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
+func checkExpressionPropertyAccesses(ctx context.Context, view braceView, types map[string]string, params map[string]interface{}) error {
 	if params != nil {
-		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
+		if err := validateStaticPropertySubscripts(view, staticTypeScope{values: types, params: params}); err != nil {
 			return err
 		}
 	}
-	return scanPropertyAccesses(ctx, text, types, params, true)
+	return scanPropertyAccesses(ctx, view, types, params, true)
 }
 
 // scanPropertyAccesses checks the property accesses (and, in expression
 // text, the map projections) of text; see checkPropertyAccesses.
-func scanPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}, expressions bool) error {
-	braces := newSubqueryBraceScanner(text, 0)
-	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
+func scanPropertyAccesses(ctx context.Context, view braceView, types map[string]string, params map[string]interface{}, expressions bool) error {
+	text := view.text()
+	braces := newBraceFactScanner(view, 0)
+	if strings.IndexByte(text, '.') < 0 && firstLiveBrace(text) < 0 {
 		return nil
 	}
 	// A comprehension, quantifier or reduce is scanned in place: an access
@@ -296,27 +284,28 @@ func scanPropertyAccesses(ctx context.Context, text string, types map[string]str
 			if end < 0 {
 				return nil
 			}
-			if pattern, projection, isPattern := splitPatternComprehension(text[index : end+1]); isPattern {
+			if pattern, projection, isPattern := splitPatternComprehension(view.window(index, end+1)); isPattern {
 				// The pattern's own variables are nodes, relationships or
 				// paths; outer variables keep their types inside, but for
 				// the names bound around it.
 				inside := local().withoutTypes(types, index)
-				if err := checkPropertyAccesses(ctx, pattern, inside, params); err != nil {
+				innerView := view.window(index+1, end).trim()
+				if err := checkPropertyAccesses(ctx, innerView.window(0, len(pattern)), inside, params); err != nil {
 					return err
 				}
-				if err := checkExpressionPropertyAccesses(ctx, projection, inside, params); err != nil {
+				if err := checkExpressionPropertyAccesses(ctx, innerView.window(len(innerView.text())-len(projection), len(innerView.text())), inside, params); err != nil {
 					return err
 				}
 				index = end
 			}
-		case c == '{':
+		case cyphertext.IsOpenBrace(c):
 			if index > 0 && braces.at(index) {
-				end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter)
-				if end < 0 {
+				end, complete := view.close(index)
+				if !complete {
 					return nil
 				}
 				// A subquery body sees the outer variables.
-				if err := validatePropertyAccessClauses(ctx, text[index+1:end], local().withoutTypes(types, index), params); err != nil {
+				if err := validatePropertyAccessClauses(ctx, view.window(index+1, end), local().withoutTypes(types, index), params); err != nil {
 					return err
 				}
 				index = end
@@ -395,8 +384,8 @@ func namespacedCallFollows(text string, index int) bool {
 
 // isSubqueryBrace reports whether the { at text[index] opens a subquery body
 // (EXISTS { … }, COUNT { … }, COLLECT { … }, CALL { … }) rather than a map.
-func isSubqueryBrace(text string, index int) bool {
-	return precedingSubqueryExpressionKeyword(text, index)
+func isSubqueryBrace(view braceView, index int) bool {
+	return view.isBody(index)
 }
 
 // parameterMayRejectPropertyAccess reports whether a parameter whose value a

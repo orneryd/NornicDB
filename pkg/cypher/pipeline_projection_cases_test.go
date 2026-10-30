@@ -59,7 +59,7 @@ func TestPipelineWithProjectionCases(t *testing.T) {
 					if tc.input != nil {
 						input = tc.input
 					}
-					out, ok := exec.pipelineApplyWith(context.Background(), input, tc.query, nil, false)
+					out, ok := exec.pipelineApplyWith(context.Background(), input, originalBraceView(tc.query), nil, false)
 					require.Equal(t, tc.recognized, ok)
 					if !tc.recognized {
 						require.Nil(t, out)
@@ -118,7 +118,7 @@ func TestPipelineMatchCases(t *testing.T) {
 				engine = &matchErrEngine{Engine: store, err: tc.failure}
 			}
 			exec := NewStorageExecutor(engine)
-			out, ok, err := exec.pipelineApplyMatch(context.Background(), rows, tc.query)
+			out, ok, err := exec.pipelineApplyMatch(context.Background(), rows, originalBraceView(tc.query))
 			require.True(t, ok)
 			if tc.failure != nil {
 				require.Error(t, err)

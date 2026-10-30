@@ -45,15 +45,19 @@ func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetada
 			return participant(obligation)
 		}
 	}
-	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts.SourceView(source)
+	return e.statementProjectionProgram(context.Background(), sourceStatementView(source), incoming, cypher25, schema).facts.SourceView(source)
 }
 
-func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {
+func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, view braceView, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {
+	ctx = withBraceView(ctx, view)
+	query := view.text()
 	ensureBuiltInProceduresRegistered()
 	names := resultmetadata.Unknown()
 	incoming.Visit(func(values []string) { names = resultmetadata.Known(values) }, func() { names = resultmetadata.Unknown() })
 	var program *projectedScopeFacts
-	if schema == nil {
+	if err := view.admission(); err != nil {
+		program = programFailure(resultmetadata.ReasonParserDecline, 0, err)
+	} else if schema == nil {
 		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
 	} else {
 		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}

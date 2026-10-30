@@ -1,28 +1,38 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // parseQuantifierArguments splits the arguments of all / any / none /
 // single, "variable IN list WHERE predicate", for every evaluator.
-func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
-	// The declaration as every reader reads it (bindingDeclaration); WHERE at
-	// the top level: a list comprehension or subquery in the list expression
-	// has its own.
+func parseQuantifierArguments(view braceView) (variable, listExpression, predicate string, ok bool) {
+	inner := view.text()
+	parts, ok := parseQuantifierSpans(view)
+	if !ok {
+		return "", "", "", false
+	}
+	return parts.variable, strings.TrimSpace(inner[parts.list.Start:parts.list.End]), strings.TrimSpace(inner[parts.predicate.Start:parts.predicate.End]), true
+}
+
+func parseQuantifierSpans(view braceView) (comprehensionSpans, bool) {
+	inner := view.text()
 	variable, _, listStart, declared := bindingDeclaration(inner, 0)
 	if !declared {
-		return "", "", "", false
+		return comprehensionSpans{}, false
 	}
-	rest := inner[listStart:]
-	whereIndex := topLevelKeywordIndex(rest, "WHERE")
-	if whereIndex < 0 {
-		return "", "", "", false
+	where := topLevelKeywordIndex(view.window(listStart, len(inner)), "WHERE")
+	if where < 0 {
+		return comprehensionSpans{}, false
 	}
-	listExpression = strings.TrimSpace(rest[:whereIndex])
-	predicate = strings.TrimSpace(rest[whereIndex+len("WHERE"):])
-	if listExpression == "" || predicate == "" {
-		return "", "", "", false
+	parts := comprehensionSpans{variable: variable,
+		list:      cyphertext.Span{Start: listStart, End: listStart + where},
+		predicate: cyphertext.Span{Start: listStart + where + len("WHERE"), End: len(inner)}}
+	if strings.TrimSpace(inner[parts.list.Start:parts.list.End]) == "" || strings.TrimSpace(inner[parts.predicate.Start:parts.predicate.End]) == "" {
+		return comprehensionSpans{}, false
 	}
-	return variable, listExpression, predicate, true
+	return parts, true
 }
 
 // isQuantifierFunction reports whether name (lower case) is a list

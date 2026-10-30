@@ -16,9 +16,10 @@ import (
 // function calls; schema and administration commands declare rules, not
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
-func validateKnownFunctions(expression string) error {
+func validateKnownFunctions(view braceView) error {
+	expression := view.text()
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
+		(isSchemaCommandStatement(expression) || isMetadataCommand(view, metadataCreateAdmission)) {
 		return nil
 	}
 	return forEachFunctionCall(expression, func(name, normalized string) error {

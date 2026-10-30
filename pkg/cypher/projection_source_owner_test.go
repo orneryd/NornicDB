@@ -33,32 +33,32 @@ func TestProjectionSourceStagePopulation(t *testing.T) {
 		{"count { MATCH (n) } AS c", [2]string{"count { MATCH (n) }", "c"}, [2]string{"count { MATCH (n) }", "c"}, 20},
 	} {
 		t.Run(tc.item, func(t *testing.T) {
-			itemSource := readProjectionItemSource(context.Background(), tc.item, projectionBeforeRewrite)
+			itemSource := readProjectionItemSource(context.Background(), originalBraceView(tc.item), projectionBeforeRewrite)
 			expression, alias := itemSource.expression, itemSource.alias
 			require.Equal(t, tc.rewrite, [2]string{expression, alias})
-			itemSource = readProjectionItemSource(t.Context(), tc.item, projectionAdmitted)
+			itemSource = readProjectionItemSource(t.Context(), originalBraceView(tc.item), projectionAdmitted)
 			expression, alias = itemSource.expression, itemSource.alias
 			require.Equal(t, tc.admitted, [2]string{expression, alias})
-			require.Equal(t, tc.as, readProjectionItemSource(t.Context(), tc.item, projectionAdmitted).as)
+			require.Equal(t, tc.as, readProjectionItemSource(t.Context(), originalBraceView(tc.item), projectionAdmitted).as)
 		})
 	}
 }
 
 func TestProjectionSourceRawAndDecodedViews(t *testing.T) {
 	const item = " \tn AS /* c */ `a b` "
-	admitted := readProjectionItemSource(t.Context(), item, projectionAdmitted)
+	admitted := readProjectionItemSource(t.Context(), originalBraceView(item), projectionAdmitted)
 	require.Equal(t, 4, admitted.as)
 	require.Equal(t, "n", admitted.rawExpression)
 	require.Equal(t, "/* c */ `a b`", admitted.rawAlias)
 	require.Equal(t, "n", admitted.expression)
 	require.Equal(t, "a b", admitted.alias)
-	before := readProjectionItemSource(t.Context(), item, projectionBeforeRewrite)
+	before := readProjectionItemSource(t.Context(), originalBraceView(item), projectionBeforeRewrite)
 	require.Equal(t, admitted.as, before.as)
 	require.Equal(t, admitted.rawExpression, before.expression)
 	require.Equal(t, admitted.rawAlias, before.alias)
 	// Multiple source items retain the first AS offset, while the single-item
 	// semantic view remains absent, as both previous admitted consumers required.
-	multiple := readProjectionItemSource(t.Context(), "n AS x, m AS y", projectionAdmitted)
+	multiple := readProjectionItemSource(t.Context(), expressionBraceView("n AS x, m AS y"), projectionAdmitted)
 	require.Equal(t, 2, multiple.as)
 	require.Empty(t, multiple.expression)
 	require.Empty(t, multiple.alias)
@@ -67,15 +67,15 @@ func TestProjectionSourceRawAndDecodedViews(t *testing.T) {
 func TestProjectionSourceCanceledAdmittedReadRetainsStageContract(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	source := readProjectionItemSource(ctx, "n AS x", projectionAdmitted)
+	source := readProjectionItemSource(ctx, expressionBraceView("n AS x"), projectionAdmitted)
 	require.Equal(t, -1, source.as)
 	require.Empty(t, source.expression)
 	require.Empty(t, source.alias)
 	// Pre-rewrite inspection was context-free; its lexical view remains so.
-	source = readProjectionItemSource(ctx, "n AS x", projectionBeforeRewrite)
+	source = readProjectionItemSource(ctx, expressionBraceView("n AS x"), projectionBeforeRewrite)
 	require.Equal(t, "n", source.expression)
 	require.Equal(t, "x", source.alias)
-	source = readProjectionItemSource(t.Context(), "n AS x", projectionAdmitted)
+	source = readProjectionItemSource(t.Context(), expressionBraceView("n AS x"), projectionAdmitted)
 	require.Equal(t, 2, source.as)
 	require.Equal(t, "x", source.alias)
 }

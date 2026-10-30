@@ -11,7 +11,7 @@ import (
 // text.locate, a NornicDB extension: where a quoted passage stands in a text,
 // for a reader that cites facts as a line and a quote.
 func init() {
-	cypherfn.Register("text.locate", fnTextLocate)
+	cypherfn.RegisterInvocation("text.locate", fnTextLocate)
 }
 
 // textLocateTolerance is how many lines from the cited line an occurrence
@@ -35,7 +35,7 @@ const textLocateTolerance = 3
 // line first; a line that isn't one of the text's is null); tolerance (3);
 // from and to, the code-point range the occurrence must lie in. Without line,
 // the first occurrence in the range wins. Null text or quote is null.
-func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnTextLocate(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, argumentCountError("text.locate", "2 or 3", len(args))
 	}

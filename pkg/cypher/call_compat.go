@@ -745,7 +745,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, false, indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
 		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
@@ -797,7 +797,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 
 	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, false, indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
 			return err
 		}
 		return schema.AddFulltextIndex(indexName, labels, properties)
@@ -831,7 +831,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 
 	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, false, indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
 			return err
 		}
 		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)
@@ -906,8 +906,8 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
+func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, view braceView) (*ExecuteResult, error) {
+	arguments, err := e.extractBoundProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, view)
 	if err != nil {
 		return nil, err
 	}
@@ -916,8 +916,8 @@ func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context,
 
 // callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
 // Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
+func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, view braceView) (*ExecuteResult, error) {
+	arguments, err := e.extractBoundProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, view)
 	if err != nil {
 		return nil, err
 	}
@@ -941,7 +941,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	propertyKey, validKey := arguments[1].(string)
 	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(strings.TrimSpace(expression), "[") {
-		arguments[2] = e.evaluateExpressionWithContext(ctx, expression, nil, nil)
+		arguments[2] = e.evaluateProcedureText(ctx, expression)
 	}
 	vector, validVector := toFloat64Slice(arguments[2])
 	if !validID || !validKey || !validVector {
@@ -1012,7 +1012,7 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []int
 
 	metadata, valid := toStringAnyMap(arguments[0])
 	if expression, raw := arguments[0].(string); raw {
-		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+		metadata, valid = toStringAnyMap(e.evaluateProcedureText(ctx, expression))
 	}
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")

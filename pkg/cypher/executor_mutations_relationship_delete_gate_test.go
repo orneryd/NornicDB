@@ -31,7 +31,7 @@ func TestIsSimpleBoundRelationshipDeleteMatchSegment(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isSimpleBoundRelationshipDeleteMatchSegment(tc.segment); got != tc.want {
+			if got := isSimpleBoundRelationshipDeleteMatchSegment(originalBraceView(tc.segment)); got != tc.want {
 				t.Fatalf("isSimpleBoundRelationshipDeleteMatchSegment(%q) = %v, want %v", tc.segment, got, tc.want)
 			}
 		})
@@ -43,15 +43,15 @@ func TestParseBoundRelationshipDeleteWithLimitSegment(t *testing.T) {
 	base := "MATCH (a) MATCH (a)-[r]->(b)"
 
 	t.Run("valid", func(t *testing.T) {
-		gotBase, gotLimit, ok := parseBoundRelationshipDeleteWithLimitSegment(base+" WITH r LIMIT 5", deleteVar)
+		gotBase, gotLimit, ok := parseBoundRelationshipDeleteWithLimitSegment(originalBraceView(base+" WITH r LIMIT 5"), deleteVar)
 		if !ok {
 			t.Fatal("expected ok for WITH r LIMIT 5")
 		}
 		if gotLimit != 5 {
 			t.Fatalf("limit = %d, want 5", gotLimit)
 		}
-		if gotBase != base {
-			t.Fatalf("base = %q, want %q", gotBase, base)
+		if gotBase.text() != base {
+			t.Fatalf("base = %q, want %q", gotBase.text(), base)
 		}
 	})
 
@@ -75,7 +75,7 @@ func TestParseBoundRelationshipDeleteWithLimitSegment(t *testing.T) {
 	}
 	for _, tc := range rejections {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, ok := parseBoundRelationshipDeleteWithLimitSegment(tc.segment, deleteVar); ok {
+			if _, _, ok := parseBoundRelationshipDeleteWithLimitSegment(originalBraceView(tc.segment), deleteVar); ok {
 				t.Fatalf("expected rejection for %q", tc.segment)
 			}
 		})

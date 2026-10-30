@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -323,18 +324,15 @@ func iterationSourceVariable(clause, variable string) string {
 // dynamic label expressions (its targets are writes, and Neo4j lets SET
 // write to a deleted entity), nothing for a DELETE or REMOVE (their
 // targets), the whole clause otherwise.
-func deletedEntityReadText(clause pipelineClause) string {
+func deletedEntityReadText(ctx context.Context, clause pipelineClause) string {
 	switch clause.kind {
 	case pipelineClauseDelete, pipelineClauseRemove:
 		return ""
 	case pipelineClauseSet:
-		body := strings.TrimSpace(clause.text)
-		if startsWithKeywordFold(body, "SET") {
-			body = body[len("SET"):]
-		}
 		var values strings.Builder
-		for _, assignment := range splitSetAssignments(body) {
-			_, property, operator, right := splitSetAssignment(assignment)
+		for _, assignment := range setAssignmentViews(clause.input(ctx).clauseBody("SET")) {
+			item := readSetAssignment(assignment)
+			property, operator, right := item.property, item.operator, item.rightText()
 			switch operator {
 			case "[]=":
 				// The key expression of x[key] = v is read too.

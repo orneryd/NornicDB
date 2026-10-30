@@ -17,15 +17,15 @@ import (
 // empty is dropped. Like APOC, a null map or a null key list fails the call
 // (ProcedureCallFailed). An argument of the wrong type is a type error.
 func init() {
-	cypherfn.Register("apoc.map.removekey", fnApocMapRemoveKey)
-	cypherfn.Register("apoc.map.removekeys", fnApocMapRemoveKeys)
+	cypherfn.RegisterInvocation("apoc.map.removekey", fnApocMapRemoveKey)
+	cypherfn.RegisterInvocation("apoc.map.removekeys", fnApocMapRemoveKeys)
 }
 
 // fnApocMapRemoveKey is apoc.map.removeKey(map, key, config = {}). APOC
 // returns the map unchanged when its top level has no such key, without
 // looking into nested maps even with recursive set; otherwise it is
 // apoc.map.removeKeys(map, [key], config). A null key is in no map.
-func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnApocMapRemoveKey(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	const function = "apoc.map.removeKey"
 	entries, values, err := apocMapArguments(ctx, function, args)
 	if err != nil {
@@ -50,7 +50,7 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 
 // fnApocMapRemoveKeys is apoc.map.removeKeys(map, keys, config = {}). A key
 // in the list that isn't a string matches no map key.
-func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnApocMapRemoveKeys(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	const function = "apoc.map.removeKeys"
 	entries, values, err := apocMapArguments(ctx, function, args)
 	if err != nil {
@@ -78,7 +78,7 @@ func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, erro
 
 // apocMapArguments evaluates the (map, key or keys, config = {}) arguments
 // and reads the map.
-func apocMapArguments(ctx cypherfn.Context, function string, args []string) (map[string]interface{}, []interface{}, error) {
+func apocMapArguments(ctx cypherfn.InvocationContext, function string, args []string) (map[string]interface{}, []interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, nil, functionParameterCountError(function, len(args) > 3)
 	}

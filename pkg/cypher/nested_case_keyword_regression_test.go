@@ -55,7 +55,7 @@ func TestCaseClosureBalanceLexicalBoundaries(t *testing.T) {
 			if tc.name == "property_prefix" {
 				candidate = strings.LastIndex(tc.text, "END")
 			}
-			require.Equal(t, tc.required, casePrefixEndRequired(tc.text, candidate))
+			require.Equal(t, tc.required, casePrefixEndRequired(originalBraceView(tc.text), candidate))
 		})
 	}
 }

@@ -11,13 +11,14 @@ import (
 type preparedPatternRowKey struct{}
 
 type patternRowMap struct {
-	text       string
+	view       braceView
 	keys       []string
 	parameters []string
 }
 
 type patternRowPlan struct {
-	pattern string
+	view    braceView
+	pattern braceView
 	maps    []patternRowMap
 	err     error
 }
@@ -29,11 +30,11 @@ var patternRowPlans = newBoundedCache[string, *patternRowPlan](512, boundedCache
 // The shared element/map readers compile syntax once. The existing materializer
 // evaluates each map once per row; native parameters carry the values through
 // physical retries and MERGE lookup/create without another producer call.
-func (e *StorageExecutor) bindPatternProperties(ctx context.Context, pattern string, row map[string]interface{}) (context.Context, string, error) {
-	if prepared, _ := ctx.Value(preparedPatternRowKey{}).(string); prepared == pattern {
+func (e *StorageExecutor) bindPatternProperties(ctx context.Context, pattern braceView, row map[string]interface{}) (context.Context, braceView, error) {
+	if prepared, _ := ctx.Value(preparedPatternRowKey{}).(*cyphertext.Source); prepared == pattern.source {
 		return ctx, pattern, nil
 	}
-	if !strings.Contains(pattern, "{") || patternMapsAreConstant(pattern) {
+	if _, found := pattern.patternProperty(blankRelationshipExpressions(pattern.text())); !found || patternMapsAreConstant(pattern) {
 		return ctx, pattern, nil
 	}
 	plan := e.patternRowPlanFor(pattern, getParamsFromContext(ctx))
@@ -48,11 +49,21 @@ func (e *StorageExecutor) bindPatternProperties(ctx context.Context, pattern str
 
 // patternRowPlanFor owns cached syntax and caller parameter reservation.
 // Collision-specific plans are compiled afresh and never enter the syntax cache.
-func (e *StorageExecutor) patternRowPlanFor(pattern string, reserved map[string]interface{}) *patternRowPlan {
-	plan, cached := patternRowPlans.get(pattern)
+func (e *StorageExecutor) patternRowPlanFor(pattern braceView, reserved map[string]interface{}) *patternRowPlan {
+	plan, cached := patternRowPlans.get(pattern.text())
 	if !cached {
 		plan = e.compilePatternRow(pattern, nil)
-		patternRowPlans.put(pattern, plan)
+		patternRowPlans.put(pattern.text(), plan)
+	}
+	if cached {
+		copy := *plan
+		copy.view = pattern
+		copy.pattern = braceView{syntax: pattern.syntax, source: plan.pattern.source.Rebase(plan.view.source, pattern.source)}
+		copy.maps = append([]patternRowMap(nil), plan.maps...)
+		for i := range copy.maps {
+			copy.maps[i].view = braceView{syntax: pattern.syntax, source: copy.maps[i].view.source.Rebase(plan.view.source, pattern.source)}
+		}
+		plan = &copy
 	}
 	// A caller may use our usual private names as real query parameters.
 	// Compile the same syntax with those names reserved before reading values.
@@ -74,7 +85,7 @@ func (e *StorageExecutor) patternRowPlanFor(pattern string, reserved map[string]
 
 // bind evaluates each property map once against this row and retains the values
 // as native parameters for physical retries and MERGE lookup/create.
-func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern string, row map[string]interface{}) (context.Context, string, error) {
+func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern braceView, row map[string]interface{}) (context.Context, braceView, error) {
 	outer := getParamsFromContext(ctx)
 	rowCtx := ctx
 	if row != nil {
@@ -89,7 +100,7 @@ func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern s
 		params[name] = value
 	}
 	for _, properties := range p.maps {
-		values, err := e.patternRowPropertyValues(rowCtx, properties.text)
+		values, err := e.patternRowPropertyValues(rowCtx, properties.view)
 		if err != nil {
 			return ctx, pattern, err
 		}
@@ -98,39 +109,35 @@ func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern s
 		}
 	}
 	rowCtx = withParams(rowCtx, params)
-	return context.WithValue(rowCtx, preparedPatternRowKey{}, p.pattern), p.pattern, nil
+	rowCtx = withBraceView(rowCtx, p.pattern)
+	return context.WithValue(rowCtx, preparedPatternRowKey{}, p.pattern.source), p.pattern, nil
 }
 
 // compilePatternRow uses the canonical element walk and property-key reader.
 // No property expression, bound row or runtime parameter value is evaluated.
-func (e *StorageExecutor) compilePatternRow(pattern string, reserved map[string]interface{}) *patternRowPlan {
-	plan := &patternRowPlan{pattern: pattern}
+func (e *StorageExecutor) compilePatternRow(view braceView, reserved map[string]interface{}) *patternRowPlan {
+	pattern := view.text()
+	plan := &patternRowPlan{view: view, pattern: view}
 	var edits []labelRewriteEdit
 	nextBinding := 0
-	walk := labelExpressionRewriter{query: pattern}
+	walk := labelExpressionRewriter{query: pattern, braceView: view}
 	walk.visitElement = func(open, close int, _ bool) error {
-		_, propertyText := splitNodePatternProperties("(" + pattern[open+1:close] + ")")
-		if propertyText == "" {
+		element := view.window(open+1, close)
+		span, found := element.patternProperty(blankRelationshipExpressions(element.text()))
+		if !found {
 			return nil
 		}
-		propertyStart := close - len(propertyText)
-		propertyEnd := cyphertext.FindMatchingDelimiter(pattern[:close], propertyStart, '{', '}', cyphertext.OpeningDelimiter)
-		if propertyEnd < propertyStart {
-			return nil // The existing syntax validator owns malformed maps.
-		}
-		propertyText = pattern[propertyStart : propertyEnd+1]
-		keys, err := e.patternRowPropertyKeys(propertyText)
+		propertyView := element.window(span.Start, span.End)
+		keys, err := e.patternRowPropertyKeys(propertyView)
 		if err != nil {
 			return err
 		}
-		properties := patternRowMap{text: propertyText}
+		properties := patternRowMap{view: propertyView}
 		for key := range keys {
 			properties.keys = append(properties.keys, key)
 		}
 		sort.Strings(properties.keys)
-		var text strings.Builder
-		text.WriteByte('{')
-		separator := ""
+		parameters := make(map[string]string, len(properties.keys))
 		for _, key := range properties.keys {
 			name := ""
 			for {
@@ -141,30 +148,36 @@ func (e *StorageExecutor) compilePatternRow(pattern string, reserved map[string]
 				}
 			}
 			properties.parameters = append(properties.parameters, name)
-			text.WriteString(separator)
-			text.WriteString(cyphertext.PrintIdentifier(key, isSimpleCypherName, cyphertext.RawSource))
-			text.WriteString(":$")
-			text.WriteString(name)
-			separator = ","
+			parameters[key] = name
 		}
-		text.WriteByte('}')
+		entries, valid := propertyView.keyedEntries()
+		if !valid {
+			return propertyView.admission()
+		}
+		// Preserve every original separator and key. Only the values become
+		// parameter references; entry projection remains the Source owner's
+		// endpoint projection, with no map text or entry grammar rebuilt.
+		for _, entry := range entries {
+			base := open + 1 + span.Start
+			edits = append(edits, labelRewriteEdit{start: base + entry.record.Value.Start, end: base + entry.record.Value.End, text: "$" + parameters[entry.key()]})
+		}
 		plan.maps = append(plan.maps, properties)
-		edits = append(edits, labelRewriteEdit{start: propertyStart, end: propertyEnd + 1, text: text.String()})
 		return nil
 	}
-	var unusedPredicates []string
+	var unusedPredicates []rewritePredicate
 	plan.err = walk.patternElements(0, len(pattern), labelPatternCreate, &unusedPredicates)
 	if plan.err == nil {
-		plan.pattern, _ = applyLabelRewriteEdits(pattern, edits, false)
+		_, rewrite := applyLabelRewriteEdits(pattern, edits, false)
+		plan.pattern = view.rewrite(rewrite)
 	}
 	return plan
 }
 
-func (e *StorageExecutor) patternRowPropertyKeys(text string) (map[string]interface{}, error) {
+func (e *StorageExecutor) patternRowPropertyKeys(text braceView) (map[string]interface{}, error) {
 	return patternPropertyKeys(context.Background(), text, true)
 }
 
-func (e *StorageExecutor) patternRowPropertyValues(ctx context.Context, text string) (map[string]interface{}, error) {
+func (e *StorageExecutor) patternRowPropertyValues(ctx context.Context, text braceView) (map[string]interface{}, error) {
 	return e.parsePropertyMap(ctx, text, true)
 }
 
@@ -173,12 +186,12 @@ func pipelineBoundMergeEndpoints(template *pipelineMergeTemplate, row pipelineRo
 	if template.shape == nil {
 		return false
 	}
-	_, start := pipelineBoundNode(row, template.shape.startContent)
-	_, end := pipelineBoundNode(row, template.shape.endContent)
+	_, start := pipelineBoundNode(row, template.shape.startContent.text())
+	_, end := pipelineBoundNode(row, template.shape.endContent.text())
 	return start && end
 }
 
-func (e *StorageExecutor) preparePatternNodeProperties(ctx context.Context, pattern string) (context.Context, map[string]interface{}, error) {
+func (e *StorageExecutor) preparePatternNodeProperties(ctx context.Context, pattern braceView) (context.Context, map[string]interface{}, error) {
 	rowCtx, prepared, err := e.bindPatternProperties(ctx, pattern, nil)
 	if err != nil {
 		return ctx, nil, err

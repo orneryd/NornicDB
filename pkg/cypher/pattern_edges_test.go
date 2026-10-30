@@ -59,22 +59,22 @@ func TestPatternEdges(t *testing.T) {
 	rewritten, _, err := desugarLabelExpressions("MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
 	require.NoError(t, err)
 	body := strings.TrimSuffix(strings.TrimPrefix(rewritten, "MATCH "), " RETURN p")
-	m, ok, err := exec.parseShortestPathMatch(ctx, body)
+	m, ok, err := exec.parseShortestPathMatch(ctx, originalBraceView(body))
 	require.NoError(t, err, body)
 	require.True(t, ok, body)
 	for _, row := range []pipelineRow{{"a": node(1), "b": node(5)}, {"a": node(1), "b": node(1)}} {
 		_, err = exec.pipelineApplyShortestPathMatch(cancelled, []pipelineRow{row}, m, false)
 		require.ErrorIs(t, err, context.Canceled)
 	}
-	quantified, ok, err := parseQuantifiedPathMatch("(a:SP {id: 1})((x)-->(y))+(b)")
+	quantified, ok, err := parseQuantifiedPathMatch(originalBraceView("(a:SP {id: 1})((x)-->(y))+(b)"))
 	require.NoError(t, err)
 	require.True(t, ok)
 	_, err = exec.pipelineApplyQuantifiedPathMatch(cancelled, []pipelineRow{{}}, quantified)
 	require.ErrorIs(t, err, context.Canceled)
 
 	for _, text := range []string{"(a WHERE a.s = '[*]')-->(b)", "(a)-[r WHERE r.w * 2 > 1]->(b)", "(a)-[r {w: 2}]->(b)"} {
-		require.False(t, hasVariableLengthRelationship(text, 0, len(text)), text)
-		require.False(t, hasUnboundedRepetition(text, 0, len(text)), text)
+		require.False(t, hasVariableLengthRelationship(originalBraceView(text), 0, len(text)), text)
+		require.False(t, hasUnboundedRepetition(originalBraceView(text), 0, len(text)), text)
 	}
 	for text, unbounded := range map[string]bool{
 		"(a)-[r*1..2 {w: 1}]->(b)":       false,
@@ -84,13 +84,13 @@ func TestPatternEdges(t *testing.T) {
 		"(a)((x)-->(y)){1,3}(b)":         false,
 		"(a)((x)-->(y))+(b)":             true,
 	} {
-		require.Equal(t, unbounded, hasUnboundedRepetition(text, 0, len(text)), text)
+		require.Equal(t, unbounded, hasUnboundedRepetition(originalBraceView(text), 0, len(text)), text)
 	}
 	// A pattern the selected path search can't read fails the step.
-	_, _, err = exec.parseSelectedPathMatch("(a) (b)", "p", nil, &pathSelector{}, "", nil)
+	_, _, err = exec.parseSelectedPathMatch(originalBraceView("(a) (b)"), "p", nil, &pathSelector{}, originalBraceView(""), nil)
 	require.Error(t, err)
-	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
+	err = exec.matchQuantifiedChain(ctx, originalBraceView("(a) (b)"), "a", originalBraceView(""), quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
 	require.Error(t, err)
-	require.False(t, parenthesisedPathAt("((a)", 0, 3))
-	require.False(t, parenthesisedPathAt("(  )", 0, 3))
+	require.False(t, parenthesisedPathAt(originalBraceView("((a)"), 0, 3))
+	require.False(t, parenthesisedPathAt(originalBraceView("(  )"), 0, 3))
 }

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -10,18 +11,25 @@ import (
 // pipelineClauseEffects is the chain planner's entire operator contract.
 // Its observer consumes the canonical syntax product alongside scope binding.
 type pipelineClauseEffects struct {
-	reads, writes    stretchTokens
-	chainWrites      stretchTokens
-	batch            *transactionBatchSpec
-	barrier, expands bool
-	materializes     bool
-	opaqueReads      bool
-	predicates       []string
-	skip, limit      string
-	pagination       []paginationExpression
+	reads, writes       stretchTokens
+	chainWrites         stretchTokens
+	batch               *transactionBatchSpec
+	barrier, expands    bool
+	materializes        bool
+	opaqueReads         bool
+	predicates          []braceView
+	skip, limit         string
+	skipView, limitView braceView
+	pagination          []paginationExpression
 }
 
-var pipelineClauseEffectCache = newBoundedCache[string, pipelineClauseEffects](4096, boundedCacheStringShardIndex)
+type clauseEffectSourceKey struct {
+	source   *cyphertext.Source
+	entry    cypherantlr.SyntaxEntry
+	cypher25 bool
+}
+
+var pipelineClauseEffectCache = newBoundedCache[clauseEffectSourceKey, pipelineClauseEffects](4096, func(key clauseEffectSourceKey) int { return boundedCacheStringShardIndex(key.source.Text) })
 
 func pipelineClauseEffectsFor(ctx context.Context, text string) (pipelineClauseEffects, error) {
 	return pipelineSyntaxEffects(ctx, text, false)
@@ -35,10 +43,12 @@ func pipelineStatementEffectsFor(ctx context.Context, text string) (pipelineClau
 // statement compiler composes its own binding observer with this same observer;
 // an effect-cache hit can never stand in for scope completeness.
 func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pipelineClauseEffects, error) {
-	entry, key := cypherantlr.ClauseEntry, text
+	view := statementBraceView(ctx, text)
+	entry := cypherantlr.ClauseEntry
 	if statement {
-		entry, key = cypherantlr.StatementEntry, "\x00"+text
+		entry = cypherantlr.StatementEntry
 	}
+	key := clauseEffectSourceKey{view.source, entry, cypherVersionFromContext(ctx) == "25"}
 	if effects, found := pipelineClauseEffectCache.get(key); found {
 		return effects, ctx.Err()
 	}
@@ -47,7 +57,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 		return pipelineClauseEffects{}, err
 	}
 	var effects pipelineClauseEffects
-	syntax.Walk(pipelineEffectVisitor(&effects))
+	syntax.Walk(pipelineEffectVisitor(view, &effects))
 	if err := ctx.Err(); err != nil {
 		return effects, err
 	}
@@ -57,10 +67,10 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 
 // pipelineEffectVisitor preserves graph/stream effects without owning lexical
 // structure, variable identities, or a second traversal of query text.
-func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVisitor {
+func pipelineEffectVisitor(view braceView, effects *pipelineClauseEffects) cypherantlr.SyntaxVisitor {
 	depth := 0
 	reading, writing, creating := true, false, false
-	recordPattern := func(pattern string) {
+	recordPattern := func(pattern braceView) {
 		if reading {
 			addStretchPattern(pattern, &effects.reads, false)
 		}
@@ -110,7 +120,8 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.expands = true
 			}
 		case cypherantlr.CypherParserRULE_nodePattern:
-			recordPattern(node.Code())
+			start, end := node.Span()
+			recordPattern(view.window(start, end))
 			if creating && !node.ChildRule(cypherantlr.CypherParserRULE_nodeLabels).Valid() && !node.ChildRule(cypherantlr.CypherParserRULE_properties).Valid() {
 				if start, ok := node.Parent(); ok && start.Rule() == cypherantlr.CypherParserRULE_patternElemStart {
 					if pattern, ok := start.Parent(); ok && pattern.Rule() == cypherantlr.CypherParserRULE_patternElem && !pattern.ChildRule(cypherantlr.CypherParserRULE_patternElemPart).Valid() {
@@ -120,7 +131,8 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				}
 			}
 		case cypherantlr.CypherParserRULE_relationshipPattern:
-			recordPattern(node.Code())
+			start, end := node.Span()
+			recordPattern(view.window(start, end))
 			if !node.ChildRule(cypherantlr.CypherParserRULE_relationDetail).Valid() {
 				if reading {
 					effects.reads.anyRelationship = true
@@ -184,9 +196,9 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 			reading, writing, creating = false, false, false
 			var changed stretchTokens
 			if node.Rule() == cypherantlr.CypherParserRULE_setSt {
-				addStretchSetWrites(pipelineClauseBody(node.Code(), "SET"), &changed)
+				addStretchSetWrites(view.code(node).clauseBody("SET"), &changed)
 			} else {
-				addStretchRemoveWrites(pipelineClauseBody(node.Code(), "REMOVE"), &changed)
+				addStretchRemoveWrites(view.code(node).clauseBody("REMOVE"), &changed)
 			}
 			effects.writes.include(&changed)
 			effects.chainWrites.include(&changed)
@@ -223,7 +235,7 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.barrier = true
 			}
 		case cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
-			value := node.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			value := view.code(node.ChildRule(cypherantlr.CypherParserRULE_expression))
 			keyword := "SKIP"
 			if node.Rule() == cypherantlr.CypherParserRULE_limitSt {
 				keyword = "LIMIT"
@@ -231,14 +243,14 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 			effects.pagination = append(effects.pagination, paginationExpression{keyword: keyword, value: value})
 			if depth == 0 {
 				if keyword == "SKIP" {
-					effects.skip = value
+					effects.skip, effects.skipView = value.text(), value
 				} else {
-					effects.limit = value
+					effects.limit, effects.limitView = value.text(), value
 				}
 			}
 		case cypherantlr.CypherParserRULE_where, cypherantlr.CypherParserRULE_filterSt:
 			if depth == 0 {
-				effects.predicates = append(effects.predicates, node.ChildRule(cypherantlr.CypherParserRULE_expression).Code())
+				effects.predicates = append(effects.predicates, view.code(node.ChildRule(cypherantlr.CypherParserRULE_expression)))
 			}
 		case cypherantlr.CypherParserRULE_countAll:
 			if depth == 0 {
@@ -254,7 +266,7 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 					effects.reads.anyKey = true
 				}
 			}
-			if depth == 0 && pipelineExpressionContainsAggregate(node.Code()) {
+			if depth == 0 && pipelineExpressionContainsAggregate(view.code(node)) {
 				effects.materializes = true
 				effects.barrier = true
 			}
@@ -266,15 +278,16 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 // simplifiedPipelinePredicate delegates boolean identities to the existing
 // logical owner. Nonlogical leaves remain unknown: a runtime comparison such
 // as 1=0 is not a planning-time empty result on Neo4j.
-func simplifiedPipelinePredicate(expression string) (interface{}, bool, error) {
-	expression = logicalOperandKey(expression)
+func simplifiedPipelinePredicate(view braceView) (interface{}, bool, error) {
+	view = logicalOperandView(view)
+	expression := view.text()
 	if strings.EqualFold(expression, "true") {
 		return true, true, nil
 	}
 	if strings.EqualFold(expression, "false") {
 		return false, true, nil
 	}
-	value, logical, resolved, err := evaluateLogicalExpression(expression, simplifiedPipelinePredicate)
+	value, logical, resolved, err := evaluateLogicalExpression(view, simplifiedPipelinePredicate)
 	return value, logical && resolved, err
 }
 
@@ -289,13 +302,13 @@ func (e *StorageExecutor) pipelineClauseBoundary(ctx context.Context, effects pi
 		maximumRows = -1
 	}
 	if effects.skip != "" {
-		if skip, ok := e.evaluatePipelinePagination(ctx, effects.skip, nil); ok && maximumRows >= 0 {
+		if skip, ok := e.evaluatePipelinePagination(ctx, effects.skipView, nil); ok && maximumRows >= 0 {
 			boundary = boundary || (skip > 0 && skip >= maximumRows)
 			maximumRows = max(0, maximumRows-skip)
 		}
 	}
 	if effects.limit != "" {
-		if limit, ok := e.evaluatePipelinePagination(ctx, effects.limit, nil); ok {
+		if limit, ok := e.evaluatePipelinePagination(ctx, effects.limitView, nil); ok {
 			boundary = boundary || limit == 0
 			if maximumRows < 0 || limit < maximumRows {
 				maximumRows = limit

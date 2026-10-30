@@ -22,13 +22,13 @@ func TestCompoundKeywordTriviaSpans(t *testing.T) {
 	for _, text := range []string{"OPTIONALMATCH", "OPTIONAL/* unfinished", "OPTIONAL // MATCH"} {
 		_, ok := keywordMatchAt(text, 0, "OPTIONAL MATCH", 0, len("OPTIONAL MATCH"))
 		require.False(t, ok, text)
-		require.False(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
-		require.Equal(t, -1, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.False(t, startsWithKeywords(originalBraceView(text), "OPTIONAL", "MATCH"), text)
+		require.Equal(t, -1, findMultiWordKeywordIndex(originalBraceView(text), "OPTIONAL", "MATCH"), text)
 	}
 	for _, text := range []string{"OPTIONAL/*c*/MATCH (n)", "OPTIONAL //c\nMATCH (n)"} {
-		require.True(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
+		require.True(t, startsWithKeywords(originalBraceView(text), "OPTIONAL", "MATCH"), text)
 		require.Equal(t, "(n)", pipelineClauseBody(text, "OPTIONAL MATCH"), text)
-		require.Equal(t, 0, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.Equal(t, 0, findMultiWordKeywordIndex(originalBraceView(text), "OPTIONAL", "MATCH"), text)
 	}
 	const text = "ON/*c*/CREATE //c\nSET n.x=1"
 	allocs := testing.AllocsPerRun(100, func() {
@@ -55,7 +55,7 @@ func TestDistinctTriviaAdmission(t *testing.T) {
 		{"/* unfinished", "/* unfinished", false},
 		{"DISTINCT /* unfinished", "DISTINCT /* unfinished", false},
 	} {
-		got, distinct := cutDistinct(tc.text)
+		got, distinct := cutDistinct(originalBraceView(tc.text))
 		require.Equal(t, tc.want, got, tc.text)
 		require.Equal(t, tc.distinct, distinct, tc.text)
 	}
@@ -64,7 +64,7 @@ func TestDistinctTriviaAdmission(t *testing.T) {
 func TestCompoundKeywordOperatorCasePolicy(t *testing.T) {
 	for _, text := range []string{" x STARTS WITH 'x'", " x STARTS  WITH 'x'", " x STARTS/*c*/WITH 'x'"} {
 		require.True(t, operatorMatchesAt(text, " STARTS  WITH ", 2, false), text)
-		left, right, ok := splitByOperatorWithOptions(text, " STARTS  WITH ", false, true)
+		left, right, ok := splitByOperatorWithOptions(originalBraceView(text), " STARTS  WITH ", false, true)
 		require.True(t, ok, text)
 		require.Equal(t, "x", left, text)
 		require.Equal(t, "'x'", right, text)
@@ -82,7 +82,7 @@ func TestCompoundKeywordOperatorCasePolicy(t *testing.T) {
 		got := operatorMatchesAt(tc.text, " STARTS WITH ", 2, tc.fold)
 		require.Equal(t, tc.want, got, tc.text)
 		if tc.want {
-			left, right, ok := splitByOperatorWithOptions(tc.text, " STARTS WITH ", tc.fold, true)
+			left, right, ok := splitByOperatorWithOptions(originalBraceView(tc.text), " STARTS WITH ", tc.fold, true)
 			require.True(t, ok, tc.text)
 			require.Equal(t, "x", left, tc.text)
 			require.Equal(t, "'x'", right, tc.text)
@@ -101,7 +101,7 @@ func TestPipelineCompoundKeywordBodyBindings(t *testing.T) {
 	} {
 		require.Equal(t, "(n)-[r]->(m)", pipelineClauseBody(tc.clause, tc.keyword), tc.clause)
 		scope := make(map[string]struct{})
-		addPipelinePatternBindings(t.Context(), exec, scope, tc.clause, tc.keyword)
+		addPipelinePatternBindings(t.Context(), exec, scope, pipelineClause{text: tc.clause, view: originalBraceView(tc.clause)}, tc.keyword)
 		require.Equal(t, map[string]struct{}{"n": {}, "r": {}, "m": {}}, scope, tc.clause)
 	}
 }
@@ -118,7 +118,7 @@ func TestCorrelatedOptionalImportTrivia(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"}))
 		outer := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL" + gap + "MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-		value, found, err := exec.resolveCorrelatedImportValue(t.Context(), outer, "seed", "seed-1", "t", map[string]map[string]interface{}{})
+		value, found, err := exec.resolveCorrelatedImportValue(t.Context(), originalBraceView(outer), "seed", "seed-1", "t", map[string]map[string]interface{}{})
 		require.NoError(t, err, gap)
 		require.True(t, found, gap)
 		switch target := value.(type) {

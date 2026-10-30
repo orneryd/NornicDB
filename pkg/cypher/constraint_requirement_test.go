@@ -57,8 +57,21 @@ func TestConstraintRequirementSpellings(t *testing.T) {
 		"CREATE CONSTRAINT x FOR n:L REQUIRE n.a IS UNIQUE",
 		"CREATE CONSTRAINT x FOR [r:R] REQUIRE r.a IS UNIQUE",
 	} {
-		rewritten, err := exec.canonicalConstraintRequirement(statement)
+		rewritten, err := exec.canonicalConstraintRequirement(originalBraceView(statement))
 		require.NoError(t, err, statement)
-		require.Equal(t, statement, rewritten, statement)
+		require.Equal(t, statement, rewritten.text(), statement)
 	}
+}
+
+// Author: #1663 lane. Repeated text in a name must not select a different
+// occurrence when the statement producer rewrites its actual requirement.
+func TestConstraintRequirementRetainsItsOriginalOccurrence(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "constraint_requirement_origin"))
+	const name = "n.k IS NODE UNIQUE"
+	const statement = "CREATE CONSTRAINT `" + name + "` FOR (n:OccurrenceLabel) REQUIRE n.k IS NODE UNIQUE"
+	_, err := exec.Execute(t.Context(), statement, nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(t.Context(), "SHOW CONSTRAINTS YIELD name, type WHERE name = $name RETURN name, type", map[string]interface{}{"name": name})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{name, "UNIQUENESS"}}, result.Rows)
 }

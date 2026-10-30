@@ -29,7 +29,8 @@ func groupByVariable(kind string, index int) string {
 }
 
 // groupByEdits rewrites each RETURN / WITH … GROUP BY ….
-func groupByEdits(query string) ([]labelRewriteEdit, error) {
+func groupByEdits(view braceView) ([]labelRewriteEdit, error) {
+	query := view.text()
 	if indexASCIIFold(query, "group") < 0 {
 		return nil, nil
 	}
@@ -63,7 +64,7 @@ func groupByEdits(query string) ([]labelRewriteEdit, error) {
 		if closing := enclosingClose(query, word.start); closing >= 0 && closing < keysEnd {
 			keysEnd = closing
 		}
-		edit, err := groupByEdit(query, words[projection], word.start, keysStart, keysEnd)
+		edit, err := groupByEdit(view, words[projection], word.start, keysStart, keysEnd)
 		if err != nil {
 			return nil, err
 		}
@@ -125,16 +126,16 @@ func projectionWords(query string) []projectionWord {
 func enclosingClose(query string, at int) int {
 	depth := 0
 	for i := at; i < len(query); i++ {
-		switch c := query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := query[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
 			if depth == 0 {
 				return i
 			}
-			depth--
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
 		}
 	}
 	return -1
@@ -149,17 +150,19 @@ type groupByItem struct {
 
 // groupByEdit rewrites the projection whose keyword is clause, with GROUP
 // at groupStart and its keys at query[keysStart:keysEnd].
-func groupByEdit(query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+func groupByEdit(view braceView, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+	query := view.text()
 	itemsStart := skipASCIISpaces(query, clause.end, groupStart)
 	distinct := matchKeywordAt(query[:groupStart], itemsStart, "DISTINCT")
 	if distinct {
 		itemsStart += len("DISTINCT")
 	}
 	var items []groupByItem
-	for _, text := range splitTopLevelComma(query[itemsStart:groupStart]) {
-		itemSource := readProjectionItemSource(context.Background(), text, projectionBeforeRewrite)
+	itemsView := view.window(itemsStart, groupStart)
+	for _, item := range itemsView.commaViews() {
+		itemSource := readProjectionItemSource(context.Background(), item, projectionBeforeRewrite)
 		expression, alias := itemSource.expression, itemSource.alias
-		items = append(items, groupByItem{expression: expression, alias: alias, aggregates: containsAggregateFunc(expression)})
+		items = append(items, groupByItem{expression: expression, alias: alias, aggregates: containsAggregateFunc(itemSource.view)})
 	}
 	var keys []string
 	keysText := strings.TrimSpace(query[keysStart:keysEnd])

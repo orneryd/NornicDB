@@ -63,12 +63,12 @@ func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	spec := ProcedureSpec{Name: "typed", MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}}
 	for _, query := range []string{"CALL typed()", "CALL typed(count(1))", "CALL typed(missing)", "CALL typed(1 / 0)"} {
 		t.Run(query, func(t *testing.T) {
-			arguments, err := exec.extractBoundProcedureInvocationArguments(context.Background(), spec, query)
+			arguments, err := exec.extractBoundProcedureInvocationArguments(context.Background(), spec, originalBraceView(query))
 			require.Error(t, err)
 			require.Nil(t, arguments)
 		})
 	}
-	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, "CALL typed")
+	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, originalBraceView("CALL typed"))
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(7)}, arguments)
 	_, err = exec.callVectorQueryArguments(context.Background(), nil, false)

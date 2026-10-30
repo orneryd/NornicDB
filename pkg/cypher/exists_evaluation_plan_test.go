@@ -52,7 +52,7 @@ func TestExistsSubqueryEvaluationOwnerConcurrentPlan(t *testing.T) {
 			defer readers.Done()
 			shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, "MATCH (s:Source {id:key})", func(text string) boundNodeShape {
 				parses.Add(1)
-				return parseBoundNodeShape(t.Context(), text)
+				return parseBoundNodeShape(t.Context(), originalBraceView(text))
 			})
 			if !shape.ok || shape.variable != "s" {
 				t.Error("reader observed an incomplete node lookup plan")

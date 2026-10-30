@@ -18,10 +18,10 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -31,28 +31,29 @@ import (
 // --, <-->, which parseOptionalClauseEndpoints normalizes to -[]->). Used to
 // route a clause to the seeded single-hop fast path (2 groups, 1
 // relationship) or the general path.
-func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
+func scanOptionalPatternShape(view braceView) (nodeGroups, brackets int) {
+	pattern := view.text()
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
-		switch cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
-		case '/':
+		case (cypherLexicalByte(c)) == '/':
 			if end := queryCommentEnd(pattern, i); end >= 0 {
 				i = end - 1
 			}
-		case '{':
-			if end := cyphertext.FindMatchingDelimiter(pattern, i, '{', '}', cyphertext.OpeningDelimiter); end > i {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if end, found := view.close(i); found && end > i {
 				i = end
 			}
-		case '(':
+		case (cypherLexicalByte(c)) == '(':
 			nodeGroups++
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			brackets++
 			if end := cyphertext.FindMatchingDelimiter(pattern, i, '[', ']', cyphertext.OpeningDelimiter); end > i {
 				i = end
 			}
-		case '-':
+		case (cypherLexicalByte(c)) == '-':
 			if i+1 < len(pattern) && pattern[i+1] == '-' {
 				brackets++
 				i++
@@ -64,16 +65,17 @@ func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
 
 // firstParenGroup returns the first parenthesized node group of pattern,
 // including the parentheses, or "" when none exists.
-func firstParenGroup(pattern string) string {
+func firstParenGroup(view braceView) braceView {
+	pattern := view.text()
 	open := strings.Index(pattern, "(")
 	if open < 0 {
-		return ""
+		return view.window(0, 0)
 	}
 	closeIdx := strings.Index(pattern[open:], ")")
 	if closeIdx <= 0 {
-		return ""
+		return view.window(0, 0)
 	}
-	return pattern[open : open+closeIdx+1]
+	return view.window(open, open+closeIdx+1)
 }
 
 // traversalAnonVar names the synthetic variable injected into an anonymous
@@ -84,15 +86,15 @@ const traversalAnonVar = "__nornic_opt_anon"
 // ensureLeadingNodeNamed injects a synthetic variable into the pattern's first
 // node group when the pattern has no named variables at all, so the pattern
 // can be executed and its match multiplicity preserved.
-func ensureLeadingNodeNamed(pattern string) string {
+func ensureLeadingNodeNamed(pattern braceView) braceView {
 	if len(extractNodeVariables(matchPatternStructure(pattern))) > 0 || len(extractRelationshipVariables(matchPatternStructure(pattern))) > 0 {
 		return pattern
 	}
-	open := strings.Index(pattern, "(")
+	open := strings.Index(pattern.text(), "(")
 	if open < 0 {
 		return pattern
 	}
-	return pattern[:open+1] + traversalAnonVar + pattern[open+1:]
+	return pattern.replace(open+1, open+1, traversalAnonVar)
 }
 
 // extendTraversalRowMulti returns a copy of row with additional node,
@@ -133,7 +135,7 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 // no-op). An unbound variable is an independent node scan: each row joins
 // with every matching node, or carries a null binding when nothing matches.
 func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
-	if firstParenGroup(clause.pattern) == "" {
+	if firstParenGroup(clause.pattern).empty() {
 		return rows, nil
 	}
 	return e.applyGeneralOptionalClause(ctx, rows, clause)
@@ -171,7 +173,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	pattern := ensureLeadingNodeNamed(clause.pattern)
 	nodeVars := extractNodeVariables(matchPatternStructure(pattern))
 	relVars := extractRelationshipVariables(matchPatternStructure(pattern))
-	pathVar := extractPathAssignmentVariable(pattern)
+	pathVar := extractPathAssignmentVariable(pattern.text())
 	allVars := append(append([]string{}, nodeVars...), relVars...)
 	if pathVar != "" {
 		allVars = appendUniquePipelineBinding(allVars, pathVar)
@@ -179,9 +181,10 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	if len(rows) == 0 || len(allVars) == 0 {
 		return rows, nil
 	}
-	matchClause := "MATCH " + pattern
-	if strings.TrimSpace(clause.where) != "" {
-		matchClause += " WHERE " + clause.where
+	matchClause := pattern.wrap("MATCH ", "")
+	if !clause.where.empty() {
+		base := braceView{syntax: pattern.syntax, source: pattern.source.OriginalView()}
+		matchClause = base.assembleCode([]braceView{matchClause, clause.where.wrap(" WHERE ", "")}, "")
 	}
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
@@ -198,7 +201,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				return nil, err
 			}
 			if !handled {
-				return nil, unsupportedOptionalMatchShapeError(matchClause)
+				return nil, unsupportedOptionalMatchShapeError(matchClause.text())
 			}
 		}
 		for _, binding := range matched {

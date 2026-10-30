@@ -18,11 +18,11 @@ func TestRebaseListMaterializationPreservesBindingsAndFailures(t *testing.T) {
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	nodes := map[string]*storage.Node{"n": {ID: "n", Properties: map[string]interface{}{"v": int64(7)}}}
 	ctx := withExpressionFailureSlot(context.Background())
-	value := e.evaluateExpressionWithContextFull(ctx, "[n.v, [1, 2][1]]", nodes, nil, nil, nil, nil, 0)
+	value := e.evaluateExpressionWithContextFull(ctx, originalBraceView("[n.v, [1, 2][1]]"), nodes, nil, nil, nil, nil, 0)
 	require.NoError(t, getExpressionFailure(ctx))
 	require.Equal(t, []interface{}{int64(7), int64(2)}, value)
 
 	ctx = withExpressionFailureSlot(context.Background())
-	e.evaluateExpressionWithContextFull(ctx, "[rebase.failed()]", nodes, nil, nil, nil, nil, 0)
+	e.evaluateExpressionWithContextFull(ctx, originalBraceView("[rebase.failed()]"), nodes, nil, nil, nil, nil, 0)
 	require.ErrorContains(t, getExpressionFailure(ctx), "producer failed")
 }

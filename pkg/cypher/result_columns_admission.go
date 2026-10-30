@@ -30,7 +30,7 @@ func (admission boundScopeAdmission) verifyColumns(actual []string) error {
 func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string) (boundScopeAdmission, error) {
 	// Extensions have a real command continuation with its own syntax and
 	// result contract. The graph grammar must not reject them before routing.
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isMetadataCommand(source, metadataCatalogExecution) {
+	if isNornicExtensionStatement(statementBraceView(ctx, source)) || isSchemaCommandStatement(source) || isMetadataCommand(statementBraceView(ctx, source), metadataCatalogExecution) {
 		return boundScopeAdmission{command: true}, nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
@@ -74,7 +74,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		return boundScopeAdmission{graph: true, columns: program.statement.Columns, program: program.bound}, nil
 	}
 	admission := boundScopeAdmission{}
-	program := e.statementProjectionProgram(ctx, source, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema)
+	program := e.statementProjectionProgram(ctx, statementBraceView(ctx, source), resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema)
 	if err := ctx.Err(); err != nil {
 		return boundScopeAdmission{}, err
 	}

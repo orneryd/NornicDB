@@ -50,8 +50,8 @@ func TestEvaluatorReadsAPOCArguments(t *testing.T) {
 		"apoc.map.fromPairs([['a', 1]])":   map[string]interface{}{"a": int64(1)},
 		"apoc.convert.fromJsonList('[1.5, [2], {\"a\": 3}, 1e2, 99999999999999999999]')": []interface{}{1.5, []interface{}{int64(2)}, map[string]interface{}{"a": int64(3)}, float64(100), float64(1e20)},
 	} {
-		require.Equal(t, want, e.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
+		require.Equal(t, want, e.evaluateExpressionWithContext(ctx, originalBraceView(expression), nil, nil), expression)
 	}
-	require.NotNil(t, e.evaluateExpressionWithContext(ctx, "duration('P1D')", nil, nil))
-	require.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap('[1]')", nil, nil))
+	require.NotNil(t, e.evaluateExpressionWithContext(ctx, expressionBraceView("duration('P1D')"), nil, nil))
+	require.Nil(t, e.evaluateExpressionWithContext(ctx, expressionBraceView("apoc.convert.fromJsonMap('[1]')"), nil, nil))
 }

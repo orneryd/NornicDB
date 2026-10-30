@@ -77,7 +77,7 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 	require.False(t, parameterMayBeFunctionArgument("RETURN $a + $b"))
 	// Only a bare parameter is typed here: $m.k is a property access, and a
 	// parameter the statement doesn't pass has no type.
-	require.NoError(t, validateStaticFunctionParameters("RETURN toUpper($m.k), toUpper($missing), toUpper($s)", map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
+	require.NoError(t, validateStaticFunctionParameters(originalBraceView("RETURN toUpper($m.k), toUpper($missing), toUpper($s)"), map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
 
 	value := func(query string, params map[string]interface{}) interface{} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query, params)
@@ -182,16 +182,16 @@ func date(t *testing.T, text string) CypherDate {
 func TestReduceFormAndPatternHelpers(t *testing.T) {
 	for _, arguments := range []string{"a = 0", "a, x IN l | x", "a = 0, 1 IN l | x", "a = 0, x l | x", "a = 0, x IN l x",
 		"a = , x IN l | x", "a = 0, x IN l | ", "= 0, x IN l | x"} {
-		_, ok := parseReduceForm("reduce", arguments)
+		_, ok := parseReduceForm("reduce", originalBraceView(arguments))
 		require.False(t, ok, arguments)
 	}
 	// A quoted empty symbolic name is valid; success is independent of name length.
-	empty, valid := parseReduceForm("reduce", "`` = 0, x IN l | x")
+	empty, valid := parseReduceForm("reduce", expressionBraceView("`` = 0, x IN l | x"))
 	require.True(t, valid)
 	require.Empty(t, empty.accumulator)
-	_, ok := parseReduceForm("allReduce", "a = 0, x IN l | x, ")
+	_, ok := parseReduceForm("allReduce", expressionBraceView("a = 0, x IN l | x, "))
 	require.False(t, ok)
-	form, ok := parseReduceForm("allReduce", "a = 0, x IN l | a + x, a < 3")
+	form, ok := parseReduceForm("allReduce", expressionBraceView("a = 0, x IN l | a + x, a < 3"))
 	require.True(t, ok)
 	failing := errors.New("failed")
 	identity := func(accumulator, item interface{}) (interface{}, error) { return item, nil }
@@ -220,7 +220,7 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 
 	require.Empty(t, expressionLocalBindings("reduce + 1"))
 	require.Empty(t, expressionLocalBindings("reduce(s = 0"))
-	require.NoError(t, checkReduceForm("allReduce", "allReduce(a", 9, nil))
+	require.NoError(t, checkReduceForm("allReduce", expressionBraceView("allReduce(a"), 9, nil))
 	rewritten, rewrite := canonicalizeFunctionAliases("WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)")
 	require.Nil(t, rewrite)
 	require.Equal(t, "WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)", rewritten)

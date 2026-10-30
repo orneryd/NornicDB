@@ -33,7 +33,7 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 		clauses, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		original := clauses[0].text
-		plan, err := exec.buildExecutionPlan(query)
+		plan, err := exec.buildExecutionPlan(originalBraceView(query))
 		require.NoError(t, err)
 		before := len(calls)
 		for i := 0; i < 2; i++ {
@@ -46,10 +46,10 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 		after, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		require.Equal(t, original, after[0].text, "cached clauses must remain the client's clauses")
-		afterPlan, err := exec.buildExecutionPlan(query)
+		afterPlan, err := exec.buildExecutionPlan(originalBraceView(query))
 		require.NoError(t, err)
 		require.Equal(t, plan, afterPlan, "header facts must not alter planning")
-		require.NoError(t, exec.validateSyntax(ctx, query, false, syntaxStatement))
+		require.NoError(t, exec.validateSyntax(ctx, originalBraceView(query), false, syntaxStatement))
 		require.NoError(t, exec.validateSemanticScopes(ctx, query))
 		for _, prefix := range []string{"", "PROFILE "} {
 			result, err := exec.Execute(ctx, prefix+query, nil)

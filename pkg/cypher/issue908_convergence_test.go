@@ -42,15 +42,15 @@ func TestIssue907MatchProductDependentInlineProperties(t *testing.T) {
 		})
 	}
 	failureCtx := withExpressionFailureSlot(withQueryParams(ctx, params))
-	_, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{}}, []string{
+	_, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{}}, originalBraceViews(
 		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: v.original_id})",
-	}, "v.document_id = d.id")
+	), expressionBraceView("v.document_id = d.id"))
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, getExpressionFailure(failureCtx))
-	joined, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, []string{
+	joined, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, originalBraceViews(
 		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: lookup.original_id})",
-	}, "v.document_id = d.id")
+	), expressionBraceView("v.document_id = d.id"))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, joined, 1)
@@ -65,7 +65,7 @@ func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 			node := &storage.Node{ID: "node", Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(0)}}
 			id, err := store.CreateNode(node)
 			require.NoError(t, err)
-			_, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, "SET n.v = 1, age = {v: 2}")
+			_, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, originalBraceView("SET n.v = 1, age = {v: 2}"))
 			require.True(t, handled)
 			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
 			stored, err := store.GetNode(id)
@@ -79,7 +79,7 @@ func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 func TestIssue908NullSetTargetsAreNoops(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	for _, value := range []interface{}{nil, (*storage.Node)(nil), (*storage.Edge)(nil)} {
-		stats, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": value}}, "SET n.v = 1")
+		stats, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": value}}, originalBraceView("SET n.v = 1"))
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Zero(t, stats.PropertiesSet)
@@ -195,13 +195,15 @@ func TestIssue908ProductBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"p"}, result.Columns)
 	require.Len(t, result.Rows, 1)
-	rows, handled, err := exec.pipelineApplyMatchProduct(ctx, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, []string{"(:A)", "(:B)"}, "true")
+	product := originalBraceView("(:A), (:B) WHERE true")
+	rows, handled, err := exec.pipelineApplyMatchProduct(ctx, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, product, []braceView{product.window(0, 4), product.window(6, 10)}, product.window(17, 21))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, rows)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, _, err = exec.pipelineApplyMatchProduct(cancelled, []pipelineRow{{}}, []string{"(a:A)", "(b:B)"}, "")
+	unfiltered := originalBraceView("(a:A), (b:B)")
+	_, _, err = exec.pipelineApplyMatchProduct(cancelled, []pipelineRow{{}}, unfiltered, []braceView{unfiltered.window(0, 5), unfiltered.window(7, 12)}, unfiltered.window(0, 0))
 	require.Error(t, err)
 }
 
@@ -230,27 +232,27 @@ func TestIssue908NodeJoinBindings(t *testing.T) {
 	require.NoError(t, err)
 	nodes, err := exec.storage.GetNodesByLabel("A")
 	require.NoError(t, err)
-	parts := []string{"(a:A)", "(b:B)"}
-	rows, handled, err := exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, "a.v = b.v")
+	parts := originalBraceViews("(a:A)", "(b:B)")
+	rows, handled, err := exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, expressionBraceView("a.v = b.v"))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(7), rows[0]["marker"])
 	for _, value := range []interface{}{nil, int64(1), &storage.Node{Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}}} {
-		rows, handled, err = exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": value}}, parts, "a.v = b.v")
+		rows, handled, err = exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": value}}, parts, expressionBraceView("a.v = b.v"))
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Empty(t, rows)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, handled, err = exec.pipelineApplyNodeJoinProduct(cancelled, []pipelineRow{{}}, parts, "a.v = b.v")
+	_, handled, err = exec.pipelineApplyNodeJoinProduct(cancelled, []pipelineRow{{}}, parts, expressionBraceView("a.v = b.v"))
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 	failing := withExpressionFailureSlot(ctx)
 	failure := newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidType", "Invalid join predicate")
 	recordExpressionFailure(failing, failure)
-	_, handled, err = exec.pipelineApplyNodeJoinProduct(failing, []pipelineRow{{}}, parts, "a.v = b.v")
+	_, handled, err = exec.pipelineApplyNodeJoinProduct(failing, []pipelineRow{{}}, parts, expressionBraceView("a.v = b.v"))
 	require.True(t, handled)
 	require.ErrorIs(t, err, failure)
 }

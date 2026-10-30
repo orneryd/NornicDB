@@ -100,5 +100,5 @@ func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, lab
 // explicit transactions. Passing the properties lets a pattern without labels
 // take the projected scan instead of decoding every node (#857).
 func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
-	return e.collectNodesWithStreaming(ctx, labels, properties, "", "", -1)
+	return e.collectNodesWithStreaming(ctx, labels, properties, "", braceView{}, -1)
 }

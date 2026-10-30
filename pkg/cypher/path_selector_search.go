@@ -68,11 +68,11 @@ type pathPatternItem struct {
 	// variable is the element's variable ("" for none).
 	variable string
 	// text is a node pattern as written, for matching its candidates.
-	text   string
+	text   braceView
 	labels []string
 	// predicates are checked on the element alone: its property map and
 	// the conjuncts of the pattern's predicates that read only it.
-	predicates []string
+	predicates []braceView
 	types      []string
 	// direction is "outgoing", "incoming" or "both".
 	direction string
@@ -83,7 +83,7 @@ type pathPatternItem struct {
 	varLength bool
 	// items are a group's elements; where its own WHERE.
 	items []pathPatternItem
-	where string
+	where braceView
 	// group numbers the pattern's groups (and variable-length
 	// relationships).
 	group int
@@ -92,11 +92,12 @@ type pathPatternItem struct {
 // parsePathPatternItems reads a selected pattern into its elements. ok is
 // false for text that isn't a path pattern: node patterns joined by
 // relationship patterns, quantified groups and juxtapositions.
-func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
+func parsePathPatternItems(pattern braceView, nested bool) ([]pathPatternItem, bool) {
 	return parsePathPatternItemsContext(context.Background(), pattern, nested)
 }
 
-func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
+func parsePathPatternItemsContext(ctx context.Context, view braceView, nested bool) ([]pathPatternItem, bool) {
+	pattern := view.text()
 	var items []pathPatternItem
 	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
 		if ctx.Err() != nil {
@@ -108,24 +109,25 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 			if close < 0 {
 				return nil, false
 			}
-			if parenthesisedPathAt(pattern, at, close) {
-				quantifier, ok := relationshipQuantifierAt(pattern, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern))
+			if parenthesisedPathAt(view, at, close) {
+				quantifier, ok := relationshipQuantifierAt(view, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern))
 				if nested || !ok {
 					return nil, false
 				}
-				inner, where := pattern[at+1:close], ""
+				inner := view.window(at+1, close)
+				where := inner.window(0, 0)
 				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
-					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
+					inner, where = inner.window(0, index), inner.window(index+len("WHERE"), len(inner.text())).trim()
 				}
 				members, ok := parsePathPatternItemsContext(ctx, inner, true)
 				if !ok || len(members) == 0 || members[0].kind != pathPatternNode || members[len(members)-1].kind != pathPatternNode {
 					return nil, false
 				}
-				items = append(items, pathPatternItem{kind: pathPatternGroup, items: members, where: where, min: quantifier.min, max: quantifier.max})
+				items = append(items, pathPatternItem{kind: pathPatternGroup, text: view.window(at, at), items: members, where: where, min: quantifier.min, max: quantifier.max})
 				at = quantifier.end
 				continue
 			}
-			item, ok := parsePathPatternNode(pattern[at : close+1])
+			item, ok := parsePathPatternNode(view.window(at, close+1))
 			if !ok || len(items) > 0 && items[len(items)-1].kind == pathPatternNode {
 				// Only a quantified group juxtaposes with a node pattern.
 				return nil, false
@@ -134,17 +136,15 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 			at = close + 1
 		case c == '-' || c == '<':
 			end := arrowRunEnd(pattern, at, len(pattern))
-			text := pattern[at:end]
 			if end < len(pattern) && pattern[end] == '[' {
 				close := findMatchingBracket(pattern, end)
 				if close < 0 {
 					return nil, false
 				}
 				arrowEnd := arrowRunEnd(pattern, close+1, len(pattern))
-				text = pattern[at:arrowEnd]
 				end = arrowEnd
 			}
-			item, ok := parsePathPatternRelationship(text)
+			item, ok := parsePathPatternRelationship(view.window(at, end))
 			if !ok || len(items) == 0 || items[len(items)-1].kind == pathPatternRelationship {
 				return nil, false
 			}
@@ -161,16 +161,17 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 }
 
 // parsePathPatternNode reads a node pattern (text is its parentheses).
-func parsePathPatternNode(text string) (pathPatternItem, bool) {
-	item := pathPatternItem{kind: pathPatternNode, text: text}
-	inner := text[1 : len(text)-1]
-	if where := elementWhereIndex(text, 0, len(text)-1); where >= 0 {
-		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):len(text)-1]))
-		inner = text[1:where]
-		item.text = "(" + inner + ")"
+func parsePathPatternNode(view braceView) (pathPatternItem, bool) {
+	text := view.text()
+	item := pathPatternItem{kind: pathPatternNode, text: view}
+	inner := view.window(1, len(text)-1)
+	if where := elementWhereIndex(view, 0, len(text)-1); where >= 0 {
+		item.predicates = append(item.predicates, view.window(where+len("WHERE"), len(text)-1).trim())
+		inner = view.window(1, where)
+		item.text = inner.wrap("(", ")")
 	}
-	head, properties := splitNodePatternProperties("(" + inner + ")")
-	if _, _, parameter := splitPatternParameterMap(head); parameter && properties == "" {
+	head, properties := splitNodePatternProperties(inner.wrap("(", ")"))
+	if _, _, parameter := splitPatternParameterMap(head); parameter && properties.empty() {
 		// A MATCH pattern takes no parameter map (the statement rewrite
 		// rejects one).
 		return item, false
@@ -186,7 +187,8 @@ func parsePathPatternNode(text string) (pathPatternItem, bool) {
 
 // parsePathPatternRelationship reads a relationship pattern with its
 // arrows (-->, <-[r:T*1..3]-, …).
-func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
+func parsePathPatternRelationship(view braceView) (pathPatternItem, bool) {
+	text := view.text()
 	item := pathPatternItem{kind: pathPatternRelationship, direction: "both", min: 1, max: 1}
 	incoming, outgoing := strings.HasPrefix(text, "<"), strings.HasSuffix(text, ">")
 	switch {
@@ -203,10 +205,10 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 	if prefix, suffix := text[:open], text[close+1:]; close < 0 || prefix != "-" && prefix != "<-" || suffix != "-" && suffix != "->" {
 		return item, false
 	}
-	inner := text[open+1 : close]
-	if where := elementWhereIndex(text, open, close); where >= 0 {
-		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):close]))
-		inner = text[open+1 : where]
+	inner := view.window(open+1, close)
+	if where := elementWhereIndex(view, open, close); where >= 0 {
+		item.predicates = append(item.predicates, view.window(where+len("WHERE"), close).trim())
+		inner = view.window(open+1, where)
 	}
 	declaration := relationshipDeclarationOf(inner)
 	if declaration.invalidType != "" {
@@ -222,7 +224,7 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 	if strings.HasPrefix(declaration.properties, "$") {
 		return item, false
 	}
-	item.predicates = append(propertyMapPredicates(item.variable, declaration.properties), item.predicates...)
+	item.predicates = append(propertyMapPredicates(item.variable, declaration.propertyView), item.predicates...)
 	if declaration.hasLength {
 		item.varLength = true
 		item.min, item.max = 1, -1
@@ -262,19 +264,17 @@ func atoiOr(text string, fallback int) int {
 // propertyMapPredicates writes a property map ({k: v, …}) of the element
 // variable as the equalities it requires: an element matches the map when
 // each of its properties equals the value (a null value matches nothing).
-func propertyMapPredicates(variable, properties string) []string {
-	properties = strings.TrimSpace(properties)
-	if len(properties) < 2 || properties[0] != '{' {
+func propertyMapPredicates(variable string, properties braceView) []braceView {
+	if properties.empty() {
 		return nil
 	}
-	var predicates []string
-	for _, pair := range splitTopLevelComma(strings.TrimSpace(properties[1 : len(properties)-1])) {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			continue
-		}
-		key := normalizePropertyKey(pair[:colon])
-		predicates = append(predicates, variable+"."+cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)+" = ("+strings.TrimSpace(pair[colon+1:])+")")
+	entries, valid := properties.trim().keyedEntries()
+	if !valid {
+		return nil
+	}
+	var predicates []braceView
+	for _, entry := range entries {
+		predicates = append(predicates, entry.value.wrap(variable+"."+cyphertext.PrintIdentifier(entry.key(), nil, cyphertext.AcceptedSource)+" = (", ")"))
 	}
 	return predicates
 }
@@ -287,7 +287,7 @@ type pathSearchSlot struct {
 	// list marks a variable inside a group, which binds a list.
 	list       bool
 	labels     []string
-	predicates []string
+	predicates []braceView
 	// group is the slot's group (-1 outside one); iterationStart marks the
 	// first node of each repetition.
 	group          int
@@ -303,7 +303,7 @@ type pathSearchTransition struct {
 	list       bool
 	types      []string
 	direction  string
-	predicates []string
+	predicates []braceView
 	to         int
 	group      int
 }
@@ -601,11 +601,11 @@ type selectedPathPlan struct {
 	start, end        pathPatternItem
 	// constants read no pattern variable: a row they don't hold for
 	// selects nothing.
-	constants []string
+	constants []braceView
 	// pathChecks read more of the path than one element; iterationChecks
 	// read more of a repetition than one element, per group.
-	pathChecks      []string
-	iterationChecks map[int][]string
+	pathChecks      []braceView
+	iterationChecks map[int][]braceView
 	// listVariables bind lists; singles bind one element each.
 	listVariables []string
 	// lengthBounds are the clause's length(p) <= n conjuncts as (bound,
@@ -621,7 +621,7 @@ type selectedPathPlan struct {
 
 // pathLengthBound is a length(p) <= bound (strict: <) conjunct.
 type pathLengthBound struct {
-	bound  string
+	bound  braceView
 	strict bool
 }
 
@@ -633,8 +633,9 @@ var selectedPathPlans = newBoundedCache[string, selectedPathPlanEntry](1024, bou
 // selectedPathPlanEntry is a compiled plan with its filters (ok false for
 // a pattern the search can't read).
 type selectedPathPlanEntry struct {
+	inputs  []braceView
 	plan    *selectedPathPlan
-	filters []string
+	filters []braceView
 	ok      bool
 }
 
@@ -642,34 +643,36 @@ type selectedPathPlanEntry struct {
 // (the pattern's own) and the clause's WHERE conjuncts; it returns the
 // conjuncts that filter the selected paths. ok is false for a pattern the
 // search can't read. The plan is shared: it must not be changed.
-func compileSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+func compileSelectedPathPlan(pattern braceView, pathVariable string, predicate braceView, terms []braceView) (*selectedPathPlan, []braceView, bool) {
 	return compileSelectedPathPlanContext(context.Background(), pattern, pathVariable, predicate, terms)
 }
 
-func compileSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+func compileSelectedPathPlanContext(ctx context.Context, pattern braceView, pathVariable string, predicate braceView, terms []braceView) (*selectedPathPlan, []braceView, bool) {
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
-	key := pattern + "\x00" + pathVariable + "\x00" + predicate + "\x00" + strings.Join(terms, "\x00")
+	inputs, key := selectedPathInputs(pattern, pathVariable, predicate, terms)
+	pattern, predicate, terms = inputs[0], inputs[1], inputs[2:]
 	if entry, cached := selectedPathPlans.get(key); cached {
-		return entry.plan, entry.filters, entry.ok
+		bound := rebaseSelectedPathEntry(entry, inputs)
+		return bound.plan, bound.filters, bound.ok
 	}
 	plan, filters, ok := buildSelectedPathPlanContext(ctx, pattern, pathVariable, predicate, terms)
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
 	if selectedPathPlanBytes(plan, filters, len(key)) <= selectedPathPlanCacheEntryBytes {
-		selectedPathPlans.put(key, selectedPathPlanEntry{plan: plan, filters: filters, ok: ok})
+		selectedPathPlans.put(key, selectedPathPlanEntry{inputs: inputs, plan: plan, filters: filters, ok: ok})
 	}
 	return plan, filters, ok
 }
 
 // buildSelectedPathPlan compiles a plan (compileSelectedPathPlan).
-func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+func buildSelectedPathPlan(pattern braceView, pathVariable string, predicate braceView, terms []braceView) (*selectedPathPlan, []braceView, bool) {
 	return buildSelectedPathPlanContext(context.Background(), pattern, pathVariable, predicate, terms)
 }
 
-func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+func buildSelectedPathPlanContext(ctx context.Context, pattern braceView, pathVariable string, predicate braceView, terms []braceView) (*selectedPathPlan, []braceView, bool) {
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
@@ -677,7 +680,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	if !ok {
 		return nil, nil, false
 	}
-	plan := &selectedPathPlan{iterationChecks: map[int][]string{}, pathVariable: pathVariable}
+	plan := &selectedPathPlan{iterationChecks: map[int][]braceView{}, pathVariable: pathVariable}
 	generated := 0
 	name := func() string {
 		generated++
@@ -695,7 +698,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 		case pathPatternNode:
 			if item.variable == "" {
 				item.variable = name()
-				item.text = "(" + item.variable + item.text[1:]
+				item.text = item.text.window(1, len(item.text.text())).wrap("("+item.variable, "")
 				item.predicates = propertyMapPredicatesRenamed(item.predicates, item.variable)
 			}
 			plan.repeated = plan.repeated || singles[item.variable]
@@ -728,7 +731,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 		}
 	}
 	plan.start, plan.end = items[0], items[len(items)-1]
-	patternVariables := func(term string) []string {
+	patternVariables := func(term braceView) []string {
 		var read []string
 		for variable := range singles {
 			if readsPatternVariable(term, variable) {
@@ -745,7 +748,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 		}
 		return read
 	}
-	attach := func(term string) {
+	attach := func(term braceView) {
 		read := patternVariables(term)
 		switch {
 		case len(read) == 0:
@@ -763,7 +766,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	// A length bound among the pattern's predicates (shortestPath's WHERE)
 	// bounds the search too; each path is still checked against it.
 	for _, term := range splitTopLevelAndConjuncts(predicate) {
-		if term = strings.TrimSpace(term); term != "" {
+		if term = term.trim(); !term.empty() {
 			if bound, ok := pathLengthBoundOf(term, pathVariable); ok {
 				plan.lengthBounds = append(plan.lengthBounds, bound)
 			}
@@ -772,10 +775,10 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	}
 	// The clause's conjuncts that read only the endpoints select the pairs:
 	// they apply as well before the selection as after it.
-	var filters []string
+	var filters []braceView
 	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
+		term = term.trim()
+		if term.empty() {
 			continue
 		}
 		read := patternVariables(term)
@@ -819,7 +822,7 @@ func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() s
 		}
 	}
 	for _, term := range splitTopLevelAndConjuncts(group.where) {
-		if term = strings.TrimSpace(term); term == "" {
+		if term = term.trim(); term.empty() {
 			continue
 		}
 		var read []string
@@ -850,26 +853,20 @@ func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() s
 // readsPatternVariable reports whether term reads the variable name: the
 // name outside quotes, not a property key (n.name) and not a map key
 // ({name: …}); a label test (name:Label) reads it.
-func readsPatternVariable(term, name string) bool {
+func readsPatternVariable(view braceView, name string) bool {
+	term := view.text()
 	if name == "" {
 		return false
 	}
-	var brackets []byte
 	for i := 0; i < len(term); i++ {
 		switch c := term[i]; {
 		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(term, i, c) - 1
-		case c == '(' || c == '[' || c == '{':
-			brackets = append(brackets, c)
-		case c == ')' || c == ']' || c == '}':
-			if len(brackets) > 0 {
-				brackets = brackets[:len(brackets)-1]
-			}
 		case cyphertext.NamePartAt(term, i):
 			end := i + 1
 			end = cyphertext.NamePartEnd(term, end)
 			if term[i:end] == name && (i == 0 || !cyphertext.NamePartAt(term, i-1) && term[i-1] != '$') && cyphertext.NeighborByte(term, i, cyphertext.Before) != '.' &&
-				!(cyphertext.NeighborByte(term, end, cyphertext.AtOrAfter) == ':' && len(brackets) > 0 && brackets[len(brackets)-1] == '{') {
+				!view.syntax.product.MapKeyAt(view.source, cyphertext.Span{Start: i, End: end}) {
 				return true
 			}
 			i = end - 1
@@ -880,11 +877,11 @@ func readsPatternVariable(term, name string) bool {
 
 // propertyMapPredicatesRenamed rewrites property-map predicates written for
 // an element without a variable (".`k` = (v)") for variable.
-func propertyMapPredicatesRenamed(predicates []string, variable string) []string {
-	renamed := make([]string, len(predicates))
+func propertyMapPredicatesRenamed(predicates []braceView, variable string) []braceView {
+	renamed := make([]braceView, len(predicates))
 	for index, predicate := range predicates {
-		if strings.HasPrefix(predicate, ".`") {
-			predicate = variable + predicate
+		if strings.HasPrefix(predicate.text(), ".`") {
+			predicate = predicate.wrap(variable, "")
 		}
 		renamed[index] = predicate
 	}
@@ -893,25 +890,25 @@ func propertyMapPredicatesRenamed(predicates []string, variable string) []string
 
 // pathLengthBoundOf reads a conjunct length(p) <= n, length(p) < n,
 // n >= length(p) or n > length(p).
-func pathLengthBoundOf(term, pathVariable string) (pathLengthBound, bool) {
+func pathLengthBoundOf(term braceView, pathVariable string) (pathLengthBound, bool) {
 	if pathVariable == "" {
 		return pathLengthBound{}, false
 	}
 	for _, operator := range []string{"<=", ">=", "<", ">"} {
-		index := topLevelOperatorIndex(term, operator)
+		index := topLevelOperatorIndex(term.text(), operator)
 		if index < 0 {
 			continue
 		}
-		left, right := strings.TrimSpace(term[:index]), strings.TrimSpace(term[index+len(operator):])
+		left, right := term.window(0, index).trim(), term.window(index+len(operator), len(term.text())).trim()
 		isLength := func(text string) bool {
 			open := strings.IndexByte(text, '(')
 			return open > 0 && strings.EqualFold(strings.TrimSpace(text[:open]), "length") && strings.HasSuffix(text, ")") &&
 				findMatchingParen(text, open) == len(text)-1 && strings.TrimSpace(text[open+1:len(text)-1]) == pathVariable
 		}
 		switch {
-		case isLength(left) && (operator == "<=" || operator == "<"):
+		case isLength(left.text()) && (operator == "<=" || operator == "<"):
 			return pathLengthBound{bound: right, strict: operator == "<"}, !readsPatternVariable(right, pathVariable)
-		case isLength(right) && (operator == ">=" || operator == ">"):
+		case isLength(right.text()) && (operator == ">=" || operator == ">"):
 			return pathLengthBound{bound: left, strict: operator == ">"}, !readsPatternVariable(left, pathVariable)
 		}
 		return pathLengthBound{}, false
@@ -925,14 +922,14 @@ func topLevelOperatorIndex(term, operator string) int {
 	found := -1
 	depth := 0
 	for i := 0; i < len(term); i++ {
-		switch c := term[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := term[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(term, i, c) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case '<', '>', '=':
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == '<', (cypherLexicalByte(c)) == '>', (cypherLexicalByte(c)) == '=':
 			if depth != 0 {
 				continue
 			}
@@ -956,8 +953,8 @@ func topLevelOperatorIndex(term, operator string) int {
 
 // errSelectedPathPattern is the error for a selected pattern the search
 // can't read.
-func errSelectedPathPattern(pattern string) error {
-	return localizedError(localization.CypherMatchingPathPatternInvalid(pattern), nil)
+func errSelectedPathPattern(pattern braceView) error {
+	return localizedError(localization.CypherMatchingPathPatternInvalid(pattern.text()), nil)
 }
 
 // selectPaths returns the rows of a selected pattern's paths for one row,
@@ -1148,9 +1145,10 @@ func selectedEndpointConstrained(item pathPatternItem) bool {
 // selectedPathEndpoints returns the nodes an endpoint's node pattern
 // matches for row, with its predicates.
 func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelineRow, item pathPatternItem) ([]*storage.Node, error) {
-	clause := "MATCH " + item.text
+	clause := item.text.wrap("MATCH ", "")
 	if len(item.predicates) > 0 {
-		clause += " WHERE " + strings.Join(item.predicates, " AND ")
+		base := braceView{syntax: item.text.syntax, source: item.text.source.OriginalView()}
+		clause = base.assembleCode([]braceView{clause, base.assembleCode(item.predicates, " AND ").wrap(" WHERE ", "")}, "")
 	}
 	matched, err := e.pipelineMatchRows(ctx, row, clause)
 	if err != nil {
@@ -1321,7 +1319,7 @@ func reverseSliceContext[T any](ctx context.Context, values []T) bool {
 // This upper estimate includes slice capacities and retained query strings.
 const selectedPathPlanCacheEntryBytes = 64 << 10
 
-func selectedPathPlanBytes(plan *selectedPathPlan, filters []string, keyBytes int) int {
+func selectedPathPlanBytes(plan *selectedPathPlan, filters []braceView, keyBytes int) int {
 	size := keyBytes + int(unsafe.Sizeof(selectedPathPlanEntry{}))
 	stringsBytes := func(values []string) int {
 		n := cap(values) * int(unsafe.Sizeof(""))
@@ -1330,27 +1328,34 @@ func selectedPathPlanBytes(plan *selectedPathPlan, filters []string, keyBytes in
 		}
 		return n
 	}
-	size += stringsBytes(filters)
+	viewsBytes := func(values []braceView) int {
+		n := cap(values) * int(unsafe.Sizeof(braceView{}))
+		for _, value := range values {
+			n += len(value.text())
+		}
+		return n
+	}
+	size += viewsBytes(filters)
 	if plan == nil {
 		return size
 	}
-	size += 1024 + 1024*len(plan.iterationChecks) + int(unsafe.Sizeof(*plan)) + len(plan.pathVariable) + stringsBytes(plan.constants) + stringsBytes(plan.pathChecks) + stringsBytes(plan.listVariables)
+	size += 1024 + 1024*len(plan.iterationChecks) + int(unsafe.Sizeof(*plan)) + len(plan.pathVariable) + viewsBytes(plan.constants) + viewsBytes(plan.pathChecks) + stringsBytes(plan.listVariables)
 	for _, checks := range plan.iterationChecks {
-		size += 64 + stringsBytes(checks)
+		size += 64 + viewsBytes(checks)
 	}
 	for _, item := range []pathPatternItem{plan.start, plan.end} {
-		size += len(item.text) + len(item.variable) + stringsBytes(item.labels) + stringsBytes(item.predicates)
+		size += len(item.text.text()) + len(item.variable) + stringsBytes(item.labels) + viewsBytes(item.predicates)
 	}
 	size += cap(plan.lengthBounds) * int(unsafe.Sizeof(pathLengthBound{}))
 	for _, bound := range plan.lengthBounds {
-		size += len(bound.bound)
+		size += len(bound.bound.text())
 	}
 	for _, a := range []*pathSearchAutomaton{plan.forward, plan.backward} {
 		size += int(unsafe.Sizeof(*a)) + cap(a.slots)*int(unsafe.Sizeof(pathSearchSlot{})) + cap(a.moves)*int(unsafe.Sizeof(pathSearchMove{})) + cap(a.counters)*int(unsafe.Sizeof(pathSearchCounter{}))
 		for _, slot := range a.slots {
-			size += len(slot.variable) + stringsBytes(slot.labels) + stringsBytes(slot.predicates) + cap(slot.empty)*int(unsafe.Sizeof(int(0))) + cap(slot.transitions)*int(unsafe.Sizeof(pathSearchTransition{}))
+			size += len(slot.variable) + stringsBytes(slot.labels) + viewsBytes(slot.predicates) + cap(slot.empty)*int(unsafe.Sizeof(int(0))) + cap(slot.transitions)*int(unsafe.Sizeof(pathSearchTransition{}))
 			for _, t := range slot.transitions {
-				size += len(t.variable) + len(t.direction) + stringsBytes(t.types) + stringsBytes(t.predicates)
+				size += len(t.variable) + len(t.direction) + stringsBytes(t.types) + viewsBytes(t.predicates)
 			}
 		}
 		size += (cap(a.chains) + cap(a.from) + cap(a.into)) * int(unsafe.Sizeof([]int{}))

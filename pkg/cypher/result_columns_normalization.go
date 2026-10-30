@@ -16,7 +16,7 @@ var statementPresentationRewrites = newBoundedCache[string, *queryRewrite](4096,
 // The shared CST supplies these spans; normalization remains the existing edit
 // owner, and no second scope or result-header analysis runs here.
 func canonicalizeStatementText(ctx context.Context, source string) (string, *queryRewrite) {
-	canonical, rewrite := canonicalizeQueryText(source)
+	canonical, rewrite := canonicalizeQueryText(statementBraceView(ctx, source))
 	return preserveStatementPresentation(ctx, source, canonical, rewrite)
 }
 

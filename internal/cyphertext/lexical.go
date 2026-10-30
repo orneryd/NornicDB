@@ -44,6 +44,15 @@ func NamePartAt(text string, index int) bool { return NamePart(RuneAt(text, inde
 // IsWhitespaceAt reports whitespace at either a forward or reverse byte cursor.
 func IsWhitespaceAt(text string, index int) bool { return IsWhitespace(RuneAt(text, index)) }
 
+// TrimWhitespaceSpan narrows span of text to exclude leading and trailing
+// whitespace. It does not skip comments or other trivia.
+func TrimWhitespaceSpan(text string, span Span) Span {
+	left := strings.TrimLeftFunc(text[span.Start:span.End], IsWhitespace)
+	span.Start = span.End - len(left)
+	span.End = span.Start + len(strings.TrimRightFunc(left, IsWhitespace))
+	return span
+}
+
 // WhitespaceAt returns the byte width of Cypher whitespace beginning at index.
 func WhitespaceAt(text string, index int) int {
 	if index < 0 || index >= len(text) {

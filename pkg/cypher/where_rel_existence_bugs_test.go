@@ -272,16 +272,16 @@ func TestEvaluateRelationshipPatternInWhere_BareDirected(t *testing.T) {
 	orphan := getNodeByName("orphan")
 	peer := getNodeByName("peer")
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)-->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", originalBraceView("(n)-->()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", originalBraceView("(n)-->()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(peer, "n", originalBraceView("(n)-->()")))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)<--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)<--()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", originalBraceView("(n)<--()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(connected, "n", originalBraceView("(n)<--()")))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)--()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)--()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", originalBraceView("(n)--()")))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", originalBraceView("(n)--()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", originalBraceView("(n)--()")))
 }
 
 func TestCheckSubqueryMatch_BareBody(t *testing.T) {
@@ -300,7 +300,7 @@ func TestCheckSubqueryMatch_BareBody(t *testing.T) {
 	connected := getNodeByName("connected")
 	orphan := getNodeByName("orphan")
 	subqueryExists := func(node *storage.Node, body string) bool {
-		value, ok := exec.evaluateRowSubqueryValue(ctx, "EXISTS", body, map[string]interface{}{"n": node})
+		value, ok := exec.evaluateRowSubqueryValue(ctx, "EXISTS", originalBraceView(body), map[string]interface{}{"n": node})
 		return ok && value == true
 	}
 

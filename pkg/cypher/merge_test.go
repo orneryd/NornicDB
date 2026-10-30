@@ -627,12 +627,12 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 	ctx := context.Background()
 
 	row := []pipelineRow{e.mergeBindingRow(ctx, nodeCtx, relCtx)}
-	result, err := e.projectMergeReturn(ctx, row, "RETURN *")
+	result, err := e.projectMergeReturn(ctx, row, originalBraceView("RETURN *"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b", "r"}, result.Columns)
 	require.Len(t, result.Rows, 1)
 
-	result, err = e.projectMergeReturn(ctx, row, "RETURN a.name AS name, id(a) AS aid")
+	result, err = e.projectMergeReturn(ctx, row, originalBraceView("RETURN a.name AS name, id(a) AS aid"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "aid"}, result.Columns)
 	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)

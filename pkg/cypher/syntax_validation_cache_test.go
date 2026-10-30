@@ -21,28 +21,28 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 
 	config.SetParserType(config.ParserTypeANTLR)
 	valid := "MATCH (n:CacheProbe) RETURN n.id"
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement))
+	require.NoError(t, exec.validateSyntax(context.Background(), originalBraceView(valid), false, syntaxStatement))
 	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidANTLR))
 	require.False(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic))
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement), "served from the cache")
+	require.NoError(t, exec.validateSyntax(context.Background(), originalBraceView(valid), false, syntaxStatement), "served from the cache")
 
 	broken := "MATCH (n:CacheProbe RETURN n"
 	for range 2 {
-		require.Error(t, exec.validateSyntax(context.Background(), broken, false, syntaxStatement))
+		require.Error(t, exec.validateSyntax(context.Background(), originalBraceView(broken), false, syntaxStatement))
 	}
 	require.False(t, exec.hasCachedValidSyntax(broken, syntaxValidANTLR))
 
 	extension := "SHOW LIMITS"
-	require.NoError(t, exec.validateSyntax(context.Background(), extension, false, syntaxStatement), "a NornicDB extension, checked by the Nornic validator")
+	require.NoError(t, exec.validateSyntax(context.Background(), originalBraceView(extension), false, syntaxStatement), "a NornicDB extension, checked by the Nornic validator")
 	require.True(t, exec.hasCachedValidSyntax(extension, syntaxValidANTLR))
 
 	config.SetParserType(config.ParserTypeNornic)
 	other := "MATCH (n:CacheProbe) RETURN count(n)"
-	require.NoError(t, exec.validateSyntax(context.Background(), other, false, syntaxStatement))
+	require.NoError(t, exec.validateSyntax(context.Background(), originalBraceView(other), false, syntaxStatement))
 	require.True(t, exec.hasCachedValidSyntax(other, syntaxValidNornic))
 	require.False(t, exec.hasCachedValidSyntax(other, syntaxValidANTLR))
 	// The Nornic acceptance of a text ANTLR accepted adds to its entry.
-	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement))
+	require.NoError(t, exec.validateSyntax(context.Background(), originalBraceView(valid), false, syntaxStatement))
 	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic|syntaxValidANTLR))
 	require.False(t, exec.hasCachedValidSyntax("", syntaxValidNornic))
 	exec.markCachedValidSyntax("", syntaxValidNornic)
@@ -77,8 +77,8 @@ func TestSyntaxValidationCacheRejectedExtension(t *testing.T) {
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	rejected := "SHOW LIMITS YIELD name WHERE name IN ['a',]"
-	require.True(t, isNornicExtensionStatement(rejected))
-	require.Error(t, exec.validateSyntax(context.Background(), rejected, false, syntaxStatement))
+	require.True(t, isNornicExtensionStatement(originalBraceView(rejected)))
+	require.Error(t, exec.validateSyntax(context.Background(), originalBraceView(rejected), false, syntaxStatement))
 	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxValidANTLR))
 }
 
@@ -90,11 +90,11 @@ func TestSyntaxValidationNativeCoreScope(t *testing.T) {
 	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
 		config.SetParserType(parser)
 		core := NewStorageExecutor(newTestMemoryEngine(t))
-		require.NoError(t, core.validateSyntax(t.Context(), query, false, syntaxNativeCore))
+		require.NoError(t, core.validateSyntax(t.Context(), originalBraceView(query), false, syntaxNativeCore))
 		require.True(t, core.hasCachedValidSyntax(query, syntaxValidNornic))
 		require.False(t, core.hasCachedValidSyntax(query, syntaxValidANTLR))
 		statement := NewStorageExecutor(newTestMemoryEngine(t))
-		err := statement.validateSyntax(t.Context(), query, false, syntaxStatement)
+		err := statement.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement)
 		requireSemanticDetail(t, err, "InvalidUnicodeCharacter")
 		require.False(t, statement.hasCachedValidSyntax(query, activeSyntaxValidator()))
 	}
@@ -106,16 +106,16 @@ func TestSyntaxValidationCanceledStatementCacheHit(t *testing.T) {
 		config.SetParserType(parser)
 		exec := NewStorageExecutor(newTestMemoryEngine(t))
 		const query = "RETURN 13 AS syntax_cached_value"
-		require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+		require.NoError(t, exec.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement))
 		before := exec.cachedSyntaxVerdict(query)
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
-		require.ErrorIs(t, exec.validateSyntax(canceled, query, false, syntaxStatement), context.Canceled)
+		require.ErrorIs(t, exec.validateSyntax(canceled, originalBraceView(query), false, syntaxStatement), context.Canceled)
 		require.Equal(t, before, exec.cachedSyntaxVerdict(query))
 		const uncached = "RETURN 'uncached syntax value' AS fresh_value"
-		require.ErrorIs(t, exec.validateSyntax(canceled, uncached, false, syntaxStatement), context.Canceled)
+		require.ErrorIs(t, exec.validateSyntax(canceled, originalBraceView(uncached), false, syntaxStatement), context.Canceled)
 		require.Zero(t, exec.cachedSyntaxVerdict(uncached))
-		require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+		require.NoError(t, exec.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement))
 		result, err := exec.Execute(t.Context(), query, nil)
 		require.NoError(t, err)
 		require.Equal(t, []string{"syntax_cached_value"}, result.Columns)
@@ -129,7 +129,7 @@ func TestSyntaxValidationANTLRRejectionMarksOnlyNativeAcceptance(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	const query = "RETURN 1 @"
 	for range 2 {
-		err := exec.validateSyntax(t.Context(), query, false, syntaxStatement)
+		err := exec.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 		require.True(t, exec.hasCachedValidSyntax(query, syntaxValidNornic))
 		require.False(t, exec.hasCachedValidSyntax(query, syntaxValidANTLR))

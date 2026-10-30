@@ -1823,7 +1823,7 @@ func TestParseRemoveProperties(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			items, err := parseRemoveItems(tt.input)
+			items, err := parseRemoveItems(originalBraceView(tt.input))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2226,7 +2226,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := findKeywordIndex(tt.input, tt.keyword)
+			got := findKeywordIndex(originalBraceView(tt.input), tt.keyword)
 			if got != tt.expected {
 				t.Errorf("findKeywordIndex(%q, %q) = %d, want %d", tt.input, tt.keyword, got, tt.expected)
 			}
@@ -2236,7 +2236,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 func TestTopLevelKeywordIndex_IgnoresCallSubqueryBody(t *testing.T) {
 	input := "CALL { RETURN 1 } RETURN 2"
-	got := topLevelKeywordIndex(input, "RETURN")
+	got := topLevelKeywordIndex(originalBraceView(input), "RETURN")
 	if got != 18 {
 		t.Fatalf("topLevelKeywordIndex(%q, %q) = %d, want %d", input, "RETURN", got, 18)
 	}
@@ -2310,7 +2310,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 
 	t.Run("union_all_combines_all", func(t *testing.T) {
 		// Using direct execution since the main Execute router might not route to executeUnion
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true, nil)
+		result, err := e.executeUnion(ctx, originalBraceView("MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name"), true, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2320,7 +2320,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_distinct_removes_duplicates", func(t *testing.T) {
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false, nil)
+		result, err := e.executeUnion(ctx, originalBraceView("MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age"), false, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2331,14 +2331,14 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false, nil)
+		_, err := e.executeUnion(ctx, originalBraceView("MATCH (n) RETURN n"), false, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION clause")
 		}
 	})
 
 	t.Run("union_all_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true, nil)
+		_, err := e.executeUnion(ctx, originalBraceView("MATCH (n) RETURN n"), true, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION ALL clause")
 		}
@@ -2347,7 +2347,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	t.Run("union_column_mismatch", func(t *testing.T) {
 		// This might or might not error depending on implementation
 		// Just ensure it doesn't panic
-		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
+		_, _ = e.executeUnion(ctx, originalBraceView("RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b"), false, nil)
 	})
 }
 
@@ -2449,7 +2449,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	e := NewStorageExecutor(store)
 
 	t.Run("match_all_by_label", func(t *testing.T) {
-		matches, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person)")
+		matches, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH (p:Person)"))
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2462,7 +2462,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_with_where", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person) WHERE p.age = 30")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH (p:Person) WHERE p.age = 30"))
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2472,7 +2472,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_with_property_filter", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person {name: 'Alice'})")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH (p:Person {name: 'Alice'})"))
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2482,7 +2482,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_no_results", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:NonExistent)")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH (p:NonExistent)"))
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2492,7 +2492,7 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_all_nodes_no_label", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (n)")
+		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH (n)"))
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -3193,7 +3193,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// DISTINCT UNION should dedupe.
-	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false, nil)
+	res, err := e.executeUnion(ctx, originalBraceView("RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x"), false, nil)
 	if err != nil {
 		t.Fatalf("distinct UNION failed: %v", err)
 	}
@@ -3202,7 +3202,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// UNION ALL should keep duplicates.
-	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true, nil)
+	res, err = e.executeUnion(ctx, originalBraceView("RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x"), true, nil)
 	if err != nil {
 		t.Fatalf("UNION ALL failed: %v", err)
 	}
@@ -3211,7 +3211,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Mismatched column counts must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
+	_, err = e.executeUnion(ctx, originalBraceView("RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b"), false, nil)
 	if err == nil {
 		t.Fatal("expected mismatched-column UNION error")
 	}
@@ -3220,13 +3220,13 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Missing UNION separator must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false, nil)
+	_, err = e.executeUnion(ctx, originalBraceView("RETURN 1 AS x"), false, nil)
 	if err == nil {
 		t.Fatal("expected UNION not found error")
 	}
 
 	// Error in a child query must be wrapped with query index.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false, nil)
+	_, err = e.executeUnion(ctx, originalBraceView("RETURN 1 AS x UNION MATCH (n"), false, nil)
 	if err == nil {
 		t.Fatal("expected wrapped error from second UNION query")
 	}
@@ -3288,7 +3288,7 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("expected node in row[0][0], got %#v", aliceRes.Rows[0][0])
 	}
 
-	outPattern := e.parseOptionalRelPattern(ctx, "(a)-[r:KNOWS]->(b:Person {name:'bob'})")
+	outPattern := e.parseOptionalRelPattern(ctx, originalBraceView("(a)-[r:KNOWS]->(b:Person {name:'bob'})"))
 	outRelated := e.sharedOptionalExpansionForTest(alice, outPattern)
 	if len(outRelated) != 1 {
 		t.Fatalf("outgoing related len = %d, want 1", len(outRelated))
@@ -3297,7 +3297,7 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("unexpected outgoing related node: %#v", outRelated[0].node.Properties)
 	}
 
-	inPattern := e.parseOptionalRelPattern(ctx, "(a)<-[r:KNOWS]-(b:Person)")
+	inPattern := e.parseOptionalRelPattern(ctx, originalBraceView("(a)<-[r:KNOWS]-(b:Person)"))
 	inRelated := e.sharedOptionalExpansionForTest(alice, inPattern)
 	if len(inRelated) != 0 {
 		t.Fatalf("incoming related len = %d, want 0", len(inRelated))

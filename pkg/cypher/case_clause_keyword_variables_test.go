@@ -87,8 +87,8 @@ func TestCaseReadsClauseKeywordVariables(t *testing.T) {
 // bracket that encloses them: one END is a simple CASE over the variable
 // case, two a nested CASE (#1162).
 func TestCaseAfterCaseIsReadByItsEnds(t *testing.T) {
-	require.False(t, caseKeywordAt("(CASE case WHEN 1 THEN case END)", 6, "CASE"))
-	require.True(t, caseKeywordAt("(CASE CASE WHEN a THEN 1 END WHEN 1 THEN 2 END)", 6, "CASE"))
+	require.False(t, caseKeywordAt(originalBraceView("(CASE case WHEN 1 THEN case END)"), 6, "CASE"))
+	require.True(t, caseKeywordAt(originalBraceView("(CASE CASE WHEN a THEN 1 END WHEN 1 THEN 2 END)"), 6, "CASE"))
 }
 
 // A clause inside a subquery within a CASE still starts there, so a scanner
@@ -96,8 +96,8 @@ func TestCaseAfterCaseIsReadByItsEnds(t *testing.T) {
 // variable named case takes a label test (case IS Person) (#1162).
 func TestCaseKeywordRulesKeepTheirScope(t *testing.T) {
 	require.True(t, statementAccessesGraphText("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v"))
-	require.False(t, insideCaseBlock("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v", len("RETURN CASE WHEN true THEN COLLECT { ")))
-	require.True(t, insideCaseBlock("RETURN CASE match WHEN 1 THEN match END AS v", len("RETURN CASE ")))
+	require.False(t, insideCaseBlock(originalBraceView("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v"), len("RETURN CASE WHEN true THEN COLLECT { ")))
+	require.True(t, insideCaseBlock(originalBraceView("RETURN CASE match WHEN 1 THEN match END AS v"), len("RETURN CASE ")))
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_label_test"))
 	ctx := context.Background()

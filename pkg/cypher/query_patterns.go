@@ -78,6 +78,12 @@ type PatternInfo struct {
 
 // DetectQueryPattern analyzes a Cypher query and returns pattern info
 func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
+	return detectQueryPattern(ctx, inputBraceView(ctx, query, cyphertext.AcceptedSource))
+}
+
+func detectQueryPattern(ctx context.Context, view braceView) PatternInfo {
+	ctx = withBraceView(ctx, view)
+	query := view.text()
 	info := PatternInfo{
 		Pattern: PatternGeneric,
 	}
@@ -87,17 +93,17 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	// Don't optimize queries with WITH clause - they have complex aggregation
 	// semantics that the optimized executors don't handle (aliases, collect, etc.)
 	// Use word boundary check to avoid matching "STARTS WITH" or "ENDS WITH"
-	if containsKeywordOutsideStrings(query, "WITH") {
+	if containsKeywordOutsideStrings(view, "WITH") {
 		return info
 	}
 
 	// Extract LIMIT first (affects multiple patterns)
-	if limit, ok := ExtractLimit(query); ok {
+	if _, limit, ok := decimalAfterKeyword(view, "LIMIT"); ok {
 		info.Limit = limit
 	}
 
 	// Check for mutual relationship pattern: (a)-[:T]->(b)-[:T]->(a)
-	if info.Pattern == PatternGeneric && detectMutualRelationship(ctx, query, &info) {
+	if info.Pattern == PatternGeneric && detectMutualRelationship(ctx, view, &info) {
 		return info
 	}
 
@@ -115,12 +121,12 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 			!strings.Contains(upperQuery, "MIN(") &&
 			!strings.Contains(upperQuery, "MAX(") &&
 			!strings.Contains(upperQuery, "COLLECT(") {
-			matchClause := extractMatchClause(query)
+			matchClause := extractMatchClause(view)
 			if countRelationshipPatterns(matchClause) == 1 {
-				if detectIncomingCountAgg(ctx, query, &info) {
+				if detectIncomingCountAgg(ctx, view, &info) {
 					return info
 				}
-				if detectOutgoingCountAgg(ctx, query, &info) {
+				if detectOutgoingCountAgg(ctx, view, &info) {
 					return info
 				}
 			}
@@ -128,7 +134,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	}
 
 	// Check for edge property aggregation
-	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(ctx, query, &info) {
+	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(ctx, view, &info) {
 		return info
 	}
 
@@ -141,26 +147,28 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	return info
 }
 
-func extractMatchClause(query string) string {
-	matchIdx := findKeywordIndex(query, "MATCH")
+func extractMatchClause(view braceView) braceView {
+	query := view.text()
+	matchIdx := findKeywordIndex(view, "MATCH")
 	if matchIdx < 0 {
-		return ""
+		return braceView{}
 	}
 	end := len(query)
 	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "ORDER", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(query[matchIdx:], keyword); idx > 0 {
+		if idx := findKeywordIndex(view.window(matchIdx, len(query)), keyword); idx > 0 {
 			if matchIdx+idx < end {
 				end = matchIdx + idx
 			}
 		}
 	}
-	return query[matchIdx:end]
+	return view.window(matchIdx, end)
 }
 
-func countRelationshipPatterns(s string) int {
+func countRelationshipPatterns(view braceView) int {
+	s := view.text()
 	count := 0
 	for from := 0; from < len(s); {
-		_, close := readRelationshipBracket(s, from, requireClosedRelationship)
+		_, close := readRelationshipBracket(view, from, requireClosedRelationship)
 		if close < 0 {
 			break
 		}
@@ -171,14 +179,14 @@ func countRelationshipPatterns(s string) int {
 }
 
 // detectMutualRelationship checks for (a)-[:T]->(b)-[:T]->(a) pattern
-func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
-	matchClause := extractMatchClause(query)
-	matchClause = strings.TrimSpace(matchClause)
-	if matchClause == "" {
+func detectMutualRelationship(ctx context.Context, view braceView, info *PatternInfo) bool {
+	matchClause := extractMatchClause(view)
+	matchClause = matchClause.trim()
+	if matchClause.empty() {
 		return false
 	}
-	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
-		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
+	if strings.HasPrefix(upperASCII(matchClause.text()), "MATCH") {
+		matchClause = matchClause.window(len("MATCH"), len(matchClause.text())).trim()
 	}
 
 	exec := &StorageExecutor{}
@@ -215,8 +223,9 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 }
 
 // detectIncomingCountAgg checks for (x)<-[:T]-(y) ... count(y) pattern
-func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), true)
+func detectIncomingCountAgg(ctx context.Context, view braceView, info *PatternInfo) bool {
+	query := view.text()
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(view), true)
 	if !ok {
 		return false
 	}
@@ -228,7 +237,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+		isReturnNameCountShape(view, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -242,8 +251,9 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 }
 
 // detectOutgoingCountAgg checks for (x)-[:T]->(y) ... count(y) pattern
-func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), false)
+func detectOutgoingCountAgg(ctx context.Context, view braceView, info *PatternInfo) bool {
+	query := view.text()
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(view), false)
 	if !ok {
 		return false
 	}
@@ -253,7 +263,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	upperQuery := upperASCII(query)
 	countPattern := "COUNT(" + upperASCII(endVar)
 
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(view, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -266,8 +276,8 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	return false
 }
 
-func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	parts := returnShapeItems(query)
+func isReturnNameCountShape(view braceView, startVar string, endVar string) bool {
+	parts := returnShapeItems(view)
 	if len(parts) != 2 {
 		return false
 	}
@@ -286,15 +296,15 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
 }
 
-func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
-	matchClause = strings.TrimSpace(matchClause)
-	if matchClause == "" {
+func parseDirectionalCountPattern(ctx context.Context, matchClause braceView, incoming bool) (string, string, string, string, bool) {
+	matchClause = matchClause.trim()
+	if matchClause.empty() {
 		return "", "", "", "", false
 	}
-	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
-		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
+	if strings.HasPrefix(upperASCII(matchClause.text()), "MATCH") {
+		matchClause = matchClause.window(len("MATCH"), len(matchClause.text())).trim()
 	}
-	if matchClause == "" {
+	if matchClause.empty() {
 		return "", "", "", "", false
 	}
 
@@ -350,26 +360,27 @@ func edgeAggregationProperty(function string, inner string, relVar string) (prop
 }
 
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
-func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo) bool {
+func detectEdgePropertyAgg(ctx context.Context, view braceView, info *PatternInfo) bool {
+	query := view.text()
 	// First, find relationship variable in MATCH
-	matchClause := extractMatchClause(query)
-	relVar := extractRelationshipVariable(matchClause)
+	matchClause := extractMatchClause(view)
+	relVar := extractRelationshipVariable(matchClause.text())
 	if relVar == "" {
 		return false
 	}
 
 	exec := &StorageExecutor{}
-	returnIdx := findKeywordIndex(query, "RETURN")
+	returnIdx := findKeywordIndex(view, "RETURN")
 	if returnIdx < 0 {
 		return false
 	}
-	returnItems := exec.parseReturnItems(ctx, strings.TrimSpace(query[returnIdx+len("RETURN"):]))
+	returnItems := exec.parseReturnItems(ctx, view.window(returnIdx+len("RETURN"), len(query)).trim())
 	if len(returnItems) < 2 {
 		return false
 	}
 
 	for _, item := range returnItems[1:] {
-		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
+		expr := readProjectionItemSource(ctx, item.view, projectionAdmitted).expression
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		aggFunc, inner, ok := splitEdgeAggregationCall(u)
 		if !ok {
@@ -397,7 +408,7 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	if info.AggProperty == "" {
 		return false
 	}
-	if !isReturnEdgePropertyAggNameShape(query, relVar, info.AggProperty) {
+	if !isReturnEdgePropertyAggNameShape(view, relVar, info.AggProperty) {
 		return false
 	}
 	info.Pattern = PatternEdgePropertyAgg
@@ -406,8 +417,8 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	return true
 }
 
-func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	items := returnShapeItems(query)
+func isReturnEdgePropertyAggNameShape(view braceView, relVar string, propName string) bool {
+	items := returnShapeItems(view)
 	if len(items) < 2 {
 		return false
 	}
@@ -483,15 +494,16 @@ func functionCallParenAt(text string, open int) bool {
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery
 // (EXISTS { … } AND …) is not a node.
-func extractNodeVariables(matchClause string) []string {
+func extractNodeVariables(view braceView) []string {
+	matchClause := view.text()
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
 		if isCypherStringQuoteByte(matchClause[i]) {
 			i = skipQuotedSemanticText(matchClause, i) - 1
 			continue
 		}
-		if matchClause[i] == '{' {
-			if end := cyphertext.FindMatchingDelimiter(matchClause, i, '{', '}', cyphertext.OpeningDelimiter); end >= 0 {
+		if cyphertext.IsOpenBrace(matchClause[i]) {
+			if end, found := view.close(i); found {
 				i = end
 				continue
 			}
@@ -510,7 +522,7 @@ func extractNodeVariables(matchClause string) []string {
 		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
 		}
-		if _, _, subquery := subqueryExpressionKeywordAt(matchClause, j); subquery {
+		if _, _, subquery := subqueryExpressionKeywordAt(view, j); subquery {
 			continue
 		}
 		name, next, ok := scanSymbolicName(matchClause, j)
@@ -521,7 +533,7 @@ func extractNodeVariables(matchClause string) []string {
 			for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
 				next++
 			}
-			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' && matchClause[next] != '$' {
+			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && !cyphertext.IsOpenBrace(matchClause[next]) && matchClause[next] != '$' {
 				continue
 			}
 		}
@@ -542,7 +554,7 @@ func extractRelationshipType(pattern string) string {
 		}
 		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
 			typePart := strings.TrimSpace(inner[colonIdx+1:])
-			if propIdx := strings.Index(typePart, "{"); propIdx >= 0 {
+			if propIdx := firstLiveBrace(typePart); propIdx >= 0 {
 				typePart = strings.TrimSpace(typePart[:propIdx])
 			}
 			if pipeIdx := strings.Index(typePart, "|"); pipeIdx >= 0 {

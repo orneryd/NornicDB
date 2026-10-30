@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
@@ -25,6 +26,7 @@ func scopeClauseFromSyntax(call cypherantlr.SyntaxNode) callSubqueryScopeClause 
 			return clause
 		}
 		clause.text = call.Text()[start-sourceStart : end-sourceStart]
+		clause.textSpan = cyphertext.Span{Start: start, End: end}
 		if _, all := call.DirectToken(cypherantlr.CypherLexerMULT); all {
 			clause.names = nil
 		}

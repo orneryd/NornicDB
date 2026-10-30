@@ -48,16 +48,16 @@ func TestAnalyzeNodeScan_OperatorShapeBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_person_email_diag IF NOT EXISTS FOR (n:Person) ON (n.email)", nil)
 	require.NoError(t, err)
 
-	op := exec.analyzeNodeScan("MATCH (n:Person {email: 'a@b.com'}) RETURN n")
+	op := exec.analyzeNodeScan(originalBraceView("MATCH (n:Person {email: 'a@b.com'}) RETURN n"))
 	require.Equal(t, "NodeIndexSeek", op.OperatorType)
 	require.Equal(t, "Person", op.Arguments["label"])
 	require.Equal(t, "available", op.Arguments["indexStatus"])
 
-	op = exec.analyzeNodeScan("MATCH (n:Person) RETURN n")
+	op = exec.analyzeNodeScan(originalBraceView("MATCH (n:Person) RETURN n"))
 	require.Equal(t, "NodeByLabelScan", op.OperatorType)
 	require.Equal(t, "Person", op.Arguments["label"])
 
-	op = exec.analyzeNodeScan("MATCH (n) RETURN n")
+	op = exec.analyzeNodeScan(originalBraceView("MATCH (n) RETURN n"))
 	require.Equal(t, "AllNodesScan", op.OperatorType)
 	require.Empty(t, op.Arguments)
 }

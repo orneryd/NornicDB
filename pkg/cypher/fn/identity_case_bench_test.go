@@ -9,7 +9,7 @@ import (
 func BenchmarkIdentityFunctionPublicLookup(b *testing.B) {
 	names := []string{"identity_case.region", "identity_case.ärea"}
 	mu.Lock()
-	previous := map[string]Func{}
+	previous := map[string]registeredFunction{}
 	present := map[string]bool{}
 	for _, name := range names {
 		key := strings.ToLower(name)

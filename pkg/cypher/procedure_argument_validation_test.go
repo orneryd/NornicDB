@@ -17,7 +17,7 @@ func TestProcedureArgumentsRejectKnownIncompatibleTypes(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	_, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptInteger(true)")
+	_, err := extractProcedureInvocationArguments(context.Background(), spec, originalBraceView("CALL custom.acceptInteger(true)"))
 	require.Error(t, err)
 
 	var semanticError *SemanticError
@@ -34,7 +34,7 @@ func TestProcedureArgumentsCoerceIntegerToFloat(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	args, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptFloat(42)")
+	args, err := extractProcedureInvocationArguments(context.Background(), spec, originalBraceView("CALL custom.acceptFloat(42)"))
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{float64(42)}, args)
 }
@@ -47,11 +47,11 @@ func TestProcedureArgumentsAcceptNumericSubtypeAssignments(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	integerArgs, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptNumber(42)")
+	integerArgs, err := extractProcedureInvocationArguments(context.Background(), spec, originalBraceView("CALL custom.acceptNumber(42)"))
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(42)}, integerArgs)
 
-	floatArgs, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptNumber(42.5)")
+	floatArgs, err := extractProcedureInvocationArguments(context.Background(), spec, originalBraceView("CALL custom.acceptNumber(42.5)"))
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{float64(42.5)}, floatArgs)
 }
@@ -125,7 +125,7 @@ func TestCallTailReturnAllPreservesColumnsAndValues(t *testing.T) {
 		Rows:    [][]interface{}{{int64(1), "one"}, {int64(2), "two"}},
 	}
 
-	result, err := exec.executeCallTail(context.Background(), seed, "RETURN *")
+	result, err := exec.executeCallTail(context.Background(), seed, originalBraceView("RETURN *"))
 	require.NoError(t, err)
 	require.Equal(t, seed.Columns, result.Columns)
 	require.Equal(t, seed.Rows, result.Rows)

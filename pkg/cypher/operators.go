@@ -164,7 +164,20 @@ func isSpacedKeywordOperator(op string) bool {
 	return false
 }
 
-func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int {
+func findTopLevelOperator(view braceView, op string, caseInsensitive, trackBrackets bool) int {
+	return scanTopLevelOperator(view.text(), op, caseInsensitive, trackBrackets, func(at int) bool { return caseOperandExpectedBefore(view, at) })
+}
+
+// findTopLevelSymbol is the delimiter/operator reader for punctuation-only
+// consumers. It shares the scan and cannot make CASE/map-colon decisions.
+func findTopLevelSymbol(text, op string, caseInsensitive, trackBrackets bool) int {
+	if strings.IndexFunc(op, func(r rune) bool { return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' }) >= 0 {
+		panic("cypher: keyword operator requires a retained view")
+	}
+	return scanTopLevelOperator(text, op, caseInsensitive, trackBrackets, nil)
+}
+
+func scanTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool, operandExpected func(int) bool) int {
 	if len(op) == 0 || len(expr) < len(op) {
 		return -1
 	}
@@ -177,7 +190,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 	}
 	parenDepth := 0
 	bracketDepth := 0
-	braceDepth := 0
+	braceDepth := cyphertext.BraceDepth(0)
 	keyword := isSpacedKeywordOperator(op)
 
 	for i := 0; i <= len(expr)-len(op); i++ {
@@ -199,10 +212,10 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 			bracketDepth++
 		case trackBrackets && c == ']':
 			bracketDepth--
-		case trackBrackets && c == '{':
-			braceDepth++
-		case trackBrackets && c == '}':
-			braceDepth--
+		case trackBrackets && cyphertext.IsOpenBrace(c):
+			braceDepth.Open()
+		case trackBrackets && cyphertext.IsCloseBrace(c):
+			braceDepth.Close(false)
 		case parenDepth == 0 && (!trackBrackets || (bracketDepth == 0 && braceDepth == 0)):
 			if c|foldMask == prefix && (len(op) == 1 || operatorMatchesAt(expr, op, i, caseInsensitive)) {
 				if op == "=" {
@@ -213,7 +226,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 						continue
 					}
 				}
-				if keyword && caseOperandExpectedBefore(expr, i+1) {
+				if keyword && operandExpected(i+1) {
 					// A word of the operator's name where an operand is
 					// expected is a variable (or > 1 AND or < 3).
 					continue
@@ -226,8 +239,10 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 	return -1
 }
 
-func splitByOperatorWithOptions(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
-	return splitAtOperator(expr, op, findTopLevelOperator(expr, op, caseInsensitive, trackBrackets))
+func splitByOperatorWithOptions(view braceView, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
+	expr := view.text()
+
+	return splitAtOperator(expr, op, findTopLevelOperator(view, op, caseInsensitive, trackBrackets))
 }
 
 // splitByOperatorOutsideCase is splitByOperatorWithOptions for predicates
@@ -236,16 +251,18 @@ func splitByOperatorWithOptions(expr, op string, caseInsensitive, trackBrackets 
 // the context evaluator substitutes CASE blocks before scanning
 // (evaluateExpressionWithCASESubstituted); the row predicate evaluator and the
 // MATCH WHERE validation scan the text itself, so they split with this.
-func splitByOperatorOutsideCase(expr, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
-	idx := findTopLevelOperator(expr, op, caseInsensitive, trackBrackets)
+func splitByOperatorOutsideCase(view braceView, op string, caseInsensitive, trackBrackets bool) (string, string, bool) {
+	expr := view.text()
+
+	idx := findTopLevelOperator(view, op, caseInsensitive, trackBrackets)
 	for idx > 0 && mayContainCaseKeyword(expr[:idx]) {
-		end := enclosingCaseBlockEnd(expr, idx)
+		end := enclosingCaseBlockEnd(view, idx)
 		if end < 0 {
 			break
 		}
 		// The block closes at top level, so the search resumes after it in the
 		// top-level state.
-		next := findTopLevelOperator(expr[end+1:], op, caseInsensitive, trackBrackets)
+		next := findTopLevelOperator(view.window(end+1, len(expr)), op, caseInsensitive, trackBrackets)
 		if next < 0 {
 			idx = -1
 			break
@@ -277,9 +294,11 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 // clauses after it; and inside a bracket or a subquery's braces within the
 // block (THEN COLLECT { MATCH … }) a clause can start, so nothing there is
 // the block's.
-func insideCaseBlock(s string, at int) bool {
-	end := enclosingCaseBlockEnd(s, at)
-	return end >= 2 && caseKeywordAt(s, end-2, "END") && bracketDepthAt(s, at) == 0
+func insideCaseBlock(view braceView, at int) bool {
+	s := view.text()
+
+	end := enclosingCaseBlockEnd(view, at)
+	return end >= 2 && caseKeywordAt(view, end-2, "END") && bracketDepthAt(s, at) == 0
 }
 
 // bracketDepthAt is the number of brackets, parentheses and braces open at
@@ -287,13 +306,13 @@ func insideCaseBlock(s string, at int) bool {
 func bracketDepthAt(s string, at int) int {
 	depth := 0
 	for i := 0; i < at && i < len(s); i++ {
-		switch c := s[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := s[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(s, i, c) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
 		}
 	}
 	return depth
@@ -303,7 +322,9 @@ func bracketDepthAt(s string, at int) int {
 // closes the CASE … END block enclosing expr[at], or -1 when expr[at] is not
 // inside one. A CASE counts only outside quotes, backtick names, brackets and
 // property access (n.case); an unterminated CASE extends to the end of expr.
-func enclosingCaseBlockEnd(expr string, at int) int {
+func enclosingCaseBlockEnd(view braceView, at int) int {
+	expr := view.text()
+
 	depth, nest := 0, 0
 	for i := 0; i < len(expr); i++ {
 		if i >= at && depth == 0 {
@@ -314,19 +335,19 @@ func enclosingCaseBlockEnd(expr string, at int) int {
 			continue
 		}
 		c := expr[i]
-		switch c {
-		case '(', '[', '{':
-			nest++
-		case ')', ']', '}':
-			nest--
+		switch {
+		case c == '(', c == '[', cyphertext.IsOpenBrace(c):
+			nest = cyphertext.AdvanceDelimiterDepth(nest, c, false)
+		case c == ')', c == ']', cyphertext.IsCloseBrace(c):
+			nest = cyphertext.AdvanceDelimiterDepth(nest, c, false)
 		default:
 			if nest != 0 || (i > 0 && expr[i-1] == '.') {
 				continue
 			}
-			if c|0x20 == 'c' && caseKeywordAt(expr, i, "CASE") {
+			if c|0x20 == 'c' && caseKeywordAt(view, i, "CASE") {
 				depth++
 				i += len("CASE") - 1
-			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(expr, i, "END") {
+			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(view, i, "END") {
 				depth--
 				i += len("END") - 1
 				if depth == 0 && i >= at {
@@ -360,7 +381,9 @@ func hasASEAfterByte(s string, c byte) bool {
 	}
 }
 
-func hasTopLevelExpressionOperator(expr string) bool {
+func hasTopLevelExpressionOperator(view braceView) bool {
+	expr := view.text()
+
 	if expr == "" {
 		return false
 	}
@@ -372,19 +395,19 @@ func hasTopLevelExpressionOperator(expr string) bool {
 		// A leading CASE … END is the whole expression unless something
 		// follows it (CASE … END > 4, CASE … END + 1): then that is a
 		// top-level operator (#699).
-		end := leadingCaseExpressionEnd(expr)
+		end := leadingCaseExpressionEnd(view)
 		return end > 0 && strings.TrimSpace(expr[end:]) != ""
 	}
 	if hasPrefixFoldASCII(expr, "not ") || hasSuffixFoldASCII(expr, " is null") || hasSuffixFoldASCII(expr, " is not null") {
 		return true
 	}
 	for _, op := range []string{" BETWEEN ", " AND ", " OR ", " XOR ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ", " NOT IN ", " IN "} {
-		if findTopLevelOperator(expr, op, true, true) >= 0 {
+		if findTopLevelOperator(view, op, true, true) >= 0 {
 			return true
 		}
 	}
 	for _, op := range []string{"<>", "<=", ">=", "=~", "!=", "=", "<", ">", " + ", "+", "*", "/", "%", " - ", "-"} {
-		if findTopLevelOperator(expr, op, false, true) >= 0 {
+		if findTopLevelOperator(view, op, false, true) >= 0 {
 			return true
 		}
 	}
@@ -416,8 +439,8 @@ func hasTopLevelExpressionOperator(expr string) bool {
 //	hasLogicalOperator("a = 1 AND b = 2", " AND ")      // true
 //	hasLogicalOperator("name CONTAINS 'AND'", " AND ") // false (inside quotes)
 //	hasLogicalOperator("(a AND b) OR c", " AND ")      // false (inside parens)
-func (e *StorageExecutor) hasLogicalOperator(expr, op string) bool {
-	return findTopLevelOperator(expr, op, true, false) >= 0
+func (e *StorageExecutor) hasLogicalOperator(view braceView, op string) bool {
+	return findTopLevelOperator(view, op, true, false) >= 0
 }
 
 // ========================================
@@ -483,7 +506,7 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 	if len(expr) < len(op) || !strings.Contains(expr, op) {
 		return false
 	}
-	return findTopLevelOperator(expr, op, false, false) >= 0
+	return findTopLevelSymbol(expr, op, false, false) >= 0
 }
 
 // evaluateComparisonExpr evaluates comparison expressions.
@@ -507,7 +530,8 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 //	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
 //	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
 //	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
-func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	expr := view.text()
 	// Try operators in order of specificity
 	ops := []struct {
 		op   string
@@ -526,10 +550,10 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 	for _, op := range ops {
 		// An operator inside a list, map or parentheses isn't the expression's
 		// comparison ([CASE WHEN a = 1 THEN 1 END] is a list, #907).
-		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, true)
+		leftExpr, rightExpr, ok := splitByOperatorWithOptions(view, op.op, false, true)
 		if ok {
-			left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			left := e.evaluateExpressionWithContextFull(ctx, view.window(0, len(leftExpr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			right := e.evaluateExpressionWithContextFull(ctx, view.window(len(expr)-len(rightExpr), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if left == nil || right == nil {
 				return nil, true
 			}
@@ -618,15 +642,16 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("5 + 3", nodes, rels)             // int64(8)
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
-func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	expr := view.text()
 	// A relationship pattern or a map projection has - and * that aren't
 	// arithmetic.
-	if !expressionTextAccepted(expr, expressionTextOperator) {
+	if !expressionTextAccepted(view, expressionTextOperator) {
 		return nil, false
 	}
 	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {
-		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		left := e.evaluateExpressionWithContextFull(ctx, view.window(0, len(leftExpr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(ctx, view.window(len(expr)-len(rightExpr), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return left, right
 	}
 	// result reports an operator's statement error (overflow, operand type)
@@ -709,8 +734,9 @@ func binaryOperands(left, right string) bool {
 //	splitByOperator("a + b", " + ")              // ["a", "b"]
 //	splitByOperator("'a + b' + c", " + ")        // ["'a + b'", "c"]
 //	splitByOperator("(a + b) + c", " + ")        // ["(a + b)", "c"]
-func (e *StorageExecutor) splitByOperator(expr, op string) []string {
-	left, right, ok := splitByOperatorWithOptions(expr, op, true, false)
+func (e *StorageExecutor) splitByOperator(view braceView, op string) []string {
+	expr := view.text()
+	left, right, ok := splitByOperatorWithOptions(view, op, true, false)
 	if !ok {
 		return []string{expr}
 	}
@@ -999,14 +1025,15 @@ func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
 //
 //	hasStringPredicate("n.name CONTAINS 'test'", " CONTAINS ")  // true
 //	hasStringPredicate("'CONTAINS' = n.name", " CONTAINS ")     // false (in quotes)
-func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
-	return findTopLevelOperator(expr, predicate, true, true) >= 0
+func (e *StorageExecutor) hasStringPredicate(view braceView, predicate string) bool {
+	return findTopLevelOperator(view, predicate, true, true) >= 0
 }
 
-func nullPredicateOperand(expression, keyword string) (string, bool) {
-	at := topLevelKeywordIndex(expression, keyword)
+func nullPredicateOperand(view braceView, keyword string) (braceView, bool) {
+	expression := view.text()
+	at := topLevelKeywordIndex(view, keyword)
 	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
-		return "", false
+		return braceView{}, false
 	}
-	return strings.TrimSpace(expression[:at]), true
+	return view.window(0, at).trim(), true
 }

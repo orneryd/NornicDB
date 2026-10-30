@@ -51,8 +51,8 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(d)", "endNode(d)", "startNode(z)", "startNode(unbound)",
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
-		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantOK, wantErr := exec.evaluateRowFallback(expr, values, rowFallbackContext)
+		got, gotOK, gotErr := exec.evaluateRowValue(originalBraceView(expr), values)
+		want, wantOK, wantErr := exec.evaluateRowFallback(originalBraceView(expr), values, rowFallbackContext)
 		if gotErr != nil || wantErr != nil {
 			if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() {
 				t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
@@ -66,17 +66,17 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// Wrong argument types must fail through the same shared contract in both
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
-		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, _, wantErr := exec.evaluateRowFallback(expr, values, rowFallbackContext)
+		_, _, gotErr := exec.evaluateRowValue(originalBraceView(expr), values)
+		_, _, wantErr := exec.evaluateRowFallback(originalBraceView(expr), values, rowFallbackContext)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
 		}
 	}
-	if node, _, _ := exec.evaluateRowValue("startNode(r)", values); node.(*storage.Node).ID != "a" {
+	if node, _, _ := exec.evaluateRowValue(expressionBraceView("startNode(r)"), values); node.(*storage.Node).ID != "a" {
 		t.Fatalf("startNode(r) = %v", node)
 	}
-	if node, _, _ := exec.evaluateRowValue("endNode(d)", values); node != nil {
+	if node, _, _ := exec.evaluateRowValue(expressionBraceView("endNode(d)"), values); node != nil {
 		t.Fatalf("endNode(d) of a missing node = %#v", node)
 	}
 
@@ -182,10 +182,10 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 	for _, expr := range rowValueCorpus {
 		for index, row := range rows {
 			rowValueProgramsDisabled.Store(true)
-			want, wantOK, wantErr := exec.evaluateRowValue(expr, row)
+			want, wantOK, wantErr := exec.evaluateRowValue(originalBraceView(expr), row)
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
-			root, _ := compiler.compile(expr)
+			root, _ := compiler.compile(originalBraceView(expr))
 			got, gotOK, gotErr := root.eval(exec, row, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
@@ -207,13 +207,13 @@ func TestRowValueProgramsCompileIssueForms(t *testing.T) {
 		"allReduce(acc = 0, k IN $keys | acc + size(k), acc < 10000)",
 	} {
 		compiler := rowValueCompiler{}
-		root, _ := compiler.compile(expr)
+		root, _ := compiler.compile(originalBraceView(expr))
 		if text := firstRowTextNode(root); text != "" {
 			t.Fatalf("%s: %q is read from the text", expr, text)
 		}
 	}
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile("any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)")
+	root, _ := compiler.compile(expressionBraceView("any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)"))
 	quantifier := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowQuantifierNode)
 	if quantifier.loop.slots != 1 {
 		t.Fatalf("memo slots %d, want the key once", quantifier.loop.slots)
@@ -233,10 +233,10 @@ func firstRowTextNode(nodes ...rowValueNode) string {
 func firstRowTextNodeOf(node rowValueNode) string {
 	switch n := rowValueShape(node).(type) {
 	case *rowTextNode:
-		return n.text
+		return n.view.text()
 	case *rowFallbackNode:
-		if !cyphertext.IsIdentifier(n.text) && !strings.HasPrefix(n.text, "$") {
-			return n.text
+		if text := n.view.text(); !cyphertext.IsIdentifier(text) && !strings.HasPrefix(text, "$") {
+			return text
 		}
 	case *rowBoundNode:
 		return firstRowTextNode(n.inner)
@@ -302,11 +302,11 @@ func TestRowPredicateProgramAdapterConsistency(t *testing.T) {
 	evaluate := func(expr string, row map[string]interface{}, program bool) (bool, error) {
 		ctx := withExpressionFailureSlot(context.Background())
 		if program {
-			return compileRowPredicateProgram(expr).holds(exec, ctx, row), getExpressionFailure(ctx)
+			return compileRowPredicateProgram(originalBraceView(expr)).holds(exec, ctx, row), getExpressionFailure(ctx)
 		}
 		rowValueProgramsDisabled.Store(true)
 		defer rowValueProgramsDisabled.Store(false)
-		return exec.evaluateRowPredicate(ctx, expr, row), getExpressionFailure(ctx)
+		return exec.evaluateRowPredicate(ctx, originalBraceView(expr), row), getExpressionFailure(ctx)
 	}
 	for _, expr := range rowPredicateCorpus {
 		// CASE has a hand-written oracle in TestRowPredicateCaseExpectedResults:
@@ -438,7 +438,7 @@ func testRowValueProgramListAllocations(t *testing.T, exec *StorageExecutor, sto
 		}
 		return list
 	}
-	root, _ := (&rowValueCompiler{}).compile(expr)
+	root, _ := (&rowValueCompiler{}).compile(originalBraceView(expr))
 	shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
 	longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
 	evaluate := func(row map[string]interface{}) {
@@ -485,14 +485,14 @@ func TestRowContextShapeForms(t *testing.T) {
 	}
 	ctx := context.Background()
 	for run := 0; run < 2; run++ {
-		if value := exec.evaluateExpressionWithContext(ctx, "any(k IN [1] WHERE datetime() IS NOT NULL)", map[string]*storage.Node{"n": node}, nil); value != true {
+		if value := exec.evaluateExpressionWithContext(ctx, expressionBraceView("any(k IN [1] WHERE datetime() IS NOT NULL)"), map[string]*storage.Node{"n": node}, nil); value != true {
 			t.Fatalf("run %d: any() with datetime() = %v", run, value)
 		}
 		failure := withExpressionFailureSlot(ctx)
-		if _, ok := exec.evaluateRowExpressionWithContext(failure, "substring(n.id, -1)", pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
+		if _, ok := exec.evaluateRowExpressionWithContext(failure, expressionBraceView("substring(n.id, -1)"), pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
 			t.Fatalf("run %d: substring(n.id, -1) resolved without an error", run)
 		}
-		value, ok := exec.evaluateRowExpressionWithContext(ctx, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
+		value, ok := exec.evaluateRowExpressionWithContext(ctx, originalBraceView("[(n)-[:R]->(m) | m.id]"), pipelineRow{"n": node})
 		if !ok || !reflect.DeepEqual(value, []interface{}{"b"}) {
 			t.Fatalf("run %d: pattern comprehension = %v, %v", run, value, ok)
 		}
@@ -514,7 +514,7 @@ func TestRowFallbackResolutionPolicy(t *testing.T) {
 		{"bound", nil, true}, {"absent", nil, false}, {"$p", int64(7), true}, {"$object.k", int64(9), true}, {"$missing", nil, false},
 	} {
 		t.Run(test.expr, func(t *testing.T) {
-			value, resolved, err := exec.evaluateRowFallback(test.expr, values, rowFallbackValue)
+			value, resolved, err := exec.evaluateRowFallback(originalBraceView(test.expr), values, rowFallbackValue)
 			if err != nil || resolved != test.resolved || !reflect.DeepEqual(value, test.value) {
 				t.Fatalf("got %#v, %v, %v; want %#v, %v", value, resolved, err, test.value, test.resolved)
 			}
@@ -522,11 +522,11 @@ func TestRowFallbackResolutionPolicy(t *testing.T) {
 	}
 	for _, policy := range []rowFallbackPolicy{rowFallbackContext, rowFallbackValue} {
 		depth := context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{depth: maxRowFallbackDepth})
-		_, resolved, err := exec.evaluateRowFallback("toUpper('a')", pipelineRow{rowStatementContextKey: depth}, policy)
+		_, resolved, err := exec.evaluateRowFallback(expressionBraceView("toUpper('a')"), pipelineRow{rowStatementContextKey: depth}, policy)
 		if resolved || err == nil {
 			t.Fatalf("policy %d failed to retain depth boundary: resolved=%v err=%v", policy, resolved, err)
 		}
-		_, resolved, err = exec.evaluateRowFallback("substring('a', -1)", values, policy)
+		_, resolved, err = exec.evaluateRowFallback(expressionBraceView("substring('a', -1)"), values, policy)
 		if resolved || err == nil {
 			t.Fatalf("policy %d swallowed context evaluator argument error: resolved=%v err=%v", policy, resolved, err)
 		}

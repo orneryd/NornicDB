@@ -29,22 +29,21 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 		if clause.kind != pipelineClauseWith {
 			continue
 		}
-		body := projectionSemanticBody(clause.text, "WITH")
+		body, _ := projectionSemanticSourceAndTail(clause.input(ctx), "WITH")
 		if err := validateReturnAggregationSemantics(ctx, body); err != nil {
 			return err
 		}
 		seen := make(map[string]struct{})
-		for _, raw := range splitTopLevelComma(body) {
-			item := strings.TrimSpace(raw)
+		for _, raw := range body.commaViews() {
+			item := raw.text()
 			if item == "" || item == "{}" {
 				continue
 			}
-			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
-			expression, alias := itemSource.expression, itemSource.alias
+			expression, alias := parseProjectionExprAlias(ctx, raw)
 			if err := validateExpressionOperandCompleteness(expression); err != nil {
 				return err
 			}
-			explicitAlias := itemSource.as > 0
+			explicitAlias := projectionAliasIndex(ctx, raw) > 0
 			// true, false and null are literals, not variables, even when a
 			// variable of that name was declared (isLiteralKeyword).
 			if !explicitAlias && expression != "*" && (simpleSemanticIdentifier(expression) == "" || isLiteralKeyword(expression)) {
@@ -81,7 +80,7 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 		default:
 			continue
 		}
-		if err := aggregatingProjectionScopeError(ctx, strings.TrimSpace(clause.text), keyword); err != nil {
+		if err := aggregatingProjectionScopeError(ctx, clause.input(ctx).trim(), keyword); err != nil {
 			return err
 		}
 	}
@@ -90,49 +89,62 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 
 // aggregatingProjectionScopeError checks one WITH or RETURN clause
 // (validateProjectionSemantics).
-func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string) error {
-	body, tail := projectionSemanticBodyAndTail(clause, keyword)
-	_, distinct := cutDistinct(clause[len(keyword):])
-	tail = strings.TrimSpace(tail)
-	if tail == "" {
+func aggregatingProjectionScopeError(ctx context.Context, clause braceView, keyword string) error {
+	body, tail := projectionSemanticSourceAndTail(clause, keyword)
+	_, distinct := cutDistinct(clause.clauseBody(keyword))
+	tail = tail.trim()
+	if tail.empty() {
 		return nil
 	}
-	items := splitTopLevelComma(body)
+	items := body.commaViews()
 	aliases := make(map[string]struct{}, len(items)+1)
 	aliases[projectedExpressionPlaceholder] = struct{}{}
 	expressions := make([]string, 0, len(items))
+	var expressionViews []braceView
 	aggregates := false
 	for _, item := range items {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
-		expression, alias := itemSource.expression, itemSource.alias
+		product := readProjectionItemSource(ctx, item, projectionAdmitted)
+		expression, alias := product.expression, product.alias
 		expression = strings.TrimSpace(expression)
 		if expression == "*" {
 			return nil
 		}
-		aggregates = aggregates || containsAggregateFunc(expression)
+		aggregates = aggregates || containsAggregateFunc(product.view)
 		aliases[normalizeProjectionColumnName(alias)] = struct{}{}
-		expressions = append(expressions, strings.Join(strings.Fields(expression), " "))
+		expressionViews = append(expressionViews, product.view.trim().joinFields())
 	}
 	if !aggregates && !distinct {
 		return nil
 	}
 	// Longest first, so a projected x + 1 is masked whole before a
 	// projected x inside it.
-	sort.Slice(expressions, func(i, j int) bool { return len(expressions[i]) > len(expressions[j]) })
+	sort.Slice(expressionViews, func(i, j int) bool { return len(expressionViews[i].text()) > len(expressionViews[j].text()) })
+	for _, expression := range expressionViews {
+		expressions = append(expressions, expression.text())
+	}
 	// An aggregate call spelled otherwise (COUNT(distinct n) for a
 	// projected count(DISTINCT n)) is the projected one.
 	var spellings map[string]string
+	retained := map[string]braceView{}
 	spelled := false
 	for _, part := range aggregatingProjectionTailExpressions(tail) {
-		masked := strings.Join(strings.Fields(part), " ")
+		masked := part.joinFields()
 		if containsAggregateFunc(masked) {
 			if !spelled {
-				spellings, spelled = aggregateCallSpellings(expressions), true
+				spellings = aggregateCallSpellings(expressionViews, func(index int, span aggregateSpan, key string) {
+					retained[key] = expressionViews[index].window(span.start, span.end).trim()
+				})
+				spelled = true
 			}
-			masked = respellAggregateCalls(masked, spellings)
+			text := respellAggregateCalls(masked, spellings, func(start, end int, key string) {
+				masked = clause.assembleCode([]braceView{masked.window(0, start), retained[key], masked.window(end, len(masked.text()))}, "")
+			})
+			if masked.text() != text {
+				panic("cypher: aggregation spelling producer lost its source pieces")
+			}
 		}
 		for _, expression := range expressions {
-			masked = maskProjectedExpression(masked, expression)
+			masked = maskProjectedExpressionView(masked, expression)
 		}
 		for _, reference := range semanticFreeReferences(masked) {
 			base := strings.SplitN(reference, ".", 2)[0]
@@ -149,15 +161,16 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 // aggregatingProjectionTailExpressions are the expressions of a projection's
 // WHERE and ORDER BY terms, in whichever order the clause has them (WITH x
 // ORDER BY x LIMIT 1 WHERE x > 0); SKIP and LIMIT read no variables.
-func aggregatingProjectionTailExpressions(tail string) []string {
+func aggregatingProjectionTailExpressions(view braceView) []braceView {
+	tail := view.text()
 	keywords := []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"}
 	starts := make([]int, len(keywords))
 	for i, keyword := range keywords {
-		starts[i] = topLevelKeywordIndex(tail, keyword)
+		starts[i] = topLevelKeywordIndex(view, keyword)
 	}
-	segment := func(i int) string {
+	segment := func(i int) braceView {
 		if starts[i] < 0 {
-			return ""
+			return view.window(0, 0)
 		}
 		begin := starts[i] + len(keywords[i])
 		end := len(tail)
@@ -166,14 +179,14 @@ func aggregatingProjectionTailExpressions(tail string) []string {
 				end = other
 			}
 		}
-		return tail[begin:end]
+		return view.window(begin, end)
 	}
-	var parts []string
-	if where := segment(0); strings.TrimSpace(where) != "" {
+	var parts []braceView
+	if where := segment(0); !where.empty() {
 		parts = append(parts, where)
 	}
 	for _, term := range parseOrderByClause(segment(1)) {
-		parts = append(parts, term.column)
+		parts = append(parts, term.view)
 	}
 	return parts
 }
@@ -189,7 +202,7 @@ const projectedExpressionPlaceholder = "__nornic_projected"
 // before the projection. An occurrence
 // is whole when the text around it doesn't continue an identifier or a
 // property access (x is not inside n.x or xy).
-func maskProjectedExpression(text, expression string) string {
+func maskProjectedExpression(text, expression string, observe ...func(cyphertext.SourceEdit)) string {
 	if expression == "" || !strings.Contains(text, expression) {
 		return text
 	}
@@ -205,6 +218,9 @@ func maskProjectedExpression(text, expression string) string {
 		if strings.HasPrefix(text[index:], expression) &&
 			(index == 0 || !(cyphertext.NamePartAt(text, index-1) || text[index-1] == '.' || text[index-1] == '$')) &&
 			(end == len(text) || !cyphertext.NamePartAt(text, end)) {
+			for _, visit := range observe {
+				visit(cyphertext.SourceEdit{Original: cyphertext.Span{Start: index, End: end}, Accepted: cyphertext.Span{Start: out.Len(), End: out.Len() + len(projectedExpressionPlaceholder)}})
+			}
 			out.WriteString(projectedExpressionPlaceholder)
 			index = end
 			continue
@@ -213,4 +229,13 @@ func maskProjectedExpression(text, expression string) string {
 		index++
 	}
 	return out.String()
+}
+
+func maskProjectedExpressionView(view braceView, expression string) braceView {
+	var edits []cyphertext.SourceEdit
+	text := maskProjectedExpression(view.text(), expression, func(edit cyphertext.SourceEdit) { edits = append(edits, edit) })
+	if len(edits) == 0 {
+		return view
+	}
+	return braceView{syntax: view.syntax, source: view.source.RewriteWithCopies(text, edits, nil)}
 }

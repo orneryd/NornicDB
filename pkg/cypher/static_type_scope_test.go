@@ -107,6 +107,6 @@ func TestCaseInsideAnExpressionDoesNotTypeIt(t *testing.T) {
 		require.NoError(t, err, statement)
 		require.Equal(t, want, result.Rows, statement)
 	}
-	require.Equal(t, "[1] + CASE"+strings.Repeat(" ", len(" WHEN a OR b THEN [] "))+"END", maskCaseBlocks("[1] + CASE WHEN a OR b THEN [] END"))
-	require.Equal(t, "n.case = 'CASE x END'", maskCaseBlocks("n.case = 'CASE x END'"))
+	require.Equal(t, "[1] + CASE"+strings.Repeat(" ", len(" WHEN a OR b THEN [] "))+"END", maskCaseBlocks(originalBraceView("[1] + CASE WHEN a OR b THEN [] END")))
+	require.Equal(t, "n.case = 'CASE x END'", maskCaseBlocks(expressionBraceView("n.case = 'CASE x END'")))
 }

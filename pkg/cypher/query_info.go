@@ -71,7 +71,7 @@ type QueryInfo struct {
 	// Use GetAST() to access - builds on first call
 	ast      *AST
 	astBuilt bool
-	rawQuery string
+	source   *cyphertext.Source
 	astMu    sync.RWMutex
 }
 
@@ -119,6 +119,13 @@ func NewQueryAnalyzer(maxSize int) *QueryAnalyzer {
 
 // Analyze extracts query information, using cache when available.
 func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
+	source := cyphertext.NewSource(ctx, cypher, cyphertext.RawSource)
+	return a.analyzeView(ctx, braceView{source: source})
+}
+
+func (a *QueryAnalyzer) analyzeView(ctx context.Context, view braceView) *QueryInfo {
+	ctx = withBraceView(ctx, view)
+	cypher := view.text()
 	// Fast path: exact query text cache hit avoids normalization cost on hot loops.
 	a.cacheMu.RLock()
 	if info, ok := a.raw[cypher]; ok {
@@ -130,7 +137,8 @@ func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	// The analysis and its cache key read the canonical text, so comments
 	// and spacing don't change it whatever the normalization setting
 	// (classificationText).
-	text := classificationText(cypher)
+	ctx, braceView := canonicalBraceView(ctx, cypher)
+	text := braceView.text()
 	normalized := normalizeQuery(text)
 
 	// Check cache
@@ -142,7 +150,7 @@ func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	a.cacheMu.RUnlock()
 
 	// Analyze query
-	info := analyzeQuery(text)
+	info := analyzeQueryView(braceView)
 	info.NormalizedQuery = normalized
 	if info.IsReadOnly && ctx.Err() == nil {
 		info.cachePolicy.Store(cachedExecutionPolicy(ctx, text))
@@ -213,7 +221,14 @@ func (info *QueryInfo) GetAST() *AST {
 
 	// Build AST
 	builder := NewASTBuilder()
-	ast, _ := builder.Build(info.rawQuery)
+	source := info.source
+	// A caller may construct the exported zero QueryInfo. It denotes the same
+	// empty query that the release API passed to Build; in-tree producers always
+	// retain their input instead. This API boundary creates that empty input.
+	if source == nil {
+		source = cyphertext.NewSource(context.Background(), "", cyphertext.AcceptedSource)
+	}
+	ast, _ := builder.BuildSource(source)
 	info.ast = ast
 	info.astBuilt = true
 
@@ -242,9 +257,10 @@ func (info *QueryInfo) HasAST() bool {
 //
 // The analyzer is used ONLY for caching optimization, NOT for access control.
 // Actual query execution validates syntax and permissions independently.
-func analyzeQuery(cypher string) *QueryInfo {
+func analyzeQueryView(view braceView) *QueryInfo {
+	cypher := view.text()
 	info := &QueryInfo{
-		rawQuery: cypher, // Store for lazy AST building
+		source: view.source,
 	}
 	upper := upperASCII(cypher)
 
@@ -350,13 +366,23 @@ func analyzeQuery(cypher string) *QueryInfo {
 // in a string sets HasCreate), so when one of them is set the statement's
 // clauses decide (#961): MERGE … ON CREATE SET … is MERGE work, not CREATE.
 func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
+	if info == nil {
+		return false
+	}
+	return retrySafeMergeCommitView(info, braceView{source: info.source})
+}
+
+func retrySafeMergeCommitView(info *QueryInfo, view braceView) bool {
 	if info == nil || !info.HasMerge {
 		return false
 	}
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(context.Background(), info.rawQuery)
+		if view.empty() {
+			return false
+		}
+		return mergeOnlyClauses(withBraceView(context.Background(), view), view)
 	}
 	return true
 }
@@ -364,11 +390,12 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 // mergeOnlyClauses reports whether query is a single statement of MERGE
 // clauses combined only with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND and
 // RETURN. A statement the clause splitter can't split, or a UNION, is not.
-func mergeOnlyClauses(ctx context.Context, query string) bool {
-	if topLevelUnionCut(query) >= 0 {
+func mergeOnlyClauses(ctx context.Context, view braceView) bool {
+	ctx = withBraceView(ctx, view)
+	if topLevelUnionCut(view) >= 0 {
 		return false
 	}
-	clauses, ok := splitPipelineClauses(ctx, query)
+	clauses, ok := splitPipelineClauses(ctx, view.text())
 	if !ok {
 		return false
 	}
@@ -427,7 +454,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 				continue
 			}
 			for _, property := range violation.Properties {
-				if !setItemKeepsMergeKey(item.text, property, mergeKeys, statement.Params) {
+				if !setItemKeepsMergeKey(item.view, property, mergeKeys, statement.Params) {
 					return false
 				}
 			}
@@ -440,6 +467,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 // the node it writes has exactly labels.
 type mergeSetItem struct {
 	text        string
+	view        braceView
 	labels      []string
 	exactLabels bool
 }
@@ -453,28 +481,29 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 	if !ok {
 		return nil, nil, false
 	}
-	addedLabels, dynamicLabels := statementSetLabels(clauses)
+	addedLabels, dynamicLabels := statementSetLabels(ctx, clauses)
 	for index, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
-			for _, assignment := range splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])) {
-				items = append(items, mergeSetItem{text: assignment})
+			for _, assignment := range setAssignmentViews(clause.input(ctx).clauseBody("SET")) {
+				items = append(items, mergeSetItem{text: assignment.text(), view: assignment})
 			}
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+			parts := readMergeSourceActions(clause.input(ctx))
 			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
 			introduced := patternNodeLabels(parts.pattern)
-			for _, assignment := range mergeActionAssignments(parts.onCreate) {
-				item := mergeSetItem{text: assignment}
-				target, _, _, _ := splitSetAssignment(assignment)
+			for _, assignmentView := range mergeSourceActionAssignments(parts.onCreate) {
+				assignment := assignmentView.text()
+				item := mergeSetItem{text: assignment, view: assignmentView}
+				target := readSetAssignment(assignmentView).target
 				if labels, named := introduced[target]; named && !dynamicLabels[target] && !referencedIn(clauses[:index], target) {
 					item.labels = append(append([]string(nil), labels...), addedLabels[target]...)
 					item.exactLabels = true
 				}
 				items = append(items, item)
 			}
-			for _, assignment := range mergeActionAssignments(parts.onMatch) {
-				items = append(items, mergeSetItem{text: assignment})
+			for _, assignment := range mergeSourceActionAssignments(parts.onMatch) {
+				items = append(items, mergeSetItem{text: assignment.text(), view: assignment})
 			}
 		}
 	}
@@ -484,11 +513,12 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 // statementSetLabels returns the labels each variable gets from the
 // statement's SET x:Label items (SET clauses and ON CREATE / ON MATCH SET
 // lists), and the variables given a label that isn't static (SET x:$(expr)).
-func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
+func statementSetLabels(ctx context.Context, clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
 	added, dynamic = map[string][]string{}, map[string]bool{}
-	note := func(assignments []string) {
+	note := func(assignments []braceView) {
 		for _, assignment := range assignments {
-			target, _, operator, right := splitSetAssignment(assignment)
+			item := readSetAssignment(assignment)
+			target, operator, right := item.target, item.operator, item.rightText()
 			if operator != ":" {
 				continue
 			}
@@ -503,11 +533,11 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
-			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
+			note(setAssignmentViews(clause.input(ctx).clauseBody("SET")))
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
-			note(mergeActionAssignments(parts.onCreate))
-			note(mergeActionAssignments(parts.onMatch))
+			parts := readMergeSourceActions(clause.input(ctx))
+			note(mergeSourceActionAssignments(parts.onCreate))
+			note(mergeSourceActionAssignments(parts.onMatch))
 		}
 	}
 	return added, dynamic
@@ -525,13 +555,14 @@ func referencedIn(clauses []pipelineClause, variable string) bool {
 
 // patternNodeLabels returns the labels of each named node of pattern
 // ((n:L1:L2 {…}) gives n: [L1 L2]).
-func patternNodeLabels(pattern string) map[string][]string {
+func patternNodeLabels(patternView braceView) map[string][]string {
+	pattern := patternView.text()
 	nodes := map[string][]string{}
-	eachPatternElement(pattern, func(opener byte, element string) {
+	eachPatternElementSpan(pattern, func(opener byte, start, end int) {
 		if opener != '(' {
 			return
 		}
-		head, _ := splitNodePatternProperties(element)
+		head, _ := splitNodePatternProperties(patternView.window(start, end))
 		if variable, labels, err := parseNodeHead(head); err == nil && variable != "" {
 			nodes[variable] = append(nodes[variable], labels...)
 		}
@@ -542,6 +573,10 @@ func patternNodeLabels(pattern string) map[string][]string {
 // eachPatternElement calls visit with each node "(…)" and relationship
 // "[…]" of pattern, delimiters included, skipping quoted text.
 func eachPatternElement(pattern string, visit func(opener byte, element string)) {
+	eachPatternElementSpan(pattern, func(opener byte, start, end int) { visit(opener, pattern[start:end]) })
+}
+
+func eachPatternElementSpan(pattern string, visit func(opener byte, start, end int)) {
 	for index := 0; index < len(pattern); index++ {
 		switch cypherLexicalByte(pattern[index]) {
 		case cypherQuoteClass:
@@ -555,7 +590,7 @@ func eachPatternElement(pattern string, visit func(opener byte, element string))
 			if closing < 0 {
 				return
 			}
-			visit(pattern[index], pattern[index:closing+1])
+			visit(pattern[index], index, closing+1)
 			index = closing
 		}
 	}
@@ -564,11 +599,12 @@ func eachPatternElement(pattern string, visit func(opener byte, element string))
 // appendPatternPropertyExpressions adds to keys the key: expression pairs of
 // the property maps of pattern's nodes labelled label and relationships of
 // type label.
-func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string {
-	eachPatternElement(pattern, func(opener byte, element string) {
-		inner := element[1 : len(element)-1]
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace < 0 {
+func appendPatternPropertyExpressions(keys map[string][]string, pattern braceView, label string) map[string][]string {
+	eachPatternElementSpan(pattern.text(), func(opener byte, start, end int) {
+		innerView := pattern.window(start+1, end-1)
+		inner := innerView.text()
+		brace, closing, _, present := innerView.firstBrace()
+		if !present {
 			return
 		}
 		_, chain, hasLabels := splitNodeHead(inner[:brace])
@@ -578,18 +614,15 @@ func appendPatternPropertyExpressions(keys map[string][]string, pattern, label s
 		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
 			return
 		}
-		closing := cyphertext.FindMatchingDelimiter(inner, brace, '{', '}', cyphertext.OpeningDelimiter)
-		if closing < 0 {
+		entries, valid := innerView.window(brace, closing+1).keyedEntries()
+		if !valid {
 			return
 		}
-		for _, pair := range splitTopLevelComma(inner[brace+1 : closing]) {
-			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				if keys == nil {
-					keys = make(map[string][]string)
-				}
-				key := normalizePropertyKey(pair[:separator])
-				keys[key] = append(keys[key], strings.TrimSpace(pair[separator+1:]))
+		for _, entry := range entries {
+			if keys == nil {
+				keys = make(map[string][]string)
 			}
+			keys[entry.key()] = append(keys[entry.key()], entry.value.text())
 		}
 	})
 	return keys
@@ -598,8 +631,10 @@ func appendPatternPropertyExpressions(keys map[string][]string, pattern, label s
 // setItemKeepsMergeKey reports whether the SET item can't cause a UNIQUE
 // clash on property of its own: it doesn't write property, or it writes a
 // value a MERGE pattern keys property on.
-func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, params map[string]interface{}) bool {
-	_, setProperty, operator, right := splitSetAssignment(item)
+func setItemKeepsMergeKey(view braceView, property string, mergeKeys map[string][]string, params map[string]interface{}) bool {
+	view = view.trim()
+	item := readSetAssignment(view)
+	setProperty, operator, right := item.property, item.operator, item.rightText()
 	switch {
 	case operator == ":":
 		return true
@@ -621,13 +656,16 @@ func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, 
 			return false
 		}
 		written = parameter
-	case strings.HasPrefix(right, "{") && cyphertext.FindMatchingDelimiter(right, 0, '{', '}', cyphertext.OpeningDelimiter) == len(right)-1:
-		for _, pair := range splitTopLevelComma(right[1 : len(right)-1]) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
-			if separator <= 0 || normalizePropertyKey(pair[:separator]) != property {
+	case enclosingMapText(view.window(len(view.text())-len(right), len(view.text()))):
+		entries, valid := view.window(len(view.text())-len(right), len(view.text())).keyedEntries()
+		if !valid {
+			return false
+		}
+		for _, entry := range entries {
+			if entry.key() != property {
 				continue
 			}
-			value, ok := staticCommitValue(pair[separator+1:], params)
+			value, ok := staticCommitValue(entry.value.text(), params)
 			return ok && isMergeKeyValue(value, mergeKeys[property], params)
 		}
 		return true

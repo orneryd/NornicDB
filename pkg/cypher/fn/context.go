@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,8 +10,13 @@ import (
 // Context provides runtime access for function evaluation without importing the parent
 // `cypher` package (avoids import cycles).
 //
-// Eval must evaluate a Cypher expression in the caller's scope (row bindings).
-// Functions can use Eval for lazy argument evaluation (e.g. coalesce).
+// Eval is the external compatibility boundary. Expression hosts evaluate its
+// text as a fresh standalone expression in the current row scope; equal strings
+// do not claim occurrence identity in the enclosing statement. A host that
+// already supplied a value (native APOC's entity aliases) retains release's
+// value-bound callback. Internal functions use retained argument positions in
+// InvocationContext instead.
+// Author: #1663 implementation lane. Compatibility allocation: orchestrator Nornic2.
 type Context struct {
 	Nodes map[string]*storage.Node
 	Rels  map[string]*storage.Edge
@@ -32,6 +38,18 @@ type Context struct {
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and
 	// Neo4j 5.26 for a Cypher 5 statement (#907).
 	Cypher25 bool
+}
+
+// InvocationContext carries the host's retained argument identities. Eval
+// selects an existing argument position; the host evaluates its carried Source
+// window. Shadowing Context.Eval makes a string-taking internal call a compiler
+// error. Context.Eval is reserved for the external Func compatibility adapter.
+type InvocationContext struct {
+	Context
+	Eval func(index int) (interface{}, error)
+	// EvalSpan selects an extent emitted by an argument's own grammar (for
+	// example TRIM's FROM form), relative to that retained argument window.
+	EvalSpan func(index int, span cyphertext.Span) (interface{}, error)
 }
 
 // GraphCatalog lists the graphs of the composite database a query runs on:

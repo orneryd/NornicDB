@@ -38,7 +38,7 @@ func nativeAPOCCallFailure(name string, value interface{}) error {
 	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed", invalidFunctionArgument(name, value).Error())
 }
 
-func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name string, args []interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name string, args []interface{}, retained []braceView, evaluate func(braceView) (interface{}, error)) (interface{}, bool, error) {
 	if !isNativeAPOCFunction(name) {
 		return nil, false, nil
 	}
@@ -77,8 +77,13 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		if name == "apoc.rel.type" {
 			builtin = "type"
 		}
-		fnCtx := e.registryFunctionContext(ctx, func(string) (interface{}, error) { return value, nil })
-		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, fnCtx)
+		fnCtx := e.registryFunctionContext(ctx, retained, evaluate)
+		// Native APOC has already evaluated these retained arguments. Internal
+		// aliases consume those values once. This external API boundary keeps
+		// release's value-bound callback and argument metadata unchanged.
+		fnCtx.Eval = func(index int) (interface{}, error) { return args[index], nil }
+		fnCtx.Context.Eval = func(string) (interface{}, error) { return value, nil }
+		v, _, err := cypherfn.EvaluateInvocation(builtin, []string{"value"}, fnCtx)
 		if err != nil {
 			err = functionEvaluationError(err)
 		}

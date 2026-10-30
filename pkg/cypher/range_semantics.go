@@ -88,12 +88,12 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow) error {
-	for _, argumentText := range namedFunctionArguments(expression, "range") {
-		parts := e.splitFunctionArgs(argumentText)
+func (e *StorageExecutor) validateRangeCalls(expression braceView, row pipelineRow) error {
+	for _, argumentText := range namedFunctionArgumentViews(expression, "range") {
+		parts := argumentText.commaViews()
 		arguments := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), row)
+			value, resolved, err := e.evaluateRowValue(part, row)
 			if err != nil {
 				return err
 			}
@@ -113,7 +113,7 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause braceView, keyword string) error {
 	expressions := projectionExpressions(ctx, clause, keyword)
 	if len(expressions) == 0 {
 		return nil
@@ -131,10 +131,11 @@ func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, ro
 	return nil
 }
 
-func namedFunctionArguments(expression, function string) []string {
+func namedFunctionArgumentViews(view braceView, function string) []braceView {
+	expression := view.text()
 	lower := lowerASCII(expression)
 	function = lowerASCII(function)
-	arguments := make([]string, 0)
+	arguments := make([]braceView, 0)
 	for index := 0; index < len(lower); {
 		if isCypherQuoteByte(lower[index]) {
 			index = skipCypherQuotedText(expression, index, expression[index])
@@ -166,7 +167,7 @@ func namedFunctionArguments(expression, function string) []string {
 		if close < 0 {
 			return arguments
 		}
-		arguments = append(arguments, expression[open+1:close])
+		arguments = append(arguments, view.window(open+1, close))
 		index = close + 1
 	}
 	return arguments

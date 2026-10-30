@@ -53,7 +53,7 @@ func TestSplitUnwindCompoundMutationStages_AdditionalRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stages, ok := splitUnwindCompoundMutationStages(tt.query, "rows", "row")
+			stages, ok := splitUnwindCompoundMutationStages(originalBraceView(tt.query), "rows", "row")
 			require.False(t, ok)
 			require.Nil(t, stages)
 		})
@@ -90,24 +90,24 @@ func TestUnwindLookupSetHasUniqueAnchor_Branches(t *testing.T) {
 }
 
 func TestParseUnwindMergeChainPattern_AdditionalRejections(t *testing.T) {
-	plan := parseUnwindMergeChainPattern(t.Context(), "MERGE (n:Node {id: row.id}) CALL db.labels()")
+	plan := parseUnwindMergeChainPattern(t.Context(), originalBraceView("MERGE (n:Node {id: row.id}) CALL db.labels()"))
 	require.False(t, plan.supported)
 
-	plan = parseUnwindMergeChainPattern(t.Context(), "MERGE (a:Node {id: row.id}) MERGE (a)-[:REL]->(b)")
+	plan = parseUnwindMergeChainPattern(t.Context(), originalBraceView("MERGE (a:Node {id: row.id}) MERGE (a)-[:REL]->(b)"))
 	require.False(t, plan.supported)
 
 	// Relationship SET requires a relationship variable.
-	plan = parseUnwindMergeChainPattern(t.Context(), "MERGE (a:Node {id: row.a}) MERGE (b:Node {id: row.b}) MERGE (a)-[:REL]->(b) SET r.k = row.k")
+	plan = parseUnwindMergeChainPattern(t.Context(), originalBraceView("MERGE (a:Node {id: row.a}) MERGE (b:Node {id: row.b}) MERGE (a)-[:REL]->(b) SET r.k = row.k"))
 	require.False(t, plan.supported)
 
 	// Supported mixed lookup + merge + rel chain.
-	plan = parseUnwindMergeChainPattern(t.Context(), `
+	plan = parseUnwindMergeChainPattern(t.Context(), originalBraceView(`
 MATCH (u:User {id: row.user_id})
 MERGE (p:Post {id: row.post_id})
 SET p.title = row.title
 MERGE (u)-[r:AUTHORED]->(p)
 SET r.source = row.source
-`)
+`))
 	require.True(t, plan.supported)
 	require.GreaterOrEqual(t, len(plan.steps), 3)
 }

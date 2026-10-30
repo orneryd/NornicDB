@@ -16,7 +16,6 @@ import (
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -314,13 +313,12 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 
 // extractReturnItemsFromQuery extracts RETURN items from a Cypher query
 func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query string) []returnItem {
-	returnIdx := findKeywordIndex(query, "RETURN")
+	view := statementBraceView(ctx, query)
+	returnIdx := findKeywordIndex(view, "RETURN")
 	if returnIdx == -1 {
 		return nil
 	}
-
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-	return e.parseReturnItems(ctx, returnPart)
+	return e.parseReturnItems(ctx, view.window(returnIdx+6, len(view.text())).trim())
 }
 
 // getNodeCached retrieves a node, using cache to avoid repeated lookups

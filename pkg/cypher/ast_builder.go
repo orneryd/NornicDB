@@ -312,7 +312,7 @@ func astCommaViews(source *cyphertext.Source) []*cyphertext.Source {
 	}
 	var parts []*cyphertext.Source
 	for start := 0; ; {
-		comma := findTopLevelOperator(source.Text[start:], ",", false, true)
+		comma := findTopLevelSymbol(source.Text[start:], ",", false, true)
 		end := len(source.Text)
 		if comma >= 0 {
 			end = start + comma
@@ -331,14 +331,23 @@ func astWithoutComments(source *cyphertext.Source) *cyphertext.Source {
 	if len(edits) == 0 {
 		return source
 	}
-	return source.Rewrite(text, edits)
+	return source.RewriteWithCopies(text, edits, nil)
 }
 
 // Build parses a Cypher query into an AST.
 func (b *ASTBuilder) Build(cypher string) (*AST, error) {
-	source := cyphertext.NormalizeSource(cypher)
+	return b.BuildSource(cyphertext.NormalizeSource(cypher))
+}
+
+// BuildSource consumes an already carried Source; Build admits independent client text.
+func (b *ASTBuilder) BuildSource(source *cyphertext.Source) (*AST, error) {
+	cypher := source.Original
 	if source.Err != nil {
 		return nil, source.Err
+	}
+	syntax := readBraceSyntax(source)
+	if err := syntax.err; err != nil {
+		return nil, err
 	}
 	ast := &AST{
 		RawQuery: cypher,
@@ -349,7 +358,7 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	// removal lets compound grammar phrases share their normal keyword owner.
 	source = astWithoutComments(source)
 	// Split into clauses
-	clauses := b.splitIntoClauses(source.Text)
+	clauses := b.splitIntoClauses(braceView{source: source, syntax: syntax})
 
 	for _, clauseInfo := range clauses {
 		clause := b.parseClause(context.Background(), clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
@@ -371,7 +380,8 @@ type clauseInfo struct {
 }
 
 // splitIntoClauses splits a query into individual clauses.
-func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
+func (b *ASTBuilder) splitIntoClauses(view braceView) []clauseInfo {
+	cypher := view.text()
 	var clauses []clauseInfo
 	upper := upperASCII(cypher)
 
@@ -412,7 +422,7 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	}
 	var boundaries []boundary
 
-	options := defaultKeywordScanOpts()
+	options := defaultKeywordScanOpts(view)
 	options.SkipBraces = true
 	for _, kw := range keywords {
 		pos := 0
@@ -565,7 +575,7 @@ func (b *ASTBuilder) parseMerge(source *cyphertext.Source) *ASTMerge {
 	merge := &ASTMerge{}
 	body := astTrim(source.Window(queryGapEnd(text, keywordEndAt(text, 0, "MERGE")), len(text)))
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body.Text, &spans)
+	parts := splitMergeClauseActions(braceView{source: body}, &spans)
 	if patterns := b.parsePatterns(body.Window(spans.pattern.Start, spans.pattern.End)); len(patterns) > 0 {
 		merge.Pattern = patterns[0]
 	}
@@ -621,15 +631,17 @@ func (b *ASTBuilder) parseSetItems(source *cyphertext.Source) []ASTSetItem {
 		item := ASTSetItem{RawValue: astRaw(partSource)}
 
 		// Parse n.prop = value or n = value or n += value
-		if eqIdx := findTopLevelOperator(part, "=", false, true); eqIdx > 0 {
-			left := strings.TrimSpace(part[:eqIdx])
+		if eqIdx := findTopLevelOperator(sourceBraceView(partSource), "=", false, true); eqIdx > 0 {
+			leftView := sourceBraceView(partSource).window(0, eqIdx).trim()
 
 			// Handle += operator
-			left = strings.TrimSuffix(left, "+")
+			if strings.HasSuffix(leftView.text(), "+") {
+				leftView = leftView.window(0, len(leftView.text())-1)
+			}
 
 			// The contextual SET target owner supplies the postfix boundary
 			// and decoded property; quoted punctuation is part of the name.
-			item.Variable, item.Property, _ = parseSetAssignmentTarget(left)
+			item.Variable, item.Property, _ = parseSetAssignmentTarget(leftView)
 			if name, ok := cyphertext.ScanIdentifier(item.Variable, 0); ok && name.End == len(item.Variable) {
 				item.Variable = name.Value
 			}
@@ -662,7 +674,7 @@ func (b *ASTBuilder) parseRemove(source *cyphertext.Source) *ASTRemove {
 		item := ASTRemoveItem{}
 
 		// Check for label removal (n:Label) or property removal (n.prop)
-		if colonIdx := findTopLevelOperator(part, ":", false, true); colonIdx > 0 {
+		if colonIdx := findTopLevelOperator(sourceBraceView(partSource), ":", false, true); colonIdx > 0 {
 			item.Variable = strings.TrimSpace(part[:colonIdx])
 			labels := labelChainNames(part[colonIdx+1:])
 			for _, l := range labels {
@@ -670,7 +682,7 @@ func (b *ASTBuilder) parseRemove(source *cyphertext.Source) *ASTRemove {
 					item.Labels = append(item.Labels, l)
 				}
 			}
-		} else if variable, property, hasProperty := parseSetAssignmentTarget(part); hasProperty {
+		} else if variable, property, hasProperty := parseSetAssignmentTarget(sourceBraceView(partSource)); hasProperty {
 			item.Variable, item.Property = variable, property
 		}
 		if name, ok := cyphertext.ScanIdentifier(item.Variable, 0); ok && name.End == len(item.Variable) {
@@ -687,13 +699,11 @@ func (b *ASTBuilder) parseRemove(source *cyphertext.Source) *ASTRemove {
 func (b *ASTBuilder) parseProjection(ctx context.Context, source *cyphertext.Source, keywordBytes int) (items []ASTReturnItem, distinct bool) {
 	text := source.Text
 
-	itemsText := strings.TrimSpace(text[keywordBytes:])
-
-	// Check for DISTINCT
-	itemsText, distinct = cutDistinct(itemsText)
+	itemsSource := sourceBraceView(source.Window(keywordBytes, len(text))).trim()
+	itemsSource, distinct = cutDistinct(itemsSource)
 
 	// Parse items
-	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
+	parts := astCommaViews(itemsSource.source)
 	for _, partSource := range parts {
 		partSource = astTrim(partSource)
 		part := partSource.Text
@@ -704,8 +714,7 @@ func (b *ASTBuilder) parseProjection(ctx context.Context, source *cyphertext.Sou
 		item := ASTReturnItem{RawText: astRaw(partSource)}
 
 		// Check for AS alias
-		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
-		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
+		itemSource := readProjectionItemSource(ctx, sourceBraceView(partSource), projectionAdmitted)
 		if itemSource.as > 0 {
 			item.Alias = itemSource.alias
 			partSource = astTrim(partSource.Window(0, itemSource.as))
@@ -735,7 +744,7 @@ func (b *ASTBuilder) parseUnwind(source *cyphertext.Source) *ASTUnwind {
 	body := astTrim(source.Window(len("UNWIND"), len(source.Text)))
 	content := body.Text
 
-	if asIndex := topLevelKeywordIndex(content, "AS"); asIndex > 0 {
+	if asIndex := topLevelKeywordIndex(braceView{source: body}, "AS"); asIndex > 0 {
 		// Map through the AS boundary before trimming accepted trivia: a
 		// normalized comment may occupy that trivia in the original source.
 		expressionSource := body.Window(0, asIndex)
@@ -873,22 +882,17 @@ func (b *ASTBuilder) parsePatterns(source *cyphertext.Source) []ASTPattern {
 			}
 			variable, labels, properties, ok := b.patternFields(partSource.Window(index+1, end))
 			if ok && opener == '(' {
-				node := ASTNode{Variable: variable, Labels: labels, Properties: map[string]ASTExpression{}, RawProps: astRaw(properties)}
-				for _, fieldSource := range astCommaViews(properties) {
-					fieldSource = astTrim(fieldSource)
-					field := fieldSource.Text
-					name, present := cyphertext.ScanIdentifier(field, 0)
-					if !present {
-						continue
-					}
-					colon, _ := cyphertext.GapEnd(field, name.End)
-					if colon < len(field) && field[colon] == ':' {
-						node.Properties[name.Value] = b.parseExpression(fieldSource.Window(colon+1, len(field)))
+				node := ASTNode{Variable: variable, Labels: labels, Properties: map[string]ASTExpression{}, RawProps: astMapBody(properties)}
+				if properties != nil {
+					// The property Source includes the original paired map endpoints.
+					entries, _ := sourceBraceView(properties).keyedEntries()
+					for _, entry := range entries {
+						node.Properties[entry.key()] = b.parseExpression(entry.value.source)
 					}
 				}
 				pattern.Nodes = append(pattern.Nodes, node)
-			} else if ok && opener == '[' && len(labels) <= 1 && (properties == nil || properties.Text == "") {
-				open, close := readRelationshipBracket(part, index, requireClosedRelationship)
+			} else if ok && opener == '[' && len(labels) <= 1 && (properties == nil || properties.Text == "{}") {
+				open, close := readRelationshipBracket(sourceBraceView(partSource), index, requireClosedRelationship)
 				left := len(strings.TrimRightFunc(part[:index], cyphertext.IsWhitespace)) - 1
 				right, unclosed := cyphertext.GapEnd(part, end+1)
 				if open == index && close == end && left >= 0 && part[left] == '-' && unclosed < 0 && right < len(part) && part[right] == '-' {
@@ -950,11 +954,11 @@ func (b *ASTBuilder) patternFields(source *cyphertext.Source) (variable string, 
 		labels, index = append(labels, name.Value), name.End
 	}
 	if index < len(text) && text[index] == '{' {
-		end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter)
-		if end < 0 {
+		end, complete := sourceBraceView(source).close(index)
+		if !complete {
 			return
 		}
-		properties, index = source.Window(index+1, end), end+1
+		properties, index = source.Window(index, end+1), end+1
 		index, unclosed = cyphertext.GapEnd(text, index)
 	}
 	ok = unclosed < 0 && index == len(text)
@@ -1027,31 +1031,16 @@ func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
 		return expr
 	}
 
-	// Map literal
-	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
-		expr.Type = ASTExprMap
-		expr.Map = make(map[string]ASTExpression)
-		inner := astTrim(source.Window(1, len(text)-1))
-		if inner.Text == "" {
-			return expr
-		}
-		parts := astCommaViews(inner)
-		for _, partSource := range parts {
-			partSource = astTrim(partSource)
-			part := partSource.Text
-			if part == "" {
-				continue
-			}
-			if colonIdx := findTopLevelMapKeyValueSeparator(part); colonIdx > 0 {
-				key := normalizePropertyKey(strings.TrimSpace(part[:colonIdx]))
-				expr.Map[key] = b.parseExpression(partSource.Window(colonIdx+1, len(part)))
-			}
+	// Map admission and entry boundaries come from the original record.
+	if entries, valid := sourceBraceView(source).keyedEntries(); valid {
+		expr.Type, expr.Map = ASTExprMap, make(map[string]ASTExpression)
+		for _, entry := range entries {
+			expr.Map[entry.key()] = b.parseExpression(entry.value.source)
 		}
 		return expr
 	}
-
 	// Property access (n.prop)
-	if variable, property, ok := splitPostfixPropertyAccess(text); ok {
+	if variable, property, ok := splitPostfixPropertyAccess(sourceBraceView(source)); ok {
 		expr.Type = ASTExprProperty
 		if decoded, named := isOneSymbolicName(variable); named {
 			variable = decoded
@@ -1069,15 +1058,14 @@ func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
 		if closeParen > parenIdx {
 			expr.Type = ASTExprFunction
 			funcName := strings.TrimSpace(text[:parenIdx])
-			argsText := text[parenIdx+1 : closeParen]
 
 			fc := &ASTFunctionCall{Name: funcName}
 
 			// Keep the original function-argument source extent and modifier.
-			argumentSource := cyphertext.ReadFunctionArgumentSource(argsText, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
-			fc.Distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
+			argumentSource, modifier := sourceBraceView(source.Window(parenIdx+1, closeParen)).argumentSource(cyphertext.DistinctArgumentModifier)
+			fc.Distinct = modifier == cyphertext.DistinctArgumentModifier
 
-			args := astCommaViews(source.Window(parenIdx+1+argumentSource.Arguments.Start, parenIdx+1+argumentSource.Arguments.End))
+			args := astCommaViews(argumentSource.source)
 			for _, arg := range args {
 				arg = astTrim(arg)
 				if arg.Text != "" && arg.Text != "*" {
@@ -1129,4 +1117,13 @@ func (b *ASTBuilder) determineQueryType(ast *AST) QueryType {
 	default:
 		return QueryMatch
 	}
+}
+
+// astMapBody keeps the AST's original property-body spelling while consumers
+// retain the complete map Source for original entry projection.
+func astMapBody(source *cyphertext.Source) string {
+	if source == nil {
+		return ""
+	}
+	return astRaw(source.Window(1, len(source.Text)-1))
 }

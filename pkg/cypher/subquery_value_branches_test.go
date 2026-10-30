@@ -14,22 +14,22 @@ import (
 func TestSubqueryValueHelperBranches(t *testing.T) {
 	// colonIsMapKeySeparator: a backtick-quoted key, whitespace before the
 	// colon, and a colon with no key before it.
-	require.True(t, colonIsMapKeySeparator("{`my key`: 1}", len("{`my key`")))
-	require.True(t, colonIsMapKeySeparator("{k : 1}", len("{k ")))
-	require.False(t, colonIsMapKeySeparator("{ : 1}", len("{ ")))
+	require.True(t, colonIsMapKeySeparator(expressionBraceView("{`my key`: 1}"), len("{`my key`")))
+	require.True(t, colonIsMapKeySeparator(expressionBraceView("{k : 1}"), len("{k ")))
+	require.False(t, colonIsMapKeySeparator(expressionBraceView("{ : 1}"), len("{ ")))
 
 	// patternHasRelationship skips string literals and quoted names.
-	require.False(t, patternHasRelationship("(a {s: 'x->y'})"))
-	require.False(t, patternHasRelationship("(`we->ird`)"))
-	require.True(t, patternHasRelationship("(a)-->(b)"))
+	require.False(t, patternHasRelationship(originalBraceView("(a {s: 'x->y'})")))
+	require.False(t, patternHasRelationship(originalBraceView("(`we->ird`)")))
+	require.True(t, patternHasRelationship(originalBraceView("(a)-->(b)")))
 
 	// Admitted source without a complete AS definition has no alias offset.
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "AS x", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "x AS", projectionAdmitted).as)
-	require.Equal(t, -1, readProjectionItemSource(t.Context(), "n.alias", projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), expressionBraceView("AS x"), projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), expressionBraceView("x AS"), projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), expressionBraceView("n.alias"), projectionAdmitted).as)
 
 	// findSubqueryExpressions stops at an unterminated backtick.
-	require.Empty(t, findSubqueryExpressions("`abc COUNT { (a) }"))
+	require.Empty(t, findSubqueryExpressions(expressionBraceView("`abc COUNT { (a) }")))
 
 	// containsIdentifierWord needs a whole word.
 	require.False(t, containsIdentifierWord("anything", ""))
@@ -80,10 +80,10 @@ func TestSubqueryValueEvaluatorBranches(t *testing.T) {
 	nodesResult, err := exec.Execute(ctx, "MATCH (n:SV {v: 1}) RETURN n", nil)
 	require.NoError(t, err)
 	node := nodesResult.Rows[0][0].(*storage.Node)
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "COUNT { (n)-->() } > 0"))
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "0 < COUNT { (n)-->() }"))
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = true"))
-	require.False(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = false"))
+	require.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("COUNT { (n)-->() } > 0")))
+	require.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("0 < COUNT { (n)-->() }")))
+	require.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("EXISTS { (n)-->() } = true")))
+	require.False(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("EXISTS { (n)-->() } = false")))
 }
 
 // TestSubqueryBodiesWithCallSubqueries covers #652 bodies that contain a CALL
@@ -113,7 +113,7 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	matched, err := exec.Execute(ctx, "MATCH (a:SC {v: 1})-[r:R]->(b:SC) RETURN a, r", nil)
 	require.NoError(t, err)
 	a, r := matched.Rows[0][0].(*storage.Node), matched.Rows[0][1].(*storage.Edge)
-	result, err := exec.executeCorrelatedSubqueryBody(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
+	result, err := exec.executeCorrelatedSubqueryBody(ctx, originalBraceView("MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e"), map[string]interface{}{
 		"a": a, "r": r, "k": int64(10), "m": (*storage.Node)(nil), "e": (*storage.Edge)(nil), "$ignored": 1,
 	})
 	require.NoError(t, err)

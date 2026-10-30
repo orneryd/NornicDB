@@ -20,13 +20,13 @@ func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
 		},
 	}
 
-	ordered := exec.applyOrderByToResult(result, "ORDER BY t.createdAt ASC")
+	ordered := exec.applyOrderByToResult(result, originalBraceView("ORDER BY t.createdAt ASC"))
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(1), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 	require.EqualValues(t, int64(2), extractPropertyFromValue(ordered.Rows[1][0], "createdAt"))
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[2][0], "createdAt"))
 
-	ordered = exec.applyOrderByToResult(result, "ORDER BY t.createdAt DESC LIMIT 2")
+	ordered = exec.applyOrderByToResult(result, originalBraceView("ORDER BY t.createdAt DESC LIMIT 2"))
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 }
@@ -42,10 +42,10 @@ func TestApplyOrderByToResult_UnknownAndEmptyBranches(t *testing.T) {
 		},
 	}
 
-	unchanged := exec.applyOrderByToResult(base, "ORDER BY missing")
+	unchanged := exec.applyOrderByToResult(base, originalBraceView("ORDER BY missing"))
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 
-	unchanged = exec.applyOrderByToResult(base, "ORDER BY")
+	unchanged = exec.applyOrderByToResult(base, originalBraceView("ORDER BY"))
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 }
 
@@ -62,7 +62,7 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 	}
 
 	// k=0 branch: LIMIT 0 with ORDER BY should return no rows.
-	out, err := exec.applyResultModifiers(context.Background(), in, "ORDER BY age ASC LIMIT 0")
+	out, err := exec.applyResultModifiers(context.Background(), in, originalBraceView("ORDER BY age ASC LIMIT 0"))
 	require.NoError(t, err)
 	require.Empty(t, out.Rows)
 
@@ -77,7 +77,7 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 
 	// Unknown ORDER BY column with LIMIT should preserve previous behavior
 	// and still apply LIMIT after no-op ORDER BY.
-	out2, err := exec.applyResultModifiers(context.Background(), in2, "ORDER BY missing DESC LIMIT 2")
+	out2, err := exec.applyResultModifiers(context.Background(), in2, originalBraceView("ORDER BY missing DESC LIMIT 2"))
 	require.NoError(t, err)
 	require.Len(t, out2.Rows, 2)
 	require.Equal(t, "c", out2.Rows[0][0])
@@ -95,7 +95,7 @@ func TestApplyResultModifiersOrdersByEveryTermBeforeMultilineWindow(t *testing.T
 		},
 	}
 
-	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
+	result, err := exec.applyResultModifiers(context.Background(), input, originalBraceView("ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1"))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a", int64(1), "third"}}, result.Rows)
 }
@@ -107,7 +107,7 @@ func TestApplyResultModifiersSelectsAscendingNumericTopK(t *testing.T) {
 		Rows:    [][]interface{}{{0.56}, {0.52}, {0.44}, {0.41}, {0.38}, {0.32}},
 	}
 
-	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY score ASC\nLIMIT 5")
+	result, err := exec.applyResultModifiers(context.Background(), input, originalBraceView("ORDER BY score ASC\nLIMIT 5"))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{0.32}, {0.38}, {0.41}, {0.44}, {0.52}}, result.Rows)
 }
@@ -122,7 +122,7 @@ func TestPipelineOrderByEvaluatesCompleteBooleanExpressions(t *testing.T) {
 		{"name": "E", "first": true, "second": false},
 	}
 
-	terms := parseOrderByTerms("ORDER BY NOT (first AND second) DESCENDING LIMIT 3")
+	terms := parseOrderByTerms(originalBraceView("ORDER BY NOT (first AND second) DESCENDING LIMIT 3"))
 	require.Len(t, terms, 1)
 	require.Equal(t, "NOT (first AND second)", terms[0].column)
 	require.True(t, terms[0].descending)
@@ -147,7 +147,7 @@ func TestPipelineOrderByUsesIncomingAndProjectedScopeWithoutLeakingBindings(t *t
 		{"a": map[string]interface{}{"name": "C"}, "name": "C"},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms(originalBraceView("ORDER BY a.name + 'C' DESC"))))
 	require.Equal(t, []pipelineRow{{"name": "C"}, {"name": "C"}, {"name": "B"}, {"name": "A"}, {"name": "A"}}, rows)
 	for _, row := range rows {
 		require.NotContains(t, row, "a")
@@ -163,7 +163,7 @@ func TestPipelineOrderByUsesGroupingKeyFromIncomingScope(t *testing.T) {
 		{"a": map[string]interface{}{"name": "C"}, "name": "C", "count": int64(2)},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms(originalBraceView("ORDER BY a.name DESC"))))
 	require.Equal(t, "C", rows[0]["name"])
 	require.NotContains(t, rows[0], "a")
 }

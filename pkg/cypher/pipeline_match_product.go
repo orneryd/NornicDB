@@ -15,11 +15,11 @@ import (
 // narrow the part before any combination is built, as Neo4j plans it below
 // its CartesianProduct; only the other conditions are evaluated on the
 // combinations (#940).
-func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, input braceView, parts []braceView, where braceView) ([]pipelineRow, bool, error) {
 	nodeVariables := make([]string, 0, len(parts))
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "(") && !containsRelationshipPattern(part) {
+		part = part.trim()
+		if strings.HasPrefix(part.text(), "(") && !containsRelationshipPattern(part.text()) {
 			if variable := nodePatternStructure(part).variable; variable != "" {
 				nodeVariables = append(nodeVariables, variable)
 			}
@@ -31,7 +31,11 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	}
 	where = rest
 	var hidden, paths []string
-	usedNames := strings.Join(parts, " ") + " " + where
+	var usedNames string
+	for _, part := range parts {
+		usedNames += part.text() + " "
+	}
+	usedNames += where.text()
 	newBinding := func() string {
 		for index := 0; ; index++ {
 			name := fmt.Sprintf("__nornic_match_product_%d", index)
@@ -56,22 +60,22 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		if err := ctx.Err(); err != nil {
 			return nil, true, err
 		}
-		part = strings.TrimSpace(part)
-		if containsRelationshipPattern(part) {
-			path := extractPathAssignmentVariable(part)
+		part = part.trim()
+		if containsRelationshipPattern(part.text()) {
+			path := extractPathAssignmentVariable(part.text())
 			if path == "" {
 				path = newBinding()
-				part = path + " = " + part
+				part = part.wrap(path+" = ", "")
 			}
 			paths = append(paths, path)
-		} else if strings.HasPrefix(part, "(") {
+		} else if strings.HasPrefix(part.text(), "(") {
 			if variable := nodePatternStructure(part).variable; variable == "" {
-				part = "(" + newBinding() + part[1:]
-			} else if own := nodeWhere[variable]; own != "" {
-				part += " WHERE " + own
+				part = part.replace(1, 1, newBinding())
+			} else if own := nodeWhere[variable]; !own.empty() {
+				part = input.assembleCode([]braceView{part, own}, " WHERE ")
 			}
 		}
-		expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+part)
+		expanded, handled, err := e.pipelineApplyMatch(ctx, rows, part.wrap("MATCH ", ""))
 		if !handled || err != nil {
 			return expanded, handled, err
 		}
@@ -88,7 +92,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	}
 	filtered := rows[:0]
 	for _, row := range rows {
-		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
+		if !where.empty() && !e.evaluateRowPredicate(ctx, where, row) {
 			continue
 		}
 		for _, name := range hidden {
@@ -106,14 +110,14 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 // equality (a.k = b.k) instead of building every combination. Each part's
 // candidates are narrowed by the conditions that read its variable only
 // (splitWhereByVariable) first.
-func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
-	if strings.TrimSpace(where) == "" {
+func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []braceView, where braceView) ([]pipelineRow, bool, error) {
+	if where.empty() {
 		return nil, false, nil
 	}
 	templates := make([]*pipelineNodeMatchTemplate, len(parts))
 	variables := make(map[string]struct{}, len(parts))
 	for index, part := range parts {
-		template := e.pipelineNodeMatchTemplateFor("MATCH " + strings.TrimSpace(part))
+		template := e.pipelineNodeMatchTemplateFor(part.trim().wrap("MATCH ", ""))
 		if !template.usable || template.labelErr != nil {
 			return nil, false, nil
 		}
@@ -125,7 +129,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	}
 	for _, template := range templates {
 		for _, property := range template.properties {
-			for _, reference := range semanticExpressionReferences(property.expr) {
+			for _, reference := range semanticExpressionReferences(property.view) {
 				variable := strings.SplitN(reference, ".", 2)[0]
 				if _, dependent := variables[variable]; dependent {
 					return nil, false, nil
@@ -135,7 +139,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	}
 	joinable := false
 	for _, term := range splitTopLevelAndConjuncts(where) {
-		left, _, right, _, _, equality := parseCartesianVarPropEqualityTerm(strings.TrimSpace(term))
+		left, _, right, _, _, equality := parseCartesianVarPropEqualityTerm(term.text())
 		_, leftLocal := variables[left]
 		_, rightLocal := variables[right]
 		joinable = joinable || equality && leftLocal && rightLocal && left != right
@@ -179,7 +183,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 				if err != nil {
 					return nil, true, err
 				}
-				if own != "" && !whereApplied {
+				if !own.empty() && !whereApplied {
 					nodes = e.filterNodes(rowCtx, nodes, pattern.variable, own)
 				}
 			}

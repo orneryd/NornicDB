@@ -112,7 +112,7 @@ func TestSourceFoundationLocalizedDiagnosticCoordinates(t *testing.T) {
 	query := "\ufeffRETURN\u00a0（1） @"
 	source := cyphertext.NormalizeSource(query)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	cause := executor.validateSyntax(t.Context(), source.Text, false, syntaxANTLRCore)
+	cause := executor.validateSyntax(t.Context(), originalBraceView(source.Text), false, syntaxANTLRCore)
 	require.Error(t, cause)
 	_, err := (resultRestoration{source: sourceQueryRewrite(source)}).restore(nil, cause, nil)
 	require.ErrorIs(t, err, cause)

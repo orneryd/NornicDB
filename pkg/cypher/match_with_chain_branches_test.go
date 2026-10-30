@@ -9,16 +9,16 @@ import (
 )
 
 func TestParseMatchWithStages_Branches(t *testing.T) {
-	_, _, ok := parseMatchWithStages("RETURN 1")
+	_, _, ok := parseMatchWithStages(originalBraceView("RETURN 1"))
 	require.False(t, ok)
 
-	_, _, ok = parseMatchWithStages("MATCH (n) RETURN n")
+	_, _, ok = parseMatchWithStages(originalBraceView("MATCH (n) RETURN n"))
 	require.False(t, ok)
 
-	_, _, ok = parseMatchWithStages("MATCH (n) WITH n MATCH (m) WITH m")
+	_, _, ok = parseMatchWithStages(originalBraceView("MATCH (n) WITH n MATCH (m) WITH m"))
 	require.False(t, ok)
 
-	stages, ret, ok := parseMatchWithStages("MATCH (n:A) WITH count(n) AS c MATCH (m:B) WITH c AS c2, count(m) AS d RETURN c2, d")
+	stages, ret, ok := parseMatchWithStages(originalBraceView("MATCH (n:A) WITH count(n) AS c MATCH (m:B) WITH c AS c2, count(m) AS d RETURN c2, d"))
 	require.True(t, ok)
 	require.Len(t, stages, 2)
 	require.Equal(t, "(n:A)", stages[0].matchClause)
@@ -32,7 +32,7 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "with_chain_eval"))
 	ctx := context.Background()
 
-	_, _, err := exec.evaluateMatchClauseNodes(ctx, "(:Person)")
+	_, _, err := exec.evaluateMatchClauseNodes(ctx, originalBraceView("(:Person)"))
 	require.ErrorContains(t, err, "missing variable")
 
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "x", "v": int64(1)}})
@@ -40,13 +40,13 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "y", "v": int64(2)}})
 	require.NoError(t, err)
 
-	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, "(n:A {k:'x'})")
+	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, originalBraceView("(n:A {k:'x'})"))
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("a1"), nodes[0].ID)
 
-	nodes, v, err = exec.evaluateMatchClauseNodes(ctx, "(n:A) WHERE n.v = 2")
+	nodes, v, err = exec.evaluateMatchClauseNodes(ctx, originalBraceView("(n:A) WHERE n.v = 2"))
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)
@@ -96,18 +96,18 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 }
 
 func TestProjectionAndCountHelpers_Branches(t *testing.T) {
-	itemSource := readProjectionItemSource(t.Context(), " n.name AS nn ", projectionAdmitted)
+	itemSource := readProjectionItemSource(t.Context(), expressionBraceView(" n.name AS nn "), projectionAdmitted)
 	expr, alias := itemSource.expression, itemSource.alias
 	require.Equal(t, "n.name", expr)
 	require.Equal(t, "nn", alias)
 
-	itemSource = readProjectionItemSource(t.Context(), "n", projectionAdmitted)
+	itemSource = readProjectionItemSource(t.Context(), expressionBraceView("n"), projectionAdmitted)
 
 	expr, alias = itemSource.expression, itemSource.alias
 	require.Equal(t, "n", expr)
 	require.Equal(t, "n", alias)
 
-	itemSource = readProjectionItemSource(t.Context(), " ", projectionAdmitted)
+	itemSource = readProjectionItemSource(t.Context(), originalBraceView(" "), projectionAdmitted)
 
 	expr, alias = itemSource.expression, itemSource.alias
 	require.Empty(t, expr)

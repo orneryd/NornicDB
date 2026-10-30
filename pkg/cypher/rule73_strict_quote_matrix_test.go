@@ -37,7 +37,7 @@ func TestRule73EscapedQuoteConjunctionMatrix(t *testing.T) {
 		"n.`a`` AND b` = 1 AND n.id = 1",
 	} {
 		t.Run("split/"+expression, func(t *testing.T) {
-			parts := splitTopLevelAndConjuncts(expression)
+			parts := splitTopLevelAndConjuncts(originalBraceView(expression))
 			require.Len(t, parts, 2)
 			require.Equal(t, "n.id = 1", parts[1])
 		})

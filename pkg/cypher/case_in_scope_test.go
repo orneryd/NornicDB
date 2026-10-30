@@ -58,7 +58,7 @@ func TestCaseBlockSpansSkipScopes(t *testing.T) {
 		"CASE WHEN a THEN 1 END) = 1":                                  1,
 		"[CASE WHEN a THEN 1 END] = [1]":                               1,
 	} {
-		require.Len(t, caseBlockSpans(expr), want, expr)
+		require.Len(t, caseBlockSpans(originalBraceView(expr)), want, expr)
 	}
 }
 
@@ -75,6 +75,6 @@ func TestSharedEvaluatorSubstitutesCaseInCompoundExpression(t *testing.T) {
 		"CASE WHEN n.x > 9 THEN 1 ELSE 2 END * 3":                      int64(6),
 		"CASE WHEN n.x > 3 THEN 'a' END + CASE WHEN true THEN 'b' END": "ab",
 	} {
-		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expr, nodes, nil), expr)
+		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, originalBraceView(expr), nodes, nil), expr)
 	}
 }

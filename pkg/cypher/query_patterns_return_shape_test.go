@@ -61,7 +61,7 @@ func TestReturnShapeItems(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, returnShapeItems(tt.query))
+			assert.Equal(t, tt.want, returnShapeItems(originalBraceView(tt.query)))
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestIsReturnNameCountShape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnNameCountShape(tt.query, "p", "f"))
+			assert.Equal(t, tt.want, isReturnNameCountShape(originalBraceView(tt.query), "p", "f"))
 		})
 	}
 }
@@ -244,7 +244,7 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(tt.query, "r", "rating"))
+			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(originalBraceView(tt.query), "r", "rating"))
 		})
 	}
 }

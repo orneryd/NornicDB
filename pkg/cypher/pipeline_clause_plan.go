@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -158,7 +157,7 @@ func plannedAnalysis[T any](plan *pipelineClausePlan, kind pipelineClauseAnalysi
 // COUNT / COLLECT subquery expression, whose body every row runs again. A
 // statement without one runs without plans.
 func withStatementClausePlans(ctx context.Context, cypher string) context.Context {
-	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFold(cypher, "CALL") {
+	if firstLiveBrace(cypher) < 0 || !mayContainSubqueryExpression(cypher) && !containsFold(cypher, "CALL") {
 		return ctx
 	}
 	return withPipelineClausePlans(ctx)

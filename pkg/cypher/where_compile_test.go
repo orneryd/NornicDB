@@ -20,39 +20,39 @@ func TestCompileSimpleWhere_SupportedPatterns(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	fn, ok := exec.getCompiledSimpleWhere(ctx, "n", "n.sourceId IS NOT NULL")
+	fn, ok := exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.sourceId IS NOT NULL"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.missing IS NULL")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.missing IS NULL"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.sourceId = 'src-1'")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.sourceId = 'src-1'"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.sourceId <> 'src-2'")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.sourceId <> 'src-2'"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.sourceId != 'src-2'")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.sourceId != 'src-2'"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.sourceId IN ['src-1','src-3']")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.sourceId IN ['src-1','src-3']"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.count >= 2 AND n.count < 3")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.count >= 2 AND n.count < 3"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.name CONTAINS 'entity'")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.name CONTAINS 'entity'"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 
-	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", "n.name STARTS WITH 'alpha' OR n.count > 99")
+	fn, ok = exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("n.name STARTS WITH 'alpha' OR n.count > 99"))
 	require.True(t, ok)
 	require.True(t, fn(node))
 }
@@ -61,7 +61,7 @@ func TestCompileSimpleWhere_UnsupportedPatterns(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 
-	_, ok := exec.getCompiledSimpleWhere(ctx, "n", "size(n.sourceId) > 0")
+	_, ok := exec.getCompiledSimpleWhere(ctx, "n", expressionBraceView("size(n.sourceId) > 0"))
 	require.False(t, ok)
 }
 
@@ -80,7 +80,7 @@ func BenchmarkEvaluateWhereCompiledCandidatePredicate(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if !exec.evaluateWhere(ctx, node, "n", whereClause) {
+		if !exec.evaluateWhere(ctx, node, "n", originalBraceView(whereClause)) {
 			b.Fatal("predicate should match")
 		}
 	}

@@ -105,7 +105,7 @@ func TestReview1238CancelledReconstruction(t *testing.T) {
 		}
 		previous = next
 	}
-	plan, _, ok := compileSelectedPathPlan("(a)-[:T*]->(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)-[:T*]->(b)"), "p", originalBraceView(""), nil)
 	if !ok {
 		t.Fatal("compile")
 	}
@@ -130,7 +130,7 @@ func TestReview1238BoundCompilation(t *testing.T) {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
 		start := time.Now()
-		p, _, ok := buildSelectedPathPlan(fmt.Sprintf("(a)(()-[:T]->()){1,%d}(b)", bound), "p", "", nil)
+		p, _, ok := buildSelectedPathPlan(originalBraceView(fmt.Sprintf("(a)(()-[:T]->()){1,%d}(b)", bound)), "p", originalBraceView(""), nil)
 		runtime.ReadMemStats(&after)
 		if !ok {
 			t.Fatal("compile")
@@ -157,12 +157,12 @@ func TestReview1238CompilationDeadline(t *testing.T) {
 
 func TestReview1238CancelledLevel(t *testing.T) {
 	e, c := review1238Graph(t)
-	ns, err := e.pipelineMatchRows(c, pipelineRow{}, "MATCH (a:S {id: 1})")
+	ns, err := e.pipelineMatchRows(c, pipelineRow{}, originalBraceView("MATCH (a:S {id: 1})"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := ns[0]["a"].(*storage.Node)
-	p, _, ok := compileSelectedPathPlan("(a)(()-[:T]->())+(b)", "p", "", nil)
+	p, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->())+(b)"), "p", originalBraceView(""), nil)
 	if !ok {
 		t.Fatal("compile")
 	}

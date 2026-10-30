@@ -40,11 +40,12 @@ func TestPlan_UnionPlanningEntries(t *testing.T) {
 				var fragment Fragment
 				var err error
 				if entry.multi {
-					blocks, extractErr := extractTopLevelCallBlocks(entry.query, nil)
+					source := testPlanningSource(entry.query)
+					blocks, extractErr := extractTopLevelCallSourceBlocks(source)
 					require.NoError(t, extractErr)
-					fragment, err = p.planMultiGraph(t.Context(), planTarget{name: "cmp"}, "cmp", entry.query, blocks)
+					fragment, err = p.planMultiGraph(planTarget{name: "cmp"}, "cmp", source, blocks)
 				} else if entry.shared {
-					fragment, err = p.planQuery(t.Context(), entry.query, planTarget{name: "cmp"}, "cmp", true)
+					fragment, err = p.planQuery(testPlanningSource(entry.query), planTarget{name: "cmp"}, "cmp", true)
 				} else {
 					fragment, err = p.Plan(t.Context(), entry.query, "cmp", cyphertext.RawSource)
 				}
@@ -125,14 +126,14 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 	fset := token.NewFileSet()
 	splits := map[string]int{}
 	owners := map[string]string{
-		"NewConcatRowIterator":   "mergeUnion",
-		"NewDistinctRowIterator": "mergeUnion",
-		"splitTopLevelUnion":     "planQuery|singleGraphStatement",
-		"planSingleQuery":        "planQuery|planCallBranch",
-		"planCallBranch":         "planQuery",
-		"ProjectionColumns":      "ResultColumns|validateUnionSchemas",
-		"planMultiGraph":         "planSingleQuery",
-		"UnionColumnOrder":       "validateUnionSchemas|mergeUnionRows",
+		"NewConcatRowIterator":    "mergeUnion",
+		"NewDistinctRowIterator":  "mergeUnion",
+		"splitTopLevelUnionSpans": "planQuery|singleGraphSource",
+		"planSingleQuery":         "planQuery|planCallBranch",
+		"planCallBranch":          "planQuery",
+		"ProjectionColumns":       "ResultColumns|validateUnionSchemas",
+		"planMultiGraph":          "planSingleQuery",
+		"UnionColumnOrder":        "validateUnionSchemas|mergeUnionRows",
 	}
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
@@ -157,7 +158,7 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 				case *ast.Ident:
 					callee = fun.Name
 				}
-				if callee == "splitTopLevelUnion" {
+				if callee == "splitTopLevelUnionSpans" {
 					splits[fn.Name.Name]++
 				}
 				if owner, guarded := owners[callee]; guarded && !strings.Contains("|"+owner+"|", "|"+fn.Name.Name+"|") {
@@ -167,7 +168,7 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 			})
 		}
 	}
-	if splits["planQuery"] != 1 || splits["singleGraphStatement"] != 1 || len(splits) != 2 {
+	if splits["planQuery"] != 1 || splits["singleGraphSource"] != 1 || len(splits) != 2 {
 		violations = append(violations, "UNION splitting must use the shared splitter once in each planning and validation entry")
 	}
 	return violations
@@ -177,9 +178,9 @@ func TestPlannerUnionOwner_GuardMutations(t *testing.T) {
 	source, err := os.ReadFile("planner.go")
 	require.NoError(t, err)
 	for _, mutation := range []struct{ name, before, after string }{
-		{"public", "p.planQuery(ctx, trimmed, session, scope, false)", "p.planSingleQuery(ctx, trimmed, session, scope, false)"},
-		{"call", "p.planQuery(ctx, subRest, sub, scope, true)", "p.planSingleQuery(ctx, block.Body, top, scope, true)"},
-		{"use", "p.planQuery(ctx, subRest, sub, scope, true)", "p.planSingleQuery(ctx, subRest, sub, scope, true)"},
+		{"public", "p.planQuery(view, planTarget{name: sessionDB}, compositeScopeRoot(sessionDB), false)", "p.planSingleQuery(view, planTarget{name: sessionDB}, compositeScopeRoot(sessionDB), false)"},
+		{"call", "p.planQuery(block.bodySource, top, scope, true)", "p.planSingleQuery(block.bodySource, top, scope, true)"},
+		{"use", "p.planQuery(subRest, sub, scope, true)", "p.planSingleQuery(subRest, sub, scope, true)"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			require.Contains(t, string(source), mutation.before)

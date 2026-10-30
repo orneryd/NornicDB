@@ -9,7 +9,7 @@ import (
 
 func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	ctx context.Context,
-	expr string,
+	view braceView,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -18,22 +18,24 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	allPathNodes []*storage.Node,
 	pathLength int,
 ) interface{} {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	// Boolean/Comparison Operators (must be before property access)
 	// ========================================
 
 	// BETWEEN must be checked before AND (because BETWEEN x AND y uses AND)
-	if betweenLeft, betweenRight, ok := splitByOperatorWithOptions(expr, " BETWEEN ", true, true); ok {
-		value := e.evaluateExpressionWithContextFull(ctx, betweenLeft, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if minPart, maxPart, ok := splitByOperatorWithOptions(betweenRight, " AND ", true, true); ok {
-			minVal := e.evaluateExpressionWithContextFull(ctx, minPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			maxVal := e.evaluateExpressionWithContextFull(ctx, maxPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if betweenLeft, betweenRight, ok := splitByOperatorWithOptions(view, " BETWEEN ", true, true); ok {
+		value := e.evaluateExpressionWithContextFull(ctx, view.window(0, len(betweenLeft)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if minPart, maxPart, ok := splitByOperatorWithOptions(view.window(len(expr)-len(betweenRight), len(expr)), " AND ", true, true); ok {
+			minVal := e.evaluateExpressionWithContextFull(ctx, view.window(len(expr)-len(betweenRight), len(expr)-len(betweenRight)+len(minPart)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			maxVal := e.evaluateExpressionWithContextFull(ctx, view.window(len(expr)-len(maxPart), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return (e.compareGreater(value, minVal) || e.compareEqual(value, minVal)) &&
 				(e.compareLess(value, maxVal) || e.compareEqual(value, maxVal))
 		}
 	}
 
 	// OR, XOR, AND and NOT (evaluateLogicalExpression).
-	if value, logical, _, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
+	if value, logical, _, err := evaluateLogicalExpression(view, func(operand braceView) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		})
@@ -49,12 +51,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// Null Predicates (IS NULL, IS NOT NULL)
 	// ========================================
 	if hasSuffixFoldASCII(expr, " is null") {
-		inner := strings.TrimSpace(expr[:len(expr)-8])
+		inner := view.window(0, len(expr)-8)
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return nullEvaluationHandler(false).evaluate(result)
 	}
 	if hasSuffixFoldASCII(expr, " is not null") {
-		inner := strings.TrimSpace(expr[:len(expr)-12])
+		inner := view.window(0, len(expr)-12)
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return nullEvaluationHandler(true).evaluate(result)
 	}
@@ -68,9 +70,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	}{
 		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
 	} {
-		if left, right, ok := splitByOperatorOutsideCase(expr, p.operator, true, true); ok {
-			l := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			r := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		if left, right, ok := splitByOperatorOutsideCase(view, p.operator, true, true); ok {
+			l := e.evaluateExpressionWithContextFull(ctx, view.window(0, len(left)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			r := e.evaluateExpressionWithContextFull(ctx, view.window(len(expr)-len(right), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return rowStringPredicateValue(l, r, p.match)
 		}
 	}
@@ -79,8 +81,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// IN Operator (value IN list)
 	// ========================================
 	// NOT IN must be checked before IN (because "NOT IN" contains " IN ")
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " NOT IN ", true, true); ok {
-		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(view, " NOT IN ", true, true); ok {
+		result, validList := e.evaluateInOperator(ctx, view.window(0, len(leftExpr)), view.window(len(expr)-len(rightExpr), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if !validList {
 			return true
 		}
@@ -89,8 +91,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 		}
 		return !result.(bool)
 	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " IN ", true, true); ok {
-		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(view, " IN ", true, true); ok {
+		result, validList := e.evaluateInOperator(ctx, view.window(0, len(leftExpr)), view.window(len(expr)-len(rightExpr), len(expr)), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if !validList {
 			return false
 		}
@@ -98,19 +100,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	}
 
 	// Comparison operators (=, <>, <, >, <=, >=)
-	if result, matched := e.evaluateComparisonExpr(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); matched {
+	if result, matched := e.evaluateComparisonExpr(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); matched {
 		return result
 	}
 
 	// Arithmetic operators (*, /, %, -, +), including string and list +.
 	// A null result (null + 1, [1] + null) is the expression's value.
-	if result, handled := e.evaluateArithmeticExpr(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
+	if result, handled := e.evaluateArithmeticExpr(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 		return result
 	}
 
 	// Unary minus
 	if strings.HasPrefix(expr, "-") && len(expr) > 1 {
-		inner := strings.TrimSpace(expr[1:])
+		inner := view.window(1, len(expr))
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if result == nil {
 			return nil
@@ -126,10 +128,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if lowerExpr == "" {
 		lowerExpr = lowerASCII(expr)
 	}
-	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, view, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
-func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, rightExpr braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	value := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	listValue := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	return cypherMembership(value, listValue)

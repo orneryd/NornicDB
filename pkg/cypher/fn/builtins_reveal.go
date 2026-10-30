@@ -1,12 +1,12 @@
 package fn
 
 func init() {
-	Register("reveal", evalReveal)
+	RegisterInvocation("reveal", evalReveal)
 }
 
-func evalReveal(ctx Context, args []string) (interface{}, error) {
+func evalReveal(ctx InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
-	return ctx.Eval(args[0])
+	return ctx.Eval(0)
 }

@@ -66,16 +66,16 @@ func (e *failingScanEngine) CreateNode(node *storage.Node) (storage.NodeID, erro
 // filter.
 func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	ctx := context.Background()
-	_, ok, _ := parseProcedurePrivilegeCommand("GRANT EXECUTE FUNCTION db.x ON DBMS TO r")
+	_, ok, _ := parseProcedurePrivilegeCommand(originalBraceView("GRANT EXECUTE FUNCTION db.x ON DBMS TO r"))
 	require.False(t, ok)
-	_, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE PROCEDURE db.x TO r")
+	_, ok, err := parseProcedurePrivilegeCommand(originalBraceView("GRANT EXECUTE PROCEDURE db.x TO r"))
 	require.True(t, ok)
 	require.ErrorContains(t, err, "expected ON DBMS")
 
-	require.Equal(t, []string{"a", "b"}, showPrivilegeRoles("SHOW ROLES role_a, `b` PRIVILEGES"))
-	require.Equal(t, []string{"a"}, showPrivilegeRoles("SHOW ROLE a PRIVILEGE"))
-	require.Nil(t, showPrivilegeRoles("SHOW ROLE a"))
-	require.Nil(t, showPrivilegeRoles("SHOW PRIVILEGES"))
+	require.Equal(t, []string{"a", "b"}, showPrivilegeRoles(originalBraceView("SHOW ROLES role_a, `b` PRIVILEGES")))
+	require.Equal(t, []string{"a"}, showPrivilegeRoles(originalBraceView("SHOW ROLE a PRIVILEGE")))
+	require.Nil(t, showPrivilegeRoles(originalBraceView("SHOW ROLE a")))
+	require.Nil(t, showPrivilegeRoles(originalBraceView("SHOW PRIVILEGES")))
 
 	// A nil grant check attaches nothing.
 	require.Equal(t, ctx, WithProcedureGrantChecker(ctx, nil))

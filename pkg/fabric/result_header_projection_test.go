@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"strings"
 	"testing"
@@ -79,10 +80,10 @@ func testInMemoryProjectionNames(query string) resultmetadata.Names {
 	return resultmetadata.Unknown()
 }
 func executeApplyInMemoryProjection(input *ResultStream, query string) (*ResultStream, bool) {
-	return executeApplyInMemoryProjectionColumns(input, query, testInMemoryProjectionNames(query))
+	return executeApplyInMemoryProjectionColumns(input, cyphertext.NormalizeSource(query), testInMemoryProjectionNames(query))
 }
 func executeCollectedMapJoinFlatProjection(input *ResultStream, query string) (*ResultStream, bool) {
-	return executeCollectedMapJoinFlatProjectionColumns(input, query, testInMemoryProjectionNames(query))
+	return executeCollectedMapJoinFlatProjectionColumns(input, cyphertext.NormalizeSource(query), testInMemoryProjectionNames(query))
 }
 
 func TestResultHeaderProjectionModifiersStayOnExecutionPath(t *testing.T) {

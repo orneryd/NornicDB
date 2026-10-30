@@ -148,9 +148,9 @@ func TestStatementFactsPublicHeaderUnknownIsTerminal(t *testing.T) {
 	query := "USE comp.remote CREATE (:MustNotExist) CALL custom.participantOnly()"
 	_, err := exec.StatementResultColumnsContext(context.Background(), query, RawSource)
 	require.Error(t, err)
-	_, err = exec.executeExplain(context.Background(), query)
+	_, err = exec.executeExplain(context.Background(), originalBraceView(query))
 	require.Error(t, err)
-	_, err = exec.executeProfile(context.Background(), query)
+	_, err = exec.executeProfile(context.Background(), originalBraceView(query))
 	require.Error(t, err)
 	result, err := exec.Execute(context.Background(), "MATCH (n:MustNotExist) RETURN count(n) AS count", nil)
 	require.NoError(t, err)

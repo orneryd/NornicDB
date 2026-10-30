@@ -24,31 +24,31 @@ func TestFirstKeywordIndexFromDefault(t *testing.T) {
 	} {
 		want := -1
 		for _, keyword := range withImportClauseKeywords {
-			if index := keywordIndex(text, keyword); index >= 0 && (want < 0 || index < want) {
+			if index := keywordIndex(originalBraceView(text), keyword); index >= 0 && (want < 0 || index < want) {
 				want = index
 			}
 		}
-		require.Equal(t, want, firstKeywordIndexFromDefault(text, 0, withImportClauseKeywords...), text)
+		require.Equal(t, want, firstKeywordIndexFromDefault(originalBraceView(text), 0, withImportClauseKeywords...), text)
 	}
-	require.Equal(t, -1, firstKeywordIndexFromDefault("RETURN 1", 0))
-	require.Equal(t, 9, firstKeywordIndexFromDefault("RETURN 1 RETURN 2", 1, "RETURN"))
+	require.Equal(t, -1, firstKeywordIndexFromDefault(originalBraceView("RETURN 1"), 0))
+	require.Equal(t, 9, firstKeywordIndexFromDefault(originalBraceView("RETURN 1 RETURN 2"), 1, "RETURN"))
 }
 
 // TestParseLeadingWithImportsKeywordAtStart: a clause keyword at the start of
 // the import list is part of it; the list ends at the next one.
 func TestParseLeadingWithImportsKeywordAtStart(t *testing.T) {
-	vars, body, hasWith, err := parseLeadingWithImports("WITH p RETURN p")
+	vars, body, hasWith, err := parseLeadingWithImports(originalBraceView("WITH p RETURN p"))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"p"}, vars)
 	require.Equal(t, "RETURN p", body)
 
-	_, body, hasWith, err = parseLeadingWithImports("with p MATCH (n) RETURN n")
+	_, body, hasWith, err = parseLeadingWithImports(originalBraceView("with p MATCH (n) RETURN n"))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, "MATCH (n) RETURN n", body)
 
-	_, _, hasWith, err = parseLeadingWithImports("WITHIN RETURN 1")
+	_, _, hasWith, err = parseLeadingWithImports(expressionBraceView("WITHIN RETURN 1"))
 	require.NoError(t, err)
 	require.False(t, hasWith)
 }
@@ -82,12 +82,12 @@ func TestCachedPipelineClausesVariants(t *testing.T) {
 // text as written, whatever characters come before it.
 func TestFindKeywordIndexInContextNonASCII(t *testing.T) {
 	text := "['ıı', 'ß'] AS x"
-	require.Equal(t, len("['ıı', 'ß'] "), findKeywordIndexInContext(text, "AS"))
-	product, ok := splitUnwindBody("UNWIND " + text)
+	require.Equal(t, len("['ıı', 'ß'] "), findKeywordIndexInContext(acceptedBraceView(text), "AS"))
+	product, ok := splitUnwindBody(originalBraceView("UNWIND " + text))
 	require.True(t, ok)
 	require.Equal(t, "['ıı', 'ß']", product.expression)
 	require.Equal(t, "x", product.aliasTail)
-	require.Equal(t, 2, findKeywordIndexInContext("n as m", "AS"))
+	require.Equal(t, 2, findKeywordIndexInContext(expressionBraceView("n as m"), "AS"))
 }
 
 // TestStartsWithKeywordsMatchesScan: startsWithKeywords answers what
@@ -114,8 +114,8 @@ func TestStartsWithKeywordsMatchesScan(t *testing.T) {
 	}
 	for _, statement := range statements {
 		for _, pair := range pairs {
-			want := findMultiWordKeywordIndex(statement, pair[0], pair[1]) == 0
-			require.Equal(t, want, startsWithKeywords(statement, pair[0], pair[1]), "%q %v", statement, pair)
+			want := findMultiWordKeywordIndex(originalBraceView(statement), pair[0], pair[1]) == 0
+			require.Equal(t, want, startsWithKeywords(originalBraceView(statement), pair[0], pair[1]), "%q %v", statement, pair)
 		}
 	}
 }

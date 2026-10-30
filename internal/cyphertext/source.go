@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -17,11 +18,101 @@ type SourceEdit struct{ Original, Accepted Span }
 // Source retains the submitted text, the text accepted by execution, and the
 // edits connecting them. Opaque quoted tokens and comments retain their bytes.
 type Source struct {
-	Original, Text string
-	Err            error
-	Edits          []SourceEdit
-	parent         *Source
-	base           int
+	Original, Text    string
+	Err               error
+	Edits             []SourceEdit
+	parent            *Source
+	base              int
+	copies            []SourceCopy
+	projected         bool
+	window            bool
+	acceptedRoot      *Source
+	braces            *sourceBraceState
+	queryBodies       []BraceRecord
+	entryDeclarations []EntryDeclaration
+}
+
+// Source may be copied by existing presentation adapters. Retained facts live
+// behind one pointer so those value copies never copy an active sync.Once.
+type sourceBraceState struct {
+	lexicalOnce  sync.Once
+	lexical      *BraceFacts
+	analysisOnce sync.Once
+	analysis     any
+}
+
+func retainAcceptedBraceSource(source *Source) *Source {
+	source.acceptedRoot = source
+	source.braces = &sourceBraceState{}
+	return source
+}
+
+// Author: #1663 implementation lane.
+// OriginalBraceAnalysis retains the statement grammar's immutable analysis of
+// this source's original lexical records. The grammar owns the concrete type;
+// Source owns its identity and publication, so sibling windows share one result.
+// Only the original input producer chooses the statement/expression frame.
+func (source *Source) OriginalBraceAnalysis(build func(*Source) any) any {
+	source = source.OriginalView()
+	source.braces.analysisOnce.Do(func() { source.braces.analysis = build(source) })
+	return source.braces.analysis
+}
+
+// OriginalView returns the accepted statement identified by its input producer.
+// Earlier normalization stages remain mapping ancestors, not new statement
+// identities. No text search or another source association selects this view.
+func (source *Source) OriginalView() *Source {
+	if source.acceptedRoot != nil {
+		return source.acceptedRoot
+	}
+	for source.parent != nil {
+		source = source.parent
+	}
+	return source
+}
+
+// StatementView is the deepest view in this view's lineage that still holds
+// the whole statement: only the statement's preamble (CYPHER, EXPLAIN or
+// PROFILE, a version, options, trivia) precedes its original extent. Clause
+// windows, and rewrites of a clause window, start after a clause and are
+// skipped; the root holds the whole statement when nothing deeper does.
+func (source *Source) StatementView() *Source {
+	for view := source; view != nil; view = view.parent {
+		if view.parent == nil {
+			return view
+		}
+		if span, ok := view.OriginalSpan(Span{End: len(view.Text)}, SourceExtent); ok && span.Start <= len(view.Original) && statementPreamble(view.Original[:span.Start]) {
+			return view
+		}
+	}
+	return source
+}
+
+// statementPreamble reports whether text holds nothing but a statement's
+// preamble words, version, options and trivia.
+func statementPreamble(text string) bool {
+	for at := 0; at < len(text); {
+		if end := CommentEnd(text, at); end >= 0 {
+			at = end
+			continue
+		}
+		if r, size := utf8.DecodeRuneInString(text[at:]); IsWhitespace(r) || r == '\ufeff' {
+			at += size
+			continue
+		}
+		end := at
+		for end < len(text) && !IsWhitespaceAt(text, end) && CommentEnd(text, end) < 0 {
+			end++
+		}
+		switch word := strings.ToUpper(text[at:end]); {
+		case word == "CYPHER", word == "EXPLAIN", word == "PROFILE", strings.Contains(word, "="):
+		case strings.Trim(word, "0123456789.") == "":
+		default:
+			return false
+		}
+		at = end
+	}
+	return true
 }
 
 // NormalizeSource applies the executor's accepted character transformations.
@@ -31,7 +122,7 @@ type Source struct {
 func NewSource(ctx context.Context, text string, stage SourceStage) *Source {
 	switch stage {
 	case AcceptedSource:
-		return &Source{Original: text, Text: text}
+		return retainAcceptedBraceSource(&Source{Original: text, Text: text})
 	case RawSource:
 		return normalizeSource(ctx, text)
 	default:
@@ -43,7 +134,8 @@ func NormalizeSource(original string) *Source {
 	return NewSource(context.Background(), original, RawSource)
 }
 
-func normalizeSource(ctx context.Context, original string) *Source {
+func normalizeSource(ctx context.Context, original string) (accepted *Source) {
+	defer func() { retainAcceptedBraceSource(accepted) }()
 	projected := ProjectUnicode(ctx, original)
 	if projected.Err != nil {
 		return projected
@@ -124,9 +216,28 @@ const (
 // policy applies to this view only: its parent/window association retains the
 // established extent policy for earlier normalization stages.
 func (source *Source) OriginalOffset(offset int, start bool, policy SourceMappingPolicy) (int, bool) {
+	position, ok := mapSourceOffset(offset, start, policy, len(source.Edits), func(index int) SourceEdit { return source.Edits[index] }, source.copies)
+	if !ok {
+		return 0, false
+	}
+	mapped := position.offset + source.base
+	if source.parent != nil {
+		return source.parent.OriginalOffset(mapped, start, SourceExtent)
+	}
+	return mapped, true
+}
+
+// mapSourceOffset is the existing policy mapper, extended for declared exact copies.
+func mapSourceOffset(offset int, start bool, policy SourceMappingPolicy, count int, editAt func(int) SourceEdit, copies []SourceCopy) (sourcePosition, bool) {
+	for _, copy := range copies {
+		if start && offset >= copy.Accepted.Start && offset < copy.Accepted.End || !start && offset > copy.Accepted.Start && offset <= copy.Accepted.End {
+			return sourcePosition{offset: copy.Original.Start + offset - copy.Accepted.Start, copied: true}, true
+		}
+	}
 	shift, mapped := 0, offset
 	resolved := false
-	for _, edit := range source.Edits {
+	for index := 0; index < count; index++ {
+		edit := editAt(index)
 		before := offset < edit.Accepted.Start || !start && offset == edit.Accepted.Start
 		if policy == SourceExactBoundaries {
 			before = offset < edit.Accepted.Start || start && offset == edit.Accepted.Start
@@ -141,7 +252,7 @@ func (source *Source) OriginalOffset(offset int, start bool, policy SourceMappin
 			}
 			if offset < edit.Accepted.End {
 				if offset != edit.Accepted.Start {
-					return 0, false
+					return sourcePosition{}, false
 				}
 				mapped, resolved = edit.Original.Start, true
 				break
@@ -158,22 +269,24 @@ func (source *Source) OriginalOffset(offset int, start bool, policy SourceMappin
 	if !resolved {
 		mapped = offset + shift
 	}
-	mapped += source.base
-	if source.parent != nil {
-		return source.parent.OriginalOffset(mapped, start, SourceExtent)
-	}
-	return mapped, true
+	return sourcePosition{offset: mapped, replaced: resolved}, true
+
+}
+
+type sourcePosition struct {
+	offset           int
+	replaced, copied bool
 }
 
 // Rewrite composes a canonical rewrite with this source association. Its edit
 // Original spans refer to this view's Text, and mapping continues to the root.
 func (source *Source) Rewrite(text string, edits []SourceEdit) *Source {
-	return &Source{Original: source.Original, Text: text, Edits: edits, parent: source}
+	return &Source{Original: source.Original, Text: text, Edits: edits, parent: source, acceptedRoot: source.OriginalView()}
 }
 
 // Window retains an exact child source window without searching by its value.
 func (source *Source) Window(start, end int) *Source {
-	return &Source{Original: source.Original, Text: source.Text[start:end], parent: source, base: start}
+	return &Source{Original: source.Original, Text: source.Text[start:end], parent: source, base: start, window: true, acceptedRoot: source.OriginalView()}
 }
 
 // OriginalText maps one accepted byte extent to its original spelling. A strict
@@ -217,6 +330,12 @@ func (source *Source) OriginalSpan(span Span, policy SourceMappingPolicy) (Span,
 }
 
 type sourceKey struct{}
+
+// SourceView returns the current carried view by identity; it does not locate text.
+func SourceView(ctx context.Context) (*Source, bool) {
+	source, ok := ctx.Value(sourceKey{}).(*Source)
+	return source, ok && source != nil
+}
 
 // RetainedSource returns only an existing source association. Accepted callers
 // never reinterpret their text as raw input when no association exists.

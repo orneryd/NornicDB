@@ -19,11 +19,22 @@ import (
 type pipelinePropertyExpression struct {
 	key  string
 	expr string
+	view braceView
+}
+
+// Cached grammar recipes are rebound through Source's actual derivation chain,
+// under the caller's exact accepted-text key. Author: #1663 lane.
+func rebasePropertyExpressions(expressions []pipelinePropertyExpression, ancestor, current braceView) []pipelinePropertyExpression {
+	result := append([]pipelinePropertyExpression(nil), expressions...)
+	for i := range result {
+		result[i].view = braceView{syntax: current.syntax, source: result[i].view.source.Rebase(ancestor.source, current.source)}
+	}
+	return result
 }
 
 // pipelinePropertyExpressions splits a property map's text ("{k: e, …}")
 // into its pairs. Unsupported syntax declines before any value is evaluated.
-func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelinePropertyExpression, bool) {
+func (e *StorageExecutor) pipelinePropertyExpressions(props braceView) ([]pipelinePropertyExpression, bool) {
 	expressions, err := parsePropertyExpressions(props)
 	return expressions, err == nil
 }
@@ -35,6 +46,7 @@ func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expres
 }
 
 type pipelineNodeMatchTemplate struct {
+	view braceView
 	// usable is false for a clause the template doesn't cover.
 	usable       bool
 	pattern      string
@@ -50,26 +62,29 @@ var pipelineNodeMatchTemplates = newBoundedCache[string, *pipelineNodeMatchTempl
 
 // pipelineNodeMatchTemplateFor parses a MATCH clause's single node pattern
 // once per clause text.
-func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineNodeMatchTemplate {
-	if template, ok := pipelineNodeMatchTemplates.get(clause); ok {
-		return template
+func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause braceView) *pipelineNodeMatchTemplate {
+	if template, ok := pipelineNodeMatchTemplates.get(clause.text()); ok {
+		copy := *template
+		copy.properties = rebasePropertyExpressions(template.properties, template.view, clause)
+		copy.view = clause
+		return &copy
 	}
-	template := &pipelineNodeMatchTemplate{}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
+	template := &pipelineNodeMatchTemplate{view: clause}
+	pattern := clause.clauseBody("MATCH")
 	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		template.where = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
+		template.where = normalizePipelineWhitespace(pattern.window(whereIndex+len("WHERE"), len(pattern.text()))).text()
+		pattern = pattern.window(0, whereIndex).trim()
 	}
-	template.pattern = pattern
+	template.pattern = pattern.text()
 	if e.isSingleNodePattern(pattern) {
 		// A path assignment (p = (n)) takes the general route.
-		template.pathVariable = extractPathAssignmentVariable(pattern)
+		template.pathVariable = extractPathAssignmentVariable(pattern.text())
 		head, props := splitNodePatternProperties(pattern)
 		template.variable, template.labels, template.labelErr = parseNodeHead(head)
 		template.properties, template.usable = e.pipelinePropertyExpressions(props)
 		template.usable = template.usable && template.variable != "" && template.pathVariable == ""
 	}
-	pipelineNodeMatchTemplates.put(clause, template)
+	pipelineNodeMatchTemplates.put(clause.text(), template)
 	return template
 }
 
@@ -107,6 +122,7 @@ func pipelinePropertiesKey(props map[string]interface{}) (string, bool) {
 // up with the relationship's properties evaluated for the row; a row with no
 // match takes the general route, which creates.
 type pipelineMergeTemplate struct {
+	view       braceView
 	usable     bool
 	shape      *mergeRelationshipShape
 	properties []pipelinePropertyExpression
@@ -116,27 +132,41 @@ var pipelineMergeTemplates = newBoundedCache[string, *pipelineMergeTemplate](512
 
 // pipelineMergeTemplateFor parses a MERGE clause once per clause text. The
 // template covers `MERGE (a)-[r:T {…}]->(b)` without ON CREATE / ON MATCH SET.
-func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMergeTemplate {
-	if template, ok := pipelineMergeTemplates.get(clause); ok {
-		return template
+func (e *StorageExecutor) pipelineMergeTemplateFor(clause braceView) *pipelineMergeTemplate {
+	if template, ok := pipelineMergeTemplates.get(clause.text()); ok {
+		copy := *template
+		copy.view = clause
+		copy.properties = rebasePropertyExpressions(template.properties, template.view, clause)
+		if template.shape != nil {
+			shape := *template.shape
+			rebase := func(part braceView) braceView {
+				if part.source == nil {
+					return part
+				}
+				return braceView{syntax: clause.syntax, source: part.source.Rebase(template.view.source, clause.source)}
+			}
+			shape.startContent, shape.endContent, shape.relProps = rebase(shape.startContent), rebase(shape.endContent), rebase(shape.relProps)
+			copy.shape = &shape
+		}
+		return &copy
 	}
-	template := &pipelineMergeTemplate{}
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "MERGE") {
-		parts := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil)
+	template := &pipelineMergeTemplate{view: clause}
+	body := clause.trim()
+	if startsWithKeywordFold(body.text(), "MERGE") {
+		parts := readMergeSourceActions(body)
 		pattern := parts.pattern
-		if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0 && parts.onCreate.len() == 0 && parts.onMatch.len() == 0 {
+		if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0 && len(parts.onCreate) == 0 && len(parts.onMatch) == 0 {
 			if shape, err := e.parseMergeRelationshipShape(pattern); err == nil &&
-				isSimpleIdentifier(strings.TrimSpace(shape.startContent)) && isSimpleIdentifier(strings.TrimSpace(shape.endContent)) &&
+				isSimpleIdentifier(strings.TrimSpace(shape.startContent.text())) && isSimpleIdentifier(strings.TrimSpace(shape.endContent.text())) &&
 				shape.relType != "" {
-				shape.startContent = strings.TrimSpace(shape.startContent)
-				shape.endContent = strings.TrimSpace(shape.endContent)
+				shape.startContent = shape.startContent.trim()
+				shape.endContent = shape.endContent.trim()
 				template.shape = shape
 				template.properties, template.usable = e.pipelinePropertyExpressions(shape.relProps)
 			}
 		}
 	}
-	pipelineMergeTemplates.put(clause, template)
+	pipelineMergeTemplates.put(clause.text(), template)
 	return template
 }
 
@@ -146,8 +176,8 @@ func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor,
 	if !t.usable {
 		return nil, nil, nil, false, nil
 	}
-	startNode, _ := row[t.shape.startContent].(*storage.Node)
-	endNode, _ := row[t.shape.endContent].(*storage.Node)
+	startNode, _ := row[t.shape.startContent.text()].(*storage.Node)
+	endNode, _ := row[t.shape.endContent.text()].(*storage.Node)
 	if startNode == nil || endNode == nil {
 		return nil, nil, nil, false, nil
 	}
@@ -158,10 +188,10 @@ func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor,
 	return &mergeRelationshipPattern{
 		pathVariable:     t.shape.pathVariable,
 		direction:        t.shape.direction,
-		startVariable:    t.shape.startContent,
-		endVariable:      t.shape.endContent,
-		startNodePattern: nodePatternInfo{variable: t.shape.startContent},
-		endNodePattern:   nodePatternInfo{variable: t.shape.endContent},
+		startVariable:    t.shape.startContent.text(),
+		endVariable:      t.shape.endContent.text(),
+		startNodePattern: nodePatternInfo{variable: t.shape.startContent.text()},
+		endNodePattern:   nodePatternInfo{variable: t.shape.endContent.text()},
 		relVariable:      t.shape.relVariable,
 		relType:          t.shape.relType,
 		properties:       props,

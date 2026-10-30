@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"strings"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -33,10 +33,10 @@ func runtimeRowResult(value interface{}, resolved bool, err error) (interface{},
 
 // checkedPropertyExpression is the consumer boundary for property materializing
 // adapters. Errors and unhandled expressions cannot be stored as NULL or text.
-func (e *StorageExecutor) checkedPropertyExpression(ctx context.Context, expr string, row pipelineRow) (interface{}, error) {
+func (e *StorageExecutor) checkedPropertyExpression(ctx context.Context, view braceView, row pipelineRow) (interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
-	value, resolved := e.evaluateRowExpressionWithContext(ctx, expr, row)
-	return checkedPropertyResult(ctx, expr, value, resolved, nil)
+	value, resolved := e.evaluateRowExpressionWithContext(ctx, view, row)
+	return checkedPropertyResult(withBraceView(ctx, view), view.text(), value, resolved, nil)
 }
 
 // checkedPropertyResult is the only result-to-value boundary for materialization.
@@ -63,8 +63,8 @@ func unresolvedExpressionError(expr string) error {
 // No partial map escapes on error. Only CREATE's successful NULL fields are omitted.
 // orderedValue retains HTTP traversal metadata for a map that is an expression
 // value. Private pattern/property bags never escape as that map value.
-func (e *StorageExecutor) materializePropertyMap(ctx context.Context, text string, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
-	expressions, err := parsePropertyExpressions(text)
+func (e *StorageExecutor) materializePropertyMap(ctx context.Context, view braceView, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
+	expressions, err := parsePropertyExpressions(view)
 	if err != nil {
 		return nil, err
 	}
@@ -76,26 +76,26 @@ type propertyExpressionPlan struct {
 	err         error
 }
 
-var propertyExpressionPlans = newBoundedCache[string, propertyExpressionPlan](512, boundedCacheStringShardIndex)
+var propertyExpressionPlans = newBoundedCache[*cyphertext.Source, propertyExpressionPlan](512, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
 // parsePropertyExpressions returns a read-only syntax plan. Row values, errors
 // from evaluation and property maps are never cached with the expression text.
-func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+func parsePropertyExpressions(view braceView) ([]pipelinePropertyExpression, error) {
+	view = view.trim()
+	if view.empty() {
 		return nil, nil
 	}
-	if !strings.HasPrefix(text, "{") {
-		text = "{" + text + "}"
-	}
-	if plan, cached := propertyExpressionPlans.get(text); cached {
+	if plan, cached := propertyExpressionPlans.get(view.source); cached {
 		return plan.expressions, plan.err
 	}
 	var expressions []pipelinePropertyExpression
-	err := forEachMapEntry(text, mapSourceText, func(key, expr string) {
-		expressions = append(expressions, pipelinePropertyExpression{key: key, expr: expr})
-	})
-	propertyExpressionPlans.put(text, propertyExpressionPlan{expressions: expressions, err: err})
+	entries, err := view.requireKeyedEntries()
+	if err == nil {
+		for _, entry := range entries {
+			expressions = append(expressions, pipelinePropertyExpression{key: entry.key(), expr: entry.value.text(), view: entry.value})
+		}
+	}
+	propertyExpressionPlans.put(view.source, propertyExpressionPlan{expressions: expressions, err: err})
 	return expressions, err
 }
 
@@ -104,7 +104,7 @@ func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error)
 func (e *StorageExecutor) materializePropertyExpressions(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	return materializePropertyEntries(ctx, expressions, retainNull, orderedValue, func(index int) (interface{}, bool, error) {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, expressions[index].expr, row)
+		value, resolved := e.evaluateRowExpressionWithContext(withBraceView(ctx, expressions[index].view), expressions[index].view, row)
 		return value, resolved, nil
 	})
 }

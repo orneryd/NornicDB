@@ -29,7 +29,7 @@ func requireDynamicUseProduct(t *testing.T, use *UseClause, function string, arg
 	require.NotNil(t, use)
 	require.Empty(t, use.Name)
 	require.Equal(t, function, use.Function)
-	require.Equal(t, args, use.Args)
+	require.Equal(t, args, useArgumentTexts(use.Arguments))
 	require.Len(t, use.Arguments, len(args))
 	for index, argument := range use.Arguments {
 		require.Equal(t, args[index], argument.Text)

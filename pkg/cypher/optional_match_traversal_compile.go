@@ -17,7 +17,7 @@ package cypher
 //     single-"value" scalar-wrapper pseudo-node),
 //   - whole-expression function calls reproduce the registered-function
 //     dispatch (functions_eval_functions.go): same inspectFunctionCall /
-//     splitFunctionArgs inputs, same cypherfn.Context construction, same
+//     retained argument views, same cypherfn.InvocationContext construction, same
 //     found/err handling, and a full-evaluator fallback when the registry
 //     does not know the function.
 //
@@ -30,9 +30,8 @@ package cypher
 // falls back to the full evaluator, preserving semantics exactly.
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -46,11 +45,11 @@ type compiledTraversalProjection func(row traversalOptRow) interface{}
 // compileTraversalProjection compiles expr into a per-row evaluator. It always
 // succeeds: expressions outside the compilable subset return a closure over
 // the full expression evaluator, which is the exact pre-compilation behavior.
-func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr string) compiledTraversalProjection {
-	if fn, ok := e.tryCompileTraversalExpr(ctx, expr); ok {
+func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, view braceView) compiledTraversalProjection {
+	if fn, ok := e.tryCompileTraversalExpr(ctx, view); ok {
 		return fn
 	}
-	captured := expr
+	captured := view
 	return func(row traversalOptRow) interface{} {
 		return e.evaluateTraversalRowExpression(ctx, captured, row)
 	}
@@ -60,7 +59,8 @@ func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr s
 // the shared heterogeneous row evaluator used by the converged pipeline. The
 // same typed projection failure is recorded when that evaluator declines;
 // unresolved query text is never a projected value.
-func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, expr string, row traversalOptRow) interface{} {
+func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, view braceView, row traversalOptRow) interface{} {
+	ctx = withBraceView(ctx, view)
 	values := make(map[string]interface{}, len(row.nodes)+len(row.rels)+len(row.values))
 	for variable, node := range row.nodes {
 		if node == nil {
@@ -79,17 +79,19 @@ func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, ex
 	for variable, value := range row.values {
 		values[variable] = value
 	}
-	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, values); ok {
+	if value, ok := e.evaluateRowExpressionWithContext(ctx, view, values); ok {
 		return value
 	}
-	pipelineItemUnevaluable(ctx, expr)
+	pipelineItemUnevaluable(ctx, view.text())
 	return nil
 }
 
 // tryCompileTraversalExpr compiles the supported expression shapes. ok=false
 // means the caller must evaluate the expression with the full evaluator.
-func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
-	expr = strings.TrimSpace(expr)
+func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, view braceView) (compiledTraversalProjection, bool) {
+	view = view.trim()
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	if expr == "" {
 		return nil, false
 	}
@@ -130,11 +132,11 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 			if v, ok := fastTraversalExprValue(captured, row); ok {
 				return v
 			}
-			return e.evaluateTraversalRowExpression(ctx, captured, row)
+			return e.evaluateTraversalRowExpression(ctx, view, row)
 		}, true
 	}
 
-	return e.tryCompileTraversalFunctionCall(ctx, expr)
+	return e.tryCompileTraversalFunctionCall(ctx, view)
 }
 
 // isCompilableTraversalVarExpr reports whether expr is a bare identifier or a
@@ -152,38 +154,40 @@ func isCompilableTraversalVarExpr(expr string) bool {
 // pre-split once; arguments that themselves compile are evaluated through
 // their compiled form when the function requests lazy evaluation via
 // Context.Eval, and everything else routes through the full evaluator.
-func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
+func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, view braceView) (compiledTraversalProjection, bool) {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	var callFacts1 functionCallFacts
 	ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1)
-	name, inner := callFacts1.name, callFacts1.inner
+	name := callFacts1.name
 	if !ok {
 		return nil, false
 	}
 	// Guarantee the full evaluator would reach the registered-function
 	// dispatch for this expression (see file comment for the branch analysis).
-	if hasTopLevelExpressionOperator(expr) || isCaseExpression(expr) {
+	if hasTopLevelExpressionOperator(view) || isCaseExpression(view) {
 		return nil, false
 	}
 
-	args := e.splitFunctionArgs(inner)
-	compiledArgs := make(map[string]compiledTraversalProjection, len(args))
+	args := view.window(callFacts1.arguments.Start, callFacts1.arguments.End).commaViews()
+	compiledArgs := make(map[*cyphertext.Source]compiledTraversalProjection, len(args))
 	for _, arg := range args {
-		if argFn, ok := e.tryCompileTraversalExpr(ctx, arg); ok {
-			compiledArgs[strings.TrimSpace(arg)] = argFn
+		if argFn, ok := e.tryCompileTraversalExpr(withBraceView(ctx, arg), arg); ok {
+			compiledArgs[arg.source] = argFn
 		}
 	}
 
-	captured := expr
+	captured := view
 	return func(row traversalOptRow) interface{} {
-		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
-			if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {
+		fnCtx := e.registryFunctionContext(ctx, args, func(argument braceView) (interface{}, error) {
+			if argFn, ok := compiledArgs[argument.source]; ok {
 				return argFn(row), nil
 			}
-			return e.evaluateExpressionWithContext(ctx, argExpr, row.nodes, row.rels), nil
+			return e.evaluateExpressionWithContext(withBraceView(ctx, argument), argument, row.nodes, row.rels), nil
 		})
 		fnCtx.Nodes = row.nodes
 		fnCtx.Rels = row.rels
-		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
+		if v, found, err := cypherfn.EvaluateInvocation(name, functionArgumentTexts(args), fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
 				return nil

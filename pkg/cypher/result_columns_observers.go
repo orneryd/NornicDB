@@ -11,13 +11,12 @@ func (compilation *boundCompilation) metadataVisitor(rootEffects *pipelineClause
 		enter  cypherantlr.SyntaxVisitor
 		finish func()
 	}
-	active := []observer{{root: -1, enter: pipelineEffectVisitor(rootEffects)}}
+	active := []observer{{root: -1, enter: pipelineEffectVisitor(compilation.view, rootEffects)}}
 	return func(node cypherantlr.SyntaxNode) func() {
-		if clause, found := compilation.clauses[node.ID()]; found {
+		if _, found := compilation.clauses[node.ID()]; found {
 			effects := &pipelineClauseEffects{}
-			active = append(active, observer{root: node.ID(), enter: pipelineEffectVisitor(effects), finish: func() {
+			active = append(active, observer{root: node.ID(), enter: pipelineEffectVisitor(compilation.view, effects), finish: func() {
 				compilation.product.effects[node.ID()] = *effects
-				pipelineClauseEffectCache.put(clause.text, *effects)
 			}})
 		}
 		if node.Rule() == cypherantlr.CypherParserRULE_expression {

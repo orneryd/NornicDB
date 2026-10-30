@@ -78,7 +78,7 @@ func TestSystemStatementPolicyExecutionModes(t *testing.T) {
 			"DROP INDEX review_idx IF EXISTS",
 			"MATCH (n:Review) RETURN count(n)",
 		} {
-			requireStatusCode(t, systemDatabaseStatementError(t.Context(), mode+statement), "Neo.ClientError.Statement.SemanticError")
+			requireStatusCode(t, systemDatabaseStatementError(t.Context(), originalBraceView(mode+statement)), "Neo.ClientError.Statement.SemanticError")
 		}
 	}
 }

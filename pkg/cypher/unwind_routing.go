@@ -13,7 +13,7 @@ type topLevelUnwindPlan struct {
 	variable      string
 	parameterName string
 	items         []interface{}
-	remainder     string
+	remainder     braceView
 }
 
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
@@ -23,12 +23,13 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	if !startsWithKeywordFold(cypher[head:], "UNWIND") {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	product, ok := splitUnwindBody(cypher)
+	view := statementBraceView(ctx, cypher)
+	product, ok := splitUnwindBody(view)
 	if !ok {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
 	listExpr := product.expression
-	plan := topLevelUnwindPlan{variable: product.variableWritten, remainder: product.remainder}
+	plan := topLevelUnwindPlan{variable: product.variableWritten, remainder: view.spanWindow(product.remainderSpan)}
 
 	params := getParamsFromContext(ctx)
 	var list interface{}
@@ -46,7 +47,7 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParameterNotFound(plan.parameterName), nil)
 		}
 	} else {
-		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
+		list = e.evaluateExpressionWithContext(ctx, view.spanWindow(product.expressionSpan), map[string]*storage.Node{}, map[string]*storage.Edge{})
 	}
 
 	// The one UNWIND coercion (#693): null is no rows, a list its elements,
@@ -62,10 +63,12 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 // changing clause semantics. Unsupported shapes return handled=false and are
 // executed by the same pipeline's general row operators.
 func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	if plan.remainder == "" {
+	remainder := plan.remainder.text()
+	if remainder == "" {
 		return nil, false, nil
 	}
-	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
+	ctx = withBraceView(ctx, plan.remainder)
+	upperRest := upperASCII(strings.TrimSpace(remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
 	if matchMutation {
@@ -82,10 +85,10 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
 		mutationPart := plan.remainder
-		returnPart := ""
+		returnPart := plan.remainder.window(len(remainder), len(remainder))
 		if returnIndex > 0 {
-			mutationPart = strings.TrimSpace(plan.remainder[:returnIndex])
-			returnPart = strings.TrimSpace(plan.remainder[returnIndex:])
+			mutationPart = plan.remainder.window(0, returnIndex).trim()
+			returnPart = plan.remainder.window(returnIndex, len(remainder)).trim()
 		}
 		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled || err != nil {
 			return result, true, err
@@ -100,10 +103,10 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	if strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
 		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
 		mutationPart := plan.remainder
-		returnPart := ""
+		returnPart := plan.remainder.window(len(remainder), len(remainder))
 		if returnIndex > 0 {
-			mutationPart = strings.TrimSpace(plan.remainder[:returnIndex])
-			returnPart = strings.TrimSpace(plan.remainder[returnIndex:])
+			mutationPart = plan.remainder.window(0, returnIndex).trim()
+			returnPart = plan.remainder.window(returnIndex, len(remainder)).trim()
 		}
 		if result, handled, err := e.executeUnwindMergeChainBatch(ctx, plan.variable, plan.items, mutationPart, returnPart); handled || err != nil {
 			return result, true, err
@@ -122,7 +125,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 					params[key] = value
 				}
 				params["__unwind_items"] = plan.items
-				result, err := e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
+				result, err := e.executeRequiredPipeline(withBraceView(withQueryParams(ctx, params), rewritten), rewritten.text())
 				return result, true, err
 			}
 		}
@@ -150,25 +153,30 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	return nil, false, nil
 }
 
-func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
-	split := parsePipelineClauses(ctx, query)
+func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query braceView) (*ExecuteResult, bool, error) {
+	ctx = withBraceView(ctx, query)
+	split := parsePipelineClauses(ctx, query.text())
 	clauses, ok := split.clauses, split.ok
 	if !ok {
 		return nil, false, nil
 	}
 	originalClauses := clauses
 	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); independent {
-		var patterns []string
+		var patterns []braceView
 		for _, clause := range clauses {
 			if clause.kind != pipelineClauseMatch {
 				break
 			}
-			patterns = append(patterns, pipelineClauseBody(clause.text, "MATCH"))
+			patterns = append(patterns, clause.view.clauseBody("MATCH"))
 		}
 		if len(patterns) > 1 {
-			combined := "MATCH " + strings.Join(patterns, ", ")
+			combined := query.assembleCode(patterns, ", ").wrap("MATCH ", "")
 			if e.compilePipelineNodeMatchSource(combined).supported {
-				clauses = append([]pipelineClause{{kind: pipelineClauseMatch, text: combined}}, clauses[len(patterns):]...)
+				compiled := parsePipelineClauses(withBraceView(ctx, combined), combined.text())
+				if !compiled.ok || len(compiled.clauses) != 1 {
+					panic("cypher: combined MATCH producer lost its clause frame")
+				}
+				clauses = append(compiled.clauses, clauses[len(patterns):]...)
 			}
 		}
 	}
@@ -198,23 +206,24 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	query := normalizeMultiMatchWhereClauses(plan.remainder)
-	if findKeywordIndexInContext(query, "CREATE") < 0 ||
-		findKeywordIndexInContext(query, "MERGE") >= 0 ||
-		findKeywordIndexInContext(query, "SET") >= 0 ||
-		findKeywordIndexInContext(query, "DELETE") >= 0 ||
-		findKeywordIndexInContext(query, "REMOVE") >= 0 ||
+	view := normalizeMultiMatchWhereClauses(plan.remainder)
+	query := view.text()
+	if findKeywordIndexInContext(view, "CREATE") < 0 ||
+		findKeywordIndexInContext(view, "MERGE") >= 0 ||
+		findKeywordIndexInContext(view, "SET") >= 0 ||
+		findKeywordIndexInContext(view, "DELETE") >= 0 ||
+		findKeywordIndexInContext(view, "REMOVE") >= 0 ||
 		!unwindItemsAreDistinctComparable(plan.items) {
 		return nil, false, nil
 	}
-	returnIndex := findKeywordIndexInContext(query, "RETURN")
+	returnIndex := findKeywordIndexInContext(view, "RETURN")
 	if returnIndex < 0 {
 		return nil, false, nil
 	}
-	if _, ok := parseUnwindBatchCountReturn(ctx, strings.TrimSpace(query[returnIndex:])); !ok {
+	if _, ok := parseUnwindBatchCountReturn(ctx, view.window(returnIndex, len(query)).trim()); !ok {
 		return nil, false, nil
 	}
-	rewritten, ok := rewriteUnwindCorrelationToIn(query, plan.variable, "__unwind_items")
+	rewritten, ok := rewriteUnwindCorrelationToIn(view, plan.variable, "__unwind_items")
 	if !ok {
 		return nil, false, nil
 	}
@@ -224,6 +233,6 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 		params[key] = value
 	}
 	params["__unwind_items"] = plan.items
-	result, err := e.executeRequiredPipeline(withQueryParams(ctx, params), rewritten)
+	result, err := e.executeRequiredPipeline(withBraceView(withQueryParams(ctx, params), rewritten), rewritten.text())
 	return result, true, err
 }

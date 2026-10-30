@@ -25,7 +25,7 @@ const deleteStreamingBatchSize = 500
 // ========================================
 
 // executeMatch handles MATCH queries.
-func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern braceView) (string, []string, map[string]interface{}, error) {
 	return e.parseMergeNodePattern(ctx, pattern, nil, nil)
 }
 
@@ -54,22 +54,24 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		return nil, false, nil
 	}
 
-	matchSegment := strings.TrimSpace(cypher[matchIdx:deleteIdx])
-	withIdx := findKeywordIndex(matchSegment, "WITH")
+	matchView := statementBraceView(ctx, cypher).window(matchIdx, deleteIdx).trim()
+	matchSegment := matchView.text()
+	withIdx := findKeywordIndex(matchView, "WITH")
 	if withIdx <= 0 {
 		return nil, false, nil
 	}
 
 	// Keep this hot path strict and deterministic.
 	for _, blocked := range []string{"ORDER BY", "SKIP", "UNWIND", "CALL", "OPTIONAL MATCH"} {
-		if containsKeywordOutsideStrings(matchSegment, blocked) {
+		if containsKeywordOutsideStrings(matchView, blocked) {
 			return nil, false, nil
 		}
 	}
 
-	baseMatch := strings.TrimSpace(matchSegment[:withIdx])
-	withPart := strings.TrimSpace(matchSegment[withIdx+4:]) // skip "WITH"
-	limitIdx := findKeywordIndex(withPart, "LIMIT")
+	baseMatch := matchView.window(0, withIdx).trim()
+	withView := matchView.window(withIdx+4, len(matchSegment)).trim()
+	withPart := withView.text() // skip "WITH"
+	limitIdx := findKeywordIndex(withView, "LIMIT")
 	if limitIdx <= 0 {
 		return nil, false, nil
 	}
@@ -141,22 +143,23 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	return result, true, getExpressionFailure(ctx)
 }
 
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch braceView, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	matchIdx := findKeywordIndex(baseMatch, "MATCH")
 	if matchIdx < 0 {
 		return nil, false, nil
 	}
 	whereIdx := findKeywordIndex(baseMatch, "WHERE")
-	patternPart := strings.TrimSpace(baseMatch[matchIdx+5:])
-	wherePart := ""
+	patternView := baseMatch.window(matchIdx+5, len(baseMatch.text())).trim()
+	whereView := baseMatch.window(0, 0)
 	if whereIdx > 0 {
-		patternPart = strings.TrimSpace(baseMatch[matchIdx+5 : whereIdx])
-		wherePart = strings.TrimSpace(baseMatch[whereIdx+5:])
+		patternView = baseMatch.window(matchIdx+5, whereIdx).trim()
+		whereView = baseMatch.window(whereIdx+5, len(baseMatch.text())).trim()
 	}
-	if !patternMapsAreConstant(patternPart) || !patternMapsAreConstant(wherePart) {
+	wherePart := whereView.text()
+	if !patternMapsAreConstant(patternView) || !patternMapsAreConstant(whereView) {
 		return nil, false, nil
 	}
-	nodePat, parseErr := readNodePattern(ctx, patternPart, patternPropertyKeys)
+	nodePat, parseErr := readNodePattern(ctx, patternView, patternPropertyKeys)
 	if parseErr != nil {
 		return nil, true, parseErr
 	}
@@ -181,7 +184,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			return nil, false, nil
 		}
 	}
-	rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, patternPart, nil)
+	rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, patternView, nil)
 	if prepareErr != nil {
 		return nil, true, prepareErr
 	}
@@ -195,24 +198,24 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	var err error
 	usedIndex := false
 	if wherePart != "" {
-		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
+		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, whereView, params); idxErr == nil && used {
 			nodes = candidates
 			usedIndex = true
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), whereView, params); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), whereView); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), whereView); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -361,7 +364,9 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	if result == nil {
 		return
 	}
-	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
+	statement := statementBraceView(info.ctx, cypher)
+	cypher = statement.text()
+	returnIdx := topLevelKeywordIndex(statement, "RETURN")
 	if returnIdx <= 0 {
 		return
 	}
@@ -402,7 +407,8 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 			// The DELETE's targets, as the pipeline DELETE collects them (a
 			// path's nodes and relationships, a list's entities).
 			for _, target := range splitTopLevelComma(deleteVars) {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
+				// Both hot paths admit one identifier target; it is read as a name.
+				value, ok := e.evaluateRowExpressionWithContext(ctx, expressionInputView(strings.TrimSpace(target), cyphertext.AcceptedSource), row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, target)
 					return
@@ -421,7 +427,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		return
 	}
 	e.replaceDeletedEntityViews(rows, deleted)
-	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
+	projected, err := e.projectMergeReturn(ctx, rows, statement.window(returnIdx, len(cypher)))
 	if err != nil {
 		return
 	}
@@ -429,7 +435,8 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	result.Rows = projected.Rows
 }
 
-func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
+func (e *StorageExecutor) isDeleteStreamingEligible(view braceView, deleteVars string, detach bool) bool {
+	matchSegment := view.text()
 	if !detach {
 		return false
 	}
@@ -438,7 +445,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	}
 	// Keep streaming path conservative to avoid semantic drift.
 	for _, blocked := range []string{"WITH", "LIMIT", "SKIP", "ORDER", "CALL", "UNWIND"} {
-		if containsKeywordOutsideStrings(matchSegment, blocked) {
+		if containsKeywordOutsideStrings(view, blocked) {
 			return false
 		}
 	}
@@ -514,7 +521,7 @@ var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?
 // extractScopeVariablesFromSetAndReturn returns variable names referenced in
 // SET assignments and RETURN items so the pre-SET MATCH query includes all
 // variables needed for mutation and projection.
-func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string {
+func extractScopeVariablesFromSetAndReturn(setPart string, returnPart braceView) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	add := func(v string) {
@@ -538,13 +545,13 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 		}
 	}
 
-	if strings.TrimSpace(returnPart) != "" {
-		for _, raw := range splitTopLevelCommaKeepEmpty(returnPart) {
-			expr := strings.TrimSpace(raw)
+	if !returnPart.empty() {
+		for _, item := range returnPart.commaPartViews(true) {
+			expr := item.text()
 			if expr == "" {
 				continue
 			}
-			if asIdx := findKeywordIndex(expr, "AS"); asIdx > 0 {
+			if asIdx := findKeywordIndex(item, "AS"); asIdx > 0 {
 				expr = strings.TrimSpace(expr[:asIdx])
 			}
 			add(extractVariableNameFromReturnItem(expr))
@@ -557,18 +564,19 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 // Example: "n += $props SET n.x = 1 SET n.y = 2" -> "n += $props, n.x = 1, n.y = 2".
 // Counting what a SET writes needs the clause boundaries, so the SET
 // applicators walk the clauses with nextChainedSetClause instead.
-func collapseChainedSetClauses(setPart string) string {
-	setPart = strings.TrimSpace(setPart)
-	first, next, ok := nextChainedSetClause(setPart, 0)
+func collapseChainedSetClauses(view braceView) string {
+	view = view.trim()
+	setPart := view.text()
+	first, next, ok := nextChainedSetClause(view, 0)
 	if !ok {
 		return setPart
 	}
-	clause, next, ok := nextChainedSetClause(setPart, next)
+	clause, next, ok := nextChainedSetClause(view, next)
 	if !ok {
 		return first
 	}
 	clauses := []string{first}
-	for ; ok; clause, next, ok = nextChainedSetClause(setPart, next) {
+	for ; ok; clause, next, ok = nextChainedSetClause(view, next) {
 		clauses = append(clauses, clause)
 	}
 	return strings.Join(clauses, ", ")
@@ -578,24 +586,44 @@ func collapseChainedSetClauses(setPart string) string {
 // setPart, a SET assignment list that may chain further SET clauses
 // ("n += $props SET n.x = 1"), and the index where the clause after it
 // starts. ok is false when no clause is left.
-func nextChainedSetClause(setPart string, start int) (clause string, next int, ok bool) {
+func nextChainedSetClause(view braceView, start int) (clause string, next int, ok bool) {
+	span, next, ok := nextChainedSetClauseSpan(view, start)
+	return view.text()[span.Start:span.End], next, ok
+}
+
+func nextChainedSetClauseSpan(view braceView, start int) (span cyphertext.Span, next int, ok bool) {
+	setPart := view.text()
 	for start < len(setPart) {
 		end, after := len(setPart), len(setPart)
-		if idx := keywordIndexFrom(setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
+		if idx := keywordIndexFrom(setPart, "SET", start, defaultKeywordScanOpts(view)); idx >= 0 {
 			end, after = idx, idx+len("SET")
 		}
-		if clause = strings.TrimSpace(setPart[start:end]); clause != "" {
-			return clause, after, true
+		if span = cyphertext.TrimWhitespaceSpan(setPart, cyphertext.Span{Start: start, End: end}); span.Start < span.End {
+			return span, after, true
 		}
 		start = after
 	}
-	return "", len(setPart), false
+	return cyphertext.Span{}, len(setPart), false
+}
+
+func nextChainedSetView(view braceView, from int) (braceView, int, bool) {
+	span, next, ok := nextChainedSetClauseSpan(view, from)
+	return view.spanWindow(span), next, ok
+}
+
+func setAssignmentViews(body braceView) []braceView {
+	var result []braceView
+	for part, next, ok := nextChainedSetView(body, 0); ok; part, next, ok = nextChainedSetView(body, next) {
+		result = append(result, part.commaPartViews(true)...)
+	}
+	return result
 }
 
 // firstPostSetClauseIndex returns the first index of a clause keyword that can
 // legally follow a SET assignment list. Returns -1 when none are present.
-func firstPostSetClauseIndex(setTail string) int {
-	opts := defaultKeywordScanOpts()
+func firstPostSetClauseIndex(view braceView) int {
+	setTail := view.text()
+	opts := defaultKeywordScanOpts(view)
 	first := -1
 	for _, kw := range []string{
 		"REMOVE", "UNWIND", "WITH", "RETURN",
@@ -611,8 +639,9 @@ func firstPostSetClauseIndex(setTail string) int {
 	return first
 }
 
-func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwindExpr string, nodeVars map[string]*storage.Node) interface{} {
-	expr := normalizeUnwindExpression(unwindExpr)
+func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwindExpr braceView, nodeVars map[string]*storage.Node) interface{} {
+	view := normalizeUnwindExpression(unwindExpr)
+	expr := view.text()
 	if strings.HasPrefix(expr, "$") {
 		paramName := strings.TrimSpace(expr[1:])
 		if paramName != "" {
@@ -623,18 +652,20 @@ func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwind
 			}
 		}
 	}
-	return e.evaluateExpressionWithContext(ctx, expr, nodeVars, nil)
+	return e.evaluateExpressionWithContext(ctx, view, nodeVars, nil)
 }
 
 // normalizeUnwindExpression removes syntactic wrapper parentheses around a valid
 // UNWIND expression, e.g. "($vals)" -> "$vals", while preserving inner
 // expression content for evaluation.
-func normalizeUnwindExpression(expr string) string {
-	trimmed := strings.TrimSpace(expr)
+func normalizeUnwindExpression(view braceView) braceView {
+	view = view.trim()
+	trimmed := view.text()
 	for hasOuterParens(trimmed) {
-		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		view = view.window(1, len(trimmed)-1).trim()
+		trimmed = view.text()
 	}
-	return trimmed
+	return view
 }
 
 func hasOuterParens(s string) bool {
@@ -807,23 +838,23 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	return splitTopLevelComma(returnPart)
 }
 
-func (e *StorageExecutor) parseReturnItems(ctx context.Context, returnPart string) []returnItem {
-	if strings.TrimSpace(returnPart) == "" {
-		returnPart = "*"
+func (e *StorageExecutor) parseReturnItems(ctx context.Context, returnPart braceView) []returnItem {
+	ctx = withBraceView(ctx, returnPart)
+	returnPart = returnPart.trim()
+	if returnPart.empty() {
+		returnPart = returnPart.generated("*")
 	}
-	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
+	plan := returnProjectionPlanFor(ctx, returnPart.wrap("RETURN ", ""))
 	if plan.star {
-		items := []returnItem{{expr: "*", alias: "*"}}
-		for _, item := range plan.starItems {
-			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
-			expr, alias := itemSource.expression, itemSource.alias
-			items = append(items, returnItem{expr: expr, alias: alias})
+		items := []returnItem{{expr: "*", alias: "*", view: returnPart.generated("*")}}
+		for _, projection := range plan.starProjections {
+			items = append(items, returnItem{expr: projection.expr, alias: projection.alias, view: projection.view})
 		}
 		return items
 	}
 	items := make([]returnItem, 0, len(plan.projections))
 	for _, projection := range plan.projections {
-		items = append(items, returnItem{expr: projection.expr, alias: projection.alias})
+		items = append(items, returnItem{expr: projection.expr, alias: projection.alias, view: projection.view})
 	}
 	return items
 }
@@ -851,15 +882,16 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable string, view braceView) bool {
+	pattern := view.text()
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
 	if e.isChainedPattern(pattern) {
-		return e.checkChainedPattern(node, variable, pattern, "")
+		return e.checkChainedPattern(node, variable, view, "")
 	}
 	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
-	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
+	relPattern := e.parseOptionalRelPattern(withBraceView(context.Background(), view), view)
 	targetMatches := func(targetNodeID storage.NodeID) bool {
 		if len(relPattern.targetLabels) == 0 && len(relPattern.targetProps) == 0 {
 			return true
@@ -881,7 +913,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	}
 	var checkIncoming, checkOutgoing bool
 	var relTypes []string
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
+	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(view, variable)
 	if checkIncoming {
 		edges, _ := e.storage.GetIncomingEdges(node.ID)
 		for _, edge := range edges {
@@ -907,7 +939,8 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 }
 
 // checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, pattern, innerWhere string) bool {
+func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable string, view braceView, innerWhere string) bool {
+	pattern := view.text()
 	// Parse the pattern to extract relationship hops
 	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
 
@@ -925,7 +958,7 @@ func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, patt
 	}
 
 	// Extract relationship hops
-	hops := e.parseRelationshipHops(pattern, variable)
+	hops := e.parseRelationshipHops(view, variable)
 	if len(hops) == 0 {
 		return false
 	}
@@ -941,10 +974,10 @@ type relationshipHop struct {
 }
 
 // parseRelationshipHops extracts relationship hops from a pattern
-func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
+func (e *StorageExecutor) parseRelationshipHops(view braceView, variable string) []relationshipHop {
 	var hops []relationshipHop
-	forEachRelationshipSource(pattern, func(_, open, close, _ int, incoming, _ bool) bool {
-		declaration := relationshipDeclarationOf(StripComments(pattern[open+1 : close]))
+	forEachRelationshipSource(view.text(), func(_, open, close, _ int, incoming, _ bool) bool {
+		declaration := relationshipDeclarationOf(view.window(open+1, close).withoutComments())
 		hops = append(hops, relationshipHop{relTypes: declaration.types, outgoing: !incoming})
 		return true
 	})
@@ -1113,19 +1146,21 @@ func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) strin
 }
 
 // extractRelTypesFromPattern consumes the existing relationship grammar.
-func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
+func (e *StorageExecutor) extractRelTypesFromPattern(view braceView, prefix string) []string {
+	pattern := view.text()
 	var types []string
 	forEachRelationshipSource(pattern, func(start, open, close, _ int, _, _ bool) bool {
 		if !strings.HasPrefix(pattern[start:], prefix) {
 			return true
 		}
-		types = relationshipDeclarationOf(StripComments(pattern[open+1 : close])).types
+		types = relationshipDeclarationOf(view.window(open+1, close).withoutComments()).types
 		return false
 	})
 	return types
 }
 
-func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) {
+func (e *StorageExecutor) relationshipExistencePatternDirections(view braceView, variable string) (incoming, outgoing bool, relTypes []string) {
+	pattern := view.text()
 	if groupStart := strings.Index(pattern, "("+variable+")"); groupStart >= 0 || strings.Contains(pattern, "("+variable+":") {
 		if groupStart < 0 {
 			groupStart = strings.Index(pattern, "("+variable+":")
@@ -1143,9 +1178,9 @@ func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variab
 		switch {
 		case strings.HasPrefix(after, "<-["):
 			incoming = true
-			relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+			relTypes = e.extractRelTypesFromPattern(view, "<-[")
 		case strings.HasPrefix(after, "-["):
-			relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+			relTypes = e.extractRelTypesFromPattern(view, "-[")
 			if strings.Contains(after, "]->") {
 				outgoing = true
 			} else if strings.Contains(after, "]-") {
@@ -1158,18 +1193,18 @@ func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variab
 		case strings.HasSuffix(before, "]->"):
 			incoming = true
 			if len(relTypes) == 0 {
-				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+				relTypes = e.extractRelTypesFromPattern(view, "-[")
 			}
 		case strings.Contains(before, "<-[") && strings.HasSuffix(before, "]-"):
 			outgoing = true
 			if len(relTypes) == 0 {
-				relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+				relTypes = e.extractRelTypesFromPattern(view, "<-[")
 			}
 		case strings.HasSuffix(before, "]-"):
 			incoming = true
 			outgoing = true
 			if len(relTypes) == 0 {
-				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+				relTypes = e.extractRelTypesFromPattern(view, "-[")
 			}
 		}
 	}

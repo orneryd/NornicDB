@@ -100,9 +100,9 @@ func TestRelationshipDeclarationOf(t *testing.T) {
 		{":Ts R", relationshipDeclaration{hasColon: true, typeText: "Ts R", types: []string{"Ts R"}, invalidType: "Ts R"}},
 		{":``|`a`", relationshipDeclaration{hasColon: true, typeText: "``|`a`", types: []string{"", "a"}, invalidType: "``"}},
 	} {
-		require.Equal(t, tc.want, relationshipDeclarationOf(tc.inner), tc.inner)
+		require.Equal(t, tc.want, relationshipDeclarationOf(originalBraceView(tc.inner)), tc.inner)
 	}
-	require.Equal(t, "A|B", relationshipDeclarationOf(":A|B").singleType())
-	require.Equal(t, "$(t)", relationshipDeclarationOf(":$(t)").singleType())
-	require.Equal(t, "a b", relationshipDeclarationOf(":`a b`").singleType())
+	require.Equal(t, "A|B", relationshipDeclarationOf(originalBraceView(":A|B")).singleType())
+	require.Equal(t, "$(t)", relationshipDeclarationOf(originalBraceView(":$(t)")).singleType())
+	require.Equal(t, "a b", relationshipDeclarationOf(originalBraceView(":`a b`")).singleType())
 }

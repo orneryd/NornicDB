@@ -396,7 +396,7 @@ func TestMatchCreateRelationship_CompoundHelpersAndDeleteBranches(t *testing.T) 
 		require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 		require.EqualValues(t, 2, result.Stats.RelationshipsCreated)
 
-		positions := findAllTopLevelPipelineKeywordPositions(`MATCH (n {txt: "MATCH"}) RETURN n MATCH (m) RETURN m`, "MATCH")
+		positions := findAllTopLevelPipelineKeywordPositions(originalBraceView(`MATCH (n {txt: "MATCH"}) RETURN n MATCH (m) RETURN m`), "MATCH")
 		require.Len(t, positions, 2)
 		assert.True(t, positions[0] < positions[1])
 		assert.True(t, isInsideQuotes(`'abc'`, 2))

@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"sort"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -42,9 +42,9 @@ import (
 // modes; NornicDB reads them in both versions.
 
 func init() {
-	cypherfn.Register(acyclicPathFunction, fnAcyclicPath)
-	cypherfn.Register(pathSelectorFunction, fnPatternMarker)
-	cypherfn.Register(repeatableElementsFunction, fnPatternMarker)
+	cypherfn.RegisterInvocation(acyclicPathFunction, fnAcyclicPath)
+	cypherfn.RegisterInvocation(pathSelectorFunction, fnPatternMarker)
+	cypherfn.RegisterInvocation(repeatableElementsFunction, fnPatternMarker)
 }
 
 // acyclicPathFunction reports whether a path's nodes are all distinct.
@@ -82,89 +82,8 @@ func (p pathPatternPrefix) selective() bool {
 // spaces skipped. ok is false when the text there isn't one followed by a
 // node pattern.
 func scanPathPatternPrefix(q string, i, end int) (pathPatternPrefix, bool, error) {
-	prefix := pathPatternPrefix{start: skipASCIISpaces(q, i, end)}
-	at := prefix.start
-	next := func() (string, int) {
-		k := skipASCIISpaces(q, at, end)
-		j := k
-		if j < end && q[j] == '$' {
-			j++
-		}
-		for j < end && cyphertext.NamePartAt(q, j) {
-			j++
-		}
-		return q[k:j], j
-	}
-	accept := func(words ...string) string {
-		token, tokenEnd := next()
-		for _, word := range words {
-			if strings.EqualFold(token, word) {
-				at = tokenEnd
-				return word
-			}
-		}
-		return ""
-	}
-	acceptCount := func() bool {
-		token, tokenEnd := next()
-		if len(token) > 1 && token[0] == '$' || token != "" && strings.Trim(token, "0123456789") == "" {
-			prefix.count, at = token, tokenEnd
-			return true
-		}
-		return false
-	}
-	// PATH or PATHS ends the prefix, but for SHORTEST k PATHS GROUPS.
-	switch accept("ANY", "ALL", "SHORTEST") {
-	case "ANY":
-		if accept("SHORTEST") != "" {
-			prefix.kind, prefix.count = "SHORTEST", "1"
-		} else {
-			prefix.kind = "ANY"
-			acceptCount()
-		}
-	case "ALL":
-		if accept("SHORTEST") != "" {
-			prefix.kind, prefix.count, prefix.groups = "SHORTEST", "1", true
-		} else {
-			prefix.kind = "ALL"
-		}
-	case "SHORTEST":
-		prefix.kind = "SHORTEST"
-		counted := acceptCount()
-		path := accept("PATH", "PATHS")
-		prefix.groups = accept("GROUP", "GROUPS") != ""
-		if !counted && !prefix.groups {
-			return pathPatternPrefix{}, false, nil
-		}
-		if path != "" && !prefix.groups {
-			return prefix.finish(q, at, end)
-		}
-	}
-	prefix.mode = accept("WALK", "TRAIL", "ACYCLIC")
-	accept("PATH", "PATHS")
-	return prefix.finish(q, at, end)
-}
-
-// finish checks the prefix read up to query[at:end], where its pattern
-// starts.
-func (prefix pathPatternPrefix) finish(q string, at, end int) (pathPatternPrefix, bool, error) {
-	if prefix.kind == "" && prefix.mode == "" {
-		return pathPatternPrefix{}, false, nil
-	}
-	if word, _, _ := scanSymbolicName(q[:end], skipASCIISpaces(q, at, end)); strings.EqualFold(word, "shortestPath") || strings.EqualFold(word, "allShortestPaths") {
-		return pathPatternPrefix{}, false, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorWithShortestPathFunction())
-	}
-	prefix.end = skipASCIISpaces(q, at, end)
-	if prefix.end >= end || q[prefix.end] != '(' {
-		return pathPatternPrefix{}, false, nil
-	}
-	if prefix.count != "" && strings.Trim(prefix.count, "0") == "" {
-		if prefix.groups {
-			return pathPatternPrefix{}, false, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorGroupCountNotPositive())
-		}
-		return pathPatternPrefix{}, false, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorPathCountNotPositive())
-	}
-	return prefix, true, nil
+	prefix, ok, err := cypherantlr.ScanPathPatternPrefix(q, i, end)
+	return pathPatternPrefix{start: prefix.Start, end: prefix.End, kind: prefix.Kind, count: prefix.Count, groups: prefix.Groups, mode: prefix.Mode}, ok, err
 }
 
 // mayUsePathPatternPrefix reports whether query may hold a selector, a path
@@ -225,7 +144,7 @@ type pathPrefixRewrite struct {
 	// parenthesised path's inside, before its WHERE.
 	patternStart, patternEnd int
 	// where is the parenthesised path's WHERE, rewritten.
-	where string
+	where rewritePredicate
 	// acyclic are the __nornic_acyclic predicates of ACYCLIC patterns.
 	acyclic []string
 	// repeatable marks MATCH REPEATABLE ELEMENTS.
@@ -235,7 +154,7 @@ type pathPrefixRewrite struct {
 	modeWritten bool
 	// pathWheres are the WHEREs of plain parenthesised paths, rewritten:
 	// filters of the clause.
-	pathWheres []string
+	pathWheres []rewritePredicate
 }
 
 // pathPrefixes rewrites the match mode and the selectors and path modes of
@@ -295,7 +214,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
 		}
 		patternEnd := trimRightIndex(q, prefix.end, part[1])
-		if prefix.mode != "" && hasVariableLengthRelationship(q, prefix.end, patternEnd) {
+		if prefix.mode != "" && hasVariableLengthRelationship(r.braceView, prefix.end, patternEnd) {
 			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathModeVariableLength(prefix.mode))
 		}
 		switch {
@@ -336,7 +255,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			r.edit(prefix.start, prefix.end, "")
 		}
 	}
-	if rewrite.repeatable && hasUnboundedRepetition(q, start, end) {
+	if rewrite.repeatable && hasUnboundedRepetition(r.braceView, start, end) {
 		return rewrite, labelExpressionSyntaxError(localization.CypherMatchingRepeatableElementsUnbounded())
 	}
 	return rewrite, nil
@@ -351,7 +270,7 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 		return false, nil
 	}
 	rewrite.patternStart, rewrite.patternEnd = start+1, end-1
-	where := findTopLevelKeyword(q[start+1:end-1], "WHERE")
+	where := findTopLevelKeyword(r.braceView.window(start+1, end-1), "WHERE")
 	if where < 0 {
 		return true, nil
 	}
@@ -362,38 +281,30 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 	if err != nil {
 		return true, err
 	}
-	rewrite.where = "(" + text + ")"
+	rewrite.where = wrapRewritePredicate("(", text, ")")
 	return true, nil
 }
 
 // rewrittenExpression returns the expression query[start:end] with the
 // rewrite's edits applied, for text that moves elsewhere in the statement.
-func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (string, error) {
+func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (rewritePredicate, error) {
 	q := r.query
-	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
+	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named, braceView: r.braceView}
 	if err := sub.expression(start, end); err != nil {
-		return "", err
+		return rewritePredicate{}, err
 	}
 	r.generated = sub.generated
-	sort.SliceStable(sub.edits, func(i, j int) bool { return sub.edits[i].start < sub.edits[j].start })
-	var text strings.Builder
-	last := start
-	for _, edit := range sub.edits {
-		text.WriteString(q[last:edit.start])
-		text.WriteString(edit.text)
-		last = edit.end
-	}
-	text.WriteString(q[last:end])
-	return text.String(), nil
+	return rewrittenSourceRegion(q, start, end, sub.edits), nil
 }
 
 // mayUseParenthesisedPath reports whether query may hold a parenthesised
 // path: a ( that opens a node pattern, then a relationship arrow
 // (parenthesisedPathAt). It never answers false for one.
-func mayUseParenthesisedPath(query string) bool {
+func mayUseParenthesisedPath(view braceView) bool {
+	query := view.text()
 	for i := strings.IndexByte(query, '('); i >= 0; {
 		if next := skipASCIISpaces(query, i+1, len(query)); next < len(query) && query[next] == '(' {
-			if close := findMatchingParen(query, i); close > i && parenthesisedPathAt(query, i, close) {
+			if close := findMatchingParen(query, i); close > i && parenthesisedPathAt(view, i, close) {
 				return true
 			}
 		}
@@ -415,14 +326,14 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 	q := r.query
 	end = trimRightIndex(q, start, end)
 	for i := start; i < end; i++ {
-		switch c := q[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := q[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '[', '{':
-			if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), map[byte]rune{'[': ']', '{': '}'}[c], cyphertext.OpeningDelimiter); close > i {
+		case (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), rune(cyphertext.DelimiterCloser(c)), cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
-		case '(':
+		case (cypherLexicalByte(c)) == '(':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '(', ')', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
@@ -430,7 +341,7 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			// A function call's parentheses (shortestPath(…)) and a quantified
 			// path are not plain parenthesised paths.
 			before := trimRightIndex(q, start, i)
-			if inner := skipASCIISpaces(q, i+1, close); inner >= close || q[inner] != '(' || quantifiedGroupAt(q, close, len(q)) ||
+			if inner := skipASCIISpaces(q, i+1, close); inner >= close || q[inner] != '(' || quantifiedGroupAt(r.braceView, close, len(q)) ||
 				before > start && cyphertext.NamePartAt(q, before-1) {
 				i = close
 				continue
@@ -448,14 +359,14 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			}
 			r.edit(i, open+1, "")
 			r.edit(last, close+1, "")
-			if where := topLevelKeywordIndex(q[open+1:last], "WHERE"); where >= 0 {
+			if where := topLevelKeywordIndex(r.braceView.window(open+1, last), "WHERE"); where >= 0 {
 				where += open + 1
 				r.edit(trimRightIndex(q, open+1, where), last, "")
 				text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), last), trimRightIndex(q, where+len("WHERE"), last))
 				if err != nil {
 					return err
 				}
-				rewrite.pathWheres = append(rewrite.pathWheres, "("+text+")")
+				rewrite.pathWheres = append(rewrite.pathWheres, wrapRewritePredicate("(", text, ")"))
 			}
 			return nil
 		}
@@ -504,9 +415,10 @@ func matchModeAt(q string, start, end int) (int, bool, bool) {
 // hasUnboundedRepetition reports whether the pattern q[start:end] repeats a
 // relationship without an upper bound: a quantifier (+, *, {m,}) or a
 // variable-length relationship (-[*]->, -[*2..]->).
-func hasUnboundedRepetition(q string, start, end int) bool {
+func hasUnboundedRepetition(view braceView, start, end int) bool {
+	q := view.text()
 	for from := start; ; {
-		_, close, quantifier, ok := nextQuantifiedGroup(q[:end], from)
+		_, close, quantifier, ok := nextQuantifiedGroup(view.window(0, end), from)
 		if !ok {
 			break
 		}
@@ -516,26 +428,26 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 		from = close + 1
 	}
 	for i := start; i < end; i++ {
-		switch c := q[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := q[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '{':
-			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if close, found := view.close(i); found && close > i && close < end {
 				i = close
 			}
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return false
 			}
-			if quantifier, _, ok := quantifierAfterArrow(q, close, end); ok && quantifier.max < 0 {
+			if quantifier, _, ok := quantifierAfterArrow(view, close, end); ok && quantifier.max < 0 {
 				return true
 			}
 			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
+			if where := elementWhereIndex(view, i, close); where >= 0 {
 				inner = where
 			}
-			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
+			if brace, _, _, found := view.window(i+1, inner).firstBrace(); found {
 				inner = i + 1 + brace
 			}
 			if star := indexOutsideQuotes(q[i+1:inner], '*'); star >= 0 {
@@ -545,10 +457,10 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 				}
 			}
 			i = close
-		case '-', '<':
+		case (cypherLexicalByte(c)) == '-', (cypherLexicalByte(c)) == '<':
 			arrowEnd := arrowRunEnd(q, i, end)
 			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
-				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok && quantifier.max < 0 {
+				if quantifier, ok := relationshipQuantifierAt(view, next, end); ok && quantifier.max < 0 {
 					return true
 				}
 			}
@@ -561,25 +473,26 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 // hasVariableLengthRelationship reports whether the pattern q[start:end]
 // writes a variable-length relationship (-[*]->, -[:R*1..3]->); a quantifier
 // after a relationship is not one.
-func hasVariableLengthRelationship(q string, start, end int) bool {
+func hasVariableLengthRelationship(view braceView, start, end int) bool {
+	q := view.text()
 	for i := start; i < end; i++ {
-		switch c := q[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := q[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '{':
-			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if close, found := view.close(i); found && close > i && close < end {
 				i = close
 			}
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return false
 			}
 			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
+			if where := elementWhereIndex(view, i, close); where >= 0 {
 				inner = where
 			}
-			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
+			if brace, _, _, found := view.window(i+1, inner).firstBrace(); found {
 				inner = i + 1 + brace
 			}
 			if indexOutsideQuotes(q[i+1:inner], '*') >= 0 {
@@ -593,7 +506,7 @@ func hasVariableLengthRelationship(q string, start, end int) bool {
 
 // fnAcyclicPath is __nornic_acyclic(path): whether no node of path repeats
 // (null for null).
-func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnAcyclicPath(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -607,7 +520,7 @@ func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnPatternMarker is reached only when a step other than the MATCH step a
 // selector or match mode is written for reads it.
-func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
+func fnPatternMarker(cypherfn.InvocationContext, []string) (interface{}, error) {
 	return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMatchingPatternMarkerOutsideMatch())
 }
 

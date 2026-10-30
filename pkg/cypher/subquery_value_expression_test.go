@@ -120,7 +120,7 @@ func TestProjectionSourceAliasIsTopLevel(t *testing.T) {
 		"[x IN [1] | x] AS `my list`":                        {"[x IN [1] | x]", "my list"},
 		"n.alias":                                            {"n.alias", "n.alias"},
 	} {
-		itemSource := readProjectionItemSource(t.Context(), item, projectionAdmitted)
+		itemSource := readProjectionItemSource(t.Context(), originalBraceView(item), projectionAdmitted)
 		expr, alias := itemSource.expression, itemSource.alias
 		require.Equal(t, want, [2]string{expr, alias}, item)
 	}

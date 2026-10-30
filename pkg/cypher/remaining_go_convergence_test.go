@@ -10,7 +10,7 @@ import (
 
 func TestStretchMapKeysUseCanonicalReader(t *testing.T) {
 	var keys stretchTokens
-	addStretchMapKeys("{`odd``key`: source.read, outer: {nested: 1}, plain: 'x.y'}", &keys)
+	addStretchMapKeys(expressionBraceView("{`odd``key`: source.read, outer: {nested: 1}, plain: 'x.y'}"), &keys)
 	require.Equal(t, map[string]struct{}{"odd`key": {}, "outer": {}, "plain": {}}, keys.keys)
 	require.False(t, keys.anyKey)
 	effects, err := pipelineClauseEffectsFor(t.Context(), "CREATE (n:CanonicalMapKeys {`odd``key`: source.read, outer: {nested: 1}})")
@@ -26,12 +26,12 @@ func TestPatternBindingPlanRemainsSyntaxOnly(t *testing.T) {
 	withPluginFunctions(t, map[string]interface{}{"inspection.planvalue": func() int64 { calls++; return calls }})
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	pattern := "(n:CanonicalPlanOwnership {id:inspection.planvalue()})"
-	plan := e.compilePatternRow(pattern, nil)
+	plan := e.compilePatternRow(originalBraceView(pattern), nil)
 	require.NoError(t, plan.err)
 	require.Zero(t, calls)
 	ctx := withParams(context.Background(), map[string]interface{}{"__nornic_pattern_property_0": int64(99)})
 	for i := int64(1); i <= 2; i++ {
-		bound, text, err := e.bindPatternProperties(ctx, pattern, nil)
+		bound, text, err := e.bindPatternProperties(ctx, originalBraceView(pattern), nil)
 		require.NoError(t, err)
 		require.Equal(t, i, calls)
 		require.Equal(t, int64(99), getParamsFromContext(bound)["__nornic_pattern_property_0"])

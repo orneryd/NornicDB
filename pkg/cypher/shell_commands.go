@@ -13,115 +13,49 @@ import (
 )
 
 func (e *StorageExecutor) preprocessShellCommands(ctx context.Context, cypher string, explicitParams map[string]interface{}) (string, context.Context, *ExecuteResult, error) {
-	remaining := strings.TrimSpace(cypher)
+	remaining := statementBraceView(ctx, cypher).trim()
+	ctx = withBraceView(ctx, remaining)
 	var lastResult *ExecuteResult
 
 	for {
-		cmd, rest, ok := nextShellCommand(remaining)
+		command, rest, ok := shellCommandSpans(remaining.text(), remaining.close)
+		cmd, restView := remaining.window(command.Start, command.End), remaining.window(rest.Start, rest.End)
 		if !ok {
 			break
 		}
 
-		result, nextCtx, err := e.executeShellCommand(ctx, cmd, rest, explicitParams)
+		result, nextCtx, err := e.executeShellCommand(ctx, cmd, restView, explicitParams)
 		if err != nil {
 			return "", ctx, nil, err
 		}
 		ctx = nextCtx
 		lastResult = result
-		remaining = strings.TrimSpace(rest)
-		if remaining == "" || !strings.HasPrefix(remaining, ":") {
+		remaining = restView.trim()
+		ctx = withBraceView(ctx, remaining)
+		if remaining.empty() || !strings.HasPrefix(remaining.text(), ":") {
 			break
 		}
 	}
 
-	if strings.HasPrefix(remaining, ":") {
-		command := strings.Split(strings.TrimSpace(remaining), "\n")[0]
+	if strings.HasPrefix(remaining.text(), ":") {
+		command := strings.Split(remaining.text(), "\n")[0]
 		return "", ctx, nil, localizedError(localization.CypherCommandRoutingUnknownCommand(command), nil)
 	}
 
 	if lastResult == nil {
 		lastResult = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}
 	}
-	return remaining, ctx, lastResult, nil
+	return remaining.text(), ctx, lastResult, nil
 }
 
-func nextShellCommand(input string) (string, string, bool) {
-	trimmed := strings.TrimSpace(input)
-	if !strings.HasPrefix(trimmed, ":") {
-		return "", input, false
+func (e *StorageExecutor) executeShellCommand(ctx context.Context, commandView, queryView braceView, explicitParams map[string]interface{}) (*ExecuteResult, context.Context, error) {
+	commandView = commandView.trim()
+	if strings.HasSuffix(commandView.text(), ";") {
+		commandView = commandView.window(0, len(commandView.text())-1).trim()
 	}
-
-	lineEnd := strings.IndexByte(trimmed, '\n')
-	firstLine := trimmed
-	if lineEnd >= 0 {
-		firstLine = trimmed[:lineEnd]
-	}
-	fields := strings.Fields(firstLine)
-	if len(fields) == 0 {
-		return "", input, false
-	}
-
-	commandName := lowerASCII(fields[0])
-	if commandName == ":use" && len(fields) > 2 {
-		// HTTP has always accepted :USE db followed by a statement on the
-		// same line. Preserve the original statement bytes (including quoted
-		// whitespace) rather than swallowing them as command arguments.
-		databaseStart := len(fields[0]) + strings.Index(firstLine[len(fields[0]):], fields[1])
-		databaseEnd := databaseStart + len(fields[1])
-		remaining := strings.TrimSpace(firstLine[databaseEnd:])
-		if lineEnd >= 0 {
-			remaining += "\n" + trimmed[lineEnd+1:]
-		}
-		return strings.TrimSpace(firstLine[:databaseEnd]), remaining, true
-	}
-	if (commandName == ":param" || commandName == ":params") && isMapStyleShellParam(trimmed) {
-		command, consumed, ok := consumeShellMapCommand(trimmed)
-		if !ok {
-			return "", input, false
-		}
-		return command, trimmed[consumed:], true
-	}
-
-	if lineEnd == -1 {
-		return trimmed, "", true
-	}
-	return strings.TrimSpace(trimmed[:lineEnd]), trimmed[lineEnd+1:], true
-}
-
-func isMapStyleShellParam(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
-	}
-	name := lowerASCII(fields[0])
-	if name != ":param" && name != ":params" {
-		return false
-	}
-	arg := strings.TrimSpace(command[len(fields[0]):])
-	return strings.HasPrefix(arg, "{")
-}
-
-func consumeShellMapCommand(input string) (string, int, bool) {
-	start := strings.Index(input, "{")
-	if start == -1 {
-		return "", 0, false
-	}
-	close := cyphertext.FindMatchingDelimiter(input, start, '{', '}', cyphertext.OpeningDelimiter)
-	if close < 0 {
-		return "", 0, false
-	}
-	end := close + 1
-	for end < len(input) && (input[end] == ';' || cyphertext.IsWhitespaceAt(input, end)) {
-		end++
-	}
-	if end < len(input) && input[end] == '\n' {
-		end++
-	}
-	return strings.TrimSpace(input[:close+1]), end, true
-}
-
-func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, query string, explicitParams map[string]interface{}) (*ExecuteResult, context.Context, error) {
-	trimmed := strings.TrimSpace(strings.TrimSuffix(command, ";"))
+	trimmed := commandView.text()
+	query := queryView.text()
+	ctx = withBraceView(ctx, commandView)
 	parts := strings.Fields(trimmed)
 	if len(parts) == 0 {
 		return nil, ctx, localizedError(localization.CypherCommandRoutingEmptyCommand(), nil)
@@ -142,13 +76,14 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, quer
 		// The query follows any remaining shell commands. Select its database
 		// with its own requirements, just as a Cypher USE clause does.
 		for {
-			_, rest, ok := nextShellCommand(query)
+			_, rest, ok := shellCommandSpans(queryView.text(), queryView.close)
 			if !ok {
 				break
 			}
-			query = rest
+			queryView = queryView.window(rest.Start, rest.End)
+			query = queryView.text()
 		}
-		if err := e.authorizeSelectedDatabase(ctx, dbName, query); err != nil {
+		if err := e.authorizeSelectedDatabase(withBraceView(ctx, queryView), dbName, query); err != nil {
 			return nil, ctx, err
 		}
 		if e.dbManager != nil {
@@ -166,15 +101,19 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, quer
 			Rows:    [][]interface{}{{"switched"}},
 		}, ctx, nil
 	case ":param", ":params":
-		result, err := e.executeParamCommand(ctx, args, explicitParams)
+		result, err := e.executeParamCommand(ctx, commandView.window(len(parts[0]), len(trimmed)).trim(), explicitParams)
 		return result, ctx, err
 	default:
 		return nil, ctx, localizedError(localization.CypherCommandRoutingUnknownCommand(parts[0]), nil)
 	}
 }
 
-func (e *StorageExecutor) executeParamCommand(ctx context.Context, args string, explicitParams map[string]interface{}) (*ExecuteResult, error) {
-	trimmed := strings.TrimSpace(strings.TrimSuffix(args, ";"))
+func (e *StorageExecutor) executeParamCommand(ctx context.Context, args braceView, explicitParams map[string]interface{}) (*ExecuteResult, error) {
+	args = args.trim()
+	if strings.HasSuffix(args.text(), ";") {
+		args = args.window(0, len(args.text())-1).trim()
+	}
+	trimmed := args.text()
 	if trimmed == "" || strings.EqualFold(trimmed, "list") {
 		return e.listShellParams(ctx), nil
 	}
@@ -186,13 +125,19 @@ func (e *StorageExecutor) executeParamCommand(ctx context.Context, args string, 
 		}, nil
 	}
 
-	mapExpr, err := parseParamCommandToMapExpression(trimmed)
+	input, err := readShellParameterInput(trimmed)
 	if err != nil {
 		return nil, err
 	}
 
 	effectiveParams := e.mergeShellParams(ctx, explicitParams)
-	paramMap, err := e.evaluateParamMapExpression(ctx, mapExpr, effectiveParams)
+	var paramMap map[string]interface{}
+	if input.mapForm {
+		paramMap, err = e.evaluateParamMapExpression(ctx, args.spanWindow(input.value), effectiveParams)
+	} else {
+		key := trimmed[input.key.Start:input.key.End]
+		paramMap, err = e.evaluateShellParameterEntries(ctx, []recordedMapEntry{{name: key, value: args.spanWindow(input.value)}}, effectiveParams)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -205,71 +150,6 @@ func (e *StorageExecutor) executeParamCommand(ctx context.Context, args string, 
 		Columns: []string{"status"},
 		Rows:    [][]interface{}{{fmt.Sprintf("Parameters set: %d", len(paramMap))}},
 	}, nil
-}
-
-func parseParamCommandToMapExpression(input string) (string, error) {
-	trimmed := strings.TrimSpace(input)
-	if trimmed == "" {
-		return "", localizedError(localization.CypherCommandRoutingParameterArgumentRequired(), nil)
-	}
-	if strings.HasPrefix(trimmed, "{") {
-		return trimmed, nil
-	}
-
-	patterns := []struct {
-		sep string
-		fn  func(string) (string, string, bool)
-	}{
-		{sep: "=>", fn: splitArrowParamSyntax},
-		{sep: "legacy", fn: splitLegacyParamSyntax},
-	}
-
-	for _, pattern := range patterns {
-		key, value, ok := pattern.fn(trimmed)
-		if !ok {
-			continue
-		}
-		if value == "" {
-			return "", localizedError(localization.CypherCommandRoutingParameterValueRequired(), nil)
-		}
-		return fmt.Sprintf("{%s: %s}", key, value), nil
-	}
-
-	return "", localizedError(localization.CypherCommandRoutingParameterUsage(), nil)
-}
-
-func splitArrowParamSyntax(input string) (string, string, bool) {
-	idx := strings.Index(input, "=>")
-	if idx == -1 {
-		return "", "", false
-	}
-	left := strings.TrimSpace(input[:idx])
-	right := strings.TrimSpace(input[idx+2:])
-	if strings.HasSuffix(left, ":") {
-		return "", "", false
-	}
-	key := normalizePropertyKey(left)
-	if key == "" {
-		return "", "", false
-	}
-	return left, right, true
-}
-
-func splitLegacyParamSyntax(input string) (string, string, bool) {
-	fields := strings.Fields(input)
-	if len(fields) < 2 {
-		return "", "", false
-	}
-	key := fields[0]
-	rest := strings.TrimSpace(input[len(key):])
-	rest = strings.TrimSpace(strings.TrimPrefix(rest, ":"))
-	if rest == "" {
-		return "", "", false
-	}
-	if normalizePropertyKey(key) == "" {
-		return "", "", false
-	}
-	return key, rest, true
 }
 
 func normalizeParamMap(value interface{}) (map[string]interface{}, error) {
@@ -291,35 +171,20 @@ func normalizeParamMap(value interface{}) (map[string]interface{}, error) {
 	}
 }
 
-func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExpr string, params map[string]interface{}) (map[string]interface{}, error) {
-	trimmed := strings.TrimSpace(mapExpr)
-	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
+func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, view braceView, params map[string]interface{}) (map[string]interface{}, error) {
+	entries, valid := view.keyedEntries()
+	if !valid {
 		return nil, localizedError(localization.CypherCommandRoutingParameterMapRequired(), nil)
 	}
-	inner := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
-	if inner == "" {
-		return map[string]interface{}{}, nil
-	}
+	return e.evaluateShellParameterEntries(ctx, entries, params)
+}
 
-	pairs := splitTopLevelCommaKeepEmpty(inner)
-	out := make(map[string]interface{}, len(pairs))
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryEmpty(), nil)
-		}
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 || colonIdx >= len(pair)-1 {
-			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
-		}
-
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
-		if key == "" || valueExpr == "" {
-			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
-		}
-
-		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
+func (e *StorageExecutor) evaluateShellParameterEntries(ctx context.Context, entries []recordedMapEntry, params map[string]interface{}) (map[string]interface{}, error) {
+	out := make(map[string]interface{}, len(entries))
+	for _, entry := range entries {
+		key, valueExpr := entry.key(), entry.value.text()
+		value := entry.value.wrap("RETURN ", " AS value")
+		result, err := e.executeInternal(withBraceView(ctx, value), value.text(), params)
 		if err != nil {
 			if cyphertext.IsIdentifier(valueExpr) {
 				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)
@@ -330,11 +195,11 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
 			return nil, localizedError(localization.CypherCommandRoutingParameterProducedNoValue(key), nerrors.ErrExpressionEvaluationFailed)
 		}
-		value := result.Rows[0][0]
-		if isUnevaluatedParameterExpression(valueExpr, value) {
+		evaluated := result.Rows[0][0]
+		if isUnevaluatedParameterExpression(valueExpr, evaluated) {
 			return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, strings.TrimSpace(valueExpr)), nerrors.ErrExpressionEvaluationFailed)
 		}
-		out[key] = value
+		out[key] = evaluated
 	}
 	return out, nil
 }

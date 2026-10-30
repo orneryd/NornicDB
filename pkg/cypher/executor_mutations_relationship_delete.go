@@ -10,12 +10,12 @@ import (
 
 func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	ctx context.Context,
-	matchSegment string,
+	matchSegment braceView,
 	cypher string,
 	deleteVars string,
 	detach bool,
 ) (*ExecuteResult, bool, error) {
-	matchSegment = strings.TrimSpace(matchSegment)
+	matchSegment = matchSegment.trim()
 	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
 	if detach || strings.Contains(deleteVars, ",") {
 		return nil, false, nil
@@ -39,7 +39,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		return nil, false, nil
 	}
 
-	pseudo := baseMatchSegment + " RETURN __delete_probe__"
+	pseudo := baseMatchSegment.wrap("", " RETURN __delete_probe__")
 	returnIdx := findKeywordIndex(pseudo, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
@@ -57,7 +57,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	if sourcePattern.variable == "" {
 		return nil, false, nil
 	}
-	relPatternText := strings.TrimSpace(clauses[1])
+	relPatternText := clauses[1].trim()
 	relMatch := e.parseTraversalPatternStructure(ctx, relPatternText)
 	if relMatch == nil || relMatch.IsChained {
 		return nil, false, nil
@@ -75,9 +75,9 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		return nil, false, nil
 	}
 
-	whereClause := ""
+	whereClause := pseudo.window(0, 0)
 	if whereIdx > 0 && whereIdx < returnIdx {
-		whereClause = strings.TrimSpace(pseudo[whereIdx+len("WHERE") : returnIdx])
+		whereClause = pseudo.window(whereIdx+len("WHERE"), returnIdx).trim()
 	}
 
 	rowCtx, sourceText, err := e.bindPatternProperties(ctx, clauses[0], nil)
@@ -135,7 +135,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			if !ok || !e.matchesEndPattern(target, &rowMatch.EndNode) {
 				continue
 			}
-			if whereClause != "" {
+			if !whereClause.empty() {
 				pathCtx := PathContext{
 					nodes: map[string]*storage.Node{
 						rowMatch.StartNode.variable: source,
@@ -181,12 +181,12 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 
 func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
 	if !inTransactionWrapper {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, braceView{}, -1)
 	}
 
 	store := e.getStorage(ctx)
 	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, braceView{}, -1)
 	}
 
 	var nodes []*storage.Node
@@ -250,43 +250,44 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 	return edges, nil
 }
 
-func parseBoundRelationshipDeleteWithLimitSegment(matchSegment, deleteVar string) (string, int, bool) {
+func parseBoundRelationshipDeleteWithLimitSegment(matchSegment braceView, deleteVar string) (braceView, int, bool) {
 	for _, blocked := range []string{"ORDER BY", "SKIP", "CALL", "UNWIND", "OPTIONAL MATCH"} {
 		if containsKeywordOutsideStrings(matchSegment, blocked) {
-			return "", 0, false
+			return braceView{}, 0, false
 		}
 	}
 	withIdx := findKeywordIndex(matchSegment, "WITH")
 	if withIdx <= 0 {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
-	baseMatch := strings.TrimSpace(matchSegment[:withIdx])
+	baseMatch := matchSegment.window(0, withIdx).trim()
 	if !isSimpleBoundRelationshipDeleteMatchSegment(baseMatch) {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
-	withPart := strings.TrimSpace(matchSegment[withIdx+len("WITH"):])
-	limitIdx := findKeywordIndex(withPart, "LIMIT")
+	withView := matchSegment.window(withIdx+len("WITH"), len(matchSegment.text())).trim()
+	withPart := withView.text()
+	limitIdx := findKeywordIndex(withView, "LIMIT")
 	if limitIdx <= 0 {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
 	withVar := strings.TrimSpace(withPart[:limitIdx])
 	if withVar != deleteVar {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
 	limitLiteral := strings.TrimSpace(withPart[limitIdx+len("LIMIT"):])
 	fields := strings.Fields(limitLiteral)
 	if len(fields) != 1 {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
 	limitN, err := strconv.Atoi(fields[0])
 	if err != nil || limitN <= 0 {
-		return "", 0, false
+		return braceView{}, 0, false
 	}
 	return baseMatch, limitN, true
 }
 
-func isSimpleBoundRelationshipDeleteMatchSegment(matchSegment string) bool {
-	if strings.TrimSpace(matchSegment) == "" {
+func isSimpleBoundRelationshipDeleteMatchSegment(matchSegment braceView) bool {
+	if matchSegment.trim().empty() {
 		return false
 	}
 	for _, blocked := range []string{"WITH", "LIMIT", "SKIP", "ORDER BY", "CALL", "UNWIND", "OPTIONAL MATCH"} {

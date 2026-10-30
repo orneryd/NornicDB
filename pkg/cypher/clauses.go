@@ -48,8 +48,9 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 // This is used to avoid matching keywords inside list comprehensions like [x IN list WHERE x > 2]
 // The keyword should be in the format " KEYWORD " with leading/trailing spaces.
 // This function normalizes whitespace (tabs, newlines) to match.
-func findKeywordNotInBrackets(s string, keyword string) int {
-	opts := defaultKeywordScanOpts()
+func findKeywordNotInBrackets(view braceView, keyword string) int {
+	s := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipBraces = false
 	opts.Boundary = keywordBoundaryWhitespace
 
@@ -74,13 +75,15 @@ func normalizeInterfaceMap(input map[interface{}]interface{}) map[string]interfa
 }
 
 // evaluateWithWhere evaluates typed WITH bindings through the shared row predicate.
-func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr string, boundVars map[string]interface{}) (bool, error) {
-	expr := strings.TrimSpace(whereExpr)
+func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, view braceView, boundVars map[string]interface{}) (bool, error) {
+	view = view.trim()
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	if expr == "" {
 		return true, nil
 	}
 	ctx = withExpressionFailureSlot(ctx)
-	if plan := planRowPredicate(expr); plan != nil && plan.complete {
+	if plan := planRowPredicate(view); plan != nil && plan.complete {
 		accepted := e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: boundVars, parameters: getParamsFromContext(ctx)}, nil)
 		return accepted, getExpressionFailure(ctx)
 	}
@@ -94,7 +97,7 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 			values[name] = value
 		}
 	}
-	accepted := e.evaluateRowPredicate(ctx, expr, values)
+	accepted := e.evaluateRowPredicate(ctx, view, values)
 	return accepted, getExpressionFailure(ctx)
 }
 
@@ -161,6 +164,8 @@ type unwindSimpleSetAssignment struct {
 	prop     string
 	expr     string
 	mergeMap bool
+	// Author: #1663 lane. Property-map metadata keeps its consumed record view.
+	mapInput braceView
 }
 
 type unwindMergeChainNodePlan struct {
@@ -213,36 +218,20 @@ type unwindMergeChainStep struct {
 }
 
 type unwindMergeChainPlan struct {
+	input     braceView
 	supported bool
 	simple    bool
 	steps     []unwindMergeChainStep
 }
 
-func parseUnwindSimpleMergeMatchAssignments(raw string) ([]unwindSimpleSetAssignment, bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+func parseUnwindSimpleMergeMatchAssignments(raw braceView) ([]unwindSimpleSetAssignment, bool) {
+	entries, valid := raw.keyedEntries()
+	if !valid || len(entries) == 0 {
 		return nil, false
 	}
-	parts := splitTopLevelComma(trimmed)
-	out := make([]unwindSimpleSetAssignment, 0, len(parts))
-	for _, part := range parts {
-		entry := strings.TrimSpace(part)
-		if entry == "" {
-			continue
-		}
-		colonIdx := strings.Index(entry, ":")
-		if colonIdx <= 0 || colonIdx == len(entry)-1 {
-			return nil, false
-		}
-		prop := strings.TrimSpace(entry[:colonIdx])
-		expr := strings.TrimSpace(entry[colonIdx+1:])
-		if prop == "" || expr == "" {
-			return nil, false
-		}
-		out = append(out, unwindSimpleSetAssignment{prop: prop, expr: expr})
-	}
-	if len(out) == 0 {
-		return nil, false
+	out := make([]unwindSimpleSetAssignment, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, unwindSimpleSetAssignment{prop: entry.name, expr: entry.value.text(), mapInput: raw})
 	}
 	return out, true
 }
@@ -294,21 +283,23 @@ func parseUnwindSimpleSetAssignments(raw, mergeVar string) ([]unwindSimpleSetAss
 	return out, true
 }
 
-func parseSimpleUnwindMergeClause(mergePart string) (string, []string, []unwindSimpleSetAssignment, bool) {
+func parseSimpleUnwindMergeClause(mergePart braceView) (string, []string, []unwindSimpleSetAssignment, bool) {
 	return parseUnwindNodePatternClause(mergePart, "MERGE")
 }
 
-func parseUnwindNodePatternClause(clause string, keyword string) (string, []string, []unwindSimpleSetAssignment, bool) {
+func parseUnwindNodePatternClause(clause braceView, keyword string) (string, []string, []unwindSimpleSetAssignment, bool) {
 	varName, labels, assignments, _, ok := parseUnwindNodePatternClauseInternal(clause, keyword, false)
 	return varName, labels, assignments, ok
 }
 
-func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAlternatives bool) (string, []string, []unwindSimpleSetAssignment, bool, bool) {
-	trimmed := strings.TrimSpace(clause)
+func parseUnwindNodePatternClauseInternal(clause braceView, keyword string, allowAlternatives bool) (string, []string, []unwindSimpleSetAssignment, bool, bool) {
+	clause = clause.trim()
+	trimmed := clause.text()
 	if !startsWithKeywordFold(trimmed, keyword) {
 		return "", nil, nil, false, false
 	}
-	rest := strings.TrimSpace(trimmed[len(keyword):])
+	restView := clause.window(len(keyword), len(trimmed)).trim()
+	rest := restView.text()
 	if !strings.HasPrefix(rest, "(") {
 		return "", nil, nil, false, false
 	}
@@ -322,19 +313,18 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 	if where != "" && (!allowAlternatives || !startsWithKeywordFold(where, "WHERE")) {
 		return "", nil, nil, false, false
 	}
-	nodePattern := strings.TrimSpace(rest[1:parenEnd])
-	braceStart := strings.Index(nodePattern, "{")
-	if braceStart < 0 {
+	nodeView := restView.window(1, parenEnd).trim()
+	nodePattern := nodeView.text()
+	braceStart, braceEnd, fact, found := nodeView.firstBrace()
+	if !found || fact.kind != patternPropertyBrace {
 		return "", nil, nil, false, false
 	}
-	exec := &StorageExecutor{}
-	braceEnd := exec.findMatchingBrace(nodePattern, braceStart)
 	if braceEnd < 0 || strings.TrimSpace(nodePattern[braceEnd+1:]) != "" {
 		return "", nil, nil, false, false
 	}
 	head := strings.TrimSpace(nodePattern[:braceStart])
-	propMap := strings.TrimSpace(nodePattern[braceStart+1 : braceEnd])
-	if head == "" || propMap == "" {
+	propMap := nodeView.window(braceStart, braceEnd+1)
+	if head == "" || strings.TrimSpace(nodePattern[braceStart+1:braceEnd]) == "" {
 		return "", nil, nil, false, false
 	}
 	parts := strings.Split(head, ":")
@@ -390,8 +380,8 @@ func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAl
 	return mergeVar, labels, assignments, anyLabel, true
 }
 
-func parseUnwindLookupClause(clause string) (unwindMergeChainLookupPlan, bool) {
-	optional := startsWithKeywordFold(strings.TrimSpace(clause), "OPTIONAL MATCH")
+func parseUnwindLookupClause(clause braceView) (unwindMergeChainLookupPlan, bool) {
+	optional := startsWithKeywordFold(clause.trim().text(), "OPTIONAL MATCH")
 	keyword := "MATCH"
 	if optional {
 		keyword = "OPTIONAL MATCH"
@@ -463,22 +453,23 @@ func unwindMergeLabelsKey(labels []string) string {
 	return strings.Join(sorted, ":")
 }
 
-func parseUnwindWithClause(ctx context.Context, clause string) (unwindMergeChainWithPlan, bool) {
-	trimmed := strings.TrimSpace(clause)
+func parseUnwindWithClause(ctx context.Context, clause braceView) (unwindMergeChainWithPlan, bool) {
+	clause = clause.trim()
+	trimmed := clause.text()
 	if !startsWithKeywordFold(trimmed, "WITH") {
 		return unwindMergeChainWithPlan{}, false
 	}
-	body := strings.TrimSpace(trimmed[len("WITH"):])
-	if body == "" {
+	body := clause.clauseBody("WITH")
+	if body.empty() {
 		return unwindMergeChainWithPlan{}, false
 	}
-	projectionPlan := returnProjectionPlanFor(ctx, "RETURN "+body)
+	projectionPlan := returnProjectionPlanFor(ctx, body.wrap("RETURN ", ""))
 	if !projectionPlan.valid || projectionPlan.star || projectionPlan.distinct || projectionPlan.hasAggregate || projectionPlan.modifiers != "" {
 		return unwindMergeChainWithPlan{}, false
 	}
-	plan := unwindMergeChainWithPlan{projection: pipelineRowWith{clause: trimmed}}
+	plan := unwindMergeChainWithPlan{projection: pipelineRowWith{clause: trimmed, view: clause}}
 	for _, projection := range projectionPlan.projections {
-		plan.projection.projections = append(plan.projection.projections, pipelineRowProjection{projection.expr, projection.alias})
+		plan.projection.projections = append(plan.projection.projections, pipelineRowProjection{expression: projection.expr, alias: projection.alias, view: projection.view})
 		if name := simpleSemanticIdentifier(projection.expr); name != "" && name == projection.alias {
 			continue
 		}
@@ -502,11 +493,12 @@ func parseUnwindWhereClause(clause string) (unwindMergeChainWherePlan, bool) {
 	return unwindMergeChainWherePlan{clause: body}, true
 }
 
-func (e *StorageExecutor) cachedUnwindMergeChainPlan(ctx context.Context, mutationPart string) unwindMergeChainPlan {
+func (e *StorageExecutor) cachedUnwindMergeChainPlan(ctx context.Context, mutationPart braceView) unwindMergeChainPlan {
 	if ctx.Err() != nil {
 		return unwindMergeChainPlan{}
 	}
-	key := strings.TrimSpace(mutationPart)
+	mutationPart = mutationPart.trim()
+	key := mutationPart.text()
 	cache := e.unwindMergeChainPlanCache
 	if cache == nil {
 		cache = &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)}
@@ -515,11 +507,11 @@ func (e *StorageExecutor) cachedUnwindMergeChainPlan(ctx context.Context, mutati
 	cache.mu.RLock()
 	if plan, ok := cache.plans[key]; ok {
 		cache.mu.RUnlock()
-		return plan
+		return rebaseUnwindMergeChainPlan(plan, mutationPart)
 	}
 	cache.mu.RUnlock()
 
-	plan := parseUnwindMergeChainPattern(ctx, key)
+	plan := parseUnwindMergeChainPattern(ctx, mutationPart)
 	if ctx.Err() != nil {
 		return unwindMergeChainPlan{}
 	}
@@ -541,15 +533,16 @@ func isComparableInterfaceValue(v interface{}) bool {
 	return t.Comparable()
 }
 
-func parseSimpleCountReturn(ctx context.Context, returnPart, mergeVar string) (alias string, ok bool) {
-	r := strings.TrimSpace(returnPart)
+func parseSimpleCountReturn(ctx context.Context, returnPart braceView, mergeVar string) (alias string, ok bool) {
+	returnPart = returnPart.trim()
+	r := returnPart.text()
 	if r == "" {
 		return "", true
 	}
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(ctx, r)
+	plan := returnProjectionPlanFor(ctx, returnPart)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -560,15 +553,16 @@ func parseSimpleCountReturn(ctx context.Context, returnPart, mergeVar string) (a
 	return plan.columns[0], true
 }
 
-func parseUnwindBatchCountReturn(ctx context.Context, returnPart string) (alias string, ok bool) {
-	r := strings.TrimSpace(returnPart)
+func parseUnwindBatchCountReturn(ctx context.Context, returnPart braceView) (alias string, ok bool) {
+	returnPart = returnPart.trim()
+	r := returnPart.text()
 	if r == "" {
 		return "", true
 	}
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(ctx, r)
+	plan := returnProjectionPlanFor(ctx, returnPart)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -593,13 +587,14 @@ func countResultRows(result *ExecuteResult) int64 {
 	return integer
 }
 
-func splitUnwindMergeChainClauses(input string) ([]string, bool) {
-	trimmed := strings.TrimSpace(input)
+func splitUnwindMergeChainClauses(input braceView) ([]braceView, bool) {
+	input = input.trim()
+	trimmed := input.text()
 	if trimmed == "" {
 		return nil, false
 	}
 	keywords := []string{"ON CREATE SET", "ON MATCH SET", "OPTIONAL MATCH", "MATCH", "MERGE", "WITH", "WHERE", "SET"}
-	var clauses []string
+	var clauses []braceView
 	for trimmed != "" {
 		keyword := ""
 		for _, candidate := range keywords {
@@ -613,25 +608,28 @@ func splitUnwindMergeChainClauses(input string) ([]string, bool) {
 		}
 		next := len(trimmed)
 		for _, candidate := range keywords {
-			if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+			if idx := findKeywordIndexInContext(input.window(len(keyword), len(trimmed)), candidate); idx >= 0 {
 				pos := len(keyword) + idx
 				if pos < next {
 					next = pos
 				}
 			}
 		}
-		clauses = append(clauses, strings.TrimSpace(trimmed[:next]))
-		trimmed = strings.TrimSpace(trimmed[next:])
+		clauses = append(clauses, input.window(0, next).trim())
+		input = input.window(next, len(trimmed)).trim()
+		trimmed = input.text()
 	}
 	return clauses, len(clauses) > 0
 }
 
-func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelationshipPlan, bool) {
-	trimmed := strings.TrimSpace(clause)
+func parseUnwindMergeRelationshipClause(clause braceView) (unwindMergeChainRelationshipPlan, bool) {
+	clause = clause.trim()
+	trimmed := clause.text()
 	if !startsWithKeywordFold(trimmed, "MERGE") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	rest := pipelineClauseBody(trimmed, "MERGE")
+	restView := clause.clauseBody("MERGE")
+	rest := restView.text()
 	if !strings.HasPrefix(rest, "(") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
@@ -640,7 +638,8 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	fromVar := strings.TrimSpace(rest[1:fromEnd])
-	afterFrom := strings.TrimSpace(rest[fromEnd+1:])
+	afterFromView := restView.window(fromEnd+1, len(rest)).trim()
+	afterFrom := afterFromView.text()
 	if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(afterFrom, "-") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
@@ -649,22 +648,22 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if openBracket < 0 || closeBracket <= openBracket {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	relInner := strings.TrimSpace(afterFrom[openBracket+1 : closeBracket])
+	relInnerView := afterFromView.window(openBracket+1, closeBracket).trim()
+	relInner := relInnerView.text()
 	var matchAssignments []unwindSimpleSetAssignment
-	if propsStart := strings.Index(relInner, "{"); propsStart >= 0 {
-		propsEnd := strings.LastIndex(relInner, "}")
-		if propsEnd <= propsStart || strings.TrimSpace(relInner[propsEnd+1:]) != "" {
+	if span, found := relInnerView.patternProperty(blankRelationshipExpressions(relInner)); found {
+		if strings.TrimSpace(relInner[span.End:]) != "" {
 			return unwindMergeChainRelationshipPlan{}, false
 		}
-		matchProperties := strings.TrimSpace(relInner[propsStart+1 : propsEnd])
-		if matchProperties != "" {
+		matchProperties := relInnerView.window(span.Start, span.End)
+		if strings.TrimSpace(relInner[span.Start+1:span.End-1]) != "" {
 			var ok bool
 			matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(matchProperties)
 			if !ok {
 				return unwindMergeChainRelationshipPlan{}, false
 			}
 		}
-		relInner = strings.TrimSpace(relInner[:propsStart])
+		relInner = strings.TrimSpace(relInner[:span.Start])
 	}
 	var relVar string
 	var relType string
@@ -710,8 +709,9 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	}, true
 }
 
-func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar string) ([]string, bool) {
-	trimmed := strings.TrimSpace(restQuery)
+func splitUnwindCompoundMutationStages(restQuery braceView, unwindParamName, unwindVar string) ([]braceView, bool) {
+	restQuery = restQuery.trim()
+	trimmed := restQuery.text()
 	if trimmed == "" || unwindParamName == "" || unwindVar == "" {
 		return nil, false
 	}
@@ -722,11 +722,11 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 		return pos
 	}
 
-	stages := make([]string, 0, 4)
+	stages := make([]braceView, 0, 4)
 	start := 0
 	searchFrom := 0
 	for {
-		withIdx := keywordIndexFrom(trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
+		withIdx := keywordIndexFrom(trimmed, "WITH", searchFrom, defaultKeywordScanOpts(restQuery))
 		if withIdx < 0 {
 			break
 		}
@@ -783,8 +783,8 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 		}
 		nextPos = pos + len(stageVar)
 
-		stage := strings.TrimSpace(trimmed[start:withIdx])
-		if stage == "" {
+		stage := restQuery.window(start, withIdx).trim()
+		if stage.empty() {
 			return nil, false
 		}
 		stages = append(stages, stage)
@@ -794,15 +794,15 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 	if len(stages) == 0 {
 		return nil, false
 	}
-	last := strings.TrimSpace(trimmed[start:])
-	if last == "" {
+	last := restQuery.window(start, len(trimmed)).trim()
+	if last.empty() {
 		return nil, false
 	}
 	stages = append(stages, last)
 	return stages, len(stages) > 1
 }
 
-func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery braceView) (*ExecuteResult, bool, error) {
 	stages, ok := splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar)
 	if !ok {
 		return nil, false, nil
@@ -814,7 +814,7 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 		Stats:   &QueryStats{},
 	}
 	for _, stage := range stages {
-		fast, supported, err := e.executeUnwindMergeChainBatch(ctx, unwindVar, items, stage, "")
+		fast, supported, err := e.executeUnwindMergeChainBatch(ctx, unwindVar, items, stage, stage.window(len(stage.text()), len(stage.text())))
 		if err != nil {
 			return nil, true, err
 		}
@@ -829,40 +829,42 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 	return result, true, nil
 }
 
-func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwindMergeChainPlan {
-	plan := unwindMergeChainPlan{supported: false}
-	mutation := strings.TrimSpace(mutationPart)
+func parseUnwindMergeChainPattern(ctx context.Context, mutationPart braceView) unwindMergeChainPlan {
+	mutationPart = mutationPart.trim()
+	plan := unwindMergeChainPlan{supported: false, input: mutationPart}
+	mutation := mutationPart.text()
 	if !startsWithKeywordFold(mutation, "MERGE") && !startsWithKeywordFold(mutation, "MATCH") && !startsWithKeywordFold(mutation, "OPTIONAL MATCH") {
 		return plan
 	}
-	if findKeywordIndexInContext(mutation, "CALL") >= 0 ||
-		findKeywordIndexInContext(mutation, "DELETE") >= 0 ||
-		findKeywordIndexInContext(mutation, "DETACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "REMOVE") >= 0 ||
-		findKeywordIndexInContext(mutation, "FOREACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "UNWIND") >= 0 ||
-		findKeywordIndexInContext(mutation, "RETURN") >= 0 {
+	if findKeywordIndexInContext(mutationPart, "CALL") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "DELETE") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "DETACH") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "REMOVE") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "FOREACH") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "UNWIND") >= 0 ||
+		findKeywordIndexInContext(mutationPart, "RETURN") >= 0 {
 		return plan
 	}
-	clauses, ok := splitUnwindMergeChainClauses(mutation)
+	clauses, ok := splitUnwindMergeChainClauses(mutationPart)
 	if !ok || len(clauses) == 0 {
 		return plan
 	}
 	boundVars := make(map[string]struct{})
 	hasMutation := false
 	for i := 0; i < len(clauses); i++ {
-		clause := clauses[i]
+		clauseView := clauses[i]
+		clause := clauseView.text()
 		if !startsWithKeywordFold(clause, "MERGE") {
-			lookupPlan, ok := parseUnwindLookupClause(clause)
-			if !ok && i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1], "WHERE") {
+			lookupPlan, ok := parseUnwindLookupClause(clauseView)
+			if !ok && i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1].text(), "WHERE") {
 				// MATCH (v {…}) WHERE v:A|B, the rewritten MATCH (v:A|B {…}) (#860).
-				if lookupPlan, ok = parseUnwindLookupClause(clause + " " + clauses[i+1]); ok {
+				if lookupPlan, ok = parseUnwindLookupClause(mutationPart.assembleCode([]braceView{clauseView, clauses[i+1]}, " ")); ok {
 					i++
 				}
 			}
 			if ok {
-				for i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1], "SET") {
-					parsed, ok := parseUnwindSimpleSetAssignments(strings.TrimSpace(clauses[i+1][len("SET"):]), lookupPlan.varName)
+				for i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1].text(), "SET") {
+					parsed, ok := parseUnwindSimpleSetAssignments(clauses[i+1].clauseBody("SET").text(), lookupPlan.varName)
 					if !ok {
 						return unwindMergeChainPlan{}
 					}
@@ -874,7 +876,7 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 				boundVars[lookupPlan.varName] = struct{}{}
 				continue
 			}
-			if withPlan, ok := parseUnwindWithClause(ctx, clause); ok {
+			if withPlan, ok := parseUnwindWithClause(ctx, clauseView); ok {
 				for _, assignment := range withPlan.assignments {
 					boundVars[assignment.alias] = struct{}{}
 				}
@@ -887,7 +889,7 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 			}
 			return unwindMergeChainPlan{}
 		}
-		mergeVar, labels, assignments, ok := parseSimpleUnwindMergeClause(clause)
+		mergeVar, labels, assignments, ok := parseSimpleUnwindMergeClause(clauseView)
 		if ok {
 			nodePlan := &unwindMergeChainNodePlan{
 				mergeVar:         mergeVar,
@@ -895,7 +897,7 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 				matchAssignments: assignments,
 			}
 			for i+1 < len(clauses) {
-				nextClause := clauses[i+1]
+				nextClause := clauses[i+1].text()
 				switch {
 				case startsWithKeywordFold(nextClause, "SET"):
 					parsed, ok := parseUnwindSimpleSetAssignments(strings.TrimSpace(nextClause[len("SET"):]), mergeVar)
@@ -928,12 +930,12 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 			hasMutation = true
 			continue
 		}
-		relPlan, ok := parseUnwindMergeRelationshipClause(clause)
+		relPlan, ok := parseUnwindMergeRelationshipClause(clauseView)
 		if !ok {
 			return unwindMergeChainPlan{}
 		}
 		for i+1 < len(clauses) {
-			nextClause := clauses[i+1]
+			nextClause := clauses[i+1].text()
 			if !startsWithKeywordFold(nextClause, "SET") || relPlan.relVar == "" {
 				break
 			}
@@ -950,11 +952,11 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 		if _, exists := boundVars[relPlan.toVar]; !exists {
 			return unwindMergeChainPlan{}
 		}
-		for i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1], "SET") {
+		for i+1 < len(clauses) && startsWithKeywordFold(clauses[i+1].text(), "SET") {
 			if relPlan.relVar == "" {
 				return unwindMergeChainPlan{}
 			}
-			parsed, ok := parseUnwindSimpleSetAssignments(strings.TrimSpace(clauses[i+1][len("SET"):]), relPlan.relVar)
+			parsed, ok := parseUnwindSimpleSetAssignments(clauses[i+1].clauseBody("SET").text(), relPlan.relVar)
 			if !ok {
 				return unwindMergeChainPlan{}
 			}
@@ -1104,7 +1106,7 @@ func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value int
 	return true
 }
 
-func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart braceView) (*ExecuteResult, bool, error) {
 	plan := e.cachedUnwindMergeChainPlan(ctx, mutationPart)
 	if !plan.supported {
 		return nil, false, nil
@@ -1119,22 +1121,23 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 	if plan.simple {
 		e.markUnwindSimpleMergeBatchUsed()
 	}
-	return e.executeUnwindRowsPipeline(ctx, unwindVar, items, strings.TrimSpace(mutationPart+" "+returnPart))
+	original := braceView{syntax: mutationPart.syntax, source: mutationPart.source.OriginalView()}
+	return e.executeUnwindRowsPipeline(ctx, unwindVar, items, original.assembleCode([]braceView{mutationPart, returnPart}, " ").trim())
 }
 
-func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery braceView) (*ExecuteResult, bool, error) {
 	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
-	mutationPart := strings.TrimSpace(restQuery[:returnIdx])
-	returnPart := strings.TrimSpace(restQuery[returnIdx:])
+	mutationPart := restQuery.window(0, returnIdx).trim()
+	returnPart := restQuery.window(returnIdx, len(restQuery.text())).trim()
 	_, ok := parseSimpleCountReturn(ctx, returnPart, "o")
 	if !ok {
 		return nil, false, nil
 	}
 
-	normalized := strings.Join(strings.Fields(mutationPart), " ")
+	normalized := mutationPart.joinFields()
 
 	type rootSpec struct {
 		varName  string
@@ -1162,21 +1165,21 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		return base, field, true
 	}
-	parseIdentifierNodePattern := func(pattern string) (string, string, string, string, bool) {
-		trimmed := strings.TrimSpace(pattern)
+	parseIdentifierNodePattern := func(pattern braceView) (string, string, string, string, bool) {
+		pattern = pattern.trim()
+		trimmed := pattern.text()
 		if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
-			trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+			pattern = pattern.window(1, len(trimmed)-1).trim()
+			trimmed = pattern.text()
 		}
-		braceIdx := strings.Index(trimmed, "{")
 		head := trimmed
-		props := ""
-		if braceIdx >= 0 {
-			closeIdx := e.findMatchingBrace(trimmed, braceIdx)
-			if closeIdx != len(trimmed)-1 {
+		props := pattern.window(0, 0)
+		if span, found := pattern.patternProperty(blankRelationshipExpressions(trimmed)); found {
+			if span.End != len(trimmed) {
 				return "", "", "", "", false
 			}
-			head = strings.TrimSpace(trimmed[:braceIdx])
-			props = strings.TrimSpace(trimmed[braceIdx+1 : closeIdx])
+			head = strings.TrimSpace(trimmed[:span.Start])
+			props = pattern.window(span.Start, span.End)
 		}
 		parts := strings.Split(head, ":")
 		if len(parts) != 2 {
@@ -1187,21 +1190,15 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if !isSimpleIdentifier(varName) || !isSimpleIdentifier(label) {
 			return "", "", "", "", false
 		}
-		if props == "" {
+		if props.empty() || strings.TrimSpace(props.text()[1:len(props.text())-1]) == "" {
 			return varName, label, "", "", true
 		}
-		pairs := splitTopLevelComma(props)
-		if len(pairs) != 1 {
+		entries, valid := props.keyedEntries()
+		if !valid || len(entries) != 1 {
 			return "", "", "", "", false
 		}
-		pair := strings.TrimSpace(pairs[0])
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return "", "", "", "", false
-		}
-		propName := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		propExpr := strings.TrimSpace(pair[colonIdx+1:])
-		if !isSimpleIdentifier(propName) || propExpr == "" {
+		propName, propExpr := entries[0].name, entries[0].value.text()
+		if !isSimpleIdentifier(propName) {
 			return "", "", "", "", false
 		}
 		return varName, label, propName, propExpr, true
@@ -1278,12 +1275,13 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		return lowerASCII(fromVar), relType, lowerASCII(toVar), true
 	}
-	splitMutationClauses := func(input string) ([]string, bool) {
-		trimmed := strings.TrimSpace(input)
+	splitMutationClauses := func(input braceView) ([]braceView, bool) {
+		input = input.trim()
+		trimmed := input.text()
 		if trimmed == "" {
 			return nil, false
 		}
-		var clauses []string
+		var clauses []braceView
 		for trimmed != "" {
 			upper := upperASCII(trimmed)
 			var keyword string
@@ -1297,15 +1295,16 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			}
 			next := len(trimmed)
 			for _, candidate := range []string{"MATCH", "MERGE"} {
-				if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+				if idx := findKeywordIndexInContext(input.window(len(keyword), len(trimmed)), candidate); idx >= 0 {
 					pos := len(keyword) + idx
 					if pos < next {
 						next = pos
 					}
 				}
 			}
-			clauses = append(clauses, strings.TrimSpace(trimmed[:next]))
-			trimmed = strings.TrimSpace(trimmed[next:])
+			clauses = append(clauses, input.window(0, next).trim())
+			input = input.window(next, len(trimmed)).trim()
+			trimmed = input.text()
 		}
 		return clauses, true
 	}
@@ -1313,12 +1312,14 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	if !ok || len(mutationClauses) < 3 {
 		return nil, false, nil
 	}
-	parseRootSpec := func(clause string) (rootSpec, bool) {
-		trimmed := strings.TrimSpace(clause)
+	parseRootSpec := func(clause braceView) (rootSpec, bool) {
+		clause = clause.trim()
+		trimmed := clause.text()
 		if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 			return rootSpec{}, false
 		}
-		body := strings.TrimSpace(trimmed[len("MATCH "):])
+		bodyView := clause.window(len("MATCH "), len(trimmed)).trim()
+		body := bodyView.text()
 		if !strings.HasPrefix(body, "(") {
 			return rootSpec{}, false
 		}
@@ -1326,7 +1327,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if closeIdx < 0 {
 			return rootSpec{}, false
 		}
-		varName, label, propName, propExpr, ok := parseIdentifierNodePattern(body[:closeIdx+1])
+		varName, label, propName, propExpr, ok := parseIdentifierNodePattern(bodyView.window(0, closeIdx+1))
 		if !ok {
 			return rootSpec{}, false
 		}
@@ -1370,20 +1371,22 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	if !ok {
 		return nil, false, nil
 	}
-	parseHopSpec := func(clauses []string) (hopSpec, bool) {
+	parseHopSpec := func(clauses []braceView) (hopSpec, bool) {
 		var out hopSpec
 		out.depthByVar = make(map[string]int)
 		seenDepth := make(map[int]bool)
 		for _, clause := range clauses {
-			trimmed := strings.TrimSpace(clause)
+			clause = clause.trim()
+			trimmed := clause.text()
 			if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 				return hopSpec{}, false
 			}
-			body := strings.TrimSpace(trimmed[len("MATCH "):])
+			bodyView := clause.window(len("MATCH "), len(trimmed)).trim()
+			body := bodyView.text()
 			if strings.Contains(upperASCII(body), " WHERE ") {
 				return hopSpec{}, false
 			}
-			varName, label, propName, propExpr, ok := parseIdentifierNodePattern(body)
+			varName, label, propName, propExpr, ok := parseIdentifierNodePattern(bodyView)
 			if !ok || propName == "" {
 				return hopSpec{}, false
 			}
@@ -1418,7 +1421,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	firstMergeIdx := -1
 	for idx, clause := range mutationClauses {
-		if strings.HasPrefix(upperASCII(clause), "MERGE ") {
+		if strings.HasPrefix(upperASCII(clause.text()), "MERGE ") {
 			firstMergeIdx = idx
 			break
 		}
@@ -1433,7 +1436,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	relType := ""
 	nextByFrom := make(map[string]string)
 	for _, clause := range mutationClauses[firstMergeIdx:] {
-		from, rel, to, ok := parseMergeClause(clause)
+		from, rel, to, ok := parseMergeClause(clause.text())
 		if !ok {
 			return nil, false, nil
 		}
@@ -1483,18 +1486,19 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	return result, handled, err
 }
 
-func rewriteUnwindCorrelationToIn(query string, variable string, paramName string) (string, bool) {
+func rewriteUnwindCorrelationToIn(input braceView, variable string, paramName string) (braceView, bool) {
+	query := input.text()
 	if strings.TrimSpace(query) == "" || strings.TrimSpace(variable) == "" || strings.TrimSpace(paramName) == "" {
-		return "", false
+		return braceView{}, false
 	}
 	// Preserve join correlation semantics:
 	//   a.prop = unwindVar AND b.prop = unwindVar
 	// => a.prop IN $items AND b.prop = a.prop
 	// so we do not produce cross-key cartesian joins.
 	type equalityMatch struct {
-		start int
-		end   int
-		lhs   string
+		start  int
+		end    int
+		lhsEnd int
 	}
 	matches := make([]equalityMatch, 0, 2)
 	for i := 0; i < len(query); i++ {
@@ -1536,34 +1540,28 @@ func rewriteUnwindCorrelationToIn(query string, variable string, paramName strin
 		if rhsEnd < len(query) && cyphertext.NamePartAt(query, rhsEnd) {
 			continue
 		}
-		matches = append(matches, equalityMatch{start: lhsStart, end: rhsEnd, lhs: lhs})
+		matches = append(matches, equalityMatch{start: lhsStart, end: rhsEnd, lhsEnd: lhsEnd})
 		i = rhsEnd - 1
 	}
 	if len(matches) == 0 {
-		return "", false
+		return braceView{}, false
 	}
-	firstExpr := matches[0].lhs
-	if firstExpr == "" {
-		return "", false
-	}
+	firstExpr := input.window(matches[0].start, matches[0].lhsEnd)
 
-	var b strings.Builder
+	var pieces []braceView
 	cursor := 0
 	for i, m := range matches {
-		b.WriteString(query[cursor:m.start])
+		pieces = append(pieces, input.window(cursor, m.start))
+		lhs := input.window(m.start, m.lhsEnd)
 		if i == 0 {
-			b.WriteString(m.lhs)
-			b.WriteString(" IN $")
-			b.WriteString(paramName)
+			pieces = append(pieces, lhs.wrap("", " IN $"+paramName))
 		} else {
-			b.WriteString(m.lhs)
-			b.WriteString(" = ")
-			b.WriteString(firstExpr)
+			pieces = append(pieces, lhs.wrap("", " = "), firstExpr)
 		}
 		cursor = m.end
 	}
-	b.WriteString(query[cursor:])
-	return b.String(), true
+	pieces = append(pieces, input.window(cursor, len(query)))
+	return input.assembleCode(pieces, ""), true
 }
 
 func isSimplePropertyReference(expr string) bool {
@@ -1579,53 +1577,56 @@ func isSimplePropertyReference(expr string) bool {
 	return true
 }
 
-func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
-	trimmed := strings.TrimSpace(query)
+func rewriteTopLevelMultiMatchToCartesianMatch(query braceView) braceView {
+	input := query
+	query = query.trim()
+	trimmed := query.text()
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
-		return query
+		return input
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(query, "RETURN")
 	if returnIdx <= 0 {
-		return query
+		return input
 	}
-	body := strings.TrimSpace(trimmed[:returnIdx])
-	tail := strings.TrimSpace(trimmed[returnIdx:])
+	body := query.window(0, returnIdx).trim()
+	tail := query.window(returnIdx, len(trimmed)).trim()
 	whereIdx := findKeywordIndex(body, "WHERE")
 	if whereIdx <= 0 {
-		return query
+		return input
 	}
-	patterns := strings.TrimSpace(body[:whereIdx])
-	whereAndMutations := strings.TrimSpace(body[whereIdx+len("WHERE"):])
+	patterns := body.window(0, whereIdx).trim()
+	whereAndMutations := body.window(whereIdx+len("WHERE"), len(body.text())).trim()
 	whereClause := whereAndMutations
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE"} {
 		if index := findKeywordIndexInContext(whereAndMutations, keyword); index >= 0 {
-			whereClause = strings.TrimSpace(whereAndMutations[:index])
-			tail = strings.TrimSpace(whereAndMutations[index:]) + " " + tail
+			whereClause = whereAndMutations.window(0, index).trim()
+			tail = query.assembleCode([]braceView{whereAndMutations.window(index, len(whereAndMutations.text())).trim(), tail}, " ")
 			break
 		}
 	}
-	if patterns == "" || whereClause == "" {
-		return query
+	if patterns.empty() || whereClause.empty() {
+		return input
 	}
 
-	upperPatterns := upperASCII(patterns)
+	upperPatterns := upperASCII(patterns.text())
 	if strings.Count(upperPatterns, "MATCH ") != 2 {
-		return query
+		return input
 	}
-	first := strings.TrimSpace(patterns[len("MATCH "):])
+	first := patterns.window(len("MATCH "), len(patterns.text())).trim()
 	secondIdx := findKeywordIndex(first, "MATCH")
 	if secondIdx <= 0 {
-		return query
+		return input
 	}
-	left := strings.TrimSpace(first[:secondIdx])
-	right := strings.TrimSpace(first[secondIdx+len("MATCH"):])
-	if left == "" || right == "" {
-		return query
+	left := first.window(0, secondIdx).trim()
+	right := first.window(secondIdx+len("MATCH"), len(first.text())).trim()
+	if left.empty() || right.empty() {
+		return input
 	}
-	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
+	return query.assembleCode([]braceView{left.wrap("MATCH ", ", "), right.wrap("", " WHERE "), whereClause.wrap("", " "), tail}, "")
 }
 
-func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
+func canApplySetBasedUnwindRewrite(view braceView, items []interface{}) bool {
+	query := view.text()
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
 		return false
 	}
@@ -1633,11 +1634,11 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
 	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
 	// must execute per-row to preserve semantics.
-	if findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0 {
+	if findKeywordIndex(view, "CREATE") >= 0 ||
+		findKeywordIndex(view, "MERGE") >= 0 ||
+		findKeywordIndex(view, "SET") >= 0 ||
+		findKeywordIndex(view, "DELETE") >= 0 ||
+		findKeywordIndex(view, "REMOVE") >= 0 {
 		return false
 	}
 	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
@@ -1682,72 +1683,69 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 // predicate with a top-level OR or XOR is parenthesized so AND doesn't bind
 // into it. Anything but MATCH clauses before RETURN (OPTIONAL MATCH, WITH,
 // UNWIND, writes) leaves the query unchanged.
-func normalizeMultiMatchWhereClauses(query string) string {
-	trimmed := strings.TrimSpace(query)
+func normalizeMultiMatchWhereClauses(query braceView) braceView {
+	input := query
+	query = query.trim()
+	trimmed := query.text()
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
-		return query
+		return input
 	}
 	// OPTIONAL MATCH has left-join semantics: its WHERE can't move.
-	if findKeywordIndex(trimmed, "OPTIONAL MATCH") >= 0 {
-		return query
+	if findKeywordIndex(query, "OPTIONAL MATCH") >= 0 {
+		return input
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(query, "RETURN")
 	if returnIdx <= 0 {
-		return query
+		return input
 	}
-	mainPart := strings.TrimSpace(trimmed[:returnIdx])
-	tailPart := strings.TrimSpace(trimmed[returnIdx:])
+	mainPart := query.window(0, returnIdx).trim()
+	tailPart := query.window(returnIdx, len(trimmed)).trim()
 	for _, keyword := range []string{"WITH", "UNWIND", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "CALL", "FOREACH"} {
 		if len(findAllTopLevelPipelineKeywordPositions(mainPart, keyword)) > 0 {
-			return query
+			return input
 		}
 	}
 	starts := findAllTopLevelPipelineKeywordPositions(mainPart, "MATCH")
 	if len(starts) < 2 || starts[0] != 0 {
-		return query
+		return input
 	}
-	patterns := make([]string, 0, len(starts))
-	predicates := make([]string, 0, len(starts))
+	patterns := make([]braceView, 0, len(starts))
+	predicates := make([]braceView, 0, len(starts))
 	movedWhere := false
 	for index, start := range starts {
-		end := len(mainPart)
+		end := len(mainPart.text())
 		if index+1 < len(starts) {
 			end = starts[index+1]
 		}
-		clause := strings.TrimSpace(mainPart[start+len("MATCH") : end])
+		clause := mainPart.window(start+len("MATCH"), end).trim()
 		pattern := clause
 		if whereIdx := topLevelKeywordIndex(clause, "WHERE"); whereIdx >= 0 {
-			pattern = strings.TrimSpace(clause[:whereIdx])
-			predicate := strings.TrimSpace(clause[whereIdx+len("WHERE"):])
-			if predicate == "" {
-				return query
+			pattern = clause.window(0, whereIdx).trim()
+			predicate := clause.window(whereIdx+len("WHERE"), len(clause.text())).trim()
+			if predicate.empty() {
+				return input
 			}
 			if topLevelKeywordIndex(predicate, "OR") >= 0 || topLevelKeywordIndex(predicate, "XOR") >= 0 {
-				predicate = "(" + predicate + ")"
+				predicate = predicate.wrap("(", ")")
 			}
 			predicates = append(predicates, predicate)
 			movedWhere = movedWhere || index+1 < len(starts)
 		}
-		if pattern == "" {
-			return query
+		if pattern.empty() {
+			return input
 		}
 		patterns = append(patterns, pattern)
 	}
 	if !movedWhere {
-		return query
+		return input
 	}
 
-	var b strings.Builder
+	var pieces []braceView
 	for _, pattern := range patterns {
-		b.WriteString("MATCH ")
-		b.WriteString(pattern)
-		b.WriteString(" ")
+		pieces = append(pieces, pattern.wrap("MATCH ", " "))
 	}
-	b.WriteString("WHERE ")
-	b.WriteString(strings.Join(predicates, " AND "))
-	b.WriteString(" ")
-	b.WriteString(tailPart)
-	return b.String()
+	pieces = append(pieces, query.assembleCode(predicates, " AND ").wrap("WHERE ", " "), tailPart)
+	return query.assembleCode(pieces, "")
 }
 
 // ========================================
@@ -1757,15 +1755,17 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // executeUnion handles UNION / UNION ALL
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
-func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+func (e *StorageExecutor) executeUnion(ctx context.Context, view braceView, unionAll bool, runBranch func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	cypher := view.text()
+	ctx = withBraceView(ctx, view)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranchSpans(ctx, view)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if !ok || len(queries) < 2 {
 		// A failed product is diagnostic framing only: no branch executes.
 		if syntax, parseErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); parseErr != nil && syntax.Valid() {
-			body := queryBodyFromSyntax(statementSyntaxQuery(syntax))
+			body := queryBodyFromSyntax(view, statementSyntaxQuery(syntax))
 			if len(body.branches) > 1 {
 				for index, branch := range body.branches {
 					text := cypher[branch.start:branch.end]
@@ -1794,13 +1794,16 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	var combinedResult *ExecuteResult
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
 
-	for i, query := range queries {
+	for i, span := range queries {
+		branch := view.window(span.Start, span.End)
+		query := branch.text()
+		branchCtx := withBraceView(ctx, branch)
 		var result *ExecuteResult
 		var err error
 		if runBranch == nil {
-			result, err = e.executeInternal(ctx, query, nil)
+			result, err = e.executeInternal(branchCtx, query, nil)
 		} else {
-			result, err = runBranch(query)
+			result, err = runBranch(branchCtx, query)
 		}
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
@@ -1809,7 +1812,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", AcceptedSource)
+			columns, err := e.resultColumns(branchCtx, statementBraceView(branchCtx, query), e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
 			if err != nil {
 				return nil, err
 			}
@@ -1954,7 +1957,7 @@ type optionalRelResult struct {
 // map built from a multi-variable MATCH result row and optional OPTIONAL MATCH results.
 func (e *StorageExecutor) resolveReturnExprFromVarMap(
 	ctx context.Context,
-	expr string,
+	expr braceView,
 	varMap map[string]interface{},
 	targetVar, relVar string,
 	targetNode *storage.Node,
@@ -1968,7 +1971,7 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 			row[name] = value
 		}
 	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+strings.TrimSpace(expr))
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, expr.trim().wrap("RETURN ", ""))
 	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
 		return nil
 	}
@@ -1976,12 +1979,13 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 }
 
 // parseOptionalRelPattern parses patterns like (a)-[r:TYPE]->(b:Label)
-func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
+func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, view braceView) optionalRelPattern {
 	result := optionalRelPattern{
 		direction:   "out",
 		targetProps: make(map[string]interface{}),
 	}
-	pattern = normalizeAnonymousTraversalRelationships(strings.TrimSpace(pattern))
+	view = normalizeAnonymousTraversalView(view.trim())
+	pattern := view.text()
 
 	// Check direction
 	if strings.Contains(pattern, "<-") {
@@ -2026,8 +2030,7 @@ func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern s
 		if idx := strings.Index(remaining, "("); idx >= 0 {
 			endIdx := strings.Index(remaining[idx:], ")")
 			if endIdx > 0 {
-				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo, parseErr := e.parseNodePattern(ctx, "("+targetStr+")")
+				targetInfo, parseErr := e.parseNodePattern(ctx, view.window(relEnd+1+idx, relEnd+1+idx+endIdx+1))
 				if parseErr != nil {
 					recordExpressionFailure(ctx, parseErr)
 					return optionalRelPattern{}

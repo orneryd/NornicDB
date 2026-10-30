@@ -53,10 +53,10 @@ func TestArrowSpacing(t *testing.T) {
 // gap returns the memoized rewrite.
 func TestArrowSpacingCanonicalMemo(t *testing.T) {
 	query := "MATCH (b) <-[r]-(a:ASMemo) RETURN b"
-	first, rewrite := canonicalizeQueryText(query)
+	first, rewrite := canonicalizeQueryText(originalBraceView(query))
 	require.Equal(t, "MATCH (b)<-[r]-(a:ASMemo) RETURN b", first)
 	require.NotNil(t, rewrite)
-	second, memoized := canonicalizeQueryText(query)
+	second, memoized := canonicalizeQueryText(originalBraceView(query))
 	require.Equal(t, first, second)
 	require.Same(t, rewrite, memoized)
 }

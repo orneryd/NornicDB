@@ -58,11 +58,11 @@ func TestSubqueryCommentBoundaryWithNormalizationSetting(t *testing.T) {
 
 func TestSubqueryCommentBoundaryLexicalControls(t *testing.T) {
 	for _, expr := range []string{"COUNT /*gap*/ { RETURN 1 AS x }", "COUNT //gap\n { RETURN 1 AS x }", "COUNT /* ' // */ { RETURN 1 AS x }"} {
-		found := findSubqueryExpressions(expr)
+		found := findSubqueryExpressions(originalBraceView(expr))
 		require.Len(t, found, 1, expr)
 		require.Equal(t, "COUNT", found[0].kind)
 	}
 	for _, expr := range []string{"'COUNT /*gap*/ { RETURN 1 AS x }'", "`COUNT` /*gap*/ { RETURN 1 AS x }", "n:COUNT /*gap*/ { RETURN 1 AS x }", "COUNT /*gap*/ {.a}", "'//' + n:COUNT /*gap*/ { RETURN 1 AS x }"} {
-		require.Empty(t, findSubqueryExpressions(expr), expr)
+		require.Empty(t, findSubqueryExpressions(originalBraceView(expr)), expr)
 	}
 }

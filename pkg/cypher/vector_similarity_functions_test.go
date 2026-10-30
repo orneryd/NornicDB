@@ -61,9 +61,9 @@ func TestVectorSimilarityFunctionsMatchNeo4j(t *testing.T) {
 		return []interface{}{1.0, 2.0}, nil
 	}}
 	cosine := fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64])
-	_, err = cosine(call, []string{"a"})
+	_, err = invokeFunctionFixture(cosine, call, []string{"a"})
 	require.Error(t, err, "one argument")
-	_, err = cosine(call, []string{"fail", "b"})
+	_, err = invokeFunctionFixture(cosine, call, []string{"fail", "b"})
 	require.ErrorIs(t, err, failed)
 	// Stored coordinates of other Go widths read as numbers.
 	coordinates, err := similarityVectorArgument("cosine", "a", []interface{}{float32(1.5), 2, int32(3)}, vector.Neo4jCosineVectorValid[float64])

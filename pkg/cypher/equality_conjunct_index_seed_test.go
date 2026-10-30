@@ -200,7 +200,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	pattern := nodePatternInfo{labels: []string{"FnProbe"}, variable: "n"}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, pattern, "")
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, pattern, originalBraceView(""))
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -209,7 +209,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	t.Run("simple equality still seeds", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id")
+			pctx, pattern, expressionBraceView("n.repo_id = $repo_id"))
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -219,7 +219,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0001", "generation_id": "gen-2"})
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
 			pctx, pattern,
-			"n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id")
+			expressionBraceView("n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id"))
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -228,7 +228,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	t.Run("AND-conjunct literal equality seeds", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
 			ctx, pattern,
-			"n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'")
+			expressionBraceView("n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'"))
 		require.NoError(t, err)
 		require.True(t, used, "literal equality conjunct on an indexed property must seed")
 		require.Len(t, nodes, 10)
@@ -238,7 +238,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
 			pctx, pattern,
-			"n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id")
+			expressionBraceView("n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id"))
 		require.NoError(t, err)
 		require.True(t, used, "second conjunct on an indexed property must seed")
 		require.Len(t, nodes, 10)
@@ -246,7 +246,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			ctx, pattern, "() AND n.repo_id = 'repo-0000'")
+			ctx, pattern, originalBraceView("() AND n.repo_id = 'repo-0000'"))
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -255,7 +255,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	t.Run("no indexed conjunct falls back", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"generation_id": "gen-2"})
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.generation_id <> $generation_id AND n.uid <> 'x'")
+			pctx, pattern, expressionBraceView("n.generation_id <> $generation_id AND n.uid <> 'x'"))
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -264,7 +264,7 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	t.Run("no match still reports used", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-no-such"})
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'")
+			pctx, pattern, expressionBraceView("n.repo_id = $repo_id AND n.generation_id <> 'gen-2'"))
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Empty(t, nodes)

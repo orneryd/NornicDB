@@ -15,30 +15,19 @@ import (
 // RETURN before it while it keeps that clause's ORDER BY → SKIP → LIMIT order;
 // any other one starts its own WITH * (#907). Without this the text after a
 // pattern was read as part of the MATCH and the statement matched nothing.
-func desugarStandaloneOrderClauses(query string) (string, *queryRewrite) {
+
+func desugarStandaloneOrderClauseView(view braceView) (string, *queryRewrite) {
+	query := view.text()
 	if indexASCIIFold(query, "order") < 0 && indexASCIIFold(query, "skip") < 0 &&
 		indexASCIIFold(query, "offset") < 0 && indexASCIIFold(query, "limit") < 0 {
 		return query, nil
 	}
 	var edits []labelRewriteEdit
-	scanStandaloneOrderClauses(query, 0, len(query), &edits)
+	scanStandaloneOrderClauses(view, 0, len(query), &edits)
 	if len(edits) == 0 {
 		return query, nil
 	}
-	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query, Edits: make([]cyphertext.SourceEdit, 0, len(edits))}, verbatimColumns: true}
-	var out strings.Builder
-	out.Grow(len(query) + 8*len(edits))
-	last := 0
-	for _, edit := range edits {
-		out.WriteString(query[last:edit.start])
-		canonStart := out.Len()
-		out.WriteString(edit.text)
-		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.start, End: edit.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
-		last = edit.end
-	}
-	out.WriteString(query[last:])
-	rewrite.Text = out.String()
-	return rewrite.Text, rewrite
+	return applyLabelRewriteEdits(query, edits, true)
 }
 
 // Stages of a projection's tail, in the order its clauses may come.
@@ -52,8 +41,9 @@ const (
 
 // scanStandaloneOrderClauses scans the statement or subquery body
 // query[start:end], appending its edits in order.
-func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
-	braces := newSubqueryBraceScanner(query, start)
+func scanStandaloneOrderClauses(view braceView, start, end int, edits *[]labelRewriteEdit) {
+	query := view.text()
+	braces := newBraceFactScanner(view, start)
 	inProjection, stage := false, standaloneStageItems
 	// previousWord is the last word read, "" after any other token; last is
 	// the last character of the last token, comments and spaces skipped (0
@@ -80,7 +70,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if close < 0 {
 				return
 			}
-			scanStandaloneOrderContainers(query, index+1, close, edits)
+			scanStandaloneOrderContainers(view, index+1, close, edits)
 			index = close + 1
 			previousWord, last = "", rune(closer)
 			continue
@@ -90,9 +80,9 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				return
 			}
 			if braces.at(index) {
-				scanStandaloneOrderClauses(query, index+1, close, edits)
+				scanStandaloneOrderClauses(view, index+1, close, edits)
 			} else {
-				scanStandaloneOrderContainers(query, index+1, close, edits)
+				scanStandaloneOrderContainers(view, index+1, close, edits)
 			}
 			index = close + 1
 			previousWord, last = "", '}'
@@ -104,7 +94,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				// The label wildcard (a:%) is a complete operand, not the
 				// modulo operator.
 				previousWord, last = "", ')'
-			} else if (character == '+' || character == '*') && last == ')' && quantifiedGroupQuantifierAt(query, index) {
+			} else if (character == '+' || character == '*') && last == ')' && quantifiedGroupQuantifierAt(view, index) {
 				// A quantified path pattern's quantifier ends the pattern:
 				// ((a)-->(b))+ RETURN ….
 				previousWord = ""
@@ -123,7 +113,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		kind := standaloneClauseKind(query, upper, name.End, end)
 		distinctModifier := false
 		if upper == "DISTINCT" && (previousWord == "WITH" || previousWord == "RETURN" || previousWord == "YIELD") {
-			_, distinctModifier = cutDistinct(query[index:end])
+			_, distinctModifier = cutDistinct(view.window(index, end))
 		}
 		if kind == standaloneStageItems && !distinctModifier && standaloneOperandPosition(previousWord, last) {
 			// A keyword where an operand is expected is a variable:
@@ -270,17 +260,18 @@ func standaloneClausePosition(previousWord string, last rune) bool {
 // scanStandaloneOrderContainers visits expression containers without treating
 // their identifiers as statement clauses. Only classified subquery bodies have
 // an independent projection/order state; offsets stay in the original query.
-func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelRewriteEdit) {
-	braces := newSubqueryBraceScanner(query, start)
+func scanStandaloneOrderContainers(view braceView, start, end int, edits *[]labelRewriteEdit) {
+	query := view.text()
+	braces := newBraceFactScanner(view, start)
 	for index := start; index < end; index++ {
-		switch cypherLexicalByte(query[index]) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(query[index])) == cypherQuoteClass:
 			index = skipCypherQuotedText(query, index, query[index]) - 1
-		case '/':
+		case (cypherLexicalByte(query[index])) == '/':
 			if next := queryCommentEnd(query, index); next > index {
 				index = next - 1
 			}
-		case '{':
+		case cyphertext.IsOpenBrace(cypherLexicalByte(query[index])):
 			if !braces.at(index) {
 				continue
 			}
@@ -288,7 +279,7 @@ func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelR
 			if close < 0 {
 				return
 			}
-			scanStandaloneOrderClauses(query, index+1, close, edits)
+			scanStandaloneOrderClauses(view, index+1, close, edits)
 			index = close
 		}
 	}

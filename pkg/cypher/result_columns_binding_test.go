@@ -144,11 +144,11 @@ func TestStatementFactsLegacyImportBinding(t *testing.T) {
 				// Composite public admission is exercised by the Fabric layer.
 				// These calls pin the graph-bearing header owner's own error.
 				t.Run("selected_graph_explain_owner", func(t *testing.T) {
-					_, err := executor.executeExplain(ctx, query)
+					_, err := executor.executeExplain(ctx, originalBraceView(query))
 					checkError(t, err)
 				})
 				t.Run("selected_graph_profile_owner", func(t *testing.T) {
-					_, err := executor.executeProfile(ctx, query)
+					_, err := executor.executeProfile(ctx, originalBraceView(query))
 					checkError(t, err)
 				})
 			}

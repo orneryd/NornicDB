@@ -90,7 +90,7 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"x":     "x",
 		"null":  nil,
 	})
-	oneArgument := map[string]cypherfn.Func{
+	oneArgument := map[string]cypherfn.InvocationFunc{
 		"radians":       fnRadians,
 		"isNaN":         fnIsNaN,
 		"char_length":   fnCharLength,
@@ -99,58 +99,60 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"valueType":     fnValueType,
 	}
 	for name, function := range oneArgument {
-		_, err := function(ctx, []string{"s", "s"})
+		_, err := invokeFunctionFixture(function, ctx, []string{"s", "s"})
 		require.Error(t, err, name)
 		require.Contains(t, err.Error(), "argument(s), got 2", name)
 	}
 	// trim takes its FROM form or one to three positional arguments
 	// (trimSpecificationForm).
-	_, trimErr := fnTrim(ctx, []string{"s", "s", "s", "s"})
+	_, trimErr := invokeFunctionFixture(fnTrim, ctx, []string{"s", "s", "s", "s"})
 	require.Error(t, trimErr)
 	require.Contains(t, trimErr.Error(), "argument(s), got 4")
-	for name, function := range map[string]cypherfn.Func{
+	for name, function := range map[string]cypherfn.InvocationFunc{
 		"btrim":     fnTrimFunction("btrim", true, true),
 		"normalize": fnNormalize,
 	} {
-		_, err := function(ctx, nil)
+		_, err := invokeFunctionFixture(function, ctx, nil)
 		require.Error(t, err, name)
 		require.Contains(t, err.Error(), "expects 1 or 2 argument(s), got 0", name)
 	}
-	_, err := fnNullIf(ctx, []string{"s"})
+	_, err := invokeFunctionFixture(fnNullIf, ctx, []string{"s"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nullIf() expects 2 argument(s), got 1")
 
 	// An argument that fails to evaluate fails the call.
 	for name, call := range map[string]func() (interface{}, error){
-		"radians":     func() (interface{}, error) { return fnRadians(ctx, []string{"boom"}) },
-		"isNaN":       func() (interface{}, error) { return fnIsNaN(ctx, []string{"boom"}) },
-		"char_length": func() (interface{}, error) { return fnCharLength(ctx, []string{"boom"}) },
+		"radians":     func() (interface{}, error) { return invokeFunctionFixture(fnRadians, ctx, []string{"boom"}) },
+		"isNaN":       func() (interface{}, error) { return invokeFunctionFixture(fnIsNaN, ctx, []string{"boom"}) },
+		"char_length": func() (interface{}, error) { return invokeFunctionFixture(fnCharLength, ctx, []string{"boom"}) },
 		"upper": func() (interface{}, error) {
-			return fnStringCase(func(s string) string { return s }, "upper")(ctx, []string{"boom"})
+			return invokeFunctionFixture(fnStringCase(func(s string) string { return s }, "upper"), ctx, []string{"boom"})
 		},
-		"btrim":     func() (interface{}, error) { return fnTrimFunction("btrim", true, true)(ctx, []string{"boom"}) },
-		"trim text": func() (interface{}, error) { return fnTrim(ctx, []string{"boom"}) },
-		"trim char": func() (interface{}, error) { return fnTrim(ctx, []string{"boom FROM s"}) },
-		"trim spec": func() (interface{}, error) { return fnTrim(ctx, []string{"s", "boom"}) },
-		"normalize": func() (interface{}, error) { return fnNormalize(ctx, []string{"boom"}) },
-		"nullIf":    func() (interface{}, error) { return fnNullIf(ctx, []string{"s", "boom"}) },
-		"valueType": func() (interface{}, error) { return fnValueType(ctx, []string{"boom"}) },
+		"btrim": func() (interface{}, error) {
+			return invokeFunctionFixture(fnTrimFunction("btrim", true, true), ctx, []string{"boom"})
+		},
+		"trim text": func() (interface{}, error) { return invokeFunctionFixture(fnTrim, ctx, []string{"boom"}) },
+		"trim char": func() (interface{}, error) { return invokeFunctionFixture(fnTrim, ctx, []string{"boom FROM s"}) },
+		"trim spec": func() (interface{}, error) { return invokeFunctionFixture(fnTrim, ctx, []string{"s", "boom"}) },
+		"normalize": func() (interface{}, error) { return invokeFunctionFixture(fnNormalize, ctx, []string{"boom"}) },
+		"nullIf":    func() (interface{}, error) { return invokeFunctionFixture(fnNullIf, ctx, []string{"s", "boom"}) },
+		"valueType": func() (interface{}, error) { return invokeFunctionFixture(fnValueType, ctx, []string{"boom"}) },
 	} {
 		_, err := call()
 		require.EqualError(t, err, "boom", name)
 	}
 
 	// A float32 argument is a float.
-	value, err := fnIsNaN(ctx, []string{"nan32"})
+	value, err := invokeFunctionFixture(fnIsNaN, ctx, []string{"nan32"})
 	require.NoError(t, err)
 	require.Equal(t, true, value)
 
 	// trim's character must be a string.
-	_, err = fnTrim(ctx, []string{"LEADING one FROM s"})
+	_, err = invokeFunctionFixture(fnTrim, ctx, []string{"LEADING one FROM s"})
 	var mismatch *cypherfn.TypeMismatchError
 	require.ErrorAs(t, err, &mismatch)
 	require.Equal(t, "String", mismatch.Expected)
-	value, err = fnTrim(ctx, []string{"LEADING x FROM s"})
+	value, err = invokeFunctionFixture(fnTrim, ctx, []string{"LEADING x FROM s"})
 	require.NoError(t, err)
 	require.Equal(t, "ax", value)
 }

@@ -88,7 +88,7 @@ func tokenNameError(name string) error {
 // dynamicTokenValue evaluates the expression of a dynamic label or property
 // key in a row's context, as SET evaluates a value: a parameter that wasn't
 // supplied is an error (requireSetParameter).
-func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
 	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels)
 }
 
@@ -102,7 +102,7 @@ func (e *StorageExecutor) chainLabelNames(ctx context.Context, items []labelChai
 			names = append(names, item.name)
 			continue
 		}
-		value, err := e.dynamicTokenValue(ctx, item.expression, nodes, rels)
+		value, err := e.dynamicTokenValue(ctx, item.view, nodes, rels)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func (e *StorageExecutor) chainLabelNames(ctx context.Context, items []labelChai
 // dynamicPropertyKeyOf evaluates the key expression of n[expr] for a SET
 // (removing false) or a REMOVE (removing true) and reads it as a property key
 // (dynamicPropertyKey).
-func (e *StorageExecutor) dynamicPropertyKeyOf(ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, removing bool) (string, error) {
+func (e *StorageExecutor) dynamicPropertyKeyOf(ctx context.Context, expression braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, removing bool) (string, error) {
 	value, err := e.dynamicTokenValue(ctx, expression, nodes, rels)
 	if err != nil {
 		return "", err
@@ -151,7 +151,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	}
 	switch clause.kind {
 	case pipelineClauseSet:
-		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
+		return staticSetItemsTokenError(setAssignmentViews(clause.view.clauseBody("SET")), scope)
 	case pipelineClauseMerge:
 		set := indexASCIIFold(clause.text, " SET ")
 		if set < 0 {
@@ -160,19 +160,19 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[=") && !mentionsNonEntity(actions, scope) {
 			return nil // the pattern's labels aren't items
 		}
-		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
-		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
+		actions := readMergeSourceActions(clause.view)
+		if err := staticSetItemsTokenError(mergeSourceActionAssignments(actions.onCreate), scope); err != nil {
 			return err
 		}
-		return staticSetItemsTokenError(mergeActionAssignments(actions.onMatch), scope)
+		return staticSetItemsTokenError(mergeSourceActionAssignments(actions.onMatch), scope)
 	case pipelineClauseRemove:
-		items, err := parseRemoveItems(pipelineClauseBody(clause.text, "REMOVE"))
+		items, err := parseRemoveItems(clause.view.clauseBody("REMOVE"))
 		if err != nil {
 			return err
 		}
 		for _, item := range items {
 			if item.key != "" {
-				if err := staticDynamicTokenError(item.key, scope, dynamicTokenKey); err != nil {
+				if err := staticDynamicTokenError(item.keyView, scope, dynamicTokenKey); err != nil {
 					return err
 				}
 				continue
@@ -180,7 +180,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 			if len(item.labels) == 0 {
 				continue
 			}
-			if err := staticLabelTargetError(item.variable, scope); err != nil {
+			if err := staticLabelTargetError(item.variableView, scope); err != nil {
 				return err
 			}
 			if err := staticLabelChainTokenError(item.labels, scope); err != nil {
@@ -226,9 +226,10 @@ func mentionsNonEntity(text string, scope staticTypeScope) bool {
 	return false
 }
 
-func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error {
+func staticSetItemsTokenError(assignments []braceView, scope staticTypeScope) error {
 	for _, assignment := range assignments {
-		target, property, operator, right := splitSetAssignment(assignment)
+		item := readSetAssignment(assignment)
+		target, property, operator, right := item.target, item.property, item.operator, item.right
 		if scope.cypher25 && property == "" && (operator == "=" || operator == "+=") {
 			// Cypher 25 (Neo4j 2026.09) removed SET x = e and SET x += e for
 			// a node or relationship e: the right side is a map there
@@ -240,7 +241,7 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 		if operator != ":" && operator != "" {
 			// A property write (x.p = v, x[k] = v, x = m, x += m) needs a node
 			// or a relationship.
-			if operand := scope.operandOf(target); operand.excludes(isNodeOrRelationshipTypeName) {
+			if operand := scope.operandOf(item.targetView); operand.excludes(isNodeOrRelationshipTypeName) {
 				return typeNameMismatchError("Node or Relationship", operand.typeName())
 			}
 		}
@@ -254,11 +255,11 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 		}
 		switch operator {
 		case "[]=":
-			if err := staticDynamicTokenError(property, scope, dynamicTokenKey); err != nil {
+			if err := staticDynamicTokenError(item.key, scope, dynamicTokenKey); err != nil {
 				return err
 			}
 		case ":":
-			if err := staticLabelTargetError(target, scope); err != nil {
+			if err := staticLabelTargetError(item.targetView, scope); err != nil {
 				return err
 			}
 			items, err := setLabelChainItems(right)
@@ -278,7 +279,7 @@ func staticLabelChainTokenError(items []labelChainItem, scope staticTypeScope) e
 		if item.expression == "" {
 			continue
 		}
-		if err := staticDynamicTokenError(item.expression, scope, dynamicTokenLabel); err != nil {
+		if err := staticDynamicTokenError(item.view, scope, dynamicTokenLabel); err != nil {
 			return err
 		}
 	}
@@ -287,7 +288,7 @@ func staticLabelChainTokenError(items []labelChainItem, scope staticTypeScope) e
 
 // staticLabelTargetError rejects a label item on a variable whose static type
 // isn't a node: only nodes have labels.
-func staticLabelTargetError(variable string, scope staticTypeScope) error {
+func staticLabelTargetError(variable braceView, scope staticTypeScope) error {
 	if operand := scope.operandOf(variable); operand.excludes(isNodeTypeName) {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreLabelTargetTypeMismatch(operand.typeName()))
 	}
@@ -307,22 +308,24 @@ const (
 // ” computed at run time removes nothing), a list literal holding either
 // (for a label), or an expression whose static type a label (STRING,
 // LIST<STRING>) or a key (STRING) can't take.
-func staticDynamicTokenError(expression string, scope staticTypeScope, use dynamicTokenUse) error {
-	expression = strings.TrimSpace(expression)
+func staticDynamicTokenError(view braceView, scope staticTypeScope, use dynamicTokenUse) error {
+	view = view.trim()
+	expression := view.text()
 	for {
-		inner, wrapped := stripEnclosingExpressionParentheses(expression)
+		_, wrapped := stripEnclosingExpressionParentheses(expression)
 		if !wrapped {
 			break
 		}
-		expression = strings.TrimSpace(inner)
+		view = view.window(1, len(expression)-1).trim()
+		expression = view.text()
 	}
-	literals := []string{expression}
-	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList && use == dynamicTokenLabel {
-		literals = splitTopLevelComma(inner)
+	literals := []braceView{view}
+	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList && use == dynamicTokenLabel {
+		literals = view.window(1, len(expression)-1).commaViews()
 	}
-	for _, literal := range literals {
-		literal = strings.TrimSpace(literal)
-		if strings.EqualFold(literal, "null") {
+	for _, literalView := range literals {
+		literal := literalView.trim().text()
+		if cyphertext.KeywordEnd(literal, 0, "NULL", cyphertext.CypherWord) == len(literal) {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreTokenNameNull())
 		}
 		if value, ok := parseLiteralValueFromComputedRow(literal); ok {
@@ -331,7 +334,7 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 			}
 		}
 	}
-	operand := scope.operandOf(expression)
+	operand := scope.operandOf(view)
 	if use == dynamicTokenLabel {
 		if operand.excludes(isLabelTokenTypeName) {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(operand.typeName()))
@@ -357,18 +360,18 @@ const dynamicLabelTestFunction = "__nornic_haslabels"
 const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
 
 func init() {
-	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
-	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
+	cypherfn.RegisterInvocation(dynamicLabelTestFunction, fnDynamicLabelTest)
+	cypherfn.RegisterInvocation(dynamicLabelPredicateFunction, fnDynamicLabelTest)
 }
 
-func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnDynamicLabelTest(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 3 {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))
 	}
 	values := make([]interface{}, len(args))
-	for i, arg := range args {
-		value, err := ctx.Eval(arg)
+	for i := range args {
+		value, err := ctx.Eval(i)
 		if err != nil {
 			return nil, err
 		}
@@ -435,43 +438,43 @@ func hasDynamicToken(text string) bool {
 // the row's context: a node gets every label ($(e), $all(e); an empty list
 // none), a relationship exactly one type, or Neo4j's ExecutionFailed. A
 // property map's text is left as it is.
-func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error) {
-	var out strings.Builder
-	out.Grow(len(pattern))
+func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (braceView, error) {
+	pattern := view.text()
+	var edits []labelRewriteEdit
 	last, brackets := 0, 0
 	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := pattern[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
-		case '{':
-			if closing := cyphertext.FindMatchingDelimiter(pattern, i, '{', '}', cyphertext.OpeningDelimiter); closing > 0 {
+		case cyphertext.IsOpenBrace(c):
+			if closing, complete := view.close(i); complete && closing > 0 {
 				i = closing
 			}
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			brackets++
-		case ']':
+		case (cypherLexicalByte(c)) == ']':
 			brackets--
-		case '$':
+		case (cypherLexicalByte(c)) == '$':
 			if !dynamicLabelStartsAt(pattern, i) {
 				continue
 			}
 			open := i + strings.IndexByte(pattern[i:], '(')
 			closing := cyphertext.FindMatchingDelimiter(pattern, open, '(', ')', cyphertext.OpeningDelimiter)
 			if closing < 0 {
-				return pattern, nil
+				return view, nil
 			}
-			value, err := e.dynamicTokenValue(ctx, pattern[open+1:closing], nodes, rels)
+			value, err := e.dynamicTokenValue(ctx, view.window(open+1, closing), nodes, rels)
 			if err != nil {
-				return "", err
+				return braceView{}, err
 			}
 			names, err := dynamicLabelNames(value)
 			if err != nil {
-				return "", err
+				return braceView{}, err
 			}
 			start := i
 			if brackets > 0 {
 				if len(names) != 1 {
-					return "", localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ExecutionFailed",
+					return braceView{}, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ExecutionFailed",
 						localization.CypherCoreDynamicRelationshipTypeCount(len(names)))
 				}
 			} else if len(names) == 0 {
@@ -483,22 +486,23 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 					start--
 				}
 			}
-			out.WriteString(pattern[last:start])
+			var out strings.Builder
 			for index, name := range names {
 				if index > 0 {
 					out.WriteByte(':')
 				}
 				out.WriteString(labelExpressionNameText(name))
 			}
+			edits = append(edits, labelRewriteEdit{start: start, end: closing + 1, text: out.String()})
 			last = closing + 1
 			i = closing
 		}
 	}
 	if last == 0 {
-		return pattern, nil
+		return view, nil
 	}
-	out.WriteString(pattern[last:])
-	return out.String(), nil
+	_, rewrite := applyLabelRewriteEdits(pattern, edits, false)
+	return view.rewrite(rewrite), nil
 }
 
 // staticPatternTokenError checks the dynamic labels and types of a clause's
@@ -524,7 +528,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			if closing < 0 {
 				return nil
 			}
-			if err := staticDynamicTokenError(text[open+1:closing], scope, dynamicTokenLabel); err != nil {
+			if err := staticDynamicTokenError(clause.view.window(open+1, closing), scope, dynamicTokenLabel); err != nil {
 				return err
 			}
 			i = closing
@@ -542,8 +546,8 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			if closing < 0 {
 				return nil
 			}
-			if args := splitTopLevelComma(text[open+1 : closing]); len(args) == 3 {
-				if predicate && scope.kinds[simpleSemanticIdentifier(strings.Trim(args[0], "() "))] != matchBindingRelationship {
+			if args := clause.view.window(open+1, closing).commaViews(); len(args) == 3 {
+				if predicate && scope.kinds[simpleSemanticIdentifier(strings.Trim(args[0].text(), "() "))] != matchBindingRelationship {
 					i = closing
 					continue
 				}

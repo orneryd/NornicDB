@@ -46,7 +46,7 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 func TestPipelinePredicateSkipsUnusedRowLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	matched := exec.evaluateWithWhereCondition(context.Background(), "42 > 1", map[string]interface{}{
+	matched := exec.evaluateWithWhereCondition(context.Background(), expressionBraceView("42 > 1"), map[string]interface{}{
 		"unused": countedLiteralStringer{calls: &called},
 	})
 	require.True(t, matched)
@@ -56,7 +56,7 @@ func TestPipelinePredicateSkipsUnusedRowLiteral(t *testing.T) {
 func TestPipelinePredicateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	matched := exec.evaluateWithWhereCondition(context.Background(), "item.id = 42", map[string]interface{}{
+	matched := exec.evaluateWithWhereCondition(context.Background(), expressionBraceView("item.id = 42"), map[string]interface{}{
 		"item": map[string]interface{}{
 			"id":     42,
 			"unused": countedLiteralStringer{calls: &called},
@@ -587,12 +587,12 @@ func TestParseValue_MapLiterals(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	val := parsedTestValue(exec.parseValue(ctx, "{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}"))
+	val := parsedTestValue(exec.parseValue(ctx, expressionBraceView("{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")))
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected plain map literal to parse as map, got %T", val)
 	}
 
-	val = parsedTestValue(exec.parseValue(ctx, "{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}"))
+	val = parsedTestValue(exec.parseValue(ctx, expressionBraceView("{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")))
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected backticked map literal to parse as map, got %T", val)
 	}

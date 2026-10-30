@@ -47,11 +47,11 @@ func TestEvaluateListForPipeline(t *testing.T) {
 		"n": &storage.Node{Properties: map[string]interface{}{"vals": []interface{}{true, false}}},
 	}
 
-	require.Equal(t, []interface{}{int64(1), "x"}, evaluateListForPipeline("items", row))
-	require.Equal(t, []interface{}{map[string]interface{}{"k": "v"}}, evaluateListForPipeline("obj.list", row))
-	require.Equal(t, []interface{}{true, false}, evaluateListForPipeline("n.vals", row))
+	require.Equal(t, []interface{}{int64(1), "x"}, evaluateListForPipeline(expressionBraceView("items"), row))
+	require.Equal(t, []interface{}{map[string]interface{}{"k": "v"}}, evaluateListForPipeline(expressionBraceView("obj.list"), row))
+	require.Equal(t, []interface{}{true, false}, evaluateListForPipeline(expressionBraceView("n.vals"), row))
 
-	lit := evaluateListForPipeline("[{a: 1, b: {c: 'x'}}, true, 3.5]", row)
+	lit := evaluateListForPipeline(originalBraceView("[{a: 1, b: {c: 'x'}}, true, 3.5]"), row)
 	require.Len(t, lit, 3)
 	require.Equal(t, true, lit[1])
 	require.Equal(t, 3.5, lit[2])
@@ -62,11 +62,11 @@ func TestEvaluateListForPipeline(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "x", nested["c"])
 
-	require.Nil(t, evaluateListForPipeline("[fn(1)]", row))
+	require.Nil(t, evaluateListForPipeline(originalBraceView("[fn(1)]"), row))
 }
 
 func TestParseLiteralMapAndScalarsForPipeline(t *testing.T) {
-	m := parseLiteralMapForPipeline("{a: 1, b: {c: 'x'}, ok: true, none: null}")
+	m := parseLiteralMapForPipeline(expressionBraceView("{a: 1, b: {c: 'x'}, ok: true, none: null}"))
 	require.NotNil(t, m)
 	require.EqualValues(t, int64(1), m["a"])
 	require.Equal(t, true, m["ok"])
@@ -76,7 +76,7 @@ func TestParseLiteralMapAndScalarsForPipeline(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "x", nested["c"])
 
-	require.Nil(t, parseLiteralMapForPipeline("{a}"))
+	require.Nil(t, parseLiteralMapForPipeline(expressionBraceView("{a}")))
 
 	v, ok := parseLiteralScalarForPipeline("+42")
 	require.True(t, ok)

@@ -56,10 +56,11 @@ func TestCanceledRuntimeReaderCachesDoNotPoisonPublicExecute(t *testing.T) {
 			cancel()
 			switch owner {
 			case "return plan":
-				plan := returnProjectionPlanFor(canceled, query)
+				view := originalBraceView(query)
+				plan := returnProjectionPlanFor(canceled, view)
 				require.False(t, plan.valid)
 				returnProjectionPlans.RLock()
-				_, found := returnProjectionPlans.plans[query]
+				_, found := returnProjectionPlans.plans[view.source]
 				returnProjectionPlans.RUnlock()
 				require.False(t, found)
 			case "execution policy":
@@ -228,8 +229,8 @@ func TestQueryBodyOutputPresencePolicies(t *testing.T) {
 		{"CALL db.labels()", false, true},
 		{"RETURN 1 AS value FINISH", false, false},
 	} {
-		body := readQueryBody(t.Context(), test.query, 0, len(test.query))
-		require.Equal(t, test.direct, queryBodyProducesColumns(t.Context(), test.query, body, true), test.query)
-		require.Equal(t, test.declared, queryBodyProducesColumns(t.Context(), test.query, body, false), test.query)
+		body := readQueryBody(t.Context(), originalBraceView(test.query), 0, len(test.query))
+		require.Equal(t, test.direct, queryBodyProducesColumns(t.Context(), body, true), test.query)
+		require.Equal(t, test.declared, queryBodyProducesColumns(t.Context(), body, false), test.query)
 	}
 }

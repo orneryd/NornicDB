@@ -42,21 +42,21 @@ func TestPipelineReadOnlyTail(t *testing.T) {
 func TestPipelineLabelScanProjection(t *testing.T) {
 	ctx := context.Background()
 	pattern := nodePatternInfo{variable: "p", labels: []string{"P"}, properties: map[string]interface{}{"k": 1}}
-	properties, ok := pipelineLabelScanProjection(ctx, pattern, "p.w > 1", []string{"WITH p.b AS b", "RETURN b, p.a"})
+	properties, ok := pipelineLabelScanProjection(ctx, pattern, expressionBraceView("p.w > 1"), originalBraceViews("WITH p.b AS b", "RETURN b, p.a"))
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b", "k", "w"}, properties)
 
 	for _, tail := range [][]string{{"RETURN p"}, {"WITH p", "RETURN p.a"}, {"MATCH (p)-->(q)", "RETURN q.a"}} {
-		_, ok = pipelineLabelScanProjection(ctx, pattern, "", tail)
+		_, ok = pipelineLabelScanProjection(ctx, pattern, originalBraceView(""), originalBraceViews(tail...))
 		require.False(t, ok, "%v", tail)
 	}
-	_, ok = pipelineLabelScanProjection(ctx, pattern, "p = $other", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(ctx, pattern, expressionBraceView("p = $other"), originalBraceViews("RETURN p.a"))
 	require.False(t, ok)
-	_, ok = pipelineLabelScanProjection(ctx, nodePatternInfo{variable: "p"}, "", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(ctx, nodePatternInfo{variable: "p"}, originalBraceView(""), originalBraceViews("RETURN p.a"))
 	require.False(t, ok)
-	_, ok = pipelineLabelScanProjection(ctx, pattern, "", nil)
+	_, ok = pipelineLabelScanProjection(ctx, pattern, originalBraceView(""), nil)
 	require.False(t, ok)
-	_, ok = pipelineLabelScanProjection(WithTemporalViewport(ctx, CurrentTemporalViewport()), pattern, "", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(WithTemporalViewport(ctx, CurrentTemporalViewport()), pattern, originalBraceView(""), originalBraceViews("RETURN p.a"))
 	require.False(t, ok)
 }
 
@@ -104,6 +104,6 @@ func TestLabelScanReadsOnlyUsedProperties(t *testing.T) {
 
 // A keyword-named variable followed by a property access is a reference.
 func TestSemanticExpressionReferencesKeywordVariableProperty(t *testing.T) {
-	require.Equal(t, []string{"where.id", "x"}, semanticExpressionReferences("where.id + x"))
-	require.Equal(t, []string{"x"}, semanticExpressionReferences("x IS NOT NULL AND true"))
+	require.Equal(t, []string{"where.id", "x"}, semanticExpressionReferences(originalBraceView("where.id + x")))
+	require.Equal(t, []string{"x"}, semanticExpressionReferences(expressionBraceView("x IS NOT NULL AND true")))
 }

@@ -55,12 +55,13 @@ func TestComparisonChainsSupportArbitraryLength(t *testing.T) {
 		"e": int64(3),
 	}
 	resolutionCount := make(map[string]int)
-	resolve := func(operand string) (interface{}, bool, error) {
+	resolve := func(operandView braceView) (interface{}, bool, error) {
+		operand := operandView.text()
 		resolutionCount[operand]++
 		return values[operand], true, nil
 	}
 
-	result, ok, resolved, err := evaluateComparisonChain("a < b = c <> d <= e", resolve, func(left, right interface{}, operator string) interface{} {
+	result, ok, resolved, err := evaluateComparisonChain(expressionBraceView("a < b = c <> d <= e"), resolve, func(left, right interface{}, operator string) interface{} {
 		return compareCypherPredicateValue(left, right, operator)
 	}, false)
 	if !ok || !resolved || err != nil || result != true {
@@ -171,7 +172,7 @@ func TestNumericNaNIsUnordered(t *testing.T) {
 }
 
 func TestComparisonChainParserIgnoresNestedOperators(t *testing.T) {
-	operands, operators, ok := splitComparisonChain("'a=b' = value <> coalesce(other, 1 < 2)")
+	operands, operators, ok := splitComparisonChain(expressionBraceView("'a=b' = value <> coalesce(other, 1 < 2)"))
 	if !ok {
 		t.Fatal("expected a comparison chain")
 	}
@@ -214,7 +215,7 @@ func BenchmarkComparisonChainSplit(b *testing.B) {
 		b.Run(benchmark.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				benchmarkComparisonScan, _ = scanComparisonChain(benchmark.expression)
+				benchmarkComparisonScan, _ = scanComparisonChain(originalBraceView(benchmark.expression))
 			}
 		})
 	}
@@ -228,7 +229,7 @@ func BenchmarkComparisonChainOperands(b *testing.B) {
 		{"overflow", "1 < 2 = 2 <> 3 <= 3 < 4 <= 4"},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			scan, ok := scanComparisonChain(tc.expression)
+			scan, ok := scanComparisonChain(originalBraceView(tc.expression))
 			if !ok {
 				b.Fatal("missing comparison chain")
 			}

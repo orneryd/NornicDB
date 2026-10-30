@@ -4,24 +4,18 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // Query structure is a read-only view of execution's retained grammar product.
 // It remains available when names or procedure signatures cannot be resolved.
-var queryBodyContainerKeywords = [...]string{"CALL", "EXISTS", "COUNT", "COLLECT"}
+var queryBodyContainerKeywords = cyphertext.QueryBodyContainerKeywords
 
-func queryBodyContainerKeyword(word string) bool {
-	for _, keyword := range queryBodyContainerKeywords {
-		if strings.EqualFold(word, keyword) {
-			return true
-		}
-	}
-	return false
-}
-
-func forEachQueryBody(ctx context.Context, source string, containers []string, visit func(string, int, int) error) error {
-	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
+func forEachQueryBody(ctx context.Context, view braceView, containers []string, visit func(string, braceView) error) error {
+	source := view.text()
+	ctx = withBraceView(ctx, view)
+	if isNornicExtensionStatement(view) || isSchemaCommandStatement(source) {
 		return nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
@@ -58,9 +52,17 @@ func forEachQueryBody(ctx context.Context, source string, containers []string, v
 		open, hasOpen := node.DirectToken(cypherantlr.CypherLexerLBRACE)
 		close, hasClose := node.DirectToken(cypherantlr.CypherLexerRBRACE)
 		if hasOpen && hasClose {
-			_, start := open.Span()
+			opening, start := open.Span()
 			end, _ := close.Span()
-			failure = visit(container, start, end)
+			fact, retained := view.at(opening)
+			if !retained || fact.kind != subqueryBrace {
+				panic("cypher: query body consumer lost its original role")
+			}
+			projected, complete := view.close(opening)
+			if !complete || projected != end {
+				panic("cypher: query body consumer lost its original endpoint")
+			}
+			failure = visit(container, view.window(start, end))
 		}
 		return nil
 	})
@@ -89,10 +91,12 @@ type queryBody struct {
 type queryBodyForeach struct {
 	variable       string
 	listExpression string
+	listView       braceView
 	updates        []pipelineClause
 }
 
 type queryBodyBranch struct {
+	grammarView            braceView
 	start, end             int
 	unionAll               bool
 	useStart, useEnd       int
@@ -116,7 +120,9 @@ func declinedQueryBody(start, end int) queryBody {
 
 // readQueryBody is the compatibility entry for a source window. Statement
 // compilation retains its product and calls queryBodyFromSyntax directly.
-func readQueryBody(ctx context.Context, source string, start, end int) queryBody {
+func readQueryBody(ctx context.Context, view braceView, start, end int) queryBody {
+	source := view.text()
+	ctx = withBraceView(ctx, view)
 	if ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
@@ -129,17 +135,17 @@ func readQueryBody(ctx context.Context, source string, start, end int) queryBody
 		pattern, found := syntax.Window(start, end, cypherantlr.CypherParserRULE_patternWhere, cypherantlr.CypherParserRULE_pattern)
 		if found {
 			if container, parent := pattern.Parent(); parent {
-				if body, _, complete := queryExpressionBody(container); complete {
+				if body, _, complete := queryExpressionBody(view, container); complete {
 					return body
 				}
 			}
 		}
 		return declinedQueryBody(start, end)
 	}
-	return queryBodyFromSyntax(node)
+	return queryBodyFromSyntax(view, node)
 }
 
-func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
+func queryBodyFromSyntax(view braceView, node cypherantlr.SyntaxNode) queryBody {
 	body := queryBody{status: queryBodyRead}
 	if !node.Valid() {
 		return queryBody{status: queryBodyDeclined}
@@ -148,15 +154,15 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 	case cypherantlr.CypherParserRULE_query:
 		regular := node.ChildRule(cypherantlr.CypherParserRULE_regularQuery)
 		if regular.Valid() {
-			body = queryBodyFromSyntax(regular)
+			body = queryBodyFromSyntax(view, regular)
 		} else {
 			call := node.ChildRule(cypherantlr.CypherParserRULE_standaloneCall)
 			if !call.Valid() {
 				start, end := node.Span()
 				return declinedQueryBody(start, end)
 			}
-			branch := newQueryBodyBranch(call)
-			appendQuerySyntax(&branch, call)
+			branch := newQueryBodyBranch(view, call)
+			appendQuerySyntax(view, &branch, call)
 			body.branches = []queryBodyBranch{branch}
 		}
 		use := node.ChildRule(cypherantlr.CypherParserRULE_useClause)
@@ -169,23 +175,23 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 			child := node.Child(i)
 			switch child.Rule() {
 			case cypherantlr.CypherParserRULE_singleQuery:
-				branch := newQueryBodyBranch(child)
-				appendQuerySyntax(&branch, child)
+				branch := newQueryBodyBranch(view, child)
+				appendQuerySyntax(view, &branch, child)
 				body.branches = append(body.branches, branch)
 			case cypherantlr.CypherParserRULE_unionSt:
 				query := child.ChildRule(cypherantlr.CypherParserRULE_singleQuery)
-				branch := newQueryBodyBranch(query)
+				branch := newQueryBodyBranch(view, query)
 				_, branch.unionAll = child.DirectToken(cypherantlr.CypherLexerALL)
-				appendQuerySyntax(&branch, query)
+				appendQuerySyntax(view, &branch, query)
 				body.branches = append(body.branches, branch)
 			}
 		}
 	case cypherantlr.CypherParserRULE_subqueryBody:
-		branch := newQueryBodyBranch(node)
+		branch := newQueryBodyBranch(view, node)
 		for i := 0; i < node.ChildCount(); i++ {
 			child := node.Child(i)
 			if child.Rule() == cypherantlr.CypherParserRULE_subqueryBody {
-				tail := queryBodyFromSyntax(child)
+				tail := queryBodyFromSyntax(view, child)
 				if len(tail.branches) > 0 {
 					_, tail.branches[0].unionAll = node.DirectToken(cypherantlr.CypherLexerALL)
 				}
@@ -199,7 +205,7 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 				_, branch.end = lastQueryBranchSpan(branch)
 				continue
 			}
-			appendQuerySyntax(&branch, child)
+			appendQuerySyntax(view, &branch, child)
 		}
 		if len(body.branches) == 0 {
 			body.branches = []queryBodyBranch{branch}
@@ -211,11 +217,11 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 			start, end := node.Span()
 			return declinedQueryBody(start, end)
 		}
-		branch := newQueryBodyBranch(node)
+		branch := newQueryBodyBranch(view, node)
 		for i := 0; i < node.ChildCount(); i++ {
 			child := node.Child(i)
 			if child.Rule() == cypherantlr.CypherParserRULE_updatingStatement {
-				appendQuerySyntax(&branch, child)
+				appendQuerySyntax(view, &branch, child)
 			}
 		}
 		if len(branch.clauses) == 0 {
@@ -223,8 +229,8 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 		}
 		body.foreach = &queryBodyForeach{
 			variable:       symbolicNameValue(variable.Text()),
-			listExpression: expression.Text(),
-			updates:        make([]pipelineClause, 0, len(branch.clauses)),
+			listExpression: expression.Text(), listView: view.code(expression),
+			updates: make([]pipelineClause, 0, len(branch.clauses)),
 		}
 		for _, source := range branch.clauses {
 			clause := source.pipelineClause
@@ -233,12 +239,12 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 		}
 		body.branches = []queryBodyBranch{branch}
 	case cypherantlr.CypherParserRULE_singleQuery:
-		branch := newQueryBodyBranch(node)
-		appendQuerySyntax(&branch, node)
+		branch := newQueryBodyBranch(view, node)
+		appendQuerySyntax(view, &branch, node)
 		body.branches = []queryBodyBranch{branch}
 	case cypherantlr.CypherParserRULE_matchSt:
-		branch := newQueryBodyBranch(node)
-		appendQuerySyntax(&branch, node)
+		branch := newQueryBodyBranch(view, node)
+		appendQuerySyntax(view, &branch, node)
 		body.branches = []queryBodyBranch{branch}
 	default:
 		start, end := node.Span()
@@ -264,10 +270,10 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 // queryExpressionBody covers the grammar's statement and pattern forms through
 // one structural view. A pattern-only body is an implicit MATCH, with its own
 // declarations and predicate scope; it is never read as an outer expression.
-func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherantlr.SyntaxNode, bool) {
+func queryExpressionBody(view braceView, container cypherantlr.SyntaxNode) (queryBody, cypherantlr.SyntaxNode, bool) {
 	for _, rule := range []int{cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_regularQuery, cypherantlr.CypherParserRULE_matchSt} {
 		if body := container.ChildRule(rule); body.Valid() {
-			return queryBodyFromSyntax(body), body, true
+			return queryBodyFromSyntax(view, body), body, true
 		}
 	}
 	pattern := container.ChildRule(cypherantlr.CypherParserRULE_pattern)
@@ -283,14 +289,14 @@ func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherant
 	if where := container.ChildRule(cypherantlr.CypherParserRULE_where); where.Valid() {
 		_, end = where.Span()
 	}
-	branch := queryBodyBranch{start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
-	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end]}, start: start, end: end, syntax: container}}
+	branch := queryBodyBranch{grammarView: view, start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
+	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end], view: view.window(start, end), grammarView: view}, start: start, end: end, syntax: container}}
 	return queryBody{status: queryBodyRead, branches: []queryBodyBranch{branch}}, container, true
 }
 
-func newQueryBodyBranch(node cypherantlr.SyntaxNode) queryBodyBranch {
+func newQueryBodyBranch(view braceView, node cypherantlr.SyntaxNode) queryBodyBranch {
 	start, end := node.Span()
-	return queryBodyBranch{start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
+	return queryBodyBranch{grammarView: view, start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
 }
 
 func lastQueryBranchSpan(branch queryBodyBranch) (start, end int) {
@@ -318,11 +324,11 @@ func setQueryBodyUse(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 
 // appendQuerySyntax unwraps grammar containers only. It does not enter a clause
 // expression or CALL body; those belong to their own retained statement views.
-func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
+func appendQuerySyntax(view braceView, branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	switch node.Rule() {
 	case cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_singlePartQ, cypherantlr.CypherParserRULE_multiPartQ, cypherantlr.CypherParserRULE_readingStatement, cypherantlr.CypherParserRULE_updatingStatement:
 		for i := 0; i < node.ChildCount(); i++ {
-			appendQuerySyntax(branch, node.Child(i))
+			appendQuerySyntax(view, branch, node.Child(i))
 		}
 		return
 	case cypherantlr.CypherParserRULE_useClause:
@@ -358,7 +364,7 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	if start > nodeStart {
 		text = text[start-nodeStart:]
 	}
-	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional}, start: start, end: end, syntax: node})
+	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional, view: view.window(start, end), grammarView: view}, start: start, end: end, syntax: node})
 }
 
 // embeddingCandidate reports the documented nonterminal WITH EMBEDDING form:
@@ -394,7 +400,7 @@ func statementHasEmbeddingCandidate(ctx context.Context, source string) bool {
 	if !containsFold(source, "EMBEDDING") {
 		return false
 	}
-	for _, branch := range readQueryBody(ctx, source, 0, len(source)).branches {
+	for _, branch := range readQueryBody(ctx, statementBraceView(ctx, source), 0, len(source)).branches {
 		for index := range branch.clauses {
 			if embeddingCandidate(branch.clauses, index) != "" {
 				return true

@@ -2,23 +2,22 @@ package cypher
 
 import (
 	"context"
-	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // canonicalQueryClause adapts standalone execution helpers to the same grammar
 // product. The bound compiler supplies the retained clause node directly.
-func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+func canonicalQueryClause(ctx context.Context, source braceView) (cypherantlr.SyntaxNode, bool) {
+	syntax, err := cypherantlr.ParseSyntax(withBraceView(ctx, source), source.text(), cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return cypherantlr.SyntaxNode{}, false
 	}
 	root := statementSyntaxQuery(syntax)
 	if !root.Valid() {
-		root, _ = syntax.Window(0, len(source), cypherantlr.CypherParserRULE_subqueryBody)
+		root, _ = syntax.Window(0, len(source.text()), cypherantlr.CypherParserRULE_subqueryBody)
 	}
-	body := queryBodyFromSyntax(root)
+	body := queryBodyFromSyntax(source, root)
 	if len(body.branches) == 0 || len(body.branches[0].clauses) == 0 {
 		return cypherantlr.SyntaxNode{}, false
 	}
@@ -33,22 +32,23 @@ func syntaxSymbolName(node cypherantlr.SyntaxNode) string {
 	return name
 }
 
-func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func(cypherantlr.SyntaxNode)) *returnProjectionPlan {
-	plan := &returnProjectionPlan{}
+func projectionPlanFromSyntax(view braceView, clause cypherantlr.SyntaxNode, expressions ...func(cypherantlr.SyntaxNode)) *returnProjectionPlan {
+	plan := &returnProjectionPlan{view: view}
 	body := clause.ChildRule(cypherantlr.CypherParserRULE_projectionBody)
 	if !body.Valid() {
 		return plan
 	}
 	_, plan.distinct = body.DirectToken(cypherantlr.CypherLexerDISTINCT)
-	var modifiers []string
+	var modifiers []braceView
 	for i := 0; i < body.ChildCount(); i++ {
 		node := body.Child(i)
 		switch node.Rule() {
 		case cypherantlr.CypherParserRULE_orderSt, cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
-			modifiers = append(modifiers, node.Code())
+			modifiers = append(modifiers, view.code(node))
 		}
 	}
-	plan.modifiers = strings.Join(modifiers, " ")
+	plan.modifiersView = view.assembleCode(modifiers, " ")
+	plan.modifiers = plan.modifiersView.text()
 	items := body.ChildRule(cypherantlr.CypherParserRULE_projectionItems)
 	if !items.Valid() {
 		return plan
@@ -70,9 +70,9 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 		target := plan
 		if plan.star {
-			target = &returnProjectionPlan{}
+			target = &returnProjectionPlan{view: view}
 		}
-		target.addProjection(expression.Code(), alias)
+		target.addProjection(view.code(expression), alias)
 		projection := &target.projections[len(target.projections)-1]
 		projection.variable, projection.direct = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {
@@ -126,11 +126,11 @@ func (item yieldItem) column() string {
 
 // yieldFromSyntax owns decoded output identities for both execution and facts.
 // Modifiers are existing expression views, never comma/keyword text slices.
-func yieldFromSyntax(clause cypherantlr.SyntaxNode) *yieldClause {
+func yieldFromSyntax(view braceView, clause cypherantlr.SyntaxNode) *yieldClause {
 	if _, found := clause.DirectToken(cypherantlr.CypherLexerYIELD); !found {
 		return nil
 	}
-	yield := &yieldClause{items: []yieldItem{}}
+	yield := &yieldClause{view: view, items: []yieldItem{}, whereView: view.window(0, 0), orderView: view.window(0, 0), skipView: view.window(0, 0), limitView: view.window(0, 0)}
 	_, yield.yieldAll = clause.DirectToken(cypherantlr.CypherLexerMULT)
 	items := clause.ChildRule(cypherantlr.CypherParserRULE_yieldItems)
 	if items.Valid() {
@@ -158,28 +158,33 @@ func yieldFromSyntax(clause cypherantlr.SyntaxNode) *yieldClause {
 		}
 		where := items.ChildRule(cypherantlr.CypherParserRULE_where)
 		if where.Valid() {
-			yield.where = where.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			yield.whereView = view.code(where.ChildRule(cypherantlr.CypherParserRULE_expression))
+			yield.where = yield.whereView.text()
 		}
 	}
 	for i := 0; i < clause.ChildCount(); i++ {
 		part := clause.Child(i)
 		switch part.Rule() {
 		case cypherantlr.CypherParserRULE_where:
-			yield.where = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			yield.whereView = view.code(part.ChildRule(cypherantlr.CypherParserRULE_expression))
+			yield.where = yield.whereView.text()
 			yield.misplacedWhere = yield.orderBy != "" || yield.skip != "" || yield.limit != ""
 		case cypherantlr.CypherParserRULE_orderSt:
-			var terms []string
+			var terms []braceView
 			for j := 0; j < part.ChildCount(); j++ {
 				item := part.Child(j)
 				if item.Rule() == cypherantlr.CypherParserRULE_orderItem {
-					terms = append(terms, item.Code())
+					terms = append(terms, view.code(item))
 				}
 			}
-			yield.orderBy = strings.Join(terms, ", ")
+			yield.orderView = view.assembleCode(terms, ", ")
+			yield.orderBy = yield.orderView.text()
 		case cypherantlr.CypherParserRULE_skipSt:
-			yield.skip = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			yield.skipView = view.code(part.ChildRule(cypherantlr.CypherParserRULE_expression))
+			yield.skip = yield.skipView.text()
 		case cypherantlr.CypherParserRULE_limitSt:
-			yield.limit = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			yield.limitView = view.code(part.ChildRule(cypherantlr.CypherParserRULE_expression))
+			yield.limit = yield.limitView.text()
 		}
 	}
 	return yield

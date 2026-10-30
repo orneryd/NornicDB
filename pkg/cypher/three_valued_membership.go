@@ -12,33 +12,35 @@ import "strings"
 // Boolean WHERE evaluators use it for NOT: `NOT (x IN list)` holds only when the
 // membership is known false. Negating a two-valued membership instead turned
 // null (x IN null, a null x, or a list holding null without a match) into true.
-func inPredicateTruth(clause string, eval func(string) interface{}) (cypherTruth, bool) {
-	clause = strings.TrimSpace(clause)
+func inPredicateTruth(view braceView, eval func(braceView) interface{}) (cypherTruth, bool) {
+	view = view.trim()
+	clause := view.text()
 	for {
-		inner, enclosed := stripEnclosingExpressionParentheses(clause)
+		_, enclosed := stripEnclosingExpressionParentheses(clause)
 		if !enclosed {
 			break
 		}
-		clause = strings.TrimSpace(inner)
+		view = view.window(1, len(clause)-1).trim()
+		clause = view.text()
 	}
 	upper := upperASCII(clause)
 	if strings.HasPrefix(upper, "EXISTS") || strings.HasPrefix(upper, "COUNT") || strings.HasPrefix(upper, "NOT ") {
 		return truthUnknown, false
 	}
 	for _, operator := range []string{" AND ", " OR ", " XOR "} {
-		if _, _, found := splitByOperatorWithOptions(clause, operator, true, true); found {
+		if _, _, found := splitByOperatorWithOptions(view, operator, true, true); found {
 			return truthUnknown, false
 		}
 	}
 	negate := false
-	left, right, found := splitByOperatorWithOptions(clause, " NOT IN ", true, true)
+	left, right, found := splitByOperatorWithOptions(view, " NOT IN ", true, true)
 	if found {
 		negate = true
-	} else if left, right, found = splitByOperatorWithOptions(clause, " IN ", true, true); !found {
+	} else if left, right, found = splitByOperatorWithOptions(view, " IN ", true, true); !found {
 		return truthUnknown, false
 	}
 	truth := truthUnknown
-	if membership, ok := cypherMembership(eval(left), eval(right)); ok {
+	if membership, ok := cypherMembership(eval(view.window(0, len(left))), eval(view.window(len(clause)-len(right), len(clause)))); ok {
 		if matched, known := membership.(bool); known {
 			truth = truthOf(matched)
 		}

@@ -30,9 +30,10 @@ func graphResolutionCatalog() *Catalog {
 // Cypher executor would for these tests: 'text' is a string literal, $p a
 // parameter, and any other expression a row variable held in params (the
 // executor checks that each is a STRING; these tests pass strings).
-func literalGraphArguments(_ context.Context, expressions []string, params map[string]interface{}) ([]string, error) {
+func literalGraphArguments(_ context.Context, expressions []*cyphertext.Source, params map[string]interface{}) ([]string, error) {
 	values := make([]string, len(expressions))
-	for i, expression := range expressions {
+	for i, source := range expressions {
+		expression := source.Text
 		switch {
 		case strings.HasPrefix(expression, "'") && strings.HasSuffix(expression, "'"):
 			values[i] = strings.Trim(expression, "'")
@@ -46,12 +47,13 @@ func literalGraphArguments(_ context.Context, expressions []string, params map[s
 }
 
 func dynamicExec(function string, args []string, scope string) *FragmentExec {
-	return &FragmentExec{
-		Input: &FragmentInit{},
-		Query: "MATCH (n) RETURN n",
-		Graph: &UseClause{Function: function, Args: args},
-		Scope: scope,
+	root := cyphertext.NormalizeSource("USE " + function + "(" + strings.Join(args, ", ") + ") MATCH (n) RETURN n")
+	reference, _, present, err := ReadUseClauseSource(context.Background(), root, false)
+	if err != nil || !present {
+		panic("invalid dynamic graph fixture")
 	}
+	selector := sourceUse{UseClause: reference.UseClause, source: root, arguments: reference.ArgumentViews}
+	return (planningSource{view: root, anchor: root}).window(reference.End, len(root.Text)).trim().exec(useTarget(selector), scope)
 }
 
 // TestResolveExecGraph_Dynamic pins how a dynamic graph reference resolves
@@ -202,14 +204,14 @@ func TestResolveExecGraph_EvaluatorFailures(t *testing.T) {
 	require.EqualError(t, err, `dynamic graph reference graph.byName("cmp.a") can't be evaluated`)
 
 	evalErr := errors.New("Variable `g` not defined")
-	exec.SetGraphArgumentEvaluator(func(context.Context, []string, map[string]interface{}) ([]string, error) {
+	exec.SetGraphArgumentEvaluator(func(context.Context, []*cyphertext.Source, map[string]interface{}) ([]string, error) {
 		return nil, evalErr
 	})
 	_, _, err = exec.resolveExecGraph(context.Background(), dynamicExec("graph.byName", []string{"g"}, "cmp"), nil)
 	require.ErrorIs(t, err, evalErr)
 
 	// An evaluator must return one value per argument expression.
-	exec.SetGraphArgumentEvaluator(func(context.Context, []string, map[string]interface{}) ([]string, error) {
+	exec.SetGraphArgumentEvaluator(func(context.Context, []*cyphertext.Source, map[string]interface{}) ([]string, error) {
 		return nil, nil
 	})
 	_, _, err = exec.resolveExecGraph(context.Background(), dynamicExec("graph.byName", []string{"g"}, "cmp"), nil)

@@ -38,7 +38,8 @@ func (s *semanticBindingScope) contains(name string) bool {
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
 func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isMetadataCommand(cypher, metadataCreateAdmission) {
+	view := statementBraceView(ctx, cypher)
+	if findKeywordIndexInContext(view, "CREATE") < 0 || isMetadataCommand(view, metadataCreateAdmission) {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(ctx, cypher)
@@ -50,31 +51,31 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			for _, name := range extractNodeVariables(clause.text) {
+			for _, name := range extractNodeVariables(clause.view) {
 				scope.bind(name)
 			}
-			for _, name := range extractRelationshipVariables(clause.text) {
+			for _, name := range extractRelationshipVariables(clause.view) {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.view)
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
+			if err := bindPipelineLet(scope, clause.view); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause.view); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			for _, name := range extractNodeVariables(clause.text) {
+			for _, name := range extractNodeVariables(clause.view) {
 				scope.bind(name)
 			}
-			for _, name := range extractRelationshipVariables(clause.text) {
+			for _, name := range extractRelationshipVariables(clause.view) {
 				scope.bind(name)
 			}
 		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
+			if err := e.validateCreateClauseBindings(scope, clause.view, cypher25); err != nil {
 				return err
 			}
 		}
@@ -82,11 +83,11 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	return nil
 }
 
-func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause braceView) *semanticBindingScope {
+	body, _ := projectionSemanticSourceAndTail(clause, "WITH")
 	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+	for _, raw := range body.commaViews() {
+		itemSource := readProjectionItemSource(ctx, raw.trim(), projectionAdmitted)
 		expr, alias := itemSource.expression, itemSource.alias
 		if expr == "*" {
 			for name := range input.names {
@@ -106,7 +107,7 @@ func projectedBindingScope(ctx context.Context, input *semanticBindingScope, cla
 // validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
 // variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
 // and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(clause string) error {
+func validateUnwindAlias(clause braceView) error {
 	_, alias, ok := parsePipelineIteration(clause)
 	if !ok {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
@@ -124,7 +125,7 @@ func validateUnwindAlias(clause string) error {
 }
 
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
-func unwindBindingName(clause string) string {
+func unwindBindingName(clause braceView) string {
 	if _, alias, ok := parsePipelineIteration(clause); ok {
 		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
 			return normalizeProjectionColumnName(name)
@@ -133,15 +134,15 @@ func unwindBindingName(clause string) string {
 	return ""
 }
 
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
-	body := strings.TrimSpace(clause[len("CREATE"):])
+func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause braceView, cypher25 bool) error {
+	body := clause.clauseBody("CREATE")
 	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
 		if !cypher25 {
 			clear(created)
 		}
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
+		pattern = pattern.trim()
+		if pattern.empty() {
 			continue
 		}
 		isRelationshipPattern := patternHasRelationship(pattern)
@@ -162,7 +163,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 		}
 
 		for _, nodePattern := range e.splitNodePatterns(pattern) {
-			variable := createNodePatternVariable(nodePattern)
+			variable := createNodePatternVariable(nodePattern.text())
 			if err := e.validateCreatePatternExpressions(scope, nodePattern); err != nil {
 				return err
 			}
@@ -200,8 +201,12 @@ func createNodePatternVariable(pattern string) string {
 	return name.Value
 }
 
-func createNodePatternHasDecoration(pattern string) bool {
-	trimmed := strings.TrimSpace(pattern)
+func createNodePatternHasDecoration(view braceView) bool {
+	trimmed, props := splitNodePatternProperties(view)
+	if !props.empty() {
+		return true
+	}
+	trimmed = strings.TrimSpace(trimmed)
 	if strings.HasPrefix(trimmed, "(") {
 		trimmed = strings.TrimSpace(trimmed[1:])
 	}
@@ -210,7 +215,7 @@ func createNodePatternHasDecoration(pattern string) bool {
 		return false
 	}
 	remainder := strings.TrimSpace(trimmed[next.End:])
-	return strings.HasPrefix(remainder, ":") || strings.HasPrefix(remainder, "{")
+	return strings.HasPrefix(remainder, ":")
 }
 
 func createVariableAlreadyBoundError(variable string) error {
@@ -233,7 +238,7 @@ func createUndefinedVariableError(variable string) error {
 	}
 }
 
-func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern string) error {
+func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern braceView) error {
 	properties, ok := createPropertyMapBody(pattern)
 	if !ok {
 		return nil
@@ -241,7 +246,7 @@ func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindin
 	return e.validateCreatePropertyExpressions(scope, properties)
 }
 
-func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern string) error {
+func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern braceView) error {
 	for _, properties := range createRelationshipPropertyMapBodies(pattern) {
 		if err := e.validateCreatePropertyExpressions(scope, properties); err != nil {
 			return err
@@ -252,33 +257,26 @@ func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticB
 
 // createPropertyMapBody returns the text between the braces of a node (or
 // relationship) pattern's property map.
-func createPropertyMapBody(pattern string) (string, bool) {
-	open := indexByteOutsideBackticks(pattern, '{')
-	close := strings.LastIndex(pattern, "}")
-	if open < 0 || close <= open {
-		return "", false
+func createPropertyMapBody(pattern braceView) (braceView, bool) {
+	_, properties := splitNodePatternProperties(pattern)
+	if properties.empty() {
+		return properties, false
 	}
-	return pattern[open+1 : close], true
+	close, complete := properties.close(0)
+	if !complete {
+		return properties, false
+	}
+	return properties.window(0, close+1), true
 }
 
 // createRelationshipPropertyMapBodies returns the property map text of every
 // relationship ([...]) in a CREATE path pattern.
-func createRelationshipPropertyMapBodies(pattern string) []string {
-	var bodies []string
-	for offset := 0; offset < len(pattern); {
-		open := strings.Index(pattern[offset:], "[")
-		if open < 0 {
-			break
-		}
-		open += offset
-		close := findMatchingBracket(pattern, open)
-		if close < 0 {
-			break
-		}
-		if properties, ok := createPropertyMapBody(pattern[open+1 : close]); ok {
+func createRelationshipPropertyMapBodies(pattern braceView) []braceView {
+	var bodies []braceView
+	for open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0; open, close = readRelationshipBracket(pattern, close+1, requireClosedRelationship) {
+		if properties, ok := createPropertyMapBody(pattern.window(open+1, close)); ok {
 			bodies = append(bodies, properties)
 		}
-		offset = close + 1
 	}
 	return bodies
 }
@@ -295,10 +293,10 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
 // clause for a Cypher 25 statement, where a pattern may not read an entity an
 // earlier pattern of the same CREATE creates either (Neo4j 2026.09).
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern braceView, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
-		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
+		if variable := createNodePatternVariable(nodePattern.text()); variable != "" && !scope.contains(variable) {
 			created[variable] = "Node"
 		}
 	}
@@ -308,22 +306,14 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 	if len(created) == 0 {
 		return nil
 	}
-	maps := createRelationshipPropertyMapBodies(pattern)
-	for _, nodePattern := range nodePatterns {
-		if properties, ok := createPropertyMapBody(nodePattern); ok {
-			maps = append(maps, properties)
-		}
+	entries, valid := pattern.patternEntryViews()
+	if !valid {
+		return pattern.admission()
 	}
-	for _, properties := range maps {
-		for _, pair := range splitTopLevelComma(properties) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
-			if separator <= 0 {
-				continue
-			}
-			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
-				if kind, ok := created[variable]; ok {
-					return createSamePatternReferenceError(variable, kind, clause)
-				}
+	for _, entry := range entries {
+		for _, variable := range expressionFreeVariables(entry.value) {
+			if kind, ok := created[variable]; ok {
+				return createSamePatternReferenceError(variable, kind, clause)
 			}
 		}
 	}
@@ -335,13 +325,13 @@ func createSamePatternReferenceError(variable, kind, clause string) error {
 		localization.CypherCoreEntityReferencedInSameClause(kind, variable, clause))
 }
 
-func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties string) error {
-	for _, pair := range splitTopLevelComma(properties) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			continue
-		}
-		expression := strings.TrimSpace(pair[separator+1:])
+func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties braceView) error {
+	entries, err := properties.requireKeyedEntries()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		expression := entry.value.text()
 		if err := validateExpressionOperandCompleteness(expression); err != nil {
 			return err
 		}
@@ -357,7 +347,7 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" || strings.HasPrefix(expression, "$") ||
 		strings.HasPrefix(expression, "'") || strings.HasPrefix(expression, "\"") ||
-		strings.HasPrefix(expression, "[") || strings.HasPrefix(expression, "{") ||
+		strings.HasPrefix(expression, "[") || startsBrace(expression) ||
 		looksLikeFunctionCall(expression) {
 		return "", false
 	}

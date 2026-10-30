@@ -328,7 +328,6 @@
     "localBindingStepReads",
     "localScopeStart",
     "namedPathDeclaration",
-    "staticListOperand",
     "staticListOperandTypeError",
     "validateListComprehensionVariables",
     "wholeListOperand"
@@ -482,10 +481,6 @@
     "mayBeLogicalExpression"
   ],
   "pkg/cypher/map_literal_validation.go": [
-    "at",
-    "subqueryBraceBodyStartsLikeClause",
-    "subqueryExpressionAfterLiveByte",
-    "subqueryExpressionKeywordBeforeBrace",
     "validateStaticMapKeys"
   ],
   "pkg/cypher/map_pattern_context.go": [
@@ -1088,5 +1083,8 @@
   ],
   "ui/src/store/appStore.ts": [],
   "ui/src/utils/cypherStatements.ts": [],
-  "ui/src/utils/cypherText.mjs": []
+  "ui/src/utils/cypherText.mjs": [],
+  "pkg/cypher/brace_syntax.go": [
+    "at"
+  ]
 }

@@ -42,14 +42,19 @@ import (
 // labelRewriteEdit replaces query[start:end] with text (an insertion when
 // start == end).
 type labelRewriteEdit struct {
-	start, end int
-	text       string
+	start, end  int
+	text        string
+	copies      []cyphertext.SourceCopy
+	constructed []braceConstruction
+	braceParts  []braceConstructionPart
+	entries     []cyphertext.EntryDeclaration
 }
 
 type labelExpressionRewriter struct {
 	query     string
 	edits     []labelRewriteEdit
 	generated int
+	nextBrace int
 	// The property phase reuses this element walk without label rewriting.
 	visitElement func(open, close int, relationship bool) error
 	// params are the statement's parameters: a dynamic label or type whose
@@ -62,6 +67,9 @@ type labelExpressionRewriter struct {
 	// syntax is the label syntax scope of the MATCH clause being read; nil
 	// outside one.
 	syntax *labelSyntaxScope
+	// braceView retains the original admission/role/entry product through
+	// rewriting; this producer does not classify isolated expression text.
+	braceView braceView
 	// named holds the variables given to anonymous elements, by the index of
 	// their opening bracket, so an element is named once.
 	named map[int]string
@@ -95,15 +103,19 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
+func desugarLabelExpressionView(view braceView, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+	query := view.text()
+	if view.syntax.err != nil {
+		return query, nil, view.syntax.err
+	}
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(view) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
-		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
+		!mayUseParenthesisedPath(view) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
 		!mayTestExpressionLabels(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
+	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25, braceView: view}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -123,15 +135,49 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 	var out strings.Builder
 	out.Grow(len(query) + 32*len(edits))
 	last := 0
+	parts := make(map[int]braceConstruction)
 	for _, edit := range edits {
+		if last < edit.start {
+			rewrite.copies = append(rewrite.copies, cyphertext.SourceCopy{Original: cyphertext.Span{Start: last, End: edit.start}, Accepted: cyphertext.Span{Start: out.Len(), End: out.Len() + edit.start - last}})
+		}
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
+		for _, copy := range edit.copies {
+			copy.Accepted.Start += canonStart
+			copy.Accepted.End += canonStart
+			rewrite.copies = append(rewrite.copies, copy)
+		}
+		for _, construction := range edit.constructed {
+			rewrite.constructed = append(rewrite.constructed, shiftBraceConstruction(construction, canonStart))
+		}
+		for _, entry := range edit.entries {
+			rewrite.entries = append(rewrite.entries, entry.Shift(canonStart))
+		}
+		for _, part := range edit.braceParts {
+			construction := parts[part.id]
+			if part.opening {
+				construction.span.Start, construction.kind = canonStart+part.at, part.kind
+			} else {
+				construction.span.End = canonStart + part.at + 1
+			}
+			parts[part.id] = construction
+		}
 		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.start, End: edit.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = edit.end
 	}
+	if last < len(query) {
+		rewrite.copies = append(rewrite.copies, cyphertext.SourceCopy{Original: cyphertext.Span{Start: last, End: len(query)}, Accepted: cyphertext.Span{Start: out.Len(), End: out.Len() + len(query) - last}})
+	}
 	out.WriteString(query[last:])
 	rewrite.Text = out.String()
+	rewrite.projected = true
+	for _, construction := range parts {
+		if construction.span.End <= construction.span.Start {
+			panic("cypher: incomplete generated brace construction")
+		}
+		rewrite.constructed = append(rewrite.constructed, construction)
+	}
 	return rewrite.Text, rewrite
 }
 
@@ -168,17 +214,17 @@ func mayTestExpressionLabels(query string) bool {
 func mayReadPatternInPropertyMap(query string) bool {
 	var openers []byte
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := query[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
-		case '(', '[':
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[':
 			openers = append(openers, c)
-		case ')', ']', '}':
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
 			if len(openers) > 0 {
 				openers = openers[:len(openers)-1]
 			}
-		case '{':
-			inPattern := len(openers) > 0 && openers[len(openers)-1] != '{'
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			inPattern := len(openers) > 0 && !cyphertext.IsOpenBrace(openers[len(openers)-1])
 			openers = append(openers, c)
 			if !inPattern {
 				continue
@@ -195,19 +241,20 @@ func mayReadPatternInPropertyMap(query string) bool {
 	return false
 }
 
-func mayUsePatternPredicate(query string) bool {
+func mayUsePatternPredicate(view braceView) bool {
+	query := view.text()
 	var openers []int
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := query[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
-		case '(', '[', '{':
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
 			openers = append(openers, i)
-		case ')', ']', '}':
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
 			if len(openers) > 0 {
 				openers = openers[:len(openers)-1]
 			}
-		case 'W', 'w':
+		case (cypherLexicalByte(c)) == 'W', (cypherLexicalByte(c)) == 'w':
 			if len(openers) == 0 || !matchKeywordAt(query, i, "WHERE") {
 				continue
 			}
@@ -215,7 +262,7 @@ func mayUsePatternPredicate(query string) bool {
 			if query[open] == '{' || query[open] == '(' && open > 0 && cyphertext.NamePartAt(query, open-1) {
 				continue
 			}
-			if topLevelKeywordIndex(query[open+1:i], "IN") >= 0 {
+			if topLevelKeywordIndex(view.window(open+1, i), "IN") >= 0 {
 				continue
 			}
 			return true
@@ -431,11 +478,11 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
-		case c == '(' || c == '[' || c == '{':
-			depth++
+		case c == '(' || c == '[' || cyphertext.IsOpenBrace(c):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, c, false)
 			continue
-		case c == ')' || c == ']' || c == '}':
-			depth--
+		case c == ')' || c == ']' || cyphertext.IsCloseBrace(c):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, c, false)
 			continue
 		}
 		if depth != 0 || !cyphertext.NameStartAt(q, i) || (i > start && cyphertext.NamePartAt(q, i-1)) {
@@ -446,7 +493,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			j++
 		}
 		word := strings.ToUpper(q[i:j])
-		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(q[start:end], i-start, j-start, word) {
+		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(r.braceView.window(start, end), i-start, j-start, word) {
 			i = j - 1
 			continue
 		}
@@ -507,7 +554,7 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 				outer.symbols = outer.symbols || scope.symbols
 			}
 		case "CREATE", "MERGE":
-			if hasQuantifiedGroup(r.query[clause.bodyStart:clause.end]) {
+			if hasQuantifiedGroup(r.braceView.window(clause.bodyStart, clause.end)) {
 				return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathInWritePattern(clause.keyword))
 			}
 			if err := writePatternSelectorError(r.query, clause); err != nil {
@@ -565,23 +612,23 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 	if err != nil {
 		return err
 	}
-	predicates = append(predicates, repeated...)
-	predicates = append(predicates, prefixes.acyclic...)
+	predicates = append(predicates, generatedPredicates(repeated...)...)
+	predicates = append(predicates, generatedPredicates(prefixes.acyclic...)...)
 	predicates = append(predicates, prefixes.pathWheres...)
 	if prefixes.selector != "" {
-		if prefixes.where != "" {
+		if prefixes.where.text != "" {
 			predicates = append(predicates, prefixes.where)
 		}
-		predicate := "true"
+		predicate := generatedPredicate("true")
 		if len(predicates) > 0 {
-			predicate = strings.Join(predicates, " AND ")
+			predicate = joinRewritePredicates(predicates, " AND ")
 		}
-		predicates = []string{prefixes.selector + predicate + ")"}
+		predicates = []rewritePredicate{wrapRewritePredicate(prefixes.selector, predicate, ")")}
 	}
 	if prefixes.repeatable {
 		// The mode marker comes first: the MATCH step reads it before a
 		// selector (repeatable_elements.go).
-		predicates = append([]string{repeatableElementsFunction + "()"}, predicates...)
+		predicates = append([]rewritePredicate{generatedPredicate(repeatableElementsFunction + "()")}, predicates...)
 	}
 	switch {
 	case whereStart >= 0 && len(predicates) > 0:
@@ -590,40 +637,40 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 		return r.expression(whereStart, whereEnd)
 	case len(predicates) > 0:
 		at := trimRightIndex(r.query, start, end)
-		r.edit(at, at, " WHERE "+strings.Join(predicates, " AND "))
+		r.editPredicate(at, at, wrapRewritePredicate(" WHERE ", joinRewritePredicates(predicates, " AND "), ""))
 	}
 	return nil
 }
 
 // pattern rewrites the elements of the pattern query[start:end] and returns
 // the predicates its label expressions become (MATCH only).
-func (r *labelExpressionRewriter) pattern(start, end int, mode labelPatternMode) ([]string, error) {
-	var predicates []string
+func (r *labelExpressionRewriter) pattern(start, end int, mode labelPatternMode) ([]rewritePredicate, error) {
+	var predicates []rewritePredicate
 	if err := r.patternElements(start, end, mode, &predicates); err != nil {
 		return nil, err
 	}
 	return predicates, nil
 }
 
-func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatternMode, predicates *[]rewritePredicate) error {
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '{':
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
 			// A quantifier ({1,3}) or a stray map: no labels in it.
 			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
-		case '(':
+		case (cypherLexicalByte(c)) == '(':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '(', ')', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
 			inner := skipASCIISpaces(q, i+1, close)
-			if inner < close && q[inner] == '(' && mode == labelPatternMatch && quantifiedGroupAt(q, close, end) {
+			if inner < close && q[inner] == '(' && mode == labelPatternMatch && quantifiedGroupAt(r.braceView, close, end) {
 				// A quantified group's predicates are its own WHERE's.
 				if err := r.quantifiedGroup(i, close); err != nil {
 					return err
@@ -635,7 +682,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				// pathPrefixes moves to the clause's).
 				stop := close
 				if inner < close && q[inner] == '(' {
-					if where := topLevelKeywordIndex(q[i+1:close], "WHERE"); where >= 0 {
+					if where := topLevelKeywordIndex(r.braceView.window(i+1, close), "WHERE"); where >= 0 {
 						stop = i + 1 + where
 					}
 				}
@@ -646,13 +693,13 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				return err
 			}
 			i = close
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			open := i
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
-			quantifier, at, quantified := quantifierAfterArrow(q, close, end)
+			quantifier, at, quantified := quantifierAfterArrow(r.braceView, close, end)
 			if err := r.visitOrRewriteElement(open, close, true, quantified, mode, predicates); err != nil {
 				return err
 			}
@@ -663,11 +710,11 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				}
 				i = quantifier.end - 1
 			}
-		case '-', '<':
+		case (cypherLexicalByte(c)) == '-', (cypherLexicalByte(c)) == '<':
 			// An abbreviated relationship (--, -->, <--) may be quantified.
 			arrowEnd := arrowRunEnd(q, i, end)
 			if next := skipASCIISpaces(q, arrowEnd, end); r.visitElement == nil && next < end && q[next] != '[' {
-				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok {
+				if quantifier, ok := relationshipQuantifierAt(r.braceView, next, end); ok {
 					if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
 						return err
 					}
@@ -681,7 +728,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 	return nil
 }
 
-func (r *labelExpressionRewriter) visitOrRewriteElement(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) visitOrRewriteElement(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]rewritePredicate) error {
 	if r.visitElement != nil {
 		return r.visitElement(open, close, relationship)
 	}
@@ -691,7 +738,7 @@ func (r *labelExpressionRewriter) visitOrRewriteElement(open, close int, relatio
 // element rewrites the node (or relationship) pattern query[open:close+1]:
 // its variable, then : or IS and a label chain, and its own WHERE (#878).
 // quantified marks a relationship followed by a quantifier (#864).
-func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]rewritePredicate) error {
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
 	variable, variableEnd := "", i
@@ -699,7 +746,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 		variable, variableEnd = written, end
 		i = skipASCIISpaces(q, end, close)
 	}
-	if where := elementWhereIndex(q, open, close); where >= 0 {
+	if where := elementWhereIndex(r.braceView, open, close); where >= 0 {
 		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
 			return err
 		}
@@ -725,6 +772,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	if !ok {
 		return nil
 	}
+	chain.view = r.braceView.window(textStart, close)
 	chainEnd := textStart + chain.end
 	r.syntax.note(chain, q[textStart:close], relationship, viaIS)
 	rest := skipASCIISpaces(q, chainEnd, close)
@@ -751,7 +799,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 			}
 			variable = r.elementVariable(open, variable)
 			r.edit(chainStart, chainEnd, labelChainText(chain.expr.requiredLabels()))
-			*predicates = append(*predicates, chain.expr.predicate(variable))
+			*predicates = append(*predicates, generatedPredicate(chain.expr.predicate(variable)))
 			return nil
 		}
 		chain.expr, chain.symbols = resolved, true
@@ -768,7 +816,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	}
 	variable = r.elementVariable(open, variable)
 	r.edit(chainStart, chainEnd, labelChainText(chain.expr.requiredLabels()))
-	*predicates = append(*predicates, variable+":"+chain.expr.String())
+	*predicates = append(*predicates, generatedPredicate(variable+":"+chain.expr.String()))
 	return nil
 }
 
@@ -778,21 +826,21 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 // a map entry is that equality, null included, and the pattern's routes
 // read property maps as values known before the match. A variable-length
 // relationship's map applies to each of its relationships and is left alone.
-func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, variable string, relationship bool, predicates *[]string) {
+func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, variable string, relationship bool, predicates *[]rewritePredicate) {
 	if len(r.patternVariables) == 0 {
 		return
 	}
 	q := r.query
 	brace := -1
 	for i := from; i < close; i++ {
-		switch c := q[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := q[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '*':
+		case (cypherLexicalByte(c)) == '*':
 			if relationship {
 				return
 			}
-		case '{':
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
 			brace = i
 		}
 		if brace >= 0 {
@@ -802,37 +850,53 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 	if brace < 0 {
 		return
 	}
-	end := cyphertext.FindMatchingDelimiter(q[:close+1], brace, '{', '}', cyphertext.OpeningDelimiter)
-	if end < 0 {
+	end, found := r.braceView.close(brace)
+	if !found || end > close {
 		return
 	}
-	entries := splitTopLevelComma(q[brace+1 : end])
-	kept := make([]string, 0, len(entries))
-	var moved []string
-	for _, entry := range entries {
-		colon := indexOutsideQuotes(entry, ':')
-		if colon < 0 {
+	var kept, moved []rewritePredicate
+	var keptEntries []cyphertext.BraceEntry
+	if !r.braceView.entries(brace, end, func(entry cyphertext.BraceEntry) {
+		key, value := q[entry.Name.Start:entry.Name.End], q[entry.Value.Start:entry.Value.End]
+		if !r.readsPatternVariable(value) {
+			kept = append(kept, copiedPredicate(q, entry.Span))
+			keptEntries = append(keptEntries, entry)
 			return
 		}
-		key, value := strings.TrimSpace(entry[:colon]), strings.TrimSpace(entry[colon+1:])
-		if key == "" || !r.readsPatternVariable(value) {
-			kept = append(kept, strings.TrimSpace(entry))
-			continue
-		}
-		moved = append(moved, key+" = "+value)
+		// Leading spaces only: a trailing line comment keeps its line break.
+		valueSpan := cyphertext.Span{Start: cyphertext.TrimWhitespaceSpan(q, entry.Value).Start, End: entry.Value.End}
+		moved = append(moved, wrapRewritePredicate(key+" = ", copiedPredicate(q, valueSpan), ""))
+	}) {
+		panic("cypher: label rewrite lost admitted map entries")
 	}
 	if len(moved) == 0 {
 		return
 	}
 	variable = r.elementVariable(open, variable)
 	for _, equality := range moved {
-		*predicates = append(*predicates, variable+"."+equality)
+		*predicates = append(*predicates, wrapRewritePredicate(variable+".", equality, ""))
 	}
 	if len(kept) == 0 {
 		r.edit(brace, end+1, "")
 		return
 	}
-	r.edit(brace, end+1, "{"+strings.Join(kept, ", ")+"}")
+	pieces := []rewritePredicate{copiedPredicate(q, cyphertext.Span{Start: brace, End: brace + 1}), joinRewritePredicates(kept, ", "), copiedPredicate(q, cyphertext.Span{Start: end, End: end + 1})}
+	rebuilt := joinRewritePredicates(pieces, "")
+	offset := 1
+	for index, entry := range keptEntries {
+		before := offset - 1
+		if index > 0 {
+			before = offset
+			offset += 2
+		}
+		projected := entry
+		projected.Name = cyphertext.Span{Start: offset + entry.Name.Start - entry.Span.Start, End: offset + entry.Name.End - entry.Span.Start}
+		projected.Value = cyphertext.Span{Start: offset + entry.Value.Start - entry.Span.Start, End: offset + entry.Value.End - entry.Span.Start}
+		projected.Span = cyphertext.Span{Start: before + 1, End: offset + len(kept[index].text)}
+		rebuilt.entries = append(rebuilt.entries, cyphertext.EntryDeclaration{Original: entry, Entry: projected, First: projected.Name, Separators: cyphertext.EntrySeparators{Before: cyphertext.Span{Start: before, End: before + 1}, Colon: cyphertext.Span{Start: projected.Value.Start - 1, End: projected.Value.Start}, After: cyphertext.Span{Start: projected.Span.End, End: projected.Span.End + 1}}})
+		offset = projected.Span.End
+	}
+	r.editPredicate(brace, end+1, rebuilt)
 }
 
 // readsPatternVariable reports whether expression reads a variable of the
@@ -865,14 +929,14 @@ func declaredPatternVariables(pattern string) map[string]bool {
 	var variables map[string]bool
 	depth := 0
 	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := pattern[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
-		case '{':
-			depth++
-		case '}':
-			depth--
-		case '(', '[':
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case cyphertext.IsCloseBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[':
 			if depth > 0 {
 				continue
 			}
@@ -892,12 +956,13 @@ func declaredPatternVariables(pattern string) map[string]bool {
 // elementWhereIndex is the index of the WHERE that starts the pattern
 // element query[open:close+1]'s own predicate (#878), or -1. The element's
 // variable comes first, so a variable named where isn't the keyword.
-func elementWhereIndex(q string, open, close int) int {
+func elementWhereIndex(view braceView, open, close int) int {
+	q := view.text()
 	i := skipASCIISpaces(q, open+1, close)
 	if _, end, ok := scanSymbolicName(q[:close], i); ok {
 		i = end
 	}
-	if where := topLevelKeywordIndex(q[i:close], "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(view.window(i, close), "WHERE"); where >= 0 {
 		return i + where
 	}
 	return -1
@@ -910,7 +975,7 @@ func elementWhereIndex(q string, open, close int) int {
 // reads the iteration variable under the relationship's own name. Neo4j
 // rejects the predicate on a * variable-length relationship and in CREATE or
 // MERGE.
-func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]rewritePredicate) error {
 	q := r.query
 	element := "Node"
 	if relationship {
@@ -922,17 +987,17 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 	if relationship && indexOutsideQuotes(q[open+1:where], '*') >= 0 {
 		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateVariableLength())
 	}
-	predicate, err := r.rewrittenPredicate(strings.TrimSpace(q[where+len("WHERE") : close]))
+	predicate, err := r.rewrittenPredicate(skipASCIISpaces(q, where+len("WHERE"), close), trimRightIndex(q, where+len("WHERE"), close))
 	if err != nil {
 		return err
 	}
 	r.edit(where, close, "")
 	if quantified {
 		variable = r.elementVariable(open, variable)
-		*predicates = append(*predicates, "all("+variable+" IN "+variable+" WHERE "+predicate+")")
+		*predicates = append(*predicates, wrapRewritePredicate("all("+variable+" IN "+variable+" WHERE ", predicate, ")"))
 		return nil
 	}
-	*predicates = append(*predicates, "("+predicate+")")
+	*predicates = append(*predicates, wrapRewritePredicate("(", predicate, ")"))
 	return nil
 }
 
@@ -940,24 +1005,29 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // predicates and comprehensions rewritten, for a predicate elementWhere
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
-func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
-	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+func (r *labelExpressionRewriter) rewrittenPredicate(start, end int) (rewritePredicate, error) {
+	predicate := r.query[start:end]
+	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}, braceView: r.braceView.window(start, end)}
 	if err := sub.expression(0, len(predicate)); err != nil {
-		return "", err
+		return rewritePredicate{}, err
 	}
 	r.generated = sub.generated
 	if len(sub.edits) == 0 {
-		return predicate, nil
+		return copiedPredicate(r.query, cyphertext.Span{Start: start, End: end}), nil
 	}
-	rewritten, _ := applyLabelRewriteEdits(predicate, sub.edits, false)
-	return rewritten, nil
+	rewritten, rewrite := applyLabelRewriteEdits(predicate, sub.edits, false)
+	for i := range rewrite.copies {
+		rewrite.copies[i].Original.Start += start
+		rewrite.copies[i].Original.End += start
+	}
+	return rewritePredicate{text: rewritten, copies: rewrite.copies, constructed: rewrite.constructed, entries: rewrite.entries}, nil
 }
 
 // relationshipElement rewrites a relationship pattern's type chain
 // (query[chainStart:chainEnd]; rest is where the length or properties
 // start). A quantified relationship's type expression applies to each of its
 // relationships (#864).
-func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]rewritePredicate) error {
 	q := r.query
 	if chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonConjunction())
@@ -979,10 +1049,10 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 			r.edit(chainStart, chainEnd, "")
 			if variableLength || quantified {
 				each := r.variable()
-				*predicates = append(*predicates, "all("+each+" IN "+variable+" WHERE "+chain.expr.predicate(each)+")")
+				*predicates = append(*predicates, generatedPredicate("all("+each+" IN "+variable+" WHERE "+chain.expr.predicate(each)+")"))
 				return nil
 			}
-			*predicates = append(*predicates, chain.expr.predicate(variable))
+			*predicates = append(*predicates, generatedPredicate(chain.expr.predicate(variable)))
 			return nil
 		}
 		if resolved.kind == labelExpressionAnd && len(resolved.operands) == 0 {
@@ -995,7 +1065,7 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	}
 	alternatives, plain := chain.expr.alternatives()
 	if chain.barColons {
-		hasProperties := strings.IndexByte(q[rest:close], '{') >= 0
+		hasProperties := firstLiveBrace(q[rest:close]) >= 0
 		if variable != "" || variableLength || quantified || hasProperties {
 			return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonDisjunction(chain.expr.String()))
 		}
@@ -1029,10 +1099,10 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	r.edit(chainStart, chainEnd, kept)
 	if quantified {
 		each := r.variable()
-		*predicates = append(*predicates, "all("+each+" IN "+variable+" WHERE "+each+":"+chain.expr.String()+")")
+		*predicates = append(*predicates, generatedPredicate("all("+each+" IN "+variable+" WHERE "+each+":"+chain.expr.String()+")"))
 		return nil
 	}
-	*predicates = append(*predicates, variable+":"+chain.expr.String())
+	*predicates = append(*predicates, generatedPredicate(variable+":"+chain.expr.String()))
 	return nil
 }
 
@@ -1045,15 +1115,18 @@ func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode lab
 	if chain.dynamicAny && mode != labelPatternMatch {
 		return nil, false, labelExpressionSyntaxError(localization.CypherCoreDynamicAnyInWritePattern())
 	}
-	return chain.expr.resolveDynamic(r.resolveConstant)
+	return chain.expr.resolveDynamic(func(span cyphertext.Span) (interface{}, bool, error) {
+		return r.resolveConstant(chain.view.spanWindow(span))
+	})
 }
 
 // resolveConstant reads a dynamic term's expression when its value is known
 // before the rows exist: a literal (whose wrong type or name is a
 // SyntaxError, staticDynamicTokenError) or a supplied parameter.
-func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
-	expression = strings.TrimSpace(expression)
-	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
+func (r *labelExpressionRewriter) resolveConstant(view braceView) (interface{}, bool, error) {
+	view = view.trim()
+	expression := view.text()
+	if err := staticDynamicTokenError(view, staticTypeScope{}, dynamicTokenLabel); err != nil {
 		return nil, false, err
 	}
 	if strings.HasPrefix(expression, "$") {
@@ -1063,7 +1136,7 @@ func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{
 		}
 		return nil, false, nil
 	}
-	if value, literal := parseLiteralValueForPipeline(expression); literal {
+	if value, literal := parseLiteralValueForPipeline(view); literal {
 		return value, true, nil
 	}
 	return nil, false, nil
@@ -1122,17 +1195,17 @@ func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
 	partStart := start
 	for i := start; i <= end; i++ {
 		if i < end {
-			switch c := q[i]; cypherLexicalByte(c) {
-			case cypherQuoteClass:
+			switch c := q[i]; {
+			case (cypherLexicalByte(c)) == cypherQuoteClass:
 				i = skipCypherQuotedText(q[:end], i, c) - 1
 				continue
-			case '(', '[', '{':
-				closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
+			case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+				closer := rune(cyphertext.DelimiterCloser(c))
 				if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), closer, cyphertext.OpeningDelimiter); close > i {
 					i = close
 				}
 				continue
-			case ',':
+			case (cypherLexicalByte(c)) == ',':
 			default:
 				continue
 			}
@@ -1144,7 +1217,7 @@ func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
 			inner := skipASCIISpaces(q, open+1, i)
 			// Nothing follows the node (a single-node path), and it has no
 			// variable: its text starts with ":", ")" or "{".
-			if close > open && trimRightIndex(q, close+1, i) == close+1 && strings.IndexByte(":){", q[inner]) >= 0 {
+			if close > open && trimRightIndex(q, close+1, i) == close+1 && syntaxByteInSet(":){", q[inner]) {
 				r.elementVariable(open, "")
 			}
 		}
@@ -1158,7 +1231,7 @@ func mayAssignAnonymousNodePath(query string) bool {
 	for i := strings.IndexByte(query, '='); i >= 0; {
 		open := skipASCIISpaces(query, i+1, len(query))
 		if open < len(query) && query[open] == '(' {
-			if inner := skipASCIISpaces(query, open+1, len(query)); inner < len(query) && strings.IndexByte(":){", query[inner]) >= 0 {
+			if inner := skipASCIISpaces(query, open+1, len(query)); inner < len(query) && syntaxByteInSet(":){", query[inner]) {
 				return true
 			}
 		}
@@ -1201,7 +1274,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 		c := q[i]
 		// A pattern predicate or comprehension can't quantify a relationship;
 		// Neo4j allows it only in MATCH and subqueries.
-		if _, quantified := relationshipQuantifierAt(q, i, end); quantified && arrowEndsAt(q, start, i) {
+		if _, quantified := relationshipQuantifierAt(r.braceView, i, end); quantified && arrowEndsAt(q, start, i) {
 			return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
 		}
 		switch {
@@ -1247,7 +1320,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			for j < end && cyphertext.NamePartAt(q, j) {
 				j++
 			}
-			if err := shortestPathExpressionError(q, i, j, end); err != nil {
+			if err := shortestPathExpressionError(r.braceView, i, j, end); err != nil {
 				return err
 			}
 			if err := r.vectorCall(i, j, end); err != nil {
@@ -1320,9 +1393,9 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		skip := !wordIsName(q, wordStart)
 		switch word {
 		case "CASE":
-			skip = caseKeywordAt(q, wordStart, word) && equalFoldASCII(caseWordAt(q, skipSpaces(q, min(is+2, len(q)))), "when")
+			skip = caseKeywordAt(r.braceView, wordStart, word) && equalFoldASCII(caseWordAt(q, skipSpaces(q, min(is+2, len(q)))), "when")
 		case "WHEN", "THEN", "ELSE":
-			skip = caseKeywordAt(q, wordStart, word)
+			skip = caseKeywordAt(r.braceView, wordStart, word)
 		}
 		if skip {
 			return nil
@@ -1404,42 +1477,12 @@ func (r *labelExpressionRewriter) isLabeledTest(wordStart, wordEnd, afterIs, end
 	return true
 }
 
-// opensSubquery reports whether the { at query[brace] opens a subquery body:
-// EXISTS {, COUNT {, COLLECT {, CALL { or CALL (…) {. The word may be the
-// clause keyword before the scanned body (CALL).
+// opensSubquery reports whether the { at query[brace] opens a query body, as
+// the brace syntax owner decides it. The rewriter's scanner answers its
+// increasing brace offsets in one pass over the statement.
 func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
-	q, start := r.query, 0
-	i := brace - 1
-	for i >= start && cyphertext.IsWhitespaceAt(q, i) {
-		i--
-	}
-	if i >= start && q[i] == ')' {
-		depth := 0
-		for ; i >= start; i-- {
-			if q[i] == ')' {
-				depth++
-			} else if q[i] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
-		}
-		i--
-		for i >= start && cyphertext.IsWhitespaceAt(q, i) {
-			i--
-		}
-		end := i + 1
-		for i >= start && cyphertext.NamePartAt(q, i) {
-			i--
-		}
-		return strings.EqualFold(q[i+1:end], "CALL")
-	}
-	end := i + 1
-	for i >= start && cyphertext.NamePartAt(q, i) {
-		i--
-	}
-	return queryBodyContainerKeyword(q[i+1 : end])
+	fact, found := r.braceView.at(brace)
+	return found && fact.kind == subqueryBrace
 }
 
 // subquery rewrites a subquery body query[start:end]: a statement, or a
@@ -1476,7 +1519,7 @@ func (r *labelExpressionRewriter) subquery(start, end int) error {
 	r.edits = append(r.edits[:mark], append([]labelRewriteEdit{{start: first, end: first, text: "MATCH "}}, r.edits[mark:]...)...)
 	if whereStart < 0 {
 		at := trimRightIndex(q, first, end)
-		r.edit(at, at, " WHERE "+strings.Join(predicates, " AND "))
+		r.editPredicate(at, at, wrapRewritePredicate(" WHERE ", joinRewritePredicates(predicates, " AND "), ""))
 		return nil
 	}
 	return r.whereWithPredicates(whereStart, end, predicates)
@@ -1484,17 +1527,17 @@ func (r *labelExpressionRewriter) subquery(start, end int) error {
 
 // whereWithPredicates ANDs predicates in front of the WHERE body
 // query[start:end] and rewrites the body.
-func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates []string) error {
+func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates []rewritePredicate) error {
 	q := r.query
 	bodyStart := skipASCIISpaces(q, start, end)
 	bodyEnd := trimRightIndex(q, bodyStart, end)
-	body := q[bodyStart:bodyEnd]
+	body := r.braceView.window(bodyStart, bodyEnd)
 	wrap := findTopLevelKeyword(body, " OR ") >= 0 || findTopLevelKeyword(body, " XOR ") >= 0
-	prefix := strings.Join(predicates, " AND ") + " AND "
+	prefix := wrapRewritePredicate("", joinRewritePredicates(predicates, " AND "), " AND ")
 	if wrap {
-		prefix += "("
+		prefix = wrapRewritePredicate("", prefix, "(")
 	}
-	r.edit(bodyStart, bodyStart, prefix)
+	r.editPredicate(bodyStart, bodyStart, prefix)
 	if err := r.expression(bodyStart, bodyEnd); err != nil {
 		return err
 	}
@@ -1601,11 +1644,17 @@ func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callCl
 		return err
 	}
 	open := labelRewriteEdit{start: start, end: start, text: "EXISTS { MATCH "}
-	closing := labelRewriteEdit{start: end, end: end, text: " WHERE " + strings.Join(predicates, " AND ") + " }"}
+	closingText := wrapRewritePredicate(" WHERE ", joinRewritePredicates(predicates, " AND "), " }")
+	closing := labelRewriteEdit{start: end, end: end, text: closingText.text, copies: closingText.copies}
 	if callStart >= 0 {
 		open = labelRewriteEdit{start: callStart, end: start, text: "EXISTS { MATCH "}
-		closing = labelRewriteEdit{start: end, end: callClose + 1, text: closing.text}
+		closing = labelRewriteEdit{start: end, end: callClose + 1, text: closing.text, copies: closing.copies}
 	}
+	constructionID := r.nextBrace
+	r.nextBrace++
+	open.braceParts = []braceConstructionPart{{id: constructionID, at: len("EXISTS "), opening: true, kind: subqueryBrace}}
+	closing.braceParts = []braceConstructionPart{{id: constructionID, at: len(closing.text) - 1}}
+	closing.constructed = closingText.constructed
 	r.edits = append(r.edits[:mark], append([]labelRewriteEdit{open}, r.edits[mark:]...)...)
 	r.edits = append(r.edits, closing)
 	return nil
@@ -1645,7 +1694,7 @@ func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 	case whereStart >= 0:
 		err = r.expression(whereStart, bar)
 	case len(predicates) > 0:
-		r.edit(chainEnd, chainEnd, " WHERE "+strings.Join(predicates, " AND "))
+		r.editPredicate(chainEnd, chainEnd, wrapRewritePredicate(" WHERE ", joinRewritePredicates(predicates, " AND "), ""))
 	}
 	if err != nil {
 		return true, err
@@ -1744,14 +1793,14 @@ func topLevelByteIndex(q string, start, end int, b byte) int {
 	depth := 0
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
 		}
 		if c == b && depth == 0 {
 			return i

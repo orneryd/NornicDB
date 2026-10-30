@@ -26,9 +26,9 @@ func TestKeywordScannersSkipOperatorWith(t *testing.T) {
 		{"MATCH (n) WITH n, n.x AS a WHERE n.starts WITH n RETURN n", 10},
 	}
 	for _, tc := range cases {
-		assert.Equal(t, tc.want, findKeywordIndex(tc.query, "WITH"), "findKeywordIndex %q", tc.query)
-		assert.Equal(t, tc.want, findKeywordIndexInContext(tc.query, "WITH"), "findKeywordIndexInContext %q", tc.query)
-		positions := findAllTopLevelPipelineKeywordPositions(tc.query, "WITH")
+		assert.Equal(t, tc.want, findKeywordIndex(originalBraceView(tc.query), "WITH"), "findKeywordIndex %q", tc.query)
+		assert.Equal(t, tc.want, findKeywordIndexInContext(originalBraceView(tc.query), "WITH"), "findKeywordIndexInContext %q", tc.query)
+		positions := findAllTopLevelPipelineKeywordPositions(originalBraceView(tc.query), "WITH")
 		first := -1
 		if len(positions) > 0 {
 			first = positions[0]
@@ -41,7 +41,7 @@ func TestKeywordScannersSkipOperatorWith(t *testing.T) {
 }
 
 func findKeywordIndexFromAfter(s, keyword string, from int) int {
-	return keywordIndexFrom(s, keyword, from, defaultKeywordScanOpts())
+	return keywordIndexFrom(s, keyword, from, defaultKeywordScanOpts(acceptedBraceView(s)))
 }
 
 func TestYieldWhereStringOperators(t *testing.T) {

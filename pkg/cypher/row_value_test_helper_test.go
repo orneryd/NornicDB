@@ -11,7 +11,7 @@ import (
 // "unresolved".
 func rowValue(t testing.TB, e *StorageExecutor, expr string, values map[string]interface{}) (interface{}, bool) {
 	t.Helper()
-	value, ok, err := e.evaluateRowValue(expr, values)
+	value, ok, err := e.evaluateRowValue(originalBraceView(expr), values)
 	require.NoError(t, err, expr)
 	return value, ok
 }

@@ -14,22 +14,22 @@ import (
 // GRANT / REVOKE EXECUTE [BOOSTED] PROCEDURE … ON DBMS parse as Neo4j writes
 // them; other privilege statements are not procedure privileges.
 func TestParseProcedurePrivilegeCommand(t *testing.T) {
-	command, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE BOOSTED PROCEDURE db.cdc.*, db.txlog.entries ON DBMS TO cdc_reader, `other role`")
+	command, ok, err := parseProcedurePrivilegeCommand(originalBraceView("GRANT EXECUTE BOOSTED PROCEDURE db.cdc.*, db.txlog.entries ON DBMS TO cdc_reader, `other role`"))
 	require.True(t, ok)
 	require.NoError(t, err)
 	require.Equal(t, procedurePrivilegeCommand{grant: true, boosted: true, procedures: []string{"db.cdc.*", "db.txlog.entries"}, roles: []string{"cdc_reader", "other role"}}, command)
 
-	command, ok, err = parseProcedurePrivilegeCommand("REVOKE GRANT IMMUTABLE EXECUTE PROCEDURES db.cdc.query ON DBMS FROM cdc_reader")
+	command, ok, err = parseProcedurePrivilegeCommand(originalBraceView("REVOKE GRANT IMMUTABLE EXECUTE PROCEDURES db.cdc.query ON DBMS FROM cdc_reader"))
 	require.True(t, ok)
 	require.NoError(t, err)
 	require.Equal(t, procedurePrivilegeCommand{immutable: true, procedures: []string{"db.cdc.query"}, roles: []string{"cdc_reader"}}, command)
 
 	for _, statement := range []string{"GRANT ROLE admin TO bob", "GRANT TRAVERSE ON GRAPH * TO r", "DENY EXECUTE PROCEDURE x ON DBMS TO r", "MATCH (n) RETURN n"} {
-		_, ok, _ = parseProcedurePrivilegeCommand(statement)
+		_, ok, _ = parseProcedurePrivilegeCommand(originalBraceView(statement))
 		require.False(t, ok, statement)
 	}
 	for _, statement := range []string{"GRANT EXECUTE PROCEDURE db.x ON GRAPH * TO r", "GRANT EXECUTE PROCEDURE db.x ON DBMS FROM r", "GRANT EXECUTE PROCEDURE ON DBMS TO r"} {
-		_, ok, err = parseProcedurePrivilegeCommand(statement)
+		_, ok, err = parseProcedurePrivilegeCommand(originalBraceView(statement))
 		require.True(t, ok, statement)
 		require.Error(t, err, statement)
 	}

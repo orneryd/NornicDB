@@ -19,7 +19,7 @@ func TestApplyRemoveAndMergeWhereContext_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	out := &ExecuteResult{Stats: &QueryStats{}}
-	require.NoError(t, exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": n}, {"n": "not-node"}}, "REMOVE n.drop, n:Tmp", out))
+	require.NoError(t, exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": n}, {"n": "not-node"}}, originalBraceView("REMOVE n.drop, n:Tmp"), out))
 	require.Equal(t, 1, out.Stats.PropertiesSet)
 
 	nAfter, err := store.GetNode("n1")

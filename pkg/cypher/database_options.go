@@ -51,12 +51,12 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 // clause (searched from from): the statement before it, and the options it
 // sets, validated. No clause is no options.
 func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher string, from int) (string, map[string]string, error) {
-	at := keywordIndexFrom(cypher, "OPTIONS", from, defaultKeywordScanOpts())
+	at := keywordIndexFrom(cypher, "OPTIONS", from, defaultKeywordScanOpts(statementBraceView(ctx, cypher)))
 	if at < 0 {
 		return cypher, nil, nil
 	}
-	clause := strings.TrimSpace(cypher[at+len("OPTIONS"):])
-	if !strings.HasPrefix(clause, "{") || !strings.HasSuffix(clause, "}") {
+	clause := statementBraceView(ctx, cypher).window(at+len("OPTIONS"), len(cypher)).trim()
+	if closing, complete := clause.close(0); !complete || closing != len(clause.text())-1 {
 		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
 	}
 	fields, isMap := e.evaluateExpressionWithContext(ctx, clause, nil, nil).(map[string]interface{})
@@ -79,8 +79,8 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 // handled is false for another ALTER DATABASE form. A missing database is
 // a no-op with IF EXISTS.
 func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string, from int) (result *ExecuteResult, handled bool, err error) {
-	setAt := findMultiWordKeywordIndex(cypher[from:], "SET", "OPTION")
-	removeAt := findMultiWordKeywordIndex(cypher[from:], "REMOVE", "OPTION")
+	setAt := findMultiWordKeywordIndex(statementBraceView(ctx, cypher).window(from, len(cypher)), "SET", "OPTION")
+	removeAt := findMultiWordKeywordIndex(statementBraceView(ctx, cypher).window(from, len(cypher)), "REMOVE", "OPTION")
 	at, remove := setAt, false
 	if removeAt >= 0 && (setAt < 0 || removeAt < setAt) {
 		at, remove = removeAt, true
@@ -108,7 +108,8 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	}
 	value := ""
 	if !remove {
-		parsed, parseErr := e.parseValue(ctx, valueText)
+		statement := statementBraceView(ctx, cypher).trim()
+		parsed, parseErr := e.parseValue(ctx, statement.window(len(statement.text())-len(valueText), len(statement.text())))
 		if parseErr != nil {
 			return nil, true, parseErr
 		}

@@ -126,7 +126,7 @@ func TestExecutionModesRequireStatement(t *testing.T) {
 			{"EXPLAIN RETURN 1 /* incomplete", "Neo.ClientError.Statement.ArgumentError"},
 		} {
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-			_, err := exec.executeProfile(ctx, tc.query)
+			_, err := exec.executeProfile(ctx, originalBraceView(tc.query))
 			cancel()
 			requireStatusCode(t, err, tc.code)
 		}

@@ -62,12 +62,12 @@ func TestSliceAndIndexOfScalarsMatchNeo4j(t *testing.T) {
 func TestRowListSliceBounds(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "slice_bounds"))
 	values := map[string]interface{}{"l": []interface{}{int64(1), int64(2)}, "z": int64(0)}
-	evaluate := func(part string) (interface{}, bool, error) { return exec.evaluateRowValue(part, values) }
+	evaluate := func(part braceView) (interface{}, bool, error) { return exec.evaluateRowValue(part, values) }
 	for _, bounds := range [][2]string{{"1 / z", ""}, {"", "1 / z"}} {
-		_, _, err := evaluateCypherListSlice(values["l"], bounds[0], bounds[1], evaluate)
+		_, _, err := evaluateCypherListSlice(values["l"], originalBraceView(bounds[0]), originalBraceView(bounds[1]), evaluate)
 		require.Error(t, err, "bounds %q", bounds)
 	}
-	value, ok, err := evaluateCypherListSlice(values["l"], "1", "", evaluate)
+	value, ok, err := evaluateCypherListSlice(values["l"], expressionBraceView("1"), originalBraceView(""), evaluate)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{int64(2)}, value)

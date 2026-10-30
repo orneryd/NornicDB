@@ -117,7 +117,7 @@ func TestGh713SimpleNodeCompilerDeclinesUnsupportedPlans(t *testing.T) {
 		"n LIMIT 1", "n AS", "n.id", "N", "m AS node",
 	} {
 		t.Run(projection, func(t *testing.T) {
-			column, handled := parseSimpleReturnVariable(t.Context(), projection, "n")
+			column, handled := parseSimpleReturnVariable(t.Context(), originalBraceView(projection), "n")
 			require.False(t, handled)
 			require.Empty(t, column)
 		})

@@ -277,26 +277,26 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	inner := &ExecuteResult{Columns: []string{"value", "missing"}, Rows: [][]interface{}{{int64(1)}}, Stats: &QueryStats{}}
-	unchanged, err := exec.executeCallTail(ctx, inner, "")
+	unchanged, err := exec.executeCallTail(ctx, inner, originalBraceView(""))
 	require.NoError(t, err)
 	require.Same(t, inner, unchanged)
-	projected, err := exec.executeCallTail(ctx, inner, "RETURN value, missing")
+	projected, err := exec.executeCallTail(ctx, inner, originalBraceView("RETURN value, missing"))
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), nil}}, projected.Rows)
 	require.Same(t, inner.Stats, projected.Stats)
-	star, err := exec.executeCallTail(ctx, inner, "RETURN *")
+	star, err := exec.executeCallTail(ctx, inner, originalBraceView("RETURN *"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"missing", "value"}, star.Columns)
 	require.Equal(t, [][]interface{}{{nil, int64(1)}}, star.Rows)
 	require.Same(t, inner.Stats, star.Stats)
-	_, err = exec.executeCallTail(ctx, inner, "RETURN range(1, 2, 0)")
+	_, err = exec.executeCallTail(ctx, inner, originalBraceView("RETURN range(1, 2, 0)"))
 	require.Error(t, err)
 }
 
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 	t.Run("independent_return_bindings", func(t *testing.T) {
 		exec := newGh648Executor(t)
-		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", nil)
+		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, originalBraceView("CALL { RETURN 2 AS c }"), nil)
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
@@ -438,11 +438,11 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
 	clauses, split := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
-	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
+	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, originalBraceView("CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"), nil)
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
 	runner := newGh648Executor(t)
-	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0].text, nil)
-	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1].text, nil)
+	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, originalBraceView(clauses[0].text), nil)
+	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, originalBraceView(clauses[1].text), nil)
 	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
 	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
 	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
@@ -655,7 +655,7 @@ func TestBranchDeclaresVariable(t *testing.T) {
 	} {
 		require.Equal(t, testCase.declares, branchDeclaresVariable(t.Context(), testCase.branch, testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), "MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
+	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), originalBraceView("MATCH (n)-->(m) RETURN m, k"), []string{"n", "k"}))
 	require.Equal(t, byte(0), previousNonSpace("  ", 2))
 	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
 }

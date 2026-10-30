@@ -56,7 +56,7 @@ type nodeBatchMatchKey struct {
 }
 
 func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
-	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
+	ctx context.Context, unwindVar string, items []interface{}, restQuery braceView,
 ) (*ExecuteResult, bool, error) {
 	plan, ok := parseUnwindRelationshipMergeBatchPlan(ctx, restQuery, unwindVar)
 	if !ok {
@@ -89,34 +89,37 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 	return result, handled, err
 }
 
-func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
+func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery braceView, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
 	plan := unwindRelationshipMergeBatchPlan{}
-	trimmed := strings.TrimSpace(restQuery)
+	restQuery = restQuery.trim()
+	trimmed := restQuery.text()
 	if trimmed == "" || !startsWithKeywordFold(trimmed, "MATCH") {
 		return plan, false
 	}
 
-	returnIdx := findKeywordIndexInContext(trimmed, "RETURN")
+	returnIdx := findKeywordIndexInContext(restQuery, "RETURN")
 	if returnIdx < 0 {
 		return plan, false
 	}
-	returns, ok := parseRelationshipBatchReturn(ctx, strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]), unwindVar)
+	returns, ok := parseRelationshipBatchReturn(ctx, restQuery.window(returnIdx+len("RETURN"), len(trimmed)).trim(), unwindVar)
 	if !ok {
 		return plan, false
 	}
 
-	body := strings.TrimSpace(trimmed[:returnIdx])
-	withIdx := findKeywordIndexInContext(body, "WITH")
+	bodyView := restQuery.window(0, returnIdx).trim()
+	body := bodyView.text()
+	withIdx := findKeywordIndexInContext(bodyView, "WITH")
 	if withIdx < 0 {
 		return plan, false
 	}
-	vectorSetters, ok := parseRelationshipBatchVectorSetters(strings.TrimSpace(body[withIdx:]), unwindVar)
+	vectorSetters, ok := parseRelationshipBatchVectorSetters(bodyView.window(withIdx, len(body)).trim(), unwindVar)
 	if !ok {
 		return plan, false
 	}
-	mutationPart := strings.TrimSpace(body[:withIdx])
+	mutationView := bodyView.window(0, withIdx).trim()
+	mutationPart := mutationView.text()
 
-	setIdx := findKeywordIndexInContext(mutationPart, "SET")
+	setIdx := findKeywordIndexInContext(mutationView, "SET")
 	if setIdx < 0 {
 		return plan, false
 	}
@@ -125,21 +128,22 @@ func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwin
 		return plan, false
 	}
 
-	preSet := strings.TrimSpace(mutationPart[:setIdx])
-	mergeIdx := findKeywordIndexInContext(preSet, "MERGE")
+	preSetView := mutationView.window(0, setIdx).trim()
+	preSet := preSetView.text()
+	mergeIdx := findKeywordIndexInContext(preSetView, "MERGE")
 	if mergeIdx < 0 {
 		return plan, false
 	}
-	merge, ok := parseRelationshipBatchMergeClause(strings.TrimSpace(preSet[mergeIdx:]), unwindVar)
+	merge, ok := parseRelationshipBatchMergeClause(preSetView.window(mergeIdx, len(preSet)).trim(), unwindVar)
 	if !ok {
 		return plan, false
 	}
 
-	matchClauses := make([]string, 0, 4)
-	for _, clause := range SplitByMatch(strings.TrimSpace(preSet[:mergeIdx])) {
-		clause = strings.TrimSpace(clause)
-		if clause != "" {
-			matchClauses = append(matchClauses, "MATCH "+clause)
+	matchClauses := make([]braceView, 0, 4)
+	for _, clause := range preSetView.window(0, mergeIdx).trim().keywordParts("MATCH", keywordSplitGeneric) {
+		clause = clause.trim()
+		if !clause.empty() {
+			matchClauses = append(matchClauses, clause.wrap("MATCH ", ""))
 		}
 	}
 	if len(matchClauses) == 0 {
@@ -182,13 +186,15 @@ func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwin
 	return plan, true
 }
 
-func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMergeSpec, bool) {
+func parseRelationshipBatchMergeClause(clause braceView, unwindVar string) (relationshipMergeSpec, bool) {
 	spec := relationshipMergeSpec{}
-	body := strings.TrimSpace(clause)
+	clause = clause.trim()
+	body := clause.text()
 	if !startsWithKeywordFold(body, "MERGE") {
 		return spec, false
 	}
-	body = pipelineClauseBody(body, "MERGE")
+	clause = clause.clauseBody("MERGE")
+	body = clause.text()
 	arrowIdx := strings.Index(body, "]->")
 	if arrowIdx < 0 {
 		return spec, false
@@ -215,14 +221,14 @@ func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMe
 		return spec, false
 	}
 
-	rel := strings.TrimSpace(body[lBracketIdx+2 : arrowIdx])
-	braceIdx := strings.Index(rel, "{")
-	closeBrace := strings.LastIndex(rel, "}")
-	if braceIdx <= 0 || closeBrace <= braceIdx || strings.TrimSpace(rel[closeBrace+1:]) != "" {
+	relView := clause.window(lBracketIdx+2, arrowIdx).trim()
+	rel := relView.text()
+	braceIdx, closeBrace, _, found := relView.firstBrace()
+	if !found || braceIdx <= 0 || closeBrace <= braceIdx || strings.TrimSpace(rel[closeBrace+1:]) != "" {
 		return spec, false
 	}
 	head := strings.TrimSpace(rel[:braceIdx])
-	propsBody := strings.TrimSpace(rel[braceIdx+1 : closeBrace])
+	props := relView.window(braceIdx, closeBrace+1)
 	headParts := strings.SplitN(head, ":", 2)
 	if len(headParts) != 2 {
 		return spec, false
@@ -232,7 +238,7 @@ func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMe
 	if !isSimpleIdentifier(relVar) || !isSimpleIdentifier(relType) {
 		return spec, false
 	}
-	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)
+	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(props, unwindVar)
 	if !ok || len(rowRefs)+len(literals) == 0 {
 		return spec, false
 	}
@@ -271,13 +277,15 @@ func parseRelationshipBatchSetClause(clause, unwindVar string) (relVar, rowVar s
 	return left, right, true
 }
 
-func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationshipVectorSetterSpec, bool) {
-	trimmed := strings.TrimSpace(clause)
+func parseRelationshipBatchVectorSetters(clause braceView, unwindVar string) ([]relationshipVectorSetterSpec, bool) {
+	clause = clause.trim()
+	trimmed := clause.text()
 	if !startsWithKeywordFold(trimmed, "WITH") {
 		return nil, false
 	}
-	afterWith := strings.TrimSpace(trimmed[len("WITH"):])
-	callIdx := findKeywordIndexInContext(afterWith, "CALL")
+	afterWithView := clause.window(len("WITH"), len(trimmed)).trim()
+	afterWith := afterWithView.text()
+	callIdx := findKeywordIndexInContext(afterWithView, "CALL")
 	if callIdx < 0 {
 		return nil, false
 	}
@@ -335,8 +343,8 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 	return setters, true
 }
 
-func parseRelationshipBatchReturn(ctx context.Context, returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
-	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
+func parseRelationshipBatchReturn(ctx context.Context, returnPart braceView, unwindVar string) ([]rowFieldReturnSpec, bool) {
+	plan := returnProjectionPlanFor(ctx, returnPart.wrap("RETURN ", ""))
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" {
 		return nil, false
 	}

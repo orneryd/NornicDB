@@ -45,16 +45,20 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(ctx context.Context, query string, stage SourceStage) PermissionRequirements {
-	source := cyphertext.NewSource(ctx, query, stage)
+	source, retained := cyphertext.RetainedSource(ctx, query, stage)
+	if !retained {
+		source = cyphertext.NewSource(ctx, query, stage)
+	}
 	if source.Err != nil {
 		return PermissionRequirements{Read: true, Write: true, Schema: true, Admin: true}
 	}
-	query = source.Text
-	query = classificationText(query)
+	ctx = cyphertext.WithSourceView(ctx, source)
+	ctx, view := canonicalBraceView(ctx, source.Text)
+	query = view.text()
 	requirements := PermissionRequirements{
 		Read:   true,
-		Schema: isSchemaPermissionQuery(query),
-		Admin:  isAdminPermissionQuery(query),
+		Schema: isSchemaPermissionQuery(view),
+		Admin:  isAdminPermissionQuery(view),
 	}
 	if !requirements.Schema && !requirements.Admin {
 		_, body := parseExecutionMode(query)
@@ -87,7 +91,7 @@ func QueryPermissionRequirements(ctx context.Context, query string, stage Source
 	// A write that reads nothing of the graph (CREATE, and SET / DELETE of
 	// what it created) needs write but not read, as Neo4j lets a principal
 	// with WRITE but no READ privilege run CREATE. Any other statement reads.
-	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphText(query) {
+	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphView(view) {
 		requirements.Read = false
 	}
 	return requirements
@@ -205,7 +209,8 @@ func procedureNameAt(query string, offset int) (string, bool) {
 	return query[startName:endName], true
 }
 
-func isSchemaPermissionQuery(query string) bool {
+func isSchemaPermissionQuery(view braceView) bool {
+	query := view.text()
 	commandOffset := firstExecutableCypherOffset(query)
 	for _, command := range [][2]string{
 		{"CREATE", "INDEX"},
@@ -216,22 +221,23 @@ func isSchemaPermissionQuery(query string) bool {
 		{"CREATE", "CONSTRAINT"},
 		{"DROP", "CONSTRAINT"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(view, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
 	return false
 }
 
-func isAdminPermissionQuery(query string) bool {
+func isAdminPermissionQuery(view braceView) bool {
+	query := view.text()
 	commandOffset := firstExecutableCypherOffset(query)
 	// GRANT, REVOKE, DENY and SHOW … PRIVILEGES administer privileges.
-	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(query[commandOffset:]) {
+	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(view.window(commandOffset, len(query))) {
 		return true
 	}
 	// CREATE OR REPLACE DATABASE: the pair scan below misses the OR REPLACE
 	// between CREATE and DATABASE.
-	if isCreateOrReplaceDatabaseQuery(query) {
+	if isCreateOrReplaceDatabaseQuery(view) {
 		return true
 	}
 	for _, command := range [][2]string{
@@ -241,7 +247,7 @@ func isAdminPermissionQuery(query string) bool {
 		{"TERMINATE", "TRANSACTIONS"},
 		{"TERMINATE", "TRANSACTION"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(view, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
@@ -264,7 +270,7 @@ func isAdminPermissionQuery(query string) bool {
 		{"ALTER", "PROMOTION POLICY"},
 		{"DROP", "PROMOTION POLICY"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(view, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
@@ -273,9 +279,10 @@ func isAdminPermissionQuery(query string) bool {
 
 // isCreateOrReplaceDatabaseQuery reports whether query is
 // CREATE OR REPLACE DATABASE <name>.
-func isCreateOrReplaceDatabaseQuery(query string) bool {
+func isCreateOrReplaceDatabaseQuery(view braceView) bool {
+	query := view.text()
 	commandOffset := firstExecutableCypherOffset(query)
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(view)
 	create := keywordIndexFrom(query, "CREATE", commandOffset, opts)
 	if create != commandOffset {
 		return false

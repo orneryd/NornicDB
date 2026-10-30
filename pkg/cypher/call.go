@@ -49,12 +49,13 @@ func toFloat32Slice(v interface{}) []float32 {
 // see the aliases, as a WITH's do. A RETURN after the YIELD isn't part of it:
 // it starts the query's tail.
 type yieldClause struct {
-	items    []yieldItem // List of yielded items (possibly with aliases)
-	yieldAll bool        // YIELD * - return all columns
-	where    string      // WHERE predicate, "" when absent
-	orderBy  string      // ORDER BY items, "" when absent
-	skip     string      // SKIP expression, "" when absent
-	limit    string      // LIMIT expression, "" when absent
+	view, whereView, orderView, skipView, limitView braceView
+	items                                           []yieldItem // List of yielded items (possibly with aliases)
+	yieldAll                                        bool        // YIELD * - return all columns
+	where                                           string      // WHERE predicate, "" when absent
+	orderBy                                         string      // ORDER BY items, "" when absent
+	skip                                            string      // SKIP expression, "" when absent
+	limit                                           string      // LIMIT expression, "" when absent
 	// misplacedWhere is a WHERE after ORDER BY / SKIP / LIMIT, which Cypher
 	// rejects.
 	misplacedWhere bool
@@ -73,56 +74,44 @@ type yieldItem struct {
 }
 
 type callSplit struct {
-	callOnly string
-	tail     string
+	callOnly braceView
+	tail     braceView
 }
 
-func splitCallAndTail(ctx context.Context, source string) callSplit {
+func splitCallAndTail(ctx context.Context, source braceView) callSplit {
 	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
-		return callSplit{callOnly: source}
+		return callSplit{callOnly: source, tail: source.window(0, 0)}
 	}
 	if clause.Rule() != cypherantlr.CypherParserRULE_queryCallSt && clause.Rule() != cypherantlr.CypherParserRULE_standaloneCall && clause.Rule() != cypherantlr.CypherParserRULE_callSubquery {
-		return callSplit{callOnly: source}
+		return callSplit{callOnly: source, tail: source.window(0, 0)}
 	}
 	start, end := clause.Span()
-	return callSplit{callOnly: source[start:end], tail: strings.TrimSpace(source[end:])}
+	return callSplit{callOnly: source.window(start, end), tail: source.window(end, len(source.text())).trim()}
 }
-func buildCallTailPredicateInjection(tail string, predicates []string) string {
+func buildCallTailPredicateInjection(tail braceView, predicates []string) braceView {
+	tail = tail.trim()
 	if len(predicates) == 0 {
-		return strings.TrimSpace(tail)
+		return tail
 	}
-	injected := strings.Join(predicates, " AND ")
-	trimmed := strings.TrimSpace(tail)
-
-	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
-	if whereIdx != -1 {
-		endIdx := len(trimmed)
-		for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
-			if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx > whereIdx && idx < endIdx {
-				endIdx = idx
-			}
-		}
-		left := strings.TrimSpace(trimmed[:endIdx])
-		right := strings.TrimSpace(trimmed[endIdx:])
-		if right == "" {
-			return left + " AND " + injected
-		}
-		return left + " AND " + injected + " " + right
-	}
-
-	insertIdx := len(trimmed)
-	for _, kw := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
-		if idx := findKeywordIndexInContext(trimmed, kw); idx != -1 && idx < insertIdx {
-			insertIdx = idx
+	text := tail.text()
+	where := findKeywordIndexInContext(tail, "WHERE")
+	at := len(text)
+	for _, keyword := range []string{"WITH", "RETURN", "ORDER", "SKIP", "LIMIT", "UNWIND", "SET", "REMOVE", "DELETE", "DETACH", "MERGE", "CREATE"} {
+		if index := findKeywordIndexInContext(tail, keyword); index >= 0 && (where < 0 || index > where) && index < at {
+			at = index
 		}
 	}
-	if insertIdx >= len(trimmed) {
-		return trimmed + " WHERE " + injected
+	word := " WHERE "
+	if where >= 0 {
+		word = " AND "
 	}
-	left := strings.TrimSpace(trimmed[:insertIdx])
-	right := strings.TrimSpace(trimmed[insertIdx:])
-	return left + " WHERE " + injected + " " + right
+	left, right := tail.window(0, at).trim(), tail.window(at, len(text)).trim()
+	pieces := []braceView{left, tail.generated(word + strings.Join(predicates, " AND "))}
+	if !right.empty() {
+		pieces = append(pieces, tail.generated(" "), right)
+	}
+	return tail.assembleCode(pieces, "")
 }
 
 func tailStartsWithMatchClause(tail string) bool {
@@ -130,7 +119,9 @@ func tailStartsWithMatchClause(tail string) bool {
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
 
-func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (result *ExecuteResult, err error) {
+func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tailView braceView) (result *ExecuteResult, err error) {
+	tail := tailView.text()
+	ctx = withBraceView(ctx, tailView)
 	// Every tail route consumes the same seed once, including projections,
 	// empty row sets and write tails. Pass-through results already own its stats.
 	defer func() {
@@ -148,51 +139,51 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if _, all, _, union := parseTopLevelUnionBranches(ctx, tail); union {
+	if _, all, _, union := parseTopLevelUnionBranches(ctx, tailView); union {
 		first := true
-		return e.executeUnion(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
+		return e.executeUnion(ctx, tailView, all, func(branchCtx context.Context, branch string) (*ExecuteResult, error) {
 			if first {
 				first = false
-				return e.executeCallTail(ctx, seed, branch)
+				return e.executeCallTail(branchCtx, seed, statementBraceView(branchCtx, branch))
 			}
-			return e.executeInternal(ctx, branch, nil)
+			return e.executeInternal(branchCtx, branch, nil)
 		})
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
+	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tailView); ok || err != nil {
 		return projected, err
 	}
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
 	// CALL, …) runs as one pipeline over every yielded row, so aggregation,
 	// ORDER BY and SKIP / LIMIT see all of them. MATCH tails keep their fused
 	// operators below and reach the pipeline before the per-row fallback.
-	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tail) {
+	if !tailStartsWithMatchClause(tail) && !isPotentialWriteTail(tailView) {
 		// WITH … [WHERE] RETURN … projections keep their compiled row
 		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
 		// expressions.
-		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, nil); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tailView, nil); ok || err != nil {
 			return projected, err
 		}
-		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tailView); ok || err != nil {
 			return pipelined, err
 		}
 	}
-	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tail); ok || err != nil {
+	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tailView); ok || err != nil {
 		return pipelined, err
 	}
 	if len(seed.Rows) == 0 {
 		// Empty input still runs projection operators: their declared fields
 		// and aggregate rows are available without a metadata analysis pass.
-		if projected, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+		if projected, ok, err := e.executeCallTailPipeline(ctx, seed, tailView); ok || err != nil {
 			return projected, err
 		}
-		columns, err := e.ResultColumns(ctx, tail, resultmetadata.KnownScope(seed.Columns), cypherVersionFromContext(ctx) == "25", AcceptedSource)
+		columns, err := e.resultColumns(ctx, tailView, resultmetadata.KnownScope(seed.Columns), cypherVersionFromContext(ctx) == "25")
 		if err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, nil
 	}
 
-	expectedCols := knownResultColumns(e.CachedResultColumns(ctx, tail, seed.Columns))
+	expectedCols := knownResultColumns(e.cachedResultColumns(ctx, tailView, seed.Columns))
 	usedCols := make([]int, 0, len(seed.Columns))
 	for i, col := range seed.Columns {
 		if isIdentifierReferenced(tail, col) {
@@ -204,31 +195,31 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// or batched IN. This avoids per-row tail re-execution and preserves global
 	// ORDER/LIMIT scope. Write tails (SET/CREATE/DELETE/MERGE/REMOVE) must use
 	// the per-row path to preserve transactional write-per-row semantics.
-	if !isPotentialWriteTail(tail) {
-		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tail, expectedCols); ok || err != nil {
+	if !isPotentialWriteTail(tailView) {
+		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tailView, expectedCols); ok || err != nil {
 			return projected, err
 		}
-		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedCols); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tailView, expectedCols); ok || err != nil {
 			return projected, err
 		}
 	}
-	if !isPotentialWriteTail(tail) {
-		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+	if !isPotentialWriteTail(tailView) {
+		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tailView); ok || err != nil {
 			return pipelined, err
 		}
 	}
 	// Fallback fast path for read-only tails the pipeline declines: execute
 	// per-row tails concurrently. It runs the tail once per yielded row, so it
 	// can't aggregate across rows.
-	if len(seed.Rows) > 1 && !isPotentialWriteTail(tail) {
-		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
+	if len(seed.Rows) > 1 && !isPotentialWriteTail(tailView) {
+		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tailView, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
 		}
 	}
 
 	results := make([]callTailRowResult, len(seed.Rows))
 	for i, row := range seed.Rows {
-		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
+		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tailView, usedCols, expectedCols)
 		results[i] = callTailRowResult{idx: i, res: res, err: err}
 		if err != nil {
 			break
@@ -240,7 +231,9 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 // executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
 // (runPipelineClauses) whose input rows are the procedure's yielded rows. It
 // declines (ok false) when a tail clause isn't a pipeline clause.
-func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tailView braceView) (*ExecuteResult, bool, error) {
+	tail := tailView.text()
+	ctx = withBraceView(ctx, tailView)
 	clauses, ok := pipelineClausesFor(ctx, tail)
 	if !ok || len(clauses) == 0 {
 		return nil, false, nil
@@ -263,14 +256,17 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	ctx context.Context,
 	seed *ExecuteResult,
-	tail string,
+	tailView braceView,
 ) (*ExecuteResult, bool, error) {
-	callIndex := findKeywordIndexInContext(tail, "CALL")
+	tail := tailView.text()
+	ctx = withBraceView(ctx, tailView)
+
+	callIndex := findKeywordIndexInContext(tailView, "CALL")
 	if callIndex <= 0 {
 		return nil, false, nil
 	}
-	prefix := strings.TrimSpace(tail[:callIndex])
-	if !hasPrefixFoldASCII(prefix, "WITH ") {
+	prefix := tailView.window(0, callIndex).trim()
+	if !hasPrefixFoldASCII(prefix.text(), "WITH ") {
 		return nil, false, nil
 	}
 
@@ -287,13 +283,13 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		return nil, false, nil
 	}
 
-	callParts := splitChainedProcedureCall(ctx, strings.TrimSpace(tail[callIndex:]))
-	if strings.TrimSpace(callParts.tail) == "" {
+	callParts := splitChainedProcedureCall(ctx, tailView.window(callIndex, len(tail)).trim())
+	if callParts.tail.empty() {
 		return nil, false, nil
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
 	for _, bindings := range projected {
-		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
+		procedureResult, err := e.executeProcedureCall(withBraceView(ctx, callParts.callOnly), callParts.callOnly.text(), true)
 		if err != nil {
 			return nil, true, err
 		}
@@ -315,12 +311,14 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	return result, true, err
 }
 
-func splitChainedProcedureCall(ctx context.Context, source string) callSplit {
+func splitChainedProcedureCall(ctx context.Context, source braceView) callSplit {
 	return splitCallAndTail(ctx, source)
 }
-func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tailView braceView) (*ExecuteResult, bool, error) {
+	tail := tailView.text()
+	ctx = withBraceView(ctx, tailView)
 
-	node, valid := canonicalQueryClause(ctx, tail)
+	node, valid := canonicalQueryClause(ctx, tailView)
 	if !valid || node.Rule() != cypherantlr.CypherParserRULE_returnSt {
 		return nil, false, nil
 	}
@@ -328,7 +326,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *Ex
 	if strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(tail[end:]), ";")) != "" {
 		return nil, false, nil
 	}
-	plan := projectionPlanFromSyntax(node)
+	plan := projectionPlanFromSyntax(tailView, node)
 	if !plan.valid || !plan.star || plan.distinct || len(plan.starProjections) != 0 {
 		return nil, false, nil
 	}
@@ -352,7 +350,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *Ex
 	if plan.modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(ctx, result, plan.modifiers)
+	result, err := e.applyResultModifiers(ctx, result, plan.modifiersView)
 	return result, true, err
 }
 
@@ -365,10 +363,12 @@ type callTailRowResult struct {
 func (e *StorageExecutor) executeCallTailParallel(
 	ctx context.Context,
 	seed *ExecuteResult,
-	tail string,
+	tailView braceView,
 	usedCols []int,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
+	ctx = withBraceView(ctx, tailView)
+
 	if len(usedCols) == 0 || len(seed.Rows) <= 1 {
 		return nil, false, nil
 	}
@@ -394,7 +394,7 @@ func (e *StorageExecutor) executeCallTailParallel(
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				res, err := e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
+				res, err := e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tailView, usedCols, expectedCols)
 				results <- callTailRowResult{idx: j.idx, res: res, err: err}
 			}
 		}()
@@ -446,10 +446,13 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 	ctx context.Context,
 	seedCols []string,
 	row []interface{},
-	tail string,
+	tailView braceView,
 	usedCols []int,
 	expectedCols []string,
 ) (*ExecuteResult, error) {
+	tail := tailView.text()
+	ctx = withBraceView(ctx, tailView)
+
 	params := map[string]interface{}{}
 	prefix := make([]string, 0, len(usedCols)+2)
 	withBindings := make([]string, 0, len(usedCols))
@@ -482,15 +485,15 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 		withBindings = append(withBindings, fmt.Sprintf("$%s AS %s", pname, col))
 	}
 
-	query := buildCallTailPredicateInjection(tail, predicates)
+	query := buildCallTailPredicateInjection(tailView, predicates)
 	if len(withBindings) > 0 {
 		prefix = append(prefix, "WITH "+strings.Join(withBindings, ", "))
 	}
 	if len(prefix) > 0 {
-		query = strings.Join(prefix, " ") + " " + query
+		query = query.wrap(strings.Join(prefix, " ")+" ", "")
 	}
 
-	inner, err := e.executeInternal(ctx, query, params)
+	inner, err := e.executeInternal(withBraceView(ctx, query), query.text(), params)
 	if err != nil {
 		return nil, err
 	}
@@ -500,8 +503,8 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 	return inner, nil
 }
 
-func isPotentialWriteTail(tail string) bool {
-	t := upperASCII(strings.TrimSpace(tail))
+func isPotentialWriteTail(tail braceView) bool {
+	t := tail.trim()
 	return findKeywordIndexInContext(t, "CREATE") >= 0 ||
 		findKeywordIndexInContext(t, "MERGE") >= 0 ||
 		findKeywordIndexInContext(t, "DELETE") >= 0 ||
@@ -515,8 +518,8 @@ func isPotentialWriteTail(tail string) bool {
 type callTailProjectionPlan struct {
 	// relationship is the optional MATCH admission that precedes WITH.
 	relationship *callTailRelationshipMatchPlan
-	withClause   string
-	returnClause string
+	withClause   braceView
+	returnClause braceView
 	// limitToken / skipToken are the RETURN's LIMIT / SKIP, a literal or a
 	// parameter, checked per execution (the parameter's value can change).
 	limitToken string
@@ -527,14 +530,14 @@ type callTailProjectionPlan struct {
 	// row filter instead of rebuilding each one; the RETURN (never *) reads
 	// only the variables the WITH keeps.
 	passThroughWith bool
-	withWhere       string
+	withWhere       braceView
 }
 
 // Parsed CALL-tail plans, cached by tail text: a nil plan (a tail the plan
 // doesn't cover) is cached too.
 var (
-	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024, boundedCacheStringShardIndex)
-	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailProjectionPlan](1024, boundedCacheStringShardIndex)
+	callTailProjectionPlans        = newBoundedCache[*cyphertext.Source, *callTailProjectionPlan](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
+	callTailRelationshipMatchPlans = newBoundedCache[*cyphertext.Source, *callTailProjectionPlan](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 )
 
 // callTailRelationshipMatchPlan is a CALL tail MATCH (a)-[r:T {key: y.p}]->(b)
@@ -546,11 +549,11 @@ type callTailRelationshipMatchPlan struct {
 	relVar         string
 	relType        string
 	propertyKey    string
-	propertyExpr   string
+	propertyExpr   braceView
 	propertySource string
 	endVar         string
 	endLabel       string
-	whereClause    string
+	whereClause    braceView
 }
 
 type callTailRelationshipPatternParts struct {
@@ -559,19 +562,21 @@ type callTailRelationshipPatternParts struct {
 	relVar       string
 	relType      string
 	propertyKey  string
-	propertyExpr string
+	propertyExpr braceView
 	endVar       string
 	endLabel     string
-	rest         string
+	rest         braceView
 }
 
 func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 	ctx context.Context,
 	seed *ExecuteResult,
-	tail string,
+	tailView braceView,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := e.parseCallTailProjectionPlan(ctx, tail)
+	ctx = withBraceView(ctx, tailView)
+
+	plan, ok := e.parseCallTailProjectionPlan(ctx, tailView)
 	if !ok || plan.relationship != nil {
 		return nil, false, nil
 	}
@@ -619,10 +624,12 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	ctx context.Context,
 	seed *ExecuteResult,
-	tail string,
+	tailView braceView,
 	expectedCols []string,
 ) (*ExecuteResult, bool, error) {
-	projection, ok := e.parseCallTailProjectionPlan(ctx, tail)
+	ctx = withBraceView(ctx, tailView)
+
+	projection, ok := e.parseCallTailProjectionPlan(ctx, tailView)
 	if !ok || projection.relationship == nil {
 		return nil, false, nil
 	}
@@ -673,7 +680,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		matched[plan.startVar] = startNode
 		matched[plan.relVar] = relationship
 		matched[plan.endVar] = endNode
-		if plan.whereClause != "" && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
+		if !plan.whereClause.empty() && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
 			continue
 		}
 		rows = append(rows, matched)
@@ -686,23 +693,22 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	return result, true, nil
 }
 
-func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
+func parseCallTailRelationshipPattern(tail braceView) (callTailRelationshipPatternParts, bool) {
 	var parts callTailRelationshipPatternParts
-	rest := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(rest, "MATCH") {
+	rest := tail.trim()
+	if !hasPrefixFoldASCII(rest.text(), "MATCH") {
 		return parts, false
 	}
-	rest = strings.TrimSpace(rest[len("MATCH"):])
+	rest = rest.clauseBody("MATCH")
 	startVar, startLabel, rest, ok := parseCallTailNodeToken(rest)
 	if !ok {
 		return parts, false
 	}
-	rest = strings.TrimLeftFunc(rest, cyphertext.IsWhitespace)
-	if !strings.HasPrefix(rest, "-") {
+	rest = rest.trim()
+	if !strings.HasPrefix(rest.text(), "-") {
 		return parts, false
 	}
-	rest = strings.TrimSpace(rest[1:])
-	relInside, rest, ok := parseCallTailDelimited(rest, '[', ']')
+	relInside, rest, ok := parseCallTailDelimited(rest.window(1, len(rest.text())).trim(), '[', ']')
 	if !ok {
 		return parts, false
 	}
@@ -710,63 +716,57 @@ func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternP
 	if !ok {
 		return parts, false
 	}
-	rest = strings.TrimSpace(rest)
-	if !strings.HasPrefix(rest, "->") {
+	rest = rest.trim()
+	if !strings.HasPrefix(rest.text(), "->") {
 		return parts, false
 	}
-	rest = strings.TrimSpace(rest[2:])
-	endVar, endLabel, rest, ok := parseCallTailNodeToken(rest)
+	endVar, endLabel, rest, ok := parseCallTailNodeToken(rest.window(2, len(rest.text())).trim())
 	if !ok {
 		return parts, false
 	}
-	parts.startVar = startVar
-	parts.startLabel = startLabel
-	parts.relVar = relVar
-	parts.relType = relType
-	parts.propertyKey = propertyKey
-	parts.propertyExpr = propertyExpr
-	parts.endVar = endVar
-	parts.endLabel = endLabel
-	parts.rest = rest
+	parts.startVar, parts.startLabel = startVar, startLabel
+	parts.relVar, parts.relType = relVar, relType
+	parts.propertyKey, parts.propertyExpr = propertyKey, propertyExpr
+	parts.endVar, parts.endLabel, parts.rest = endVar, endLabel, rest
 	return parts, true
 }
 
-func parseCallTailNodeToken(input string) (variable, label, rest string, ok bool) {
-	inside, rest, ok := parseCallTailDelimited(strings.TrimSpace(input), '(', ')')
+func parseCallTailNodeToken(input braceView) (variable, label string, rest braceView, ok bool) {
+	inside, rest, ok := parseCallTailDelimited(input.trim(), '(', ')')
 	if !ok {
-		return "", "", "", false
+		return "", "", braceView{}, false
 	}
-	variable, label, ok = parseCallTailIdentifierAndOptionalType(inside)
+	variable, label, ok = parseCallTailIdentifierAndOptionalType(inside.text())
 	if !ok || variable == "" {
-		return "", "", "", false
+		return "", "", braceView{}, false
 	}
 	return variable, label, rest, true
 }
 
-func parseCallTailRelationshipToken(input string) (variable, relType, propertyKey, propertyExpr string, ok bool) {
-	rest := strings.TrimSpace(input)
-	variable, rest, ok = parseCallTailIdentifier(rest)
+func parseCallTailRelationshipToken(input braceView) (variable, relType, propertyKey string, propertyExpr braceView, ok bool) {
+	rest := input.trim()
+	variable, suffix, ok := parseCallTailIdentifier(rest.text())
 	if !ok || variable == "" {
-		return "", "", "", "", false
+		return "", "", "", braceView{}, false
 	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, ":") {
-		rest = strings.TrimSpace(rest[1:])
-		relType, rest, ok = parseCallTailIdentifier(rest)
+	rest = rest.window(len(rest.text())-len(suffix), len(rest.text())).trim()
+	if strings.HasPrefix(rest.text(), ":") {
+		rest = rest.window(1, len(rest.text())).trim()
+		relType, suffix, ok = parseCallTailIdentifier(rest.text())
 		if !ok || relType == "" {
-			return "", "", "", "", false
+			return "", "", "", braceView{}, false
 		}
-		rest = strings.TrimSpace(rest)
+		rest = rest.window(len(rest.text())-len(suffix), len(rest.text())).trim()
 	}
-	if rest == "" {
-		return variable, relType, "", "", true
+	if rest.empty() {
+		return variable, relType, "", rest, true
 	}
-	if !strings.HasPrefix(rest, "{") {
-		return "", "", "", "", false
+	if !startsBrace(rest.text()) {
+		return "", "", "", braceView{}, false
 	}
 	propertyKey, propertyExpr, rest, ok = parseCallTailSinglePropertyMap(rest)
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", "", "", false
+	if !ok || !rest.empty() {
+		return "", "", "", braceView{}, false
 	}
 	return variable, relType, propertyKey, propertyExpr, true
 }
@@ -796,30 +796,36 @@ func parseCallTailIdentifier(input string) (string, string, bool) {
 	return parseIdentifierToken(input)
 }
 
-func parseCallTailDelimited(input string, open, close byte) (inside, rest string, ok bool) {
-	return extractDelimitedSection(strings.TrimSpace(input), rune(open), rune(close))
+func parseCallTailDelimited(input braceView, open, close byte) (inside, rest braceView, ok bool) {
+	input = input.trim()
+	if len(input.text()) == 0 || input.text()[0] != open {
+		return braceView{}, braceView{}, false
+	}
+	end := -1
+	if open == '{' {
+		if retained, complete := input.close(0); complete {
+			end = retained
+		}
+	} else {
+		end = cyphertext.FindMatchingDelimiter(input.text(), 0, rune(open), rune(close), cyphertext.OpeningDelimiter)
+	}
+	if end < 0 {
+		return braceView{}, braceView{}, false
+	}
+	return input.window(1, end), input.window(end+1, len(input.text())), true
 }
 
-func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bool) {
-	inside, rest, ok := parseCallTailDelimited(input, '{', '}')
-	if !ok {
-		return "", "", "", false
+func parseCallTailSinglePropertyMap(input braceView) (key string, expr, rest braceView, ok bool) {
+	input = input.trim()
+	close, complete := input.close(0)
+	if !complete {
+		return "", braceView{}, braceView{}, false
 	}
-	parts := splitTopLevelComma(inside)
-	if len(parts) != 1 {
-		return "", "", "", false
+	entries, valid := input.window(0, close+1).keyedEntries()
+	if !valid || len(entries) != 1 {
+		return "", braceView{}, braceView{}, false
 	}
-	inside = parts[0]
-	colonIdx := findTopLevelMapKeyValueSeparator(inside)
-	if colonIdx <= 0 {
-		return "", "", "", false
-	}
-	key = strings.TrimSpace(inside[:colonIdx])
-	expr = strings.TrimSpace(inside[colonIdx+1:])
-	if !cyphertext.IsIdentifier(key) || expr == "" {
-		return "", "", "", false
-	}
-	return key, expr, rest, true
+	return entries[0].key(), entries[0].value, input.window(close+1, len(input.text())), true
 }
 
 func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
@@ -854,15 +860,15 @@ var callTailPlanClauseKeywords = []string{
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once
 // per tail text, when its LIMIT / SKIP resolve to integers for this execution.
-func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail string) (*callTailProjectionPlan, bool) {
+func (e *StorageExecutor) parseCallTailProjectionPlan(ctx context.Context, tail braceView) (*callTailProjectionPlan, bool) {
 	cache := callTailProjectionPlans
-	if hasPrefixFoldASCII(strings.TrimSpace(tail), "MATCH ") {
+	if hasPrefixFoldASCII(tail.trim().text(), "MATCH ") {
 		cache = callTailRelationshipMatchPlans
 	}
-	plan, cached := cache.get(tail)
+	plan, cached := cache.get(tail.source)
 	if !cached {
 		plan = e.planCallTailProjection(ctx, tail)
-		cache.put(tail, plan)
+		cache.put(tail.source, plan)
 	}
 	if plan == nil || !callTailPlanTokensResolve(ctx, plan) {
 		return nil, false
@@ -882,33 +888,35 @@ func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan
 
 // planCallTailProjection parses WITH … [WHERE …] RETURN …, optionally
 // preceded by a relationship MATCH over a yielded relationship, or returns nil.
-func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail string) *callTailProjectionPlan {
-	trimmed := strings.TrimSpace(tail)
-	if hasPrefixFoldASCII(trimmed, "MATCH ") && !isPotentialWriteTail(trimmed) {
-		parts, ok := parseCallTailRelationshipPattern(trimmed)
+func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail braceView) *callTailProjectionPlan {
+	tail = tail.trim()
+	trimmed := tail.text()
+	if hasPrefixFoldASCII(trimmed, "MATCH ") && !isPotentialWriteTail(tail) {
+		parts, ok := parseCallTailRelationshipPattern(tail)
 		if !ok {
 			return nil
 		}
-		rest := strings.TrimSpace(parts.rest)
-		withIdx := topLevelKeywordIndex(rest, "WITH")
+		restView := parts.rest.trim()
+		rest := restView.text()
+		withIdx := topLevelKeywordIndex(restView, "WITH")
 		if withIdx < 0 {
 			return nil
 		}
-		whereClause := strings.TrimSpace(rest[:withIdx])
-		if whereClause != "" {
-			if !hasPrefixFoldASCII(whereClause, "WHERE ") {
+		whereClause := restView.window(0, withIdx).trim()
+		if !whereClause.empty() {
+			if !hasPrefixFoldASCII(whereClause.text(), "WHERE ") {
 				return nil
 			}
-			whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
+			whereClause = whereClause.clauseBody("WHERE")
 		}
-		projection := e.planCallTailProjection(ctx, strings.TrimSpace(rest[withIdx:]))
+		projection := e.planCallTailProjection(ctx, restView.window(withIdx, len(rest)).trim())
 		if projection == nil {
 			return nil
 		}
-		propertyExpr := strings.TrimSpace(parts.propertyExpr)
+		propertyExpr := parts.propertyExpr.trim()
 		propertySource := ""
-		if dotIdx := strings.Index(propertyExpr, "."); dotIdx > 0 {
-			propertySource = strings.TrimSpace(propertyExpr[:dotIdx])
+		if dotIdx := strings.Index(propertyExpr.text(), "."); dotIdx > 0 {
+			propertySource = strings.TrimSpace(propertyExpr.text()[:dotIdx])
 		}
 		if parts.propertyKey == "" || propertySource == "" {
 			return nil
@@ -927,36 +935,38 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		}
 		return projection
 	}
-	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
+	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(tail) {
 		return nil
 	}
 	withIdx := len("WITH ")
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(tail, "RETURN")
 	if returnIdx < 0 {
 		return nil
 	}
-	beforeReturn := strings.TrimSpace(trimmed[withIdx:returnIdx])
-	returnAndModifiers := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
+	beforeReturnView := tail.window(withIdx, returnIdx).trim()
+	beforeReturn := beforeReturnView.text()
+	returnAndModifiersView := tail.window(returnIdx+len("RETURN"), len(trimmed)).trim()
+	returnAndModifiers := returnAndModifiersView.text()
 	if beforeReturn == "" || returnAndModifiers == "" {
 		return nil
 	}
 	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
 	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
 	for _, keyword := range callTailPlanClauseKeywords {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+		if topLevelKeywordIndex(beforeReturnView, keyword) >= 0 {
 			return nil
 		}
 	}
 
-	withProjection := beforeReturn
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
-		withProjection = strings.TrimSpace(beforeReturn[:whereIdx])
+	withProjection := beforeReturnView
+	if whereIdx := topLevelKeywordIndex(beforeReturnView, "WHERE"); whereIdx >= 0 {
+		withProjection = beforeReturnView.window(0, whereIdx).trim()
 	}
-	if withProjection == "" {
+	if withProjection.empty() {
 		return nil
 	}
-	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiers)
-	if returnProjection == "" {
+	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiersView)
+	if returnProjection.text() == "" {
 		return nil
 	}
 	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
@@ -971,14 +981,15 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 		return nil
 	}
 	plan := &callTailProjectionPlan{
-		withClause:   "WITH " + beforeReturn,
-		returnClause: "RETURN " + returnAndModifiers,
+		withClause:   beforeReturnView.wrap("WITH ", ""),
+		returnClause: returnAndModifiersView.wrap("RETURN ", ""),
 		limitToken:   limitToken,
 		skipToken:    skipToken,
+		withWhere:    beforeReturnView.window(0, 0),
 	}
 	plan.passThroughWith = true
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+		if topLevelKeywordIndex(beforeReturnView, keyword) >= 0 {
 			plan.passThroughWith = false
 		}
 	}
@@ -987,8 +998,8 @@ func (e *StorageExecutor) planCallTailProjection(ctx context.Context, tail strin
 			plan.passThroughWith = false
 		}
 	}
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
-		plan.withWhere = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
+	if whereIdx := topLevelKeywordIndex(beforeReturnView, "WHERE"); whereIdx >= 0 {
+		plan.withWhere = beforeReturnView.window(whereIdx+len("WHERE"), len(beforeReturn)).trim()
 	}
 	return plan
 }
@@ -1010,65 +1021,71 @@ func hasStarReturnItem(items []returnItem) bool {
 	return false
 }
 
-func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
-	projection = strings.TrimSpace(returnAndModifiers)
+func splitCallTailProjectionModifiers(input braceView) (projectionView, orderBy braceView, limitToken, skipToken string) {
+	input = input.trim()
+	projection := input.text()
+	projectionView, orderBy = input, input.window(0, 0)
 	modifierStart := len(projection)
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(projection, kw); idx >= 0 && idx < modifierStart {
+		if idx := topLevelKeywordIndex(input, kw); idx >= 0 && idx < modifierStart {
 			modifierStart = idx
 		}
 	}
+	modifierView := input.window(len(projection), len(projection))
 	modifiers := ""
 	if modifierStart < len(projection) {
-		modifiers = strings.TrimSpace(projection[modifierStart:])
-		projection = strings.TrimSpace(projection[:modifierStart])
+		modifierView = input.window(modifierStart, len(projection)).trim()
+		modifiers = modifierView.text()
+		projectionView = input.window(0, modifierStart).trim()
 	}
 	if modifiers == "" {
-		return projection, "", "", ""
+		return projectionView, orderBy, "", ""
 	}
-	if orderIdx := topLevelKeywordIndex(modifiers, "ORDER BY"); orderIdx >= 0 {
+	if orderIdx := topLevelKeywordIndex(modifierView, "ORDER BY"); orderIdx >= 0 {
 		end := len(modifiers)
 		for _, kw := range []string{"SKIP", "LIMIT"} {
-			if idx := topLevelKeywordIndex(modifiers[orderIdx:], kw); idx >= 0 {
+			if idx := topLevelKeywordIndex(modifierView.window(orderIdx, len(modifiers)), kw); idx >= 0 {
 				abs := orderIdx + idx
 				if abs > orderIdx && abs < end {
 					end = abs
 				}
 			}
 		}
-		orderBy = strings.TrimSpace(modifiers[orderIdx:end])
+		orderBy = modifierView.window(orderIdx, end).trim()
 	}
-	limitToken = extractCallTailModifierToken(modifiers, "LIMIT")
-	skipToken = extractCallTailModifierToken(modifiers, "SKIP")
-	return projection, orderBy, limitToken, skipToken
+	limitToken = extractCallTailModifierToken(modifierView, "LIMIT")
+	skipToken = extractCallTailModifierToken(modifierView, "SKIP")
+	return projectionView, orderBy, limitToken, skipToken
 }
 
 // extractCallTailModifierToken returns the whole value of keyword (SKIP or
 // LIMIT) in modifiers, up to the next modifier: an expression such as
 // LIMIT 0 + 1 stays whole, so the projection plan declines it instead of
 // reading LIMIT 0 (#572).
-func extractCallTailModifierToken(modifiers, keyword string) string {
-	idx := topLevelKeywordIndex(modifiers, keyword)
+func extractCallTailModifierToken(view braceView, keyword string) string {
+	modifiers := view.text()
+	idx := topLevelKeywordIndex(view, keyword)
 	if idx < 0 {
 		return ""
 	}
-	rest := modifiers[idx+len(keyword):]
+	restView := view.window(idx+len(keyword), len(modifiers))
+	rest := restView.text()
 	end := len(rest)
 	for _, next := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if nextIdx := topLevelKeywordIndex(rest, next); nextIdx >= 0 && nextIdx < end {
+		if nextIdx := topLevelKeywordIndex(restView, next); nextIdx >= 0 && nextIdx < end {
 			end = nextIdx
 		}
 	}
 	return strings.TrimSpace(rest[:end])
 }
 
-func callTailHasRelationshipTypeConstraint(tail string) bool {
-	for from := 0; from < len(tail); {
+func callTailHasRelationshipTypeConstraint(tail braceView) bool {
+	for from := 0; from < len(tail.text()); {
 		open, close := readRelationshipBracket(tail, from, requireClosedRelationship)
 		if open < 0 {
 			return false
 		}
-		if findTopLevelOperator(tail[open+1:close], ":", false, true) >= 0 {
+		if findTopLevelSymbol(tail.text()[open+1:close], ":", false, true) >= 0 {
 			return true
 		}
 		from = close + 1
@@ -1143,8 +1160,8 @@ func isIdentifierReferenced(query, identifier string) bool {
 // comprehension's WHERE, a subquery body) isn't the clause's; nor is one in a
 // string, a quoted name or a comment, the WITH of STARTS WITH / ENDS WITH, or
 // a clause keyword used as a name.
-func findKeywordIndexInContext(s, keyword string) int {
-	return topLevelKeywordIndex(s, keyword)
+func findKeywordIndexInContext(view braceView, keyword string) int {
+	return topLevelKeywordIndex(view, keyword)
 }
 
 // applyYieldFilter applies a procedure call's YIELD to the procedure's rows.
@@ -1191,20 +1208,19 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	for _, row := range result.Rows {
 		rows = append(rows, callTailRow(ctx, result, row))
 	}
-	rows = e.filterPipelineRows(ctx, rows, yield.where)
+	rows = e.filterPipelineRows(ctx, rows, yield.whereView)
 	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
-		var with strings.Builder
-		with.WriteString("WITH *")
+		pieces := []braceView{yield.view.generated("WITH *")}
 		if yield.orderBy != "" {
-			with.WriteString(" ORDER BY " + yield.orderBy)
+			pieces = append(pieces, yield.view.generated(" ORDER BY "), yield.orderView)
 		}
 		if yield.skip != "" {
-			with.WriteString(" SKIP " + yield.skip)
+			pieces = append(pieces, yield.view.generated(" SKIP "), yield.skipView)
 		}
 		if yield.limit != "" {
-			with.WriteString(" LIMIT " + yield.limit)
+			pieces = append(pieces, yield.view.generated(" LIMIT "), yield.limitView)
 		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String(), nil, false)
+		ordered, ok := e.pipelineApplyWith(ctx, rows, yield.view.assembleCode(pieces, ""), nil, false)
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
@@ -1236,12 +1252,13 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
-	parts := splitChainedProcedureCall(ctx, cypher)
-	callCypher := parts.callOnly
-	tailCypher := parts.tail
+	parts := splitChainedProcedureCall(ctx, statementBraceView(ctx, cypher))
+	callCypher := parts.callOnly.text()
+	ctx = withBraceView(ctx, parts.callOnly)
+	tailCypher := parts.tail.text()
 
 	// Parse YIELD clause for post-processing
-	yield := parseYieldClause(ctx, callCypher)
+	yield := parseYieldClause(ctx, parts.callOnly)
 	if err := e.validateYieldModifiers(ctx, yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}
@@ -1251,13 +1268,13 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	procName := extractProcedureName(ctx, callCypher)
 	if proc, found := globalProcedureRegistry.Get(procName); found {
 		hasTail := strings.TrimSpace(tailCypher) != ""
-		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, callCypher, hasTail); err != nil {
+		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, parts.callOnly, hasTail); err != nil {
 			return nil, err
 		}
 		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
-		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher)
+		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, parts.callOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -1302,7 +1319,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				}
 				result = seed
 			}
-			return e.executeCallTail(ctx, result, tailCypher)
+			return e.executeCallTail(ctx, result, parts.tail)
 		}
 		return result, nil
 	}

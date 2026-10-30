@@ -129,7 +129,7 @@ func TestParseUseClause_DynamicArgumentWithEscapedQuote(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "graph.byName", clause.Function)
-	require.Equal(t, []string{`'it\'s)'`}, clause.Args)
+	require.Equal(t, []string{`'it\'s)'`}, useArgumentTexts(clause.Arguments))
 	require.Equal(t, "RETURN 1", remaining)
 }
 

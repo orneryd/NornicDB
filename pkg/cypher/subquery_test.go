@@ -2383,22 +2383,22 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	ctx := context.Background()
 
 	// addLimitSkipToSubquery branches
-	s1 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) SET n.x = 1 RETURN n", 10, 0)
+	s1 := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n) SET n.x = 1 RETURN n"), 10, 0)
 	assert.Contains(t, s1, "WITH n LIMIT 10")
 	assert.Contains(t, s1, "SET n.x = 1")
 
-	s2 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) CREATE (m) RETURN n", 5, 2)
+	s2 := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n) CREATE (m) RETURN n"), 5, 2)
 	assert.Contains(t, s2, "WITH n SKIP 2 LIMIT 5")
 	assert.Contains(t, s2, "CREATE (m)")
 
-	s3 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) RETURN n", 3, 1)
+	s3 := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n) RETURN n"), 3, 1)
 	assert.Contains(t, s3, "SKIP 1 LIMIT 3")
 	assert.Contains(t, s3, "RETURN n")
 
-	s4 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n)", 7, 0)
+	s4 := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n)"), 7, 0)
 	assert.Contains(t, s4, "LIMIT 7")
 
-	s5 := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n) RETURN n LIMIT 1", 2, 0)
+	s5 := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n) RETURN n LIMIT 1"), 2, 0)
 	assert.Contains(t, s5, "LIMIT 1")
 	assert.Contains(t, s5, "LIMIT 2")
 
@@ -2407,13 +2407,13 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	// RETURN may read variables only the write clause binds.
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) SET n.x = 1 RETURN n"),
+		exec.makeSubqueryReadOnly(originalBraceView("MATCH (n) SET n.x = 1 RETURN n")),
 	)
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN m.x"),
+		exec.makeSubqueryReadOnly(originalBraceView("MATCH (n) CREATE (m) RETURN m.x")),
 	)
-	assert.Equal(t, "", exec.makeSubqueryReadOnly("CALL db.labels()"))
+	assert.Equal(t, "", exec.makeSubqueryReadOnly(originalBraceView("CALL db.labels()")))
 
 	inner := &ExecuteResult{
 		Columns: []string{"name", "score"},
@@ -2458,7 +2458,7 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 			{"bob", float64(0.8)},
 		},
 	}
-	agg, err := exec.executeCallTail(ctx, innerForAgg, "RETURN count(*) AS c")
+	agg, err := exec.executeCallTail(ctx, innerForAgg, originalBraceView("RETURN count(*) AS c"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"c"}, agg.Columns)
 	require.Len(t, agg.Rows, 1)
@@ -2581,13 +2581,13 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n.bad = true RETURN", 1)
 	require.Error(t, err)
 
-	withLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2, 1)
+	withLimit := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n:Person) SET n.flag = true RETURN n.name AS name"), 2, 1)
 	assert.Contains(t, withLimit, "WITH n SKIP 1 LIMIT 2")
-	withOnlyLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) SET n.flag = true RETURN n.name AS name", 2, 0)
+	withOnlyLimit := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n:Person) SET n.flag = true RETURN n.name AS name"), 2, 0)
 	assert.Contains(t, withOnlyLimit, "WITH n LIMIT 2")
-	fallbackNoReturn := exec.addLimitSkipToSubquery(t.Context(), "CREATE (n:Tmp)", 2, 1)
+	fallbackNoReturn := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("CREATE (n:Tmp)"), 2, 1)
 	assert.Equal(t, "CREATE (n:Tmp) SKIP 1 LIMIT 2", fallbackNoReturn)
-	fallbackExistingLimit := exec.addLimitSkipToSubquery(t.Context(), "MATCH (n:Person) RETURN n.name LIMIT 1", 2, 0)
+	fallbackExistingLimit := exec.addLimitSkipToSubquery(t.Context(), originalBraceView("MATCH (n:Person) RETURN n.name LIMIT 1"), 2, 0)
 	assert.Contains(t, fallbackExistingLimit, "LIMIT 2")
 
 	inner := &ExecuteResult{
@@ -2599,13 +2599,13 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		},
 		Stats: &QueryStats{},
 	}
-	retRes, err := exec.executeCallTail(ctx, inner, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
+	retRes, err := exec.executeCallTail(ctx, inner, originalBraceView("RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "age"}, retRes.Columns)
 	require.Len(t, retRes.Rows, 1)
 	assert.Equal(t, "b", retRes.Rows[0][0])
 
-	aggRes, err := exec.executeCallTail(ctx, inner, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
+	aggRes, err := exec.executeCallTail(ctx, inner, originalBraceView("RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names"))
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(3), aggRes.Rows[0][0])
@@ -2615,7 +2615,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	_, err = exec.sharedCallTailForTest(ctx, inner, "SET age = 1")
 	require.Error(t, err)
 
-	modified, err := exec.applyResultModifiers(context.Background(), inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
+	modified, err := exec.applyResultModifiers(context.Background(), inner, originalBraceView("ORDER BY age DESC SKIP 1 LIMIT 1"))
 	require.NoError(t, err)
 	require.Len(t, modified.Rows, 1)
 	assert.Equal(t, "b", modified.Rows[0][0])
@@ -2643,7 +2643,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},
-	}, "ORDER BY age DESC LIMIT 10")
+	}, originalBraceView("ORDER BY age DESC LIMIT 10"))
 	require.NoError(t, err)
 	require.Len(t, gotTopK.Rows, 10)
 	for i := 1; i < len(gotTopK.Rows); i++ {
@@ -2656,7 +2656,7 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},
-	}, "ORDER BY age ASC SKIP 5 LIMIT 7")
+	}, originalBraceView("ORDER BY age ASC SKIP 5 LIMIT 7"))
 	require.NoError(t, err)
 	require.Len(t, gotWindow.Rows, 7)
 	for i := 1; i < len(gotWindow.Rows); i++ {
@@ -3219,11 +3219,11 @@ func TestSeedNodesFromOuterMatch_WithPipelineReturnProjection(t *testing.T) {
 	`, nil)
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, `
+	nodes, err := exec.seedNodesFromOuterMatch(ctx, originalBraceView(`
 MATCH (p:SystemPrompt)
 WITH p
 LIMIT 1
-`, "p")
+`), "p")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.NotNil(t, nodes[0])
@@ -3258,31 +3258,31 @@ RETURN
   t.translatedText AS translatedText
 `
 
-	branches, all, mixed, ok := parseTopLevelUnionBranches(t.Context(), body)
+	branches, all, mixed, ok := parseTopLevelUnionBranches(t.Context(), originalBraceView(body))
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.True(t, all)
 	require.Len(t, branches, 2)
 
-	withVars0, inner0, hasWith0, err := parseLeadingWithImports(branches[0])
+	withVars0, inner0, hasWith0, err := parseLeadingWithImports(originalBraceView(branches[0].text()))
 	require.NoError(t, err)
 	require.True(t, hasWith0)
 	require.Equal(t, []string{"p"}, withVars0)
-	assert.True(t, isCallSubqueryPureReturn(inner0), "first UNION branch should be pure RETURN projection")
+	assert.True(t, isCallSubqueryPureReturn(originalBraceView(inner0)), "first UNION branch should be pure RETURN projection")
 
-	withVars1, inner1, hasWith1, err := parseLeadingWithImports(branches[1])
+	withVars1, inner1, hasWith1, err := parseLeadingWithImports(originalBraceView(branches[1].text()))
 	require.NoError(t, err)
 	require.True(t, hasWith1)
 	require.Equal(t, []string{"p"}, withVars1)
-	assert.False(t, isCallSubqueryPureReturn(inner1), "second UNION branch should not be pure RETURN")
+	assert.False(t, isCallSubqueryPureReturn(originalBraceView(inner1)), "second UNION branch should not be pure RETURN")
 }
 
 func TestParseLeadingWithImports_WithWherePredicate(t *testing.T) {
-	withVars, inner, hasWith, err := parseLeadingWithImports(`
+	withVars, inner, hasWith, err := parseLeadingWithImports(originalBraceView(`
 WITH o, t
 WHERE t IS NULL
 CREATE (n:Tmp)
-RETURN n`)
+RETURN n`))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"o", "t"}, withVars)
@@ -3392,19 +3392,19 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
-	body, after, inTx, batch := exec.parseCallSubquery(t.Context(), "CALL db.info()")
+	body, after, inTx, batch := exec.parseCallSubquery(t.Context(), originalBraceView("CALL db.info()"))
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
 	assert.Nil(t, batch)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 ")
+	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), originalBraceView("CALL { RETURN 1 "))
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
 	assert.Nil(t, batch)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
+	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), originalBraceView("CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x"))
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)
@@ -3412,7 +3412,7 @@ func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	require.NotNil(t, batch)
 	assert.Equal(t, "nope", batch.Expression)
 
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
+	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), originalBraceView("CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x"))
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)
@@ -3533,7 +3533,7 @@ func TestSubqueryHelpers_AddLimitSkipToSubquery_OperationBranches(t *testing.T) 
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := exec.addLimitSkipToSubquery(t.Context(), tc.query, tc.limit, tc.skip)
+			got := exec.addLimitSkipToSubquery(t.Context(), originalBraceView(tc.query), tc.limit, tc.skip)
 			tc.assert(t, got)
 		})
 	}
@@ -3562,9 +3562,9 @@ func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	}
 	require.NotNil(t, alice)
 
-	assert.True(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() } = false"))
+	assert.True(t, exec.evaluateWhere(ctx, alice, "p", expressionBraceView("EXISTS { MATCH (p)-[:KNOWS]->() }")))
+	assert.False(t, exec.evaluateWhere(ctx, alice, "p", expressionBraceView("NOT EXISTS { MATCH (p)-[:KNOWS]->() }")))
+	assert.False(t, exec.evaluateWhere(ctx, alice, "p", expressionBraceView("EXISTS { MATCH (p)-[:KNOWS]->() } = false")))
 }
 
 func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {

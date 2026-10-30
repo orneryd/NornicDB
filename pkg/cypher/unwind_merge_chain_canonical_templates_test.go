@@ -231,9 +231,9 @@ func TestGh713RelationshipBatchReturnUsesSharedColumns(t *testing.T) {
 		t.Run(clause, func(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			row := map[string]interface{}{"source": "a", "target": "b"}
-			shared, err := exec.projectMergeReturn(ctx, []pipelineRow{{"row": row}}, "RETURN "+clause)
+			shared, err := exec.projectMergeReturn(ctx, []pipelineRow{{"row": row}}, originalBraceView("RETURN "+clause))
 			require.NoError(t, err)
-			compiled, ok := parseRelationshipBatchReturn(t.Context(), clause, "row")
+			compiled, ok := parseRelationshipBatchReturn(t.Context(), originalBraceView(clause), "row")
 			require.True(t, ok)
 			columns := make([]string, len(compiled))
 			for index, projection := range compiled {
@@ -250,7 +250,7 @@ func TestGh713RelationshipBatchReturnUsesSharedColumns(t *testing.T) {
 		"row.source AS", "other.source AS source",
 	} {
 		t.Run("decline "+clause, func(t *testing.T) {
-			_, ok := parseRelationshipBatchReturn(t.Context(), clause, "row")
+			_, ok := parseRelationshipBatchReturn(t.Context(), originalBraceView(clause), "row")
 			require.False(t, ok)
 		})
 	}

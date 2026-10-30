@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"strings"
 	"testing"
@@ -624,12 +625,12 @@ func TestProjectInputRowsAsMaps_InvalidSpec(t *testing.T) {
 		Rows:    [][]interface{}{{1}},
 	}
 	// No colon in spec.
-	_, ok := projectInputRowsAsMaps(input, "invalid")
+	_, ok := projectInputRowsAsMaps(input, cyphertext.NormalizeSource("{invalid}"))
 	if ok {
 		t.Fatal("expected false for spec without colon")
 	}
 	// Non-simple key.
-	_, ok = projectInputRowsAsMaps(input, "a.b: c")
+	_, ok = projectInputRowsAsMaps(input, cyphertext.NormalizeSource("{a.b: c}"))
 	if ok {
 		t.Fatal("expected false for non-simple key")
 	}
@@ -637,7 +638,7 @@ func TestProjectInputRowsAsMaps_InvalidSpec(t *testing.T) {
 
 func TestProjectInputRowsAsMaps_EmptySpec(t *testing.T) {
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	_, ok := projectInputRowsAsMaps(input, "")
+	_, ok := projectInputRowsAsMaps(input, cyphertext.NormalizeSource("{}"))
 	if ok {
 		t.Fatal("expected false for empty spec")
 	}
@@ -682,7 +683,7 @@ func TestProjectInputRowsAsMaps_NonSimpleValue(t *testing.T) {
 		Columns: []string{"a"},
 		Rows:    [][]interface{}{{1}},
 	}
-	_, ok := projectInputRowsAsMaps(input, "key: a.b")
+	_, ok := projectInputRowsAsMaps(input, cyphertext.NormalizeSource("{key: a.b}"))
 	if ok {
 		t.Fatal("expected false for non-simple value identifier")
 	}

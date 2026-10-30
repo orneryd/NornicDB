@@ -70,6 +70,8 @@ type pipelineClause struct {
 	syntax             cypherantlr.SyntaxNode
 	embeddingCandidate string
 	text               string
+	view               braceView
+	grammarView        braceView
 	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
 	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
 	// call produces no row for is kept, with null for the call's columns
@@ -82,13 +84,13 @@ type pipelineClause struct {
 // logical pipeline remains N-ary; this is an operator property derived by
 // walking every remaining clause, not a separate query-shape handler.
 type pipelineMatchPhysicalHint struct {
-	orderExpr  string
+	orderExpr  braceView
 	limit      int
 	earlyLimit int
 	// readTail holds the clauses after the MATCH when every one of them only
 	// reads; nil otherwise. A label scan uses it to read only the properties
 	// those clauses use (pipelineLabelScanProjection).
-	readTail []string
+	readTail []braceView
 	// streamScan lets the MATCH hand its candidates on as the scan reads
 	// them: the statement only reads and streams its result to the client,
 	// and the MATCH runs once (#939).
@@ -100,11 +102,11 @@ type pipelineMatchPhysicalHint struct {
 // end in RETURN may be one part of a larger statement whose later clauses can
 // use any property. RETURN * and WITH * carry every variable on whole: a CALL
 // subquery runs its outer MATCH as MATCH ... RETURN *.
-func pipelineReadOnlyTail(remaining []pipelineClause) []string {
+func pipelineReadOnlyTail(remaining []pipelineClause) []braceView {
 	if len(remaining) == 0 || remaining[len(remaining)-1].kind != pipelineClauseReturn {
 		return nil
 	}
-	tail := make([]string, 0, len(remaining))
+	tail := make([]braceView, 0, len(remaining))
 	for _, clause := range remaining {
 		switch clause.kind {
 		case pipelineClauseWith, pipelineClauseReturn:
@@ -112,13 +114,13 @@ func pipelineReadOnlyTail(remaining []pipelineClause) []string {
 			if clause.kind == pipelineClauseWith {
 				keyword = "WITH"
 			}
-			body, _ := cutDistinct(pipelineClauseBody(clause.text, keyword))
-			if strings.HasPrefix(strings.TrimSpace(body), "*") {
+			body, _ := cutDistinct(clause.view.clauseBody(keyword))
+			if strings.HasPrefix(body.text(), "*") {
 				return nil
 			}
-			tail = append(tail, clause.text)
+			tail = append(tail, clause.view)
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseUnwind:
-			tail = append(tail, clause.text)
+			tail = append(tail, clause.view)
 		default:
 			return nil
 		}
@@ -133,7 +135,7 @@ func pipelineReadOnlyTail(remaining []pipelineClause) []string {
 // is used other than as variable.property (returned, passed on, compared,
 // used in a later pattern), or when a temporal viewport needs the node's own
 // validity properties.
-func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []string) ([]string, bool) {
+func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause braceView, readTail []braceView) ([]string, bool) {
 	if len(nodePattern.labels) == 0 || readTail == nil {
 		return nil, false
 	}
@@ -202,27 +204,30 @@ func pipelineClausesFor(ctx context.Context, cypher string) ([]pipelineClause, b
 // trailing tokens; variableWritten and remainder share its canonical name extent.
 type unwindBodySource struct {
 	expression      string
+	expressionSpan  cyphertext.Span
 	aliasTail       string
 	variableWritten string
 	remainder       string
+	remainderSpan   cyphertext.Span
 }
 
 // splitUnwindBody reads a full original UNWIND clause with the existing native
 // scanner. AS in an operand or identifier remains part of the expression.
-func splitUnwindBody(source string) (unwindBodySource, bool) {
+func splitUnwindBody(view braceView) (unwindBodySource, bool) {
+	source := view.text()
 	head := queryGapEnd(source, 0)
 	if !startsWithKeywordFold(source[head:], "UNWIND") {
 		return unwindBodySource{}, false
 	}
 	exprStart := queryGapEnd(source, keywordEndAt(source, head, "UNWIND"))
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipBraces = true
 	for from := exprStart; ; {
 		at := keywordIndexFrom(source, "AS", from, opts)
 		if at < 0 {
 			return unwindBodySource{}, false
 		}
-		if wordIsName(source, at) || insideCaseBlock(source, at) {
+		if wordIsName(source, at) || insideCaseBlock(view, at) {
 			from = at + len("AS")
 			continue
 		}
@@ -234,9 +239,11 @@ func splitUnwindBody(source string) (unwindBodySource, bool) {
 		}
 		return unwindBodySource{
 			expression:      expression,
+			expressionSpan:  cyphertext.TrimWhitespaceSpan(source, cyphertext.Span{Start: exprStart, End: at}),
 			aliasTail:       strings.TrimSpace(source[aliasStart:]),
 			variableWritten: source[aliasStart:token.End],
 			remainder:       strings.TrimSpace(source[token.End:]),
+			remainderSpan:   cyphertext.TrimWhitespaceSpan(source, cyphertext.Span{Start: token.End, End: len(source)}),
 		}, true
 	}
 }
@@ -265,9 +272,10 @@ var pipelineClauseSplits = struct {
 // the split without procedure calls unsupported.
 type pipelineClauseSplit struct {
 	clauses      []pipelineClause
+	view         braceView
 	ok           bool
 	topLevelCall bool
-	firstReturn  string
+	firstReturn  braceView
 }
 
 const pipelineClauseSplitLimit = 4096
@@ -303,7 +311,10 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	split, cached := pipelineClauseSplits.splits[key]
 	pipelineClauseSplits.RUnlock()
 	if !cached {
-		split = parsePipelineClauses(ctx, cypher)
+		// One admission serves the split and every view derived from it.
+		view := statementBraceView(ctx, cypher)
+		split = parsePipelineClauses(withBraceView(ctx, view), cypher)
+		split.view = view
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
 			return pipelineClauseSplit{}
@@ -326,6 +337,15 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	if split.clauses != nil {
 		split.clauses = append([]pipelineClause(nil), split.clauses...)
 	}
+	current := statementBraceView(ctx, cypher)
+	for index := range split.clauses {
+		clause := &split.clauses[index]
+		clause.view = braceView{syntax: current.syntax, source: clause.view.source.Rebase(split.view.source, current.source)}
+		clause.grammarView = current
+	}
+	if split.firstReturn.source != nil {
+		split.firstReturn = braceView{syntax: current.syntax, source: split.firstReturn.source.Rebase(split.view.source, current.source)}
+	}
 	return split
 }
 
@@ -333,7 +353,8 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 // RETURN remains available for semantic column export when USE or FINISH makes
 // the body unsupported by execution's pipeline; unsupported clauses stay nil.
 func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSplit {
-	body := readQueryBody(ctx, source, 0, len(source))
+	view := statementBraceView(ctx, source)
+	body := readQueryBody(ctx, view, 0, len(source))
 	if body.status != queryBodyRead || len(body.branches) != 1 {
 		return pipelineClauseSplit{}
 	}
@@ -342,7 +363,7 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 	if len(branch.clauses) > 0 {
 		last := branch.clauses[len(branch.clauses)-1]
 		if last.kind == pipelineClauseReturn {
-			split.firstReturn = strings.TrimSpace(last.text)
+			split.firstReturn = view.window(last.start, last.end).trim()
 		}
 	}
 	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
@@ -355,6 +376,8 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 			split.topLevelCall = true
 		}
 		item := clause.pipelineClause
+		item.view = view.window(clause.start, clause.end)
+		item.grammarView = view
 		item.syntax = clause.syntax
 		item.embeddingCandidate = embeddingCandidate(branch.clauses, index)
 		split.clauses = append(split.clauses, item)
@@ -402,10 +425,11 @@ func pipelineApplyOptionally(rows []pipelineRow, apply func(row []pipelineRow) (
 // strings and every bracketed construct. In particular, MATCH inside
 // EXISTS { MATCH ... } belongs to the predicate and must never become a new
 // outer pipeline clause.
-func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
+func findAllTopLevelPipelineKeywordPositions(view braceView, keyword string) []int {
+	query := view.text()
 	// Allocated on the first match: most scans find nothing.
 	var positions []int
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+	parenDepth, bracketDepth, braceDepth := 0, 0, cyphertext.BraceDepth(0)
 	withSearch := isWithKeyword(keyword)
 	if keyword == "" {
 		return positions
@@ -429,7 +453,7 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !cyphertext.NamePartAt(query, i-1)) &&
 			(i+len(keyword) == len(query) || !cyphertext.NamePartAt(query, i+len(keyword))) {
-			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
+			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(view, i, i+len(keyword), keyword) {
 				if positions == nil {
 					positions = make([]int, 0, 4)
 				}
@@ -438,24 +462,24 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			i += len(keyword) - 1
 			continue
 		}
-		switch character {
-		case '(':
+		switch {
+		case character == '(':
 			parenDepth++
-		case ')':
+		case character == ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
-		case '[':
+		case character == '[':
 			bracketDepth++
-		case ']':
+		case character == ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
-		case '{':
-			braceDepth++
-		case '}':
+		case cyphertext.IsOpenBrace(character):
+			braceDepth.Open()
+		case cyphertext.IsCloseBrace(character):
 			if braceDepth > 0 {
-				braceDepth--
+				braceDepth.Close(false)
 			}
 		}
 	}
@@ -473,7 +497,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(ctx, cypher) >= 0
 	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
-		if !pipelineUnwindUsesRange(cypher) {
+		if !pipelineUnwindUsesRange(statementBraceView(ctx, cypher)) {
 			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
 				return newPipelineDispatchOutcome(nil, true, err)
@@ -489,7 +513,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	}
 	originalClauses := clauses
 	if pipelineHasClauseKind(clauses, pipelineClauseSet) {
-		cypher = normalizePipelineWhitespace(cypher)
+		normalized := normalizePipelineWhitespace(statementBraceView(ctx, cypher))
+		ctx = withBraceView(ctx, normalized)
+		cypher = normalized.text()
 		clauses, ok = canExecuteAsPipeline(ctx, cypher)
 		if !ok {
 			return newPipelineDispatchOutcome(nil, false, nil)
@@ -588,7 +614,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				break
 			}
 			if clause.kind == pipelineClauseWith {
-				if _, local := parsePipelineRowWith(ctx, clause.text); !local {
+				if _, local := parsePipelineRowWith(ctx, clause.input(ctx)); !local {
 					break
 				}
 			}
@@ -636,14 +662,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	callChainEnd := 0
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		ctx = withBraceView(ctx, clause.input(ctx))
 		if (clause.kind == pipelineClauseWith || clause.kind == pipelineClauseReturn) && !callChain.pagination[idx] {
-			if err := e.validateRuntimePaginationClause(ctx, clause.text); err != nil {
+			if err := e.validateRuntimePaginationClause(ctx, clause.view); err != nil {
 				return result, true, err
 			}
 		}
 		var callBatch *boundTransactionBatch
 		if clause.kind == pipelineClauseCallSubquery {
-			_, _, inTransactions, _ := e.parseCallSubquery(ctx, clause.text)
+			_, _, inTransactions, _ := e.parseCallSubquery(ctx, clause.view)
 			if inTransactions {
 				if idx >= callChainEnd {
 					maximumRows := len(rows)
@@ -675,7 +702,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 		}
 		if deleted := contextslot.Get[deletedEntities](ctx); !deleted.empty() {
-			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
+			if err := validateDeletedEntityReads(rows, deletedEntityReadText(ctx, clause), deleted); err != nil {
 				return nil, true, err
 			}
 		}
@@ -690,7 +717,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			if clause.kind == pipelineClauseLet {
-				projections, err := parsePipelineLet(clause.text)
+				projections, err := parsePipelineLet(clause.view)
 				if err != nil {
 					return nil, true, err
 				}
@@ -707,13 +734,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if input == nil {
 				input = pipelineRowsSource(rows)
 			}
-			matched, supported, err := e.pipelineNodeMatchSourceWithHint(ctx, input, clause.text, hint)
+			matched, supported, err := e.pipelineNodeMatchSourceWithHint(ctx, input, clause.view, hint)
 			if err != nil {
 				return nil, true, err
 			}
 			if supported {
 				source, rows = matched, nil
-				addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
+				addPipelinePatternBindings(ctx, e, scope, clause, "MATCH")
 				continue
 			}
 			if source != nil {
@@ -724,7 +751,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					return pipelineDecline(ctx, wrote, clause.text)
 				}
 			}
-			newRows, ok, err := e.pipelineApplyMatchWithHint(ctx, rows, clause.text, hint)
+			newRows, ok, err := e.pipelineApplyMatchWithHint(ctx, rows, clause.view, hint)
 			if err != nil {
 				return nil, true, err
 			}
@@ -735,9 +762,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
+			addPipelinePatternBindings(ctx, e, scope, clause, "MATCH")
 		case pipelineClauseOptionalMatch:
-			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
+			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.view)
 			if err != nil {
 				return nil, true, err
 			}
@@ -745,7 +772,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "OPTIONAL MATCH")
+			addPipelinePatternBindings(ctx, e, scope, clause, "OPTIONAL MATCH")
 		case pipelineClauseCreate:
 			end := idx + 1
 			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
@@ -774,7 +801,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			for _, createClause := range clauses[idx:end] {
-				addPipelinePatternBindings(ctx, e, scope, createClause.text, "CREATE")
+				addPipelinePatternBindings(ctx, e, scope, createClause, "CREATE")
 			}
 			addQueryStats(result.Stats, created.Stats)
 			if created.Metadata != nil {
@@ -783,12 +810,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			idx = end - 1
 			wrote = true
 		case pipelineClauseMerge:
-			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause.text)
+			newRows, stats, err := e.pipelineApplyMerge(ctx, rows, clause.view)
 			if err != nil {
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(ctx, e, scope, clause.text, "MERGE")
+			addPipelinePatternBindings(ctx, e, scope, clause, "MERGE")
 			if stats != nil {
 				addQueryStats(result.Stats, stats)
 			}
@@ -797,7 +824,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				e.refreshRowEntities(ctx, rows)
 			}
 		case pipelineClauseDelete:
-			stats, ok, err := e.pipelineApplyDelete(ctx, rows, scope, clause.text)
+			stats, ok, err := e.pipelineApplyDelete(ctx, rows, scope, clause.input(ctx))
 			if err != nil {
 				return nil, true, err
 			}
@@ -807,15 +834,16 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			addQueryStats(result.Stats, stats)
 			wrote = true
 		case pipelineClauseSet:
-			assignment := clause.text
+			assignments := []braceView{clause.view}
 			for idx+1 < len(clauses) && clauses[idx+1].kind == pipelineClauseSet {
 				idx++
-				assignment += " " + clauses[idx].text
+				assignments = append(assignments, clauses[idx].view)
 			}
 			// Rows that bind one entity through different copies write one
 			// entity: each row reads what the rows before it wrote.
 			e.refreshRowEntities(ctx, rows)
-			stats, ok, err := e.pipelineApplySet(ctx, rows, assignment)
+			original := braceView{syntax: clause.view.syntax, source: clause.view.source.OriginalView()}
+			stats, ok, err := e.pipelineApplySet(ctx, rows, original.assembleCode(assignments, " "))
 			if err != nil {
 				return nil, true, err
 			}
@@ -829,7 +857,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 		case pipelineClauseRemove:
 			e.refreshRowEntities(ctx, rows)
-			if err := e.pipelineApplyRemove(ctx, rows, clause.text, result); err != nil {
+			if err := e.pipelineApplyRemove(ctx, rows, clause.view, result); err != nil {
 				return nil, true, err
 			}
 			wrote = true
@@ -862,14 +890,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			carried := pipelineImports(ctx)
 			carryAfter := len(carried) > 0 && pipelineClauseAggregates(ctx, clause)
 			if source != nil && !carryAfter {
-				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
+				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.input(ctx)); supported {
 					source = windowed
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause.input(ctx), pipelineImports(ctx))
 					continue
 				}
-				if plan, local := parsePipelineRowWith(ctx, clause.text); local {
+				if plan, local := parsePipelineRowWith(ctx, clause.input(ctx)); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause.input(ctx), pipelineImports(ctx))
 					continue
 				}
 			}
@@ -883,7 +911,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if err := e.validatePipelineWithRows(ctx, rows, clause.text); err != nil {
+			if err := e.validatePipelineWithRows(ctx, rows, clause.input(ctx)); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -892,7 +920,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text, source, rowsValidated)
+			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.input(ctx), source, rowsValidated)
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -901,23 +929,23 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			scope = pipelineProjectionScope(ctx, scope, clause.input(ctx), pipelineImports(ctx))
 			if carryAfter {
 				carryPipelineImports(rows, scope, carried)
 			}
 		case pipelineClauseUnwind:
-			if err := e.validatePipelineRangeArguments(ctx, rows, clause.text, "UNWIND"); err != nil {
+			if err := e.validatePipelineRangeArguments(ctx, rows, clause.input(ctx), "UNWIND"); err != nil {
 				return nil, true, err
 			}
 			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if alias := pipelineUnwindAlias(clause.text); alias != "" {
+			if alias := pipelineUnwindAlias(clause.input(ctx)); alias != "" {
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
+				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].input(ctx), pipelineImports(ctx))
 			}
 			idx += consumed
 			if idx+1 < len(clauses) && (pipelineClauseAggregates(ctx, clauses[idx+1]) || stream.forClause(ctx, &clauses[idx+1]) != nil) {
@@ -948,12 +976,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var err error
 			if clause.optional {
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text, result.Stats)
+					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.view, result.Stats)
 					yielded = names
 					return rowsOut, names, handled, err
 				}, &ok)
 			} else {
-				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text, result.Stats)
+				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.view, result.Stats)
 			}
 			if err != nil {
 				return nil, true, err
@@ -977,12 +1005,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if clause.optional && len(rows) > 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
+					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.view, callMetadata)
 					addQueryStats(stats, rowStats)
 					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
 			} else {
-				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.view, callMetadata)
 			}
 			addQueryStats(result.Stats, stats)
 			if err != nil {
@@ -996,7 +1024,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range callMetadata.columns {
 				scope[name] = struct{}{}
 			}
-			if callSubqueryQueryIsWrite(clause.text) || callMetadata.batch != nil {
+			if callSubqueryQueryIsWrite(clause.input(ctx)) || callMetadata.batch != nil {
 				wrote = true
 			}
 		case pipelineClauseForeach:
@@ -1019,10 +1047,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				result.Columns, result.Rows = columns, streamedRows
 				return result, true, nil
 			}
-			if err := e.validatePipelinePercentileArguments(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelinePercentileArguments(ctx, rows, clause.input(ctx), "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, rows, clause.input(ctx), "RETURN"); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -1034,7 +1062,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			// Fused input operators can change clause indexes; each retained
 			// syntax node still names its own canonical projection.
 			original := clause
-			plan := returnProjectionPlanFor(ctx, original.text, original)
+			plan := returnProjectionPlanFor(ctx, original.input(ctx), original)
 			if plan == nil {
 				return nil, true, unresolvedStatementError()
 			}
@@ -1070,7 +1098,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		output.wrote = wrote
 	}
 	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
-		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1].text)
+		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1].view)
 		if topLevelKeywordIndex(body, "RETURN") >= 0 {
 			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
 		}
@@ -1156,8 +1184,9 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := pipelineClauseBody(clauses[0].text, "MATCH")
-	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
+	matchView := clauses[0].view.clauseBody("MATCH")
+	matchBody := matchView.text()
+	if topLevelKeywordIndex(matchView, "WHERE") >= 0 {
 		return nil, false, nil
 	}
 	// This counter plan owns a relationship pattern, never a path assignment
@@ -1170,14 +1199,14 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	}
 	// A counter owns one projected item. Decline other projections before
 	// reading a traversal that this plan cannot consume.
-	items := e.parseReturnItems(ctx, strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := e.parseReturnItems(ctx, clauses[1].input(ctx).clauseBody("RETURN"))
 	if len(items) != 1 {
 		return nil, false, nil
 	}
-	if !patternMapsAreConstant(matchBody) {
+	if !patternMapsAreConstant(matchView) {
 		return nil, false, nil
 	}
-	matches := e.parseTraversalPatternStructure(ctx, matchBody)
+	matches := e.parseTraversalPatternStructure(ctx, matchView)
 	if matches == nil {
 		return nil, false, nil
 	}
@@ -1201,21 +1230,24 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := pipelineClauseBody(clauses[0].text, "MATCH")
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(matchBody, "WHERE"); whereIndex >= 0 {
-		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
-		matchBody = strings.TrimSpace(matchBody[:whereIndex])
+	matchView := clauses[0].view.clauseBody("MATCH")
+	matchBody := matchView.text()
+	whereView := matchView.window(len(matchBody), len(matchBody))
+	if whereIndex := topLevelKeywordIndex(matchView, "WHERE"); whereIndex >= 0 {
+		whereView = matchView.window(whereIndex+len("WHERE"), len(matchBody)).trim()
+		matchView = matchView.window(0, whereIndex).trim()
+		matchBody = matchView.text()
 	}
+	whereClause := whereView.text()
 	// A path assignment (p = (n:L)) is the general route's, which binds the
 	// path: read as a node, its variable would be "p = (n".
-	if !e.isSingleNodePattern(matchBody) || extractPathAssignmentVariable(matchBody) != "" {
+	if !e.isSingleNodePattern(matchView) || extractPathAssignmentVariable(matchBody) != "" {
 		return nil, false, nil
 	}
-	if !patternMapsAreConstant(matchBody) || !patternMapsAreConstant(whereClause) || stream.forClause(ctx, &clauses[1]) != nil {
+	if !patternMapsAreConstant(matchView) || !patternMapsAreConstant(whereView) || stream.forClause(ctx, &clauses[1]) != nil {
 		return nil, false, nil
 	}
-	nodePattern, parseErr := e.parseNodePattern(ctx, matchBody)
+	nodePattern, parseErr := e.parseNodePattern(ctx, matchView)
 	if parseErr != nil {
 		return nil, true, parseErr
 	}
@@ -1223,7 +1255,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 
-	items := e.parseReturnItems(ctx, strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := e.parseReturnItems(ctx, clauses[1].input(ctx).clauseBody("RETURN"))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1240,13 +1272,13 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereView, params)
 	if err != nil {
 		return nil, true, err
 	}
 	if !usedIndex {
 		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
-			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
+			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereView, countColumn); streamed || streamErr != nil {
 				return result, true, streamErr
 			}
 		}
@@ -1255,7 +1287,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 		// boundedSimpleProjection requires an empty WHERE, so no seek can
 		// have applied one here.
-		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereView, hint)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1269,11 +1301,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	rows := make([]pipelineRow, 0, len(candidates))
 	for _, node := range candidates {
 		row := pipelineNodeRow(ctx, nodePattern.variable, node)
-		if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
+		if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereView, map[string]interface{}(row)) {
 			rows = append(rows, row)
 		}
 	}
-	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].input(ctx))
 	if !projected {
 		return nil, false, nil
 	}
@@ -1309,7 +1341,7 @@ func pipelineSingleNodeCountProjection(items []returnItem, variable string) (str
 func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereClause braceView,
 	column string,
 ) (*ExecuteResult, bool, error) {
 	if len(nodePattern.labels) == 0 {
@@ -1323,7 +1355,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 
 	predicateRow := pipelineNodeRow(ctx, nodePattern.variable, nil)
 	predicatePlan := planRowPredicate(whereClause)
-	hasWhere := strings.TrimSpace(whereClause) != ""
+	hasWhere := !whereClause.empty()
 	whereFilter := func(node *storage.Node) bool {
 		predicateRow[nodePattern.variable] = node
 		if !hasWhere {
@@ -1359,7 +1391,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}
 	// A lookup an index can narrow is counted from the same seed the row
 	// read uses (#820); only otherwise is the label streamed.
-	candidates, whereApplied, indexed, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{})
+	candidates, whereApplied, indexed, err := e.collectPipelineIndexedNodeCandidates(withBraceView(ctx, whereClause), nodePattern, whereClause, pipelineMatchPhysicalHint{})
 	if err != nil {
 		return nil, true, err
 	}
@@ -1385,7 +1417,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}, true, nil
 }
 
-func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+func pipelineNodePredicateProperties(variable string, expression braceView, inline map[string]interface{}) []string {
 	properties := make([]string, 0, len(inline)+2)
 	seen := make(map[string]struct{}, len(inline)+2)
 	for property := range inline {
@@ -1457,7 +1489,7 @@ func pipelineSimpleNodeProjections(items []returnItem, variable string) bool {
 			return false
 		}
 		property := strings.TrimSpace(expression[len(prefix):])
-		if property == "" || strings.ContainsAny(property, ".()[]{}+-*/%^<>=, ") {
+		if property == "" || containsSyntaxAny(property, ".()[]{}+-*/%^<>=, ") {
 			return false
 		}
 	}
@@ -1473,9 +1505,34 @@ func pipelineHasClauseKind(clauses []pipelineClause, kind pipelineClauseKind) bo
 	return false
 }
 
-func normalizePipelineWhitespace(query string) string {
+func normalizePipelineWhitespace(view braceView) braceView {
+	var copies []cyphertext.SourceCopy
+	text := emitPipelineWhitespace(view.text(), func(original, accepted cyphertext.Span) {
+		if len(copies) > 0 {
+			last := &copies[len(copies)-1]
+			if last.Original.End == original.Start && last.Accepted.End == accepted.Start {
+				last.Original.End = original.End
+				last.Accepted.End = accepted.End
+				return
+			}
+		}
+		copies = append(copies, cyphertext.SourceCopy{Original: original, Accepted: accepted})
+	})
+	if text == view.text() {
+		return view
+	}
+	source := view.source.RewriteWithCopies(text, []cyphertext.SourceEdit{{Original: cyphertext.Span{End: len(view.text())}, Accepted: cyphertext.Span{End: len(text)}}}, copies)
+	return braceView{syntax: view.syntax, source: source}
+}
+
+func emitPipelineWhitespace(query string, copied ...func(cyphertext.Span, cyphertext.Span)) string {
 	if strings.IndexFunc(query, cyphertext.NonCanonicalWhitespace) < 0 {
-		return strings.TrimSpace(query)
+		text := strings.TrimSpace(query)
+		if len(copied) > 0 && len(text) > 0 {
+			left := len(query) - len(strings.TrimLeftFunc(query, cyphertext.IsWhitespace))
+			copied[0](cyphertext.Span{Start: left, End: left + len(text)}, cyphertext.Span{End: len(text)})
+		}
+		return text
 	}
 	var normalized strings.Builder
 	normalized.Grow(len(query))
@@ -1488,7 +1545,11 @@ func normalizePipelineWhitespace(query string) string {
 			}
 			spacePending = false
 			end := skipCypherQuotedText(query, index, character)
+			start := normalized.Len()
 			normalized.WriteString(query[index:end])
+			if len(copied) > 0 {
+				copied[0](cyphertext.Span{Start: index, End: end}, cyphertext.Span{Start: start, End: normalized.Len()})
+			}
 			index = end - 1
 			continue
 		}
@@ -1500,19 +1561,24 @@ func normalizePipelineWhitespace(query string) string {
 			normalized.WriteByte(' ')
 			spacePending = false
 		}
+		start := normalized.Len()
 		normalized.WriteByte(character)
+		if len(copied) > 0 {
+			copied[0](cyphertext.Span{Start: index, End: index + 1}, cyphertext.Span{Start: start, End: normalized.Len()})
+		}
 	}
 	return strings.TrimSpace(normalized.String())
 }
 
 // ---- clause appliers ----
 
-func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, error) {
-	body := pipelineClauseBody(clause, "OPTIONAL MATCH")
-	if pattern, repeatable := stripRepeatableElements(body); repeatable {
+func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause braceView) ([]pipelineRow, error) {
+	body := clause.clauseBody("OPTIONAL MATCH")
+	if pattern, repeatable := stripRepeatableElementsView(body); repeatable {
 		ctx, body = withRepeatableElements(ctx), pattern
-		clause = "OPTIONAL MATCH " + body
+		clause = body.wrap("OPTIONAL MATCH ", "")
 	}
+	ctx = withBraceView(ctx, clause)
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
 		if err != nil {
 			return nil, err
@@ -1602,26 +1668,29 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 // by the matched combinations. Returns (newRows, true, nil) on success. If a
 // MATCH in the middle of a pipeline binds zero rows, it does NOT fail — it
 // just zeros out the pipeline (matches Neo4j semantics for chained MATCH).
-func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelineRow, clause braceView) ([]pipelineRow, bool, error) {
 	return e.pipelineApplyMatchWithHint(ctx, rows, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 }
 
-func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
-	body := pipelineClauseBody(clause, "MATCH")
-	if stripped, repeatable := stripRepeatableElements(body); repeatable {
-		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
+func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, view braceView, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	bodyView := view.clauseBody("MATCH")
+	body := bodyView.text()
+	if stripped, repeatable := stripRepeatableElementsView(bodyView); repeatable {
+		bodyView = stripped
+		ctx, body, view = withRepeatableElements(ctx), stripped.text(), bodyView.wrap("MATCH ", "")
 	}
-	if err := validateBoundPatternNodes(rows, body); err != nil {
+	ctx = withBraceView(ctx, view)
+	if err := validateBoundPatternNodes(rows, bodyView); err != nil {
 		return nil, true, err
 	}
-	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
+	if shortest, ok, err := e.parseShortestPathMatch(ctx, bodyView); ok || err != nil {
 		if err != nil {
 			return nil, true, err
 		}
 		expanded, err := e.pipelineApplyShortestPathMatch(ctx, rows, shortest, false)
 		return expanded, true, err
 	}
-	if quantified, ok, err := parseQuantifiedPathMatch(body); ok || err != nil {
+	if quantified, ok, err := parseQuantifiedPathMatch(bodyView); ok || err != nil {
 		if err != nil {
 			return nil, true, err
 		}
@@ -1629,14 +1698,14 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		return expanded, true, err
 	}
 	patternEnd := len(body)
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(bodyView, "WHERE"); where >= 0 {
 		patternEnd = where
 	}
-	parts := splitTopLevelComma(body[:patternEnd])
-	if len(parts) > 1 && extractPathAssignmentVariable(parts[len(parts)-1]) != "" {
+	parts := bodyView.window(0, patternEnd).commaViews()
+	if len(parts) > 1 && extractPathAssignmentVariable(parts[len(parts)-1].text()) != "" {
 		nodePrefix := true
 		for _, part := range parts[:len(parts)-1] {
-			if !strings.HasPrefix(strings.TrimSpace(part), "(") || containsRelationshipPattern(part) {
+			if !strings.HasPrefix(part.trim().text(), "(") || containsRelationshipPattern(part.text()) {
 				nodePrefix = false
 				break
 			}
@@ -1644,9 +1713,9 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if nodePrefix {
 			for index, part := range parts {
 				if index == len(parts)-1 {
-					part += " " + body[patternEnd:]
+					part = bodyView.assembleCode([]braceView{part, bodyView.window(patternEnd, len(body))}, " ")
 				}
-				expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+part)
+				expanded, handled, err := e.pipelineApplyMatch(ctx, rows, part.wrap("MATCH ", ""))
 				if !handled || err != nil {
 					return expanded, handled, err
 				}
@@ -1655,7 +1724,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 			return rows, true, nil
 		}
 	}
-	if product, supported, err := e.pipelineNodeProductSource(ctx, rows, clause); supported || err != nil {
+	if product, supported, err := e.pipelineNodeProductSource(ctx, rows, view); supported || err != nil {
 		if err != nil {
 			return nil, true, err
 		}
@@ -1665,24 +1734,24 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		}
 		return expanded, true, nil
 	}
-	if len(parts) > 1 || len(parts) == 1 && strings.HasPrefix(strings.TrimSpace(parts[0]), "(") &&
-		!containsRelationshipPattern(parts[0]) && nodePatternStructure(parts[0]).variable == "" {
-		where := ""
+	if len(parts) > 1 || len(parts) == 1 && strings.HasPrefix(parts[0].trim().text(), "(") &&
+		!containsRelationshipPattern(parts[0].text()) && nodePatternStructure(parts[0]).variable == "" {
+		where := bodyView.window(len(body), len(body))
 		if patternEnd < len(body) {
-			where = strings.TrimSpace(body[patternEnd+len("WHERE"):])
+			where = bodyView.window(patternEnd+len("WHERE"), len(body)).trim()
 		}
-		return e.pipelineApplyMatchProduct(ctx, rows, parts, where)
+		return e.pipelineApplyMatchProduct(ctx, rows, bodyView, parts, where)
 	}
-	if expanded, ok, err := e.pipelineApplyBoundRelationshipListMatch(ctx, rows, clause); ok || err != nil {
+	if expanded, ok, err := e.pipelineApplyBoundRelationshipListMatch(ctx, rows, view); ok || err != nil {
 		return expanded, ok, err
 	}
-	if expanded, ok, err := e.pipelineApplyInitialTraversalMatch(ctx, rows, clause, hint); ok || err != nil {
+	if expanded, ok, err := e.pipelineApplyInitialTraversalMatch(ctx, rows, view, hint); ok || err != nil {
 		return expanded, ok, err
 	}
-	if expanded, ok, err := e.pipelineApplyInitialNodeMatch(ctx, rows, clause, hint); ok || err != nil {
+	if expanded, ok, err := e.pipelineApplyInitialNodeMatch(ctx, rows, view, hint); ok || err != nil {
 		return expanded, ok, err
 	}
-	if expanded, ok := e.pipelineApplyChainedMatch(ctx, rows, clause); ok {
+	if expanded, ok := e.pipelineApplyChainedMatch(ctx, rows, view); ok {
 		return expanded, true, nil
 	}
 
@@ -1702,17 +1771,19 @@ func pipelineBindingValuesEqual(left, right interface{}) bool {
 	}
 }
 
-func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, rows []pipelineRow, clause braceView, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
-	pattern := pipelineClauseBody(clause, "MATCH")
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
+	patternView := clause.clauseBody("MATCH")
+	pattern := patternView.text()
+	whereClause := patternView.window(len(pattern), len(pattern))
+	if whereIndex := topLevelKeywordIndex(patternView, "WHERE"); whereIndex >= 0 {
+		whereClause = normalizePipelineWhitespace(patternView.window(whereIndex+len("WHERE"), len(pattern)))
+		patternView = patternView.window(0, whereIndex).trim()
+		pattern = patternView.text()
 	}
-	if !e.isSingleNodePattern(pattern) {
+	if !e.isSingleNodePattern(patternView) {
 		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -1720,9 +1791,11 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		// p = (n:L): the node pattern is what follows the assignment. Parsed
 		// with the assignment, its variable was "p = (n" and it matched no
 		// node.
-		_, pattern, _ = splitPathAssignment(pattern)
+		_, right, _ := splitPathAssignment(pattern)
+		patternView = patternView.window(len(pattern)-len(right), len(pattern))
+		pattern = right
 	}
-	basePattern := nodePatternStructure(pattern)
+	basePattern := nodePatternStructure(patternView)
 	if basePattern.variable == "" {
 		return nil, false, nil
 	}
@@ -1744,11 +1817,11 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		var cacheKey string
 		if templated {
 			if propsKey, keyed := pipelinePropertiesKey(nodePattern.properties); keyed {
-				cacheKey = "\x03" + propsKey + "\x00" + materializedWhere
+				cacheKey = "\x03" + propsKey + "\x00" + materializedWhere.text()
 			}
 		} else {
 			rowCtx := withValueBindings(ctx, row)
-			materializedPattern := pattern
+			materializedPattern := patternView
 			nodePattern, parseErr = e.parseNodePattern(rowCtx, materializedPattern)
 			if parseErr != nil {
 				return nil, true, parseErr
@@ -1762,14 +1835,14 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
 			bound := e.pipelineBindZeroLengthPath(row, pathVariable, node)
-			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(bound)) {
+			if materializedWhere.empty() || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(bound)) {
 				out = append(out, bound)
 			}
 			continue
 		}
 		candidateHint := hint
 		for name := range row {
-			if name != nodePattern.variable && referencesVariable(whereClause, name) {
+			if name != nodePattern.variable && referencesVariable(whereClause.text(), name) {
 				cacheKey = ""
 				candidateHint.earlyLimit = -1
 				break
@@ -1778,8 +1851,8 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		// A WHERE that reads the path is tested below, where the path is
 		// bound; the candidates are collected without it.
 		candidateWhere := materializedWhere
-		if pathVariable != "" && referencesVariable(whereClause, pathVariable) {
-			candidateWhere = ""
+		if pathVariable != "" && referencesVariable(whereClause.text(), pathVariable) {
+			candidateWhere = candidateWhere.window(0, 0)
 			cacheKey = ""
 		}
 		candidates, cached := candidateCache[cacheKey]
@@ -1794,14 +1867,14 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 		}
 		if candidates.whereApplied {
-			materializedWhere = ""
+			materializedWhere = materializedWhere.window(0, 0)
 		}
 		// The predicate is tested on one row reused for every candidate; a
 		// row is built only for a candidate that passes. A predicate with a
 		// complete plan is planned once for the row's candidates.
 		var probe pipelineRow
 		var plan *rowPredicatePlan
-		if materializedWhere != "" {
+		if !materializedWhere.empty() {
 			if planned := planRowPredicate(materializedWhere); planned != nil && planned.complete {
 				plan = planned
 			}
@@ -1811,7 +1884,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			if pathVariable != "" {
 				path = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
 			}
-			if materializedWhere != "" {
+			if !materializedWhere.empty() {
 				if probe == nil {
 					probe = make(pipelineRow, len(row)+2)
 					for name, value := range row {
@@ -1901,7 +1974,7 @@ func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement 
 // whereIsSimpleIndexedIn reports whether a WHERE is exactly
 // <variable>.<property> IN <parameter or literal list>, the form the IN-list
 // plan answers completely.
-func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, whereClause string, params map[string]interface{}) bool {
+func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable string, whereClause braceView, params map[string]interface{}) bool {
 	if _, _, ok := e.parseSimpleIndexedInParam(variable, whereClause, params); ok {
 		return true
 	}
@@ -1916,7 +1989,10 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 // never the logical result.
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
-func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause braceView, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+	if !whereClause.empty() {
+		ctx = withBraceView(ctx, whereClause)
+	}
 	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}
@@ -1947,14 +2023,14 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, hint pipelineMatchPhysicalHint, visit func(*storage.Node) error) error {
 	// A streamed MATCH is the statement's first clause, over one row, so
 	// no batch prefetch applies to it (prefetchedPipelineCandidate).
-	nodes, _, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, "", hint)
+	nodes, _, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, braceView{}, hint)
 	if err != nil {
 		return err
 	}
 	if used {
 		return visitNodeList(nodes, visit)
 	}
-	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, "", hint)
+	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, braceView{}, hint)
 	err = e.visitNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection, nil, visit)
 	if len(nodePattern.properties) > 0 {
 		e.markMergeScanFallbackUsed()
@@ -1980,12 +2056,12 @@ func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodeP
 
 // pipelineLabelScanArguments are the filters and projection of the label
 // (or label-less) scan that seeds a MATCH no index narrows.
-func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (properties map[string]interface{}, streamingWhere string, projection []string) {
+func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePattern nodePatternInfo, whereClause braceView, hint pipelineMatchPhysicalHint) (properties map[string]interface{}, streamingWhere braceView, projection []string) {
 	if hint.earlyLimit > 0 {
 		streamingWhere = whereClause
 	}
 	properties = nodePattern.properties
-	if len(nodePattern.labels) == 0 && streamingWhere == "" {
+	if len(nodePattern.labels) == 0 && streamingWhere.empty() {
 		// The rows are filtered by the WHERE afterwards; its top-level
 		// equalities still let a label-less scan skip the nodes that can't
 		// match before decoding them (#857).
@@ -2002,15 +2078,16 @@ func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePa
 // each row. It is the pipeline adapter around the shared traversal operator:
 // node and relationship identity conflicts are rejected during the join, and
 // WHERE is evaluated once against the complete joined row.
-func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []pipelineRow, view braceView) ([]pipelineRow, bool) {
+	clause := view.text()
 	if len(rows) == 0 || extractPathAssignmentVariable(clause) != "" {
 		return nil, false
 	}
 	patternBindings := make(map[string]struct{})
-	for _, variable := range extractNodeVariables(matchPatternStructure(clause)) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(view)) {
 		patternBindings[variable] = struct{}{}
 	}
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(clause)) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(view)) {
 		patternBindings[variable] = struct{}{}
 	}
 	hasGraphBinding := false
@@ -2029,11 +2106,13 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 		return nil, false
 	}
 
-	pattern := pipelineClauseBody(clause, "MATCH")
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
+	patternView := view.clauseBody("MATCH")
+	pattern := patternView.text()
+	whereClause := patternView.window(len(pattern), len(pattern))
+	if whereIndex := topLevelKeywordIndex(patternView, "WHERE"); whereIndex >= 0 {
+		whereClause = normalizePipelineWhitespace(patternView.window(whereIndex+len("WHERE"), len(pattern)))
+		patternView = patternView.window(0, whereIndex).trim()
+		pattern = patternView.text()
 	}
 	// executeChainedMatch runs one pattern part. A MATCH of several parts
 	// ((a)-->(x), (b)-->(x)) needs its relationships distinct across the
@@ -2057,7 +2136,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 				}
 			}
 		}
-		joinedNodes, joinedRelationships := e.executeChainedMatch(withValueBindings(ctx, row), pattern, []binding{nodes}, []relationshipBinding{relationships})
+		joinedNodes, joinedRelationships := e.executeChainedMatch(withValueBindings(ctx, row), patternView, []binding{nodes}, []relationshipBinding{relationships})
 		for index, nodeBindings := range joinedNodes {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeBindings)))
 			for name, value := range row {
@@ -2071,7 +2150,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 					joined[name] = relationship
 				}
 			}
-			if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(joined)) {
+			if whereClause.empty() || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(joined)) {
 				out = append(out, joined)
 			}
 		}
@@ -2079,20 +2158,22 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	return out, true
 }
 
-func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
-	pattern := pipelineClauseBody(clause, "MATCH")
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
+func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause braceView) ([]pipelineRow, bool, error) {
+	patternView := clause.clauseBody("MATCH")
+	pattern := patternView.text()
+	whereClause := patternView.window(len(pattern), len(pattern))
+	if whereIndex := topLevelKeywordIndex(patternView, "WHERE"); whereIndex >= 0 {
+		whereClause = normalizePipelineWhitespace(patternView.window(whereIndex+len("WHERE"), len(pattern)))
+		patternView = patternView.window(0, whereIndex).trim()
+		pattern = patternView.text()
 	}
-	open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship)
+	open, close := readRelationshipBracket(patternView, 0, requireClosedRelationship)
 	if open < 0 || close < 0 {
 		return nil, false, nil
 	}
 	// Admission needs the variable and length, not a type list or normalized
 	// traversal. The execution reader checks the complete accepted pattern.
-	declaration := relationshipDeclarationHead(pattern[open+1 : close])
+	declaration := relationshipDeclarationHead(patternView.window(open+1, close))
 	if !declaration.hasLength || declaration.variable == "" {
 		return nil, false, nil
 	}
@@ -2101,7 +2182,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			return nil, false, nil
 		}
 	}
-	if hasQuantifiedGroup(pattern) || e.isChainedPattern(normalizeAnonymousTraversalRelationships(pattern)) {
+	if hasQuantifiedGroup(patternView) || e.isChainedPattern(normalizeAnonymousTraversalRelationships(pattern)) {
 		return nil, false, nil
 	}
 
@@ -2113,7 +2194,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
 			continue
 		}
-		rowCtx, prepared, err := e.bindPatternProperties(ctx, pattern, row)
+		rowCtx, prepared, err := e.bindPatternProperties(ctx, patternView, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -2156,7 +2237,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			if match.EndNode.variable != "" {
 				expanded[match.EndNode.variable] = end
 			}
-			if whereClause != "" && !e.evaluateMatchWhereCondition(ctx, whereClause, map[string]interface{}(expanded)) {
+			if !whereClause.empty() && !e.evaluateMatchWhereCondition(ctx, whereClause, map[string]interface{}(expanded)) {
 				continue
 			}
 			out = append(out, expanded)
@@ -2247,9 +2328,10 @@ func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern
 // precededByOptionalKeyword reports whether the clause keyword at position in
 // cypher follows the keyword OPTIONAL (OPTIONAL MATCH, OPTIONAL CALL), not a
 // variable named optional. It doesn't allocate.
-func precededByOptionalKeyword(cypher string, position int) bool {
+func precededByOptionalKeyword(view braceView, position int) bool {
+	cypher := view.text()
 	start := keywordsBefore(cypher, position, "OPTIONAL")
-	return start >= 0 && !clauseKeywordUsedAsName(cypher, start, start+len("OPTIONAL"), "OPTIONAL")
+	return start >= 0 && !clauseKeywordUsedAsName(view, start, start+len("OPTIONAL"), "OPTIONAL")
 }
 
 // keywordsBefore returns the index of words' first word when the words, in

@@ -45,40 +45,40 @@ func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
-	vars, inner, hasWith, err := parseLeadingWithImports(" RETURN 1 AS one ")
+	vars, inner, hasWith, err := parseLeadingWithImports(originalBraceView(" RETURN 1 AS one "))
 	require.NoError(t, err)
 	require.False(t, hasWith)
 	require.Nil(t, vars)
 	require.Equal(t, "RETURN 1 AS one", inner)
 
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a, b AS bee RETURN a, bee")
+	vars, inner, hasWith, err = parseLeadingWithImports(originalBraceView("WITH a, b AS bee RETURN a, bee"))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"a", "bee"}, vars)
 	require.Equal(t, "RETURN a, bee", inner)
 
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a WHERE a IS NOT NULL CREATE (n)")
+	vars, inner, hasWith, err = parseLeadingWithImports(originalBraceView("WITH a WHERE a IS NOT NULL CREATE (n)"))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"a"}, vars)
 	require.Equal(t, "WITH a WHERE a IS NOT NULL CREATE (n)", inner)
 
-	_, _, hasWith, err = parseLeadingWithImports("WITH a")
+	_, _, hasWith, err = parseLeadingWithImports(originalBraceView("WITH a"))
 	require.True(t, hasWith)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must be followed by a query clause")
 
-	whereExpr, rest, ok := splitLeadingWhereNullGuard("WITH a WHERE a IS NOT NULL CREATE (n)")
+	whereExpr, rest, ok := splitLeadingWhereNullGuard(originalBraceView("WITH a WHERE a IS NOT NULL CREATE (n)"))
 	require.True(t, ok)
 	require.Equal(t, "a IS NOT NULL", whereExpr)
 	require.Equal(t, "CREATE (n)", rest)
 
-	whereExpr, rest, ok = splitLeadingWhereNullGuard("WHERE a IS NULL RETURN a")
+	whereExpr, rest, ok = splitLeadingWhereNullGuard(originalBraceView("WHERE a IS NULL RETURN a"))
 	require.True(t, ok)
 	require.Equal(t, "a IS NULL", whereExpr)
 	require.Equal(t, "RETURN a", rest)
 
-	_, _, ok = splitLeadingWhereNullGuard("WHERE a IS NULL")
+	_, _, ok = splitLeadingWhereNullGuard(originalBraceView("WHERE a IS NULL"))
 	require.False(t, ok)
 
 	pass, handled := evalWhereNullGuard("((a IS NULL))", map[string]interface{}{})
@@ -94,7 +94,7 @@ func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
-	parts := splitTopLevelAndConjuncts("n.id = outer AND size([x IN [1,2] WHERE x = 1]) > 0 AND 'A AND B' = 'A AND B'")
+	parts := splitTopLevelAndConjuncts(expressionBraceView("n.id = outer AND size([x IN [1,2] WHERE x = 1]) > 0 AND 'A AND B' = 'A AND B'"))
 	require.Equal(t, []string{
 		"n.id = outer",
 		"size([x IN [1,2] WHERE x = 1]) > 0",
@@ -109,23 +109,23 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("'a=b'")
 	require.False(t, ok)
 
-	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("n.id = outer AND outer IS NOT NULL AND n.age > 3", "outer", splitTopLevelAndConjuncts, splitTopLevelEqualityCallSubquery, parseCallSubqueryVarProp, isSimpleIdentifier)
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("n.id = outer AND outer IS NOT NULL AND n.age > 3", "outer", conjunctTexts, splitTopLevelEqualityCallSubquery, parseCallSubqueryVarProp, isSimpleIdentifier)
 	require.True(t, ok)
 	require.Equal(t, "n", matchVar)
 	require.Equal(t, "id", matchProp)
 	require.Equal(t, "outer IS NOT NULL AND n.age > 3", otherWhere)
 
-	sanitized, ok := cyphertext.FilterImportConjuncts(otherWhere, "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	sanitized, ok := cyphertext.FilterImportConjuncts(otherWhere, "outer", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.True(t, ok)
 	require.Equal(t, "n.age > 3", sanitized)
 
-	_, ok = cyphertext.FilterImportConjuncts("outer > 3 AND n.age > 3", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	_, ok = cyphertext.FilterImportConjuncts("outer > 3 AND n.age > 3", "outer", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.False(t, ok)
 
-	guard, ok := cyphertext.FilterImportConjuncts("`outer` IS NOT NULL", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	guard, ok := cyphertext.FilterImportConjuncts("`outer` IS NOT NULL", "outer", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.True(t, ok)
 	require.Empty(t, guard)
-	_, ok = cyphertext.FilterImportConjuncts("outer IS NULL", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	_, ok = cyphertext.FilterImportConjuncts("outer IS NULL", "outer", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.False(t, ok)
 	require.True(t, cyphertext.FindIdentifier("outer + 1 > 0", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 	require.False(t, cyphertext.FindIdentifier("n.outer = 1", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
@@ -144,46 +144,46 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(t.Context(), "RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(t.Context(), originalBraceView("RETURN 'UNION' AS v UNION ALL RETURN 2 AS v"))
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.True(t, unionAll)
 	require.Equal(t, []string{"RETURN 'UNION' AS v", "RETURN 2 AS v"}, branches)
 
-	branches, unionAll, mixed, ok = parseTopLevelUnionBranches(t.Context(), "RETURN 1 AS v UNION RETURN 2 AS v")
+	branches, unionAll, mixed, ok = parseTopLevelUnionBranches(t.Context(), originalBraceView("RETURN 1 AS v UNION RETURN 2 AS v"))
 	require.True(t, ok)
 	require.False(t, mixed)
 	require.False(t, unionAll)
 	require.Equal(t, 2, len(branches))
 
-	projection, modifiers := splitTopLevelResultModifiersCallSubquery("n.name, 'ORDER BY literal' ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	projection, modifiers := splitTopLevelResultModifiersCallSubquery(expressionBraceView("n.name, 'ORDER BY literal' ORDER BY n.age DESC SKIP 1 LIMIT 2"))
 	require.Equal(t, "n.name, 'ORDER BY literal'", projection)
 	require.Equal(t, "ORDER BY n.age DESC SKIP 1 LIMIT 2", modifiers)
 
-	idx := indexTopLevelKeywordCallSubquery("'ORDER BY' ORDER BY n.age", "ORDER BY")
+	idx := indexTopLevelKeywordCallSubquery(expressionBraceView("'ORDER BY' ORDER BY n.age"), "ORDER BY")
 	require.Equal(t, len("'ORDER BY' "), idx)
 
-	col, desc, ok := parseOrderByModifier("ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	col, desc, ok := parseOrderByModifier(originalBraceView("ORDER BY n.age DESC SKIP 1 LIMIT 2"))
 	require.True(t, ok)
 	require.Equal(t, "n.age", col)
 	require.True(t, desc)
 
 	e, _ := newTestExecutor(t)
-	value, ok := e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "SKIP")
+	value, ok := e.parseIntModifier(context.Background(), originalBraceView("ORDER BY n.age DESC SKIP 1 LIMIT 2"), "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 1, value)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "LIMIT")
+	value, ok = e.parseIntModifier(context.Background(), originalBraceView("ORDER BY n.age DESC SKIP 1 LIMIT 2"), "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	_, ok = e.parseIntModifier(context.Background(), "LIMIT nope", "LIMIT")
+	_, ok = e.parseIntModifier(context.Background(), originalBraceView("LIMIT nope"), "LIMIT")
 	require.False(t, ok)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "SKIP")
+	value, ok = e.parseIntModifier(context.Background(), originalBraceView("ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')"), "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "LIMIT")
+	value, ok = e.parseIntModifier(context.Background(), originalBraceView("ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')"), "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 3, value)
-	_, ok = e.parseIntModifier(context.Background(), "LIMIT 1 - 2", "LIMIT")
+	_, ok = e.parseIntModifier(context.Background(), originalBraceView("LIMIT 1 - 2"), "LIMIT")
 	require.False(t, ok)
 
 	require.Equal(t, "<nil>", callSubqueryLookupKeyString(nil))
@@ -204,8 +204,8 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.Same(t, joined, crossJoinCallResults(joined, nil))
 	require.Same(t, joined, crossJoinCallResults(nil, joined))
 
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
-	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
+	require.True(t, callSubqueryQueryIsWrite(originalBraceView("MATCH (n) CREATE (m)")))
+	require.False(t, callSubqueryQueryIsWrite(originalBraceView("MATCH (n) RETURN n")))
 }
 
 func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {

@@ -15,11 +15,12 @@ type statementExecutionContract struct {
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
-	mode, body := parseExecutionMode(query)
+	mode, bodyView := executionModeView(statementBraceView(ctx, query))
+	body := bodyView.text()
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(bodyView) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
 		return statementExecutionContract{}, nil
 	}
 	if fabric.IsAdministrationCommand(body) {

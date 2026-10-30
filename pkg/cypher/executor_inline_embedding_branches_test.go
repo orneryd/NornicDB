@@ -174,19 +174,19 @@ func TestExecutorConfusableAndEmbeddingSuffixHelpers(t *testing.T) {
 	require.False(t, ok)
 
 	// With a following RETURN, EMBEDDING remains a possible projected variable.
-	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING RETURN n")
+	stripped, found := stripWithEmbeddingSuffix(originalBraceView("CREATE (n) WITH EMBEDDING RETURN n"))
 	require.False(t, found)
 	require.Equal(t, "CREATE (n) WITH EMBEDDING RETURN n", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING")
+	stripped, found = stripWithEmbeddingSuffix(originalBraceView("CREATE (n) WITH EMBEDDING"))
 	require.True(t, found)
 	require.Equal(t, "CREATE (n)", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("WITH EMBEDDING RETURN n")
+	stripped, found = stripWithEmbeddingSuffix(originalBraceView("WITH EMBEDDING RETURN n"))
 	require.False(t, found)
 	require.Equal(t, "WITH EMBEDDING RETURN n", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("CREATE (n)")
+	stripped, found = stripWithEmbeddingSuffix(originalBraceView("CREATE (n)"))
 	require.False(t, found)
 	require.Equal(t, "CREATE (n)", stripped)
 }

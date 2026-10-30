@@ -44,6 +44,31 @@ type mergeClauseActions struct {
 	onCreate, onMatch mergeActionClauses
 }
 
+// mergeSourceActions projects extents produced by the existing action grammar.
+// Consumers retain these views; no emitted SET text is re-admitted.
+// Author: #1663 implementation lane.
+type mergeSourceActions struct {
+	pattern           braceView
+	before, after     braceView
+	onCreate, onMatch []braceView
+}
+
+func readMergeSourceActions(clause braceView) mergeSourceActions {
+	clause = clause.trim()
+	body := clause.clauseBody("MERGE")
+	var spans mergeActionSpans
+	parts := splitMergeClauseActions(body, &spans)
+	project := func(clauses mergeActionClauses, positions mergeClauseSpans) []braceView {
+		var result []braceView
+		for i := 0; i < clauses.len(); i++ {
+			result = append(result, body.spanWindow(inlineOverflowAt(positions.inline[:], positions.overflow, i)))
+		}
+		return result
+	}
+	base := len(clause.text()) - len(body.text())
+	return mergeSourceActions{pattern: body.spanWindow(spans.pattern), before: clause.window(0, base+spans.pattern.Start), after: clause.window(base+spans.pattern.End, len(clause.text())), onCreate: project(parts.onCreate, spans.onCreate), onMatch: project(parts.onMatch, spans.onMatch)}
+}
+
 // mergeActionClauses are the action clauses of one kind, each its "SET ..."
 // text as a slice of the MERGE clause. The first two need no allocation.
 type mergeActionClauses struct {
@@ -63,32 +88,20 @@ func (clauses *mergeActionClauses) add(set string) {
 
 func (clauses mergeActionClauses) len() int { return clauses.count }
 
-// assignments is the index-th clause's assignment list (after SET).
-func (clauses mergeActionClauses) assignments(index int) string {
-	return strings.TrimSpace(inlineOverflowAt(clauses.inline[:], clauses.overflow, index)[len("SET"):])
+// viewTexts returns each view's text, for consumers whose values are strings.
+func viewTexts(views []braceView) []string {
+	texts := make([]string, len(views))
+	for index, view := range views {
+		texts[index] = view.text()
+	}
+	return texts
 }
 
-// setText is every clause as one SET text for pipelineApplySet, each a SET
-// of its own ("SET a SET b"); "" for none.
-func (clauses mergeActionClauses) setText() string {
-	switch clauses.count {
-	case 0:
-		return ""
-	case 1:
-		return clauses.inline[0]
-	}
-	text := clauses.inline[0]
-	for index := 1; index < clauses.count; index++ {
-		text += " " + inlineOverflowAt(clauses.inline[:], clauses.overflow, index)
-	}
-	return text
-}
-
-// mergeActionAssignments returns the assignments of every clause, in order.
-func mergeActionAssignments(clauses mergeActionClauses) []string {
-	var assignments []string
-	for index := 0; index < clauses.len(); index++ {
-		assignments = append(assignments, splitSetAssignments(clauses.assignments(index))...)
+// Author: #1663 lane. Assignments retain the extents of each original action.
+func mergeSourceActionAssignments(clauses []braceView) []braceView {
+	var assignments []braceView
+	for _, clause := range clauses {
+		assignments = append(assignments, setAssignmentViews(clause.clauseBody("SET"))...)
 	}
 	return assignments
 }
@@ -98,7 +111,8 @@ func mergeActionAssignments(clauses mergeActionClauses) []string {
 // the one parser of MERGE actions: the pipeline applies them
 // (pipelineApplyMerge), and the statement analysers and the AST builder read
 // them. It allocates only past two clauses of a kind or eight in all.
-func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeClauseActions {
+func splitMergeClauseActions(body braceView, spans *mergeActionSpans) mergeClauseActions {
+	mergeBody := body.text()
 	if spans != nil {
 		*spans = mergeActionSpans{}
 	}
@@ -110,7 +124,7 @@ func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeCla
 	actions := buffer[:0]
 	for _, keyword := range [...]string{"ON CREATE SET", "ON MATCH SET"} {
 		for from := 0; ; {
-			position := keywordIndexFromDefault(mergeBody, keyword, from)
+			position := keywordIndexFromDefault(body, keyword, from)
 			if position < 0 {
 				break
 			}
@@ -155,11 +169,11 @@ func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeCla
 	return parts
 }
 
-// applyMergeActions applies a MERGE's ON CREATE or ON MATCH SET text
-// (mergeActionClauses.setText) to the rows the MERGE produced, through the shared SET
+// applyMergeActions applies a MERGE's ON CREATE or ON MATCH SET clauses
+// to the rows the MERGE produced, through the shared SET
 // applier, and adds what it wrote to stats.
-func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipelineRow, actions string, stats *QueryStats) error {
-	if actions == "" {
+func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipelineRow, actions braceView, stats *QueryStats) error {
+	if actions.empty() {
 		return nil
 	}
 	setStats, ok, err := e.pipelineApplySet(ctx, rows, actions)
@@ -167,7 +181,7 @@ func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipeline
 		return err
 	}
 	if !ok {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeInvalidAction(actions))
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeInvalidAction(actions.text()))
 	}
 	addQueryStats(stats, setStats)
 	return nil
@@ -175,10 +189,10 @@ func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipeline
 
 // isMultiRelationshipPattern reports whether pattern (after an optional path
 // assignment) is a path of more than one relationship.
-func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
+func (e *StorageExecutor) isMultiRelationshipPattern(pattern braceView) bool {
 	// Fewer than two relationship brackets: one relationship at most, no
 	// parse needed.
-	if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open < 0 || strings.Count(pattern[open+1:], "[") == 0 {
+	if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open < 0 || strings.Count(pattern.text()[open+1:], "[") == 0 {
 		return false
 	}
 	return len(mergePathSegments(pattern)) > 1
@@ -190,19 +204,20 @@ func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
 // read by the relationship MERGE shape owner (parseMergeRelationshipShape),
 // so every direction, undirected included, reads as in a single-relationship
 // MERGE. nil for text whose brackets don't match.
-func mergePathSegments(pattern string) []string {
+func mergePathSegments(pattern braceView) []braceView {
 	_, body := parseCreatePathAssignment(pattern)
+	text := body.text()
 	var nodes [][2]int
-	for index := 0; index < len(body); index++ {
+	for index := 0; index < len(text); index++ {
 		// cyphertext.FindMatchingDelimiter skips quoted text and comments inside the
 		// brackets; a valid pattern has none outside them.
-		switch character := body[index]; character {
+		switch character := text[index]; character {
 		case '(', '[':
 			opener, closer := rune(character), ')'
 			if character == '[' {
 				closer = ']'
 			}
-			end := cyphertext.FindMatchingDelimiter(body, index, opener, closer, cyphertext.OpeningDelimiter)
+			end := cyphertext.FindMatchingDelimiter(text, index, opener, closer, cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return nil
 			}
@@ -215,9 +230,9 @@ func mergePathSegments(pattern string) []string {
 	if len(nodes) < 2 {
 		return nil
 	}
-	segments := make([]string, 0, len(nodes)-1)
+	segments := make([]braceView, 0, len(nodes)-1)
 	for index := 0; index+1 < len(nodes); index++ {
-		segments = append(segments, body[nodes[index][0]:nodes[index+1][1]+1])
+		segments = append(segments, body.window(nodes[index][0], nodes[index+1][1]+1))
 	}
 	return segments
 }
@@ -226,29 +241,28 @@ func mergePathSegments(pattern string) []string {
 // (a)-[:R]-(b) written left to right, (a)-[:R]->(b): MERGE creates an
 // undirected relationship in that direction, as the single-relationship
 // MERGE does (parseMergeRelationshipShape), while CREATE needs a direction.
-func directedMergePath(pattern string) string {
-	var builder strings.Builder
-	builder.Grow(len(pattern) + 4)
+func directedMergePath(pattern braceView) braceView {
+	text := pattern.text()
+	var pieces []cyphertext.SourcePiece
 	last := 0
-	for index := 0; index < len(pattern); index++ {
+	for index := 0; index < len(text); index++ {
 		// cyphertext.FindMatchingDelimiter skips quoted text and comments inside the
 		// brackets; a valid pattern has none outside them.
-		switch pattern[index] {
+		switch text[index] {
 		case '(':
-			if end := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter); end > index {
+			if end := cyphertext.FindMatchingDelimiter(text, index, '(', ')', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
 		case '[':
-			end := cyphertext.FindMatchingDelimiter(pattern, index, '[', ']', cyphertext.OpeningDelimiter)
+			end := cyphertext.FindMatchingDelimiter(text, index, '[', ']', cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return pattern
 			}
-			before := strings.TrimRightFunc(pattern[:index], cyphertext.IsWhitespace)
-			after := strings.TrimLeftFunc(pattern[end+1:], cyphertext.IsWhitespace)
+			before := strings.TrimRightFunc(text[:index], cyphertext.IsWhitespace)
+			after := strings.TrimLeftFunc(text[end+1:], cyphertext.IsWhitespace)
 			if !strings.HasSuffix(before, "<-") && strings.HasPrefix(after, "-(") {
-				builder.WriteString(pattern[last : end+1])
-				builder.WriteString("->")
-				last = len(pattern) - len(after) + 1
+				pieces = append(pieces, pattern.window(last, end+1).piece(), generatedPiece("->"))
+				last = len(text) - len(after) + 1
 			}
 			index = end
 		}
@@ -256,8 +270,8 @@ func directedMergePath(pattern string) string {
 	if last == 0 {
 		return pattern
 	}
-	builder.WriteString(pattern[last:])
-	return builder.String()
+	pieces = append(pieces, pattern.window(last, len(text)).piece())
+	return pattern.assemble(pieces...)
 }
 
 // pipelineMergePath runs, for one row, a MERGE of a path with more than one
@@ -265,40 +279,42 @@ func directedMergePath(pattern string) string {
 // row) or the whole path is created, reusing the row's bound variables
 // (#907). created reports which. A null or NaN property in the pattern is a
 // SemanticError, as for a single relationship (validateMergePatternProperties).
-func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
+func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
 	// The match is the statement rewrite's MATCH: a property map reading
 	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
-	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
+	wrapped := pattern.wrap("MATCH ", "")
+	_, rewrite, err := desugarLabelExpressionView(wrapped, nil, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, nil, false, err
 	}
+	desugared := wrapped.rewrite(rewrite)
 	// Syntax rewriting moves maps that read this path's variables into
 	// predicates/assignments. Materialize independent identity maps now; the
 	// dependent assignments use the checked SET owner after the path binds.
-	identityPattern := strings.TrimSpace(match[len("MATCH"):])
-	identityTail := ""
+	identityPattern := afterWord(desugared, "MATCH")
+	identityTail := identityPattern.window(0, 0)
 	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
-		identityTail = identityPattern[where:]
-		identityPattern = strings.TrimSpace(identityPattern[:where])
+		identityTail = identityPattern.window(where, len(identityPattern.text()))
+		identityPattern = identityPattern.window(0, where).trim()
 	}
 	ctx, identityPattern, err = e.bindPatternProperties(ctx, identityPattern, row)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	match = "MATCH " + identityPattern
-	if identityTail != "" {
-		match += " " + identityTail
+	match := identityPattern.wrap("MATCH ", "")
+	if identityTail.text() != "" {
+		match = desugared.assemble(generatedPiece("MATCH "), identityPattern.piece(), generatedPiece(" "), identityTail.piece())
 	}
 	for index, segment := range mergePathSegments(identityPattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
 		if shapeErr != nil {
 			return nil, nil, false, shapeErr
 		}
-		for side, content := range [...]string{shape.startContent, shape.endContent} {
+		for side, content := range [...]braceView{shape.startContent, shape.endContent} {
 			if index > 0 && side == 0 {
 				continue // the previous segment's end node, already checked and admitted
 			}
-			variable, labels, properties, parseErr := e.parseMergeNodePattern(ctx, "("+content+")", nodeContext, relContext)
+			variable, labels, properties, parseErr := e.parseMergeNodePattern(ctx, content.wrap("(", ")"), nodeContext, relContext)
 			if parseErr != nil {
 				return nil, nil, false, parseErr
 			}
@@ -311,7 +327,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 				}
 			}
 		}
-		if shape.relProps != "" {
+		if !shape.relProps.empty() {
 			evaluated, err := e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext)
 			if err != nil {
 				return nil, nil, false, err
@@ -337,15 +353,16 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// (the match's WHERE, the only predicates a MERGE pattern can have) is
 	// set once its elements exist, as Neo4j's MERGE evaluates it; CREATE
 	// itself can't read an element it creates.
-	createPattern, assignments := identityPattern, ""
+	createPattern, assignments := identityPattern, match.window(0, 0)
 	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
-		createPattern = strings.TrimSpace(match[len("MATCH"):where])
-		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
+		createPattern = match.window(len("MATCH"), where).trim()
+		assignments = match.assembleCode(splitTopLevelAndConjuncts(match.window(where+len("WHERE"), len(match.text()))), ", ")
 	}
+	create := directedMergePath(createPattern).wrap("CREATE ", "")
 	// One row: the create reports not-ok only with an error.
-	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})
-	if err == nil && assignments != "" {
-		err = e.applyMergeActions(ctx, createdRows, "SET "+assignments, result.Stats)
+	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: create.text(), view: create}})
+	if err == nil && assignments.text() != "" {
+		err = e.applyMergeActions(ctx, createdRows, assignments.wrap("SET ", ""), result.Stats)
 	}
 	if err != nil {
 		if !mergeCreateConflict(err) {

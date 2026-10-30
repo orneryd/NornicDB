@@ -30,7 +30,7 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			plan, _, ok := buildSelectedPathPlan(pattern, "p", "", nil)
+			plan, _, ok := buildSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 			runtime.ReadMemStats(&after)
 			require.True(t, ok)
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(128<<10))
@@ -66,7 +66,7 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 			t.Logf("upper=%d compiled bytes<128KiB; empty graph bytes=%d elapsed=%s error=%v", bound, after.TotalAlloc-before.TotalAlloc, time.Since(started), err)
 			canceled, stop := context.WithCancel(context.Background())
 			stop()
-			p, _, ok := compileSelectedPathPlanContext(canceled, pattern, "p", "", nil)
+			p, _, ok := compileSelectedPathPlanContext(canceled, originalBraceView(pattern), "p", originalBraceView(""), nil)
 			require.False(t, ok)
 			require.Nil(t, p)
 		})
@@ -75,7 +75,7 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 func TestSelectedPathPlanByteLimit(t *testing.T) {
 	pattern := "(a)-[:T]->(b)"
 	predicate := "a.text = '" + strings.Repeat("x", selectedPathPlanCacheEntryBytes) + "'"
-	plan, filters, ok := compileSelectedPathPlan(pattern, "p", predicate, nil)
+	plan, filters, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(predicate), nil)
 	require.True(t, ok)
 	require.Greater(t, selectedPathPlanBytes(plan, filters, len(pattern)), selectedPathPlanCacheEntryBytes)
 	key := pattern + "\x00p\x00" + predicate + "\x00"

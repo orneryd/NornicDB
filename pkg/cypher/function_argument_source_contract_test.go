@@ -11,7 +11,16 @@ func oldDistinctArgumentContract(text string) (string, bool) {
 	if strings.EqualFold(strings.TrimSpace(text), "DISTINCT") {
 		return "", true
 	}
-	return cutDistinct(text)
+	body, distinct := cutDistinct(originalBraceView(text))
+	return body.text(), distinct
+}
+
+// distinctAfter adapts the view-taking DISTINCT-as-name reader to the lexical
+// producer's rest callback, as braceView.argumentSource does.
+func distinctAfter(input string) func(string) bool {
+	view := acceptedBraceView(input)
+	end := len(strings.TrimRightFunc(input, cyphertext.IsWhitespace))
+	return func(rest string) bool { return distinctFollowsAsName(view.window(end-len(rest), end)) }
 }
 func TestFunctionArgumentSourceDistinctConsumerParity(t *testing.T) {
 	bodies := []string{"", "ALL", "all", "aLl", "DISTINCT", "distinct", "DiStInCt", "DISTINCT all", "DISTINCT x", "DISTINCT x.y", "DISTINCT `all`", "DISTINCT(x)", "DISTINCT{a:1}", "DISTINCT .5", "DISTINCT +1", "DISTINCT -1", "DISTINCT [1]", "distinct.x", "distinct[0]", "distinct, x", "distinct AS x", "distinct AND x", "distinct OR x", "distinct IS NULL", "distinct:Label", "distinct / 2", "distinct % 2", "distinct * x", "distinct{.x}", "distinct ORDER BY x", "distinctName", "ALL.x", "all+1", "all[0]", "(all)", "`ALL`", "'ALL'", "\"ALL\"", "all, x", "日本", "DİSTINCT", "ALL日本"}
@@ -22,7 +31,7 @@ func TestFunctionArgumentSourceDistinctConsumerParity(t *testing.T) {
 			for _, body := range bodies {
 				input := head + body + tail
 				want, distinct := oldDistinctArgumentContract(input)
-				got := cyphertext.ReadFunctionArgumentSource(input, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+				got := cyphertext.ReadFunctionArgumentSource(input, cyphertext.DistinctArgumentModifier, distinctAfter(input))
 				value := input[got.Arguments.Start:got.Arguments.End]
 				flag := got.Modifier == cyphertext.DistinctArgumentModifier
 				if value != want || flag != distinct {
@@ -42,7 +51,7 @@ func TestFunctionArgumentSourceMasksAndOffsets(t *testing.T) {
 		input, body string
 		kind        cyphertext.FunctionArgumentModifier
 	}{{" ALL ", "", cyphertext.AllArgumentModifier}, {"/*h*/aLl/*t*/", "", cyphertext.AllArgumentModifier}, {" DISTINCT all ", "all", cyphertext.DistinctArgumentModifier}, {"DISTINCT `all`", "`all`", cyphertext.DistinctArgumentModifier}, {"ALL.x", "ALL.x", cyphertext.NoArgumentModifier}, {"all+1", "all+1", cyphertext.NoArgumentModifier}, {"all,x", "all,x", cyphertext.NoArgumentModifier}, {"`ALL`", "`ALL`", cyphertext.NoArgumentModifier}, {"'ALL'", "'ALL'", cyphertext.NoArgumentModifier}, {"ALL日本", "ALL日本", cyphertext.NoArgumentModifier}, {"/*unfinished", "/*unfinished", cyphertext.NoArgumentModifier}} {
-		got := cyphertext.ReadFunctionArgumentSource(tc.input, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+		got := cyphertext.ReadFunctionArgumentSource(tc.input, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctAfter(tc.input))
 		require.Equal(t, tc.kind, got.Modifier, tc.input)
 		require.Equal(t, tc.body, tc.input[got.Arguments.Start:got.Arguments.End], tc.input)
 		if got.Modifier != cyphertext.NoArgumentModifier {
@@ -51,7 +60,7 @@ func TestFunctionArgumentSourceMasksAndOffsets(t *testing.T) {
 	}
 	for _, input := range []string{"ALL", "DISTINCT all", "DISTINCT `a``b`", "/*h*/all/*t*/"} {
 		require.Zero(t, testing.AllocsPerRun(100, func() {
-			_ = cyphertext.ReadFunctionArgumentSource(input, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+			_ = cyphertext.ReadFunctionArgumentSource(input, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctAfter(input))
 		}), input)
 	}
 }
@@ -67,7 +76,7 @@ func TestDistinctOnlyArgumentConsumerProducts(t *testing.T) {
 			require.Equal(t, tc.variable, aggregate.Variable)
 			require.Equal(t, tc.property, aggregate.Property)
 			require.Equal(t, tc.distinct, aggregate.Distinct)
-			_, inner, distinct, ok := parsePipelineAggregate(tc.input)
+			_, inner, distinct, ok := parsePipelineAggregate(originalBraceView(tc.input))
 			require.True(t, ok)
 			require.Equal(t, tc.body, inner)
 			require.Equal(t, tc.distinct, distinct)

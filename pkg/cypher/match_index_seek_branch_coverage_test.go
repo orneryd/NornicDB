@@ -129,7 +129,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	nodes, handled, err := exec.tryCollectNodesFromPropertyIndexOrEquality(
 		ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name = 'Alice' OR n.code = 'X2'",
+		expressionBraceView("n.name = 'Alice' OR n.code = 'X2'"),
 		nil,
 	)
 	require.NoError(t, err)
@@ -139,7 +139,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
 		ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name = 'Alice'",
+		expressionBraceView("n.name = 'Alice'"),
 		nil,
 	)
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
 		ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
-		"n.name > 'Alice' OR n.code = 'X2'",
+		expressionBraceView("n.name > 'Alice' OR n.code = 'X2'"),
 		nil,
 	)
 	require.NoError(t, err)

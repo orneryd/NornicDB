@@ -77,9 +77,9 @@ func TestSmallCypherHelperBranches(t *testing.T) {
 		"MATCH (n) REMOVE n.name",
 	}
 	for _, query := range writeQueries {
-		require.True(t, looksLikeWriteQuery(query), query)
+		require.True(t, looksLikeWriteQuery(originalBraceView(query)), query)
 	}
-	require.False(t, looksLikeWriteQuery("MATCH (n) RETURN n"))
+	require.False(t, looksLikeWriteQuery(originalBraceView("MATCH (n) RETURN n")))
 }
 
 func TestSliceAndNumericCoercionHelpers(t *testing.T) {
@@ -110,9 +110,9 @@ func TestSliceAndNumericCoercionHelpers(t *testing.T) {
 }
 
 func TestQueryPatternIdentifierHelpers(t *testing.T) {
-	require.Equal(t, []string{"a", "b_2", "c"}, extractNodeVariables("MATCH (a:Person)-[:KNOWS]->(b_2 {id: 1}), (c)"))
-	require.Equal(t, []string{"_anon"}, extractNodeVariables("MATCH (_anon)"))
-	require.Empty(t, extractNodeVariables("MATCH (:Label)-[]->()"))
+	require.Equal(t, []string{"a", "b_2", "c"}, extractNodeVariables(originalBraceView("MATCH (a:Person)-[:KNOWS]->(b_2 {id: 1}), (c)")))
+	require.Equal(t, []string{"_anon"}, extractNodeVariables(originalBraceView("MATCH (_anon)")))
+	require.Empty(t, extractNodeVariables(originalBraceView("MATCH (:Label)-[]->()")))
 
 	name, ok := cyphertext.ScanIdentifier("abc_123 rest", 0)
 	require.True(t, ok)

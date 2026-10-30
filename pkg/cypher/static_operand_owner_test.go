@@ -226,16 +226,10 @@ func TestStaticTypeNameDecisionOwner(t *testing.T) {
 			}
 			found[key] = true
 			start, end := fs.Position(function.Pos()).Offset, fs.Position(function.End()).Offset
-			compact := strings.Map(func(r rune) rune {
-				if unicode.IsSpace(r) {
-					return -1
-				}
-				return r
-			}, string(source[start:end]))
-			digest := sha256.Sum256([]byte(compact))
+			digest := sourceDecisionDigest(source[start:end])
 			exception, ok := staticTypeNameDecisionExceptions[key]
-			if !ok || exception.reason == "" || exception.sha256 != hex.EncodeToString(digest[:]) {
-				t.Errorf("%s: compares a Cypher type name outside static_operand.go (sha256 %s)", key, hex.EncodeToString(digest[:]))
+			if !ok || exception.reason == "" || exception.sha256 != digest {
+				t.Errorf("%s: compares a Cypher type name outside static_operand.go (sha256 %s)", key, digest)
 			}
 		}
 	}
@@ -244,4 +238,16 @@ func TestStaticTypeNameDecisionOwner(t *testing.T) {
 			t.Errorf("%s: stale type-name decision exception", key)
 		}
 	}
+}
+
+// sourceDecisionDigest seals reviewed source decisions while ignoring layout.
+func sourceDecisionDigest(source []byte) string {
+	compact := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, string(source))
+	digest := sha256.Sum256([]byte(compact))
+	return hex.EncodeToString(digest[:])
 }

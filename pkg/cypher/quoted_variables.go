@@ -69,6 +69,10 @@ type quotedVariableNames struct {
 	internalOrder []string
 	// parameters maps each internal parameter name to the parameter's name.
 	parameters map[string]string
+	// rewrite carries exact copies and original-entry declarations produced by
+	// the same canonicalizer that emitted canonical.
+	rewrite                     *queryRewrite
+	originalView, canonicalView braceView
 }
 
 type quotedVariableName struct {
@@ -80,11 +84,12 @@ type quotedToken struct {
 	start, end int
 	written    string
 	name       string
-	variable   bool // in a variable position
-	binding    bool // in a position that binds the variable
-	procColumn bool // a YIELD procedure column (no AS): unquoted only
-	selector   bool // a map projection variable selector
-	parameter  bool // a parameter name ($`a b`)
+	variable   bool                  // in a variable position
+	binding    bool                  // in a position that binds the variable
+	procColumn bool                  // a YIELD procedure column (no AS): unquoted only
+	selector   bool                  // a map projection variable selector
+	parameter  bool                  // a parameter name ($`a b`)
+	entry      cyphertext.BraceEntry // retained variable-selector record
 }
 
 // Fabric's planner and remote participants consume native Cypher names.
@@ -102,7 +107,8 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
-	tokens := scanQuotedTokens(ctx, query)
+	view := statementBraceView(ctx, query)
+	tokens := scanQuotedTokens(ctx, view)
 	if len(tokens) == 0 {
 		return query, nil
 	}
@@ -116,7 +122,7 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 		}
 	}
 
-	names := &quotedVariableNames{Source: cyphertext.Source{Original: query}, internal: make(map[string]quotedVariableName)}
+	names := &quotedVariableNames{Source: cyphertext.Source{Original: query}, internal: make(map[string]quotedVariableName), originalView: view}
 	identifiers := make(map[string]string) // name -> replacement identifier
 	used := make(map[string]struct{})
 	replacementFor := func(token quotedToken) string {
@@ -134,6 +140,13 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 	}
 	var out strings.Builder
 	out.Grow(len(query) + 16)
+	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query}, projected: true}
+	type emittedEntry struct {
+		original    cyphertext.BraceEntry
+		kind        cyphertext.BraceEntryKind
+		name, colon cyphertext.Span
+	}
+	var entries []emittedEntry
 	last := 0
 	for _, token := range tokens {
 		_, isBound := bound[token.name]
@@ -182,6 +195,19 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 		canonStart := out.Len()
 		out.WriteString(replacement)
 		names.Edits = append(names.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: token.start, End: token.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
+		rewrite.Edits = append(rewrite.Edits, names.Edits[len(names.Edits)-1])
+		if token.selector {
+			emitted := emittedEntry{original: token.entry, kind: cyphertext.VariableBraceEntry, name: cyphertext.Span{Start: canonStart, End: out.Len()}}
+			if replacement != token.name {
+				emitted.kind = cyphertext.KeyedBraceEntry
+				emitted.name.End = canonStart + len(token.written)
+				emitted.colon = cyphertext.Span{Start: emitted.name.End, End: emitted.name.End + 1}
+				rewrite.copies = append(rewrite.copies, cyphertext.SourceCopy{Original: cyphertext.Span{Start: token.start, End: token.end}, Accepted: emitted.name})
+			}
+			entries = append(entries, emitted)
+		} else if token.procColumn && strings.HasPrefix(replacement, token.written) {
+			rewrite.copies = append(rewrite.copies, cyphertext.SourceCopy{Original: cyphertext.Span{Start: token.start, End: token.end}, Accepted: cyphertext.Span{Start: canonStart, End: canonStart + len(token.written)}})
+		}
 		last = token.end
 	}
 	if len(names.Edits) == 0 {
@@ -189,6 +215,25 @@ func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, 
 	}
 	out.WriteString(query[last:])
 	names.Text = out.String()
+	rewrite.Text = names.Text
+	// The producer knows which entry it emitted. Separator positions are
+	// projected by Source rather than recomputed by a second offset mapper.
+	rewritten := sourceRewriteView(view.source, rewrite)
+	for _, emitted := range entries {
+		separators := emitted.original.SeparatorSpans()
+		before := rewritten.ProjectFrom(view.source, separators.Before)
+		after := rewritten.ProjectFrom(view.source, separators.After)
+		if len(before) != 1 || len(after) != 1 {
+			panic("cypher: quoted selector producer lost its retained separators")
+		}
+		entry := cyphertext.BraceEntry{Kind: emitted.kind, Span: cyphertext.Span{Start: before[0].End, End: after[0].Start}, Name: emitted.name}
+		if emitted.kind == cyphertext.KeyedBraceEntry {
+			entry.Value = cyphertext.Span{Start: emitted.colon.End, End: after[0].Start}
+		}
+		rewrite.entries = append(rewrite.entries, cyphertext.EntryDeclaration{Original: emitted.original, Entry: entry, First: emitted.name, Separators: cyphertext.EntrySeparators{Before: before[0], Colon: emitted.colon, After: after[0]}})
+	}
+	names.rewrite = rewrite
+	names.canonicalView = braceView{source: sourceRewriteView(view.source, rewrite), syntax: view.syntax}
 	for identifier := range names.internal {
 		names.internalOrder = append(names.internalOrder, identifier)
 	}
@@ -284,9 +329,10 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 	}
 }
 
-// scanQuotedTokens classifies quoted names and non-plain variable identities
-// in a quoted query using the same retained syntax walk.
-func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
+// scanQuotedTokens lists the backtick-quoted symbolic names of query outside
+// string literals, with their positions classified.
+func scanQuotedTokens(ctx context.Context, view braceView) []quotedToken {
+	source := view.text()
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
@@ -310,7 +356,10 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 		case cypherantlr.CypherParserRULE_atom, cypherantlr.CypherParserRULE_setItem, cypherantlr.CypherParserRULE_removeItem, cypherantlr.CypherParserRULE_callSubquery, cypherantlr.CypherParserRULE_mapProjection:
 			token.variable = true
 		case cypherantlr.CypherParserRULE_mapProjectionItem:
-			token.variable, token.selector = true, true
+			entry, found := view.entryAt(cyphertext.Span{Start: start, End: end})
+			if found && entry.Kind == cyphertext.VariableBraceEntry {
+				token.variable, token.selector, token.entry = true, true, entry
+			}
 		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_lhs, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_filterExpression, cypherantlr.CypherParserRULE_reduceExpression, cypherantlr.CypherParserRULE_allReduceExpression, cypherantlr.CypherParserRULE_foreachSt, cypherantlr.CypherParserRULE_letItem:
 			token.variable, token.binding = true, true
 		case cypherantlr.CypherParserRULE_yieldItem:
@@ -487,6 +536,9 @@ type quotedVariablesKey struct{}
 // executes, so checks that must see the statement as written (column names,
 // the validation cache) can map back to it.
 func withQuotedVariableNames(ctx context.Context, names *quotedVariableNames) context.Context {
+	if names != nil {
+		ctx = withSourceRewrite(ctx, names.rewrite)
+	}
 	return context.WithValue(ctx, quotedVariablesKey{}, names)
 }
 
@@ -505,8 +557,9 @@ func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableN
 
 // finalReturnBody locates the body of text's last top-level RETURN (after
 // the keyword).
-func finalReturnBody(text string) (int, int, bool) {
-	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
+func finalReturnBody(view braceView) (int, int, bool) {
+	text := view.text()
+	positions := findAllTopLevelPipelineKeywordPositions(view, "RETURN")
 	if len(positions) == 0 {
 		return 0, 0, false
 	}

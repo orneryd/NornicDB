@@ -21,7 +21,7 @@ func requireCypherSubqueriesLocalizedError(t *testing.T, err error, messageID lo
 
 func TestCypherSubqueriesLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	t.Run("subquery parser", func(t *testing.T) {
-		_, _, _, err := parseLeadingWithImports("WITH seed")
+		_, _, _, err := parseLeadingWithImports(originalBraceView("WITH seed"))
 		requireCypherSubqueriesLocalizedError(t, err, localization.MessageCypherSubqueriesWithQueryClauseRequired, "invalid CALL {} subquery: WITH must be followed by a query clause")
 	})
 

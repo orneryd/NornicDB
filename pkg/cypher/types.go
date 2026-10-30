@@ -57,6 +57,7 @@ type nodePatternInfo struct {
 type returnItem struct {
 	expr  string
 	alias string
+	view  braceView
 }
 
 // column is the item's result column: its alias. Every returnItem builder

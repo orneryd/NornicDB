@@ -25,12 +25,12 @@ func TestRowParameterResolutionPreservesBindingPrecedence(t *testing.T) {
 		{"typed-list", withParams(context.Background(), map[string]interface{}{"value": []string{"a", "b"}}), nil, []string{"a", "b"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			value, resolved := executor.evaluateRowExpressionWithContext(test.ctx, "$value", test.row)
+			value, resolved := executor.evaluateRowExpressionWithContext(test.ctx, expressionBraceView("$value"), test.row)
 			require.True(t, resolved)
 			require.Equal(t, test.want, value)
 		})
 	}
-	value, resolved := executor.evaluateRowExpressionWithContext(withParams(context.Background(), map[string]interface{}{"value": int64(3)}), "$value + 1", nil)
+	value, resolved := executor.evaluateRowExpressionWithContext(withParams(context.Background(), map[string]interface{}{"value": int64(3)}), expressionBraceView("$value + 1"), nil)
 	require.True(t, resolved)
 	require.Equal(t, int64(4), value)
 }

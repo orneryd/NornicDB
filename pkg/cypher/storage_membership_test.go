@@ -34,7 +34,7 @@ func TestStorageMembershipConstructions(t *testing.T) {
 			return e.cloneWithStorage(e.storage, selectedDatabaseStorage), nil
 		}},
 		{"manager", func(ctx context.Context, e *StorageExecutor) (*StorageExecutor, error) {
-			selected, _, err := e.useDatabase(ctx, "one", "CREATE (:AcAtom)")
+			selected, _, err := e.useDatabase(ctx, "one", originalBraceView("CREATE (:AcAtom)"))
 			if err != nil {
 				return nil, err
 			}
@@ -94,7 +94,7 @@ func TestStorageMembershipConstructions(t *testing.T) {
 					view = e.getStorage(callCtx)
 				}
 				if source == "router" {
-					selected, _, err := e.useDatabase(callCtx, "comp", "RETURN 1")
+					selected, _, err := e.useDatabase(callCtx, "comp", originalBraceView("RETURN 1"))
 					if err != nil {
 						return nil, err
 					}

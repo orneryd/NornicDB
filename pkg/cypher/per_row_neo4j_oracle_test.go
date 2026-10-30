@@ -187,9 +187,9 @@ func TestRowValueProgramsMatchNeo4j(t *testing.T) {
 				var ok bool
 				var err error
 				if text {
-					value, ok, err = exec.evaluateRowValueText(tc.expression, row)
+					value, ok, err = exec.evaluateRowValueText(originalBraceView(tc.expression), row)
 				} else {
-					root, _ := (&rowValueCompiler{}).compile(tc.expression)
+					root, _ := (&rowValueCompiler{}).compile(originalBraceView(tc.expression))
 					value, ok, err = root.eval(exec, row, nil)
 				}
 				require.NoError(t, err)
@@ -213,9 +213,9 @@ func TestRowPredicateProgramsMatchNeo4j(t *testing.T) {
 				defer rowValueProgramsDisabled.Store(false)
 				var value bool
 				if text {
-					value = exec.evaluateRowPredicateText(ctx, tc.expression, row)
+					value = exec.evaluateRowPredicateText(ctx, originalBraceView(tc.expression), row)
 				} else {
-					value = compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+					value = compileRowPredicateProgram(originalBraceView(tc.expression)).holds(exec, ctx, row)
 				}
 				require.NoError(t, getExpressionFailure(ctx))
 				require.Equal(t, tc.want, value)

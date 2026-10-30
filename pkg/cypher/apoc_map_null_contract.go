@@ -131,12 +131,12 @@ func bundledAPOCMapHandler(name string, handler interface{}, argumentCount int) 
 
 func init() {
 	for _, name := range []string{"apoc.map.frompairs", "apoc.map.fromlists", "apoc.map.merge", "apoc.map.setkey", "apoc.map.clean"} {
-		cypherfn.Register(name, apocMapConstructor(name))
+		cypherfn.RegisterInvocation(name, apocMapConstructor(name))
 	}
 }
 
-func apocMapConstructor(name string) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+func apocMapConstructor(name string) cypherfn.InvocationFunc {
+	return func(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 		min, max := 1, 1
 		switch name {
 		case "apoc.map.fromlists", "apoc.map.merge":

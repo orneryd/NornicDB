@@ -201,7 +201,7 @@ func TestDetachDeleteAnonymousChainedPath(t *testing.T) {
 	edges, edgeErr := executor.Execute(ctx, `MATCH ()-[relationship]->() RETURN count(relationship)`, nil)
 	require.NoError(t, edgeErr)
 	require.Equal(t, int64(3), edges.Rows[0][0])
-	parsed := executor.parseTraversalPattern(ctx, `(:Start)-->()-->()-->()`)
+	parsed := executor.parseTraversalPattern(ctx, originalBraceView(`(:Start)-->()-->()-->()`))
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.Segments, 3)
 	require.Len(t, executor.traverseGraph(ctx, parsed), 1)
@@ -433,10 +433,10 @@ func TestDeleteStreamingEligibility(t *testing.T) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 
-	assert.True(t, executor.isDeleteStreamingEligible("MATCH (n:Person)", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person) WITH n LIMIT 100", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person) ORDER BY n.createdAt DESC", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person)", "n", false))
+	assert.True(t, executor.isDeleteStreamingEligible(originalBraceView("MATCH (n:Person)"), "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(originalBraceView("MATCH (n:Person) WITH n LIMIT 100"), "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(originalBraceView("MATCH (n:Person) ORDER BY n.createdAt DESC"), "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(originalBraceView("MATCH (n:Person)"), "n", false))
 }
 
 func TestDetachDeleteStreaming_ReturnCountProjection(t *testing.T) {

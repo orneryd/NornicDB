@@ -116,7 +116,7 @@ func TestRowOperatorFailureBranches(t *testing.T) {
 		{"(a)-[:R]->(b)", false, ""},
 	} {
 		ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
-		_, _ = exec.evaluateRowExpressionWithContext(ctx, tc.expr, row)
+		_, _ = exec.evaluateRowExpressionWithContext(ctx, originalBraceView(tc.expr), row)
 		recorded := getExpressionFailure(ctx) != nil
 		require.Equal(t, tc.recorded, recorded, tc.expr)
 		if tc.recorded {
@@ -125,7 +125,7 @@ func TestRowOperatorFailureBranches(t *testing.T) {
 			require.Contains(t, err.Error(), tc.code, tc.expr)
 		}
 	}
-	require.True(t, expressionTextAccepted("-x", expressionTextOperand))
-	require.False(t, expressionTextAccepted("", expressionTextOperand))
-	require.True(t, expressionTextAccepted("-[1]", expressionTextOperator))
+	require.True(t, expressionTextAccepted(expressionBraceView("-x"), expressionTextOperand))
+	require.False(t, expressionTextAccepted(originalBraceView(""), expressionTextOperand))
+	require.True(t, expressionTextAccepted(expressionBraceView("-[1]"), expressionTextOperator))
 }

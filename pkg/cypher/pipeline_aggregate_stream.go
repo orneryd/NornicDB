@@ -35,14 +35,12 @@ func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
-	body := pipelineClauseBody(clause.text, "RETURN")
+	keyword := "RETURN"
 	if clause.kind == pipelineClauseWith {
-		body = pipelineClauseBody(clause.text, "WITH")
+		keyword = "WITH"
 	}
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-		body = body[:where]
-	}
-	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate
+	body, _ := projectionSemanticSourceAndTail(clause.input(ctx), keyword)
+	return returnProjectionPlanFor(ctx, body.wrap("RETURN ", "")).hasAggregate
 }
 
 func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
@@ -57,6 +55,7 @@ func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
 }
 
 type pipelineAggregateProjection struct {
+	view       braceView
 	expression string
 	states     []pipelineAggregateState
 }
@@ -80,7 +79,7 @@ type pipelineAggregateRun struct {
 func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
-	validationClauses := make([]string, 0)
+	validationClauses := make([]braceView, 0)
 	allAggregates := pipelineProjectionHasOnlyAggregates(projections)
 	groupingCount := 0
 	for index, projection := range projections {
@@ -88,23 +87,23 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			groupingCount++
 		}
 		needsValidation := false
-		var rewritten strings.Builder
-		last := 0
-		for offset, span := range findAggregateSpans(projection.expr) {
-			name, inner, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+		rewritten := projection.view
+		delta := 0
+		for offset, span := range findAggregateSpans(projection.view) {
+			name, inner, distinct, ok := parsePipelineAggregate(projection.view.window(span.start, span.end))
 			if !ok {
 				return nil, false
 			}
-			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}})
-			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc"
-			rewritten.WriteString(projection.expr[last:span.start])
-			rewritten.WriteString(traversalAggPlaceholder(offset))
-			last = span.end
+			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner.text(), view: inner, distinct: distinct, memory: memoryAccount{scope: memory}})
+			needsValidation = needsValidation || strings.ContainsAny(inner.text(), "([") || name == "percentilecont" || name == "percentiledisc"
+			placeholder := traversalAggPlaceholder(offset)
+			rewritten = rewritten.replace(span.start+delta, span.end+delta, placeholder)
+			delta += len(placeholder) - (span.end - span.start)
 		}
-		rewritten.WriteString(projection.expr[last:])
-		templates[index].expression = rewritten.String()
+		templates[index].view = rewritten
+		templates[index].expression = rewritten.text()
 		if !rowsValidated && (needsValidation || strings.ContainsAny(templates[index].expression, "([")) {
-			validationClauses = append(validationClauses, "WITH "+projection.expr)
+			validationClauses = append(validationClauses, projection.view.wrap("WITH ", ""))
 		}
 	}
 	newGroup := func(row pipelineRow) *pipelineAggregateGroup {
@@ -113,7 +112,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			group.first[name] = value
 		}
 		for index, template := range templates {
-			group.projections[index] = pipelineAggregateProjection{expression: template.expression, states: append([]pipelineAggregateState(nil), template.states...)}
+			group.projections[index] = pipelineAggregateProjection{expression: template.expression, view: template.view, states: append([]pipelineAggregateState(nil), template.states...)}
 		}
 		return group
 	}
@@ -143,7 +142,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				if projection.isAggr {
 					continue
 				}
-				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.view, row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					run.valid = false
@@ -246,23 +245,23 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			complexity += 2
 			continue
 		}
-		spans := findAggregateSpans(projection.expr)
+		spans := findAggregateSpans(projection.view)
 		if len(spans) == 0 {
 			return nil, false, nil
 		}
 		for _, span := range spans {
-			name, expression, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+			name, expression, distinct, ok := parsePipelineAggregate(projection.view.window(span.start, span.end))
 			if !ok || distinct || (name != "count" && name != "sum") {
 				return nil, false, nil
 			}
 			complexity++
-			if name == "count" && expression == "*" {
+			if name == "count" && expression.text() == "*" {
 				continue
 			}
-			if _, err := strconv.ParseInt(expression, 10, 64); err == nil {
+			if _, err := strconv.ParseInt(expression.text(), 10, 64); err == nil {
 				continue
 			}
-			patternIndex, property, ok := cartesianAggregateProperty(expression, patterns)
+			patternIndex, property, ok := cartesianAggregateProperty(expression.text(), patterns)
 			if !ok {
 				return nil, false, nil
 			}
@@ -383,7 +382,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			var parts []interface{}
 			for _, projection := range plan.projections {
 				if !projection.isAggr {
-					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
+					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.view, partial.first)
 					if !ok {
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
@@ -424,7 +423,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
 	projection := &group.projections[index]
 	if len(projection.states) == 0 {
-		return executor.evaluateRowExpressionWithContext(ctx, projection.expression, group.first)
+		return executor.evaluateRowExpressionWithContext(ctx, projection.view, group.first)
 	}
 	values := make(pipelineRow, len(group.first)+len(projection.states))
 	for name, value := range group.first {
@@ -437,10 +436,11 @@ func (group *pipelineAggregateGroup) value(ctx context.Context, executor *Storag
 		}
 		values[traversalAggPlaceholder(offset)] = value
 	}
-	return executor.evaluateRowExpressionWithContext(ctx, projection.expression, values)
+	return executor.evaluateRowExpressionWithContext(ctx, projection.view, values)
 }
 
 type pipelineAggregateState struct {
+	view             braceView
 	name, expression string
 	distinct         bool
 	seen             cypherValueIndex
@@ -466,13 +466,13 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		return true
 	}
 	if state.name == "percentilecont" || state.name == "percentiledisc" {
-		arguments := executor.splitFunctionArgs(state.expression)
+		arguments := state.view.commaViews()
 		if len(arguments) != 2 {
 			return false
 		}
 		stored := pipelineRow{}
 		if len(state.percentileRows) == 0 {
-			if err := executor.validatePercentileCalls(state.name+"("+state.expression+")", row); err != nil {
+			if err := executor.validatePercentileCalls(state.view.wrap(state.name+"(", ")"), row); err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
 			}
@@ -480,12 +480,12 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 			arguments = arguments[:1]
 		}
 		for _, argument := range arguments {
-			argument = strings.TrimSpace(argument)
+			argument = argument.trim()
 			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row)
 			if !ok {
 				return false
 			}
-			stored[argument] = value
+			stored[argument.text()] = value
 		}
 		// The percentile evaluator retains every input row until finalization.
 		// Charge the map, its values, and the slice slot before growing it.
@@ -499,7 +499,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	}
 	value, ok := row[state.expression]
 	if !ok || isLiteralKeyword(state.expression) {
-		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
+		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.view, row)
 	}
 	if !ok {
 		return false
@@ -662,7 +662,7 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 		}
 		return math.Sqrt(state.squared / float64(divisor)), true
 	case "percentilecont", "percentiledisc":
-		return executor.evaluatePipelinePercentile(ctx, state.percentileRows, state.name, state.expression, state.distinct)
+		return executor.evaluatePipelinePercentile(ctx, state.percentileRows, state.name, state.view, state.distinct)
 	default:
 		return nil, false
 	}

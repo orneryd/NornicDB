@@ -29,7 +29,8 @@ func (kind databaseDropKind) failure(standard, composite localization.Message, c
 func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string, kind databaseDropKind) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, query)
 	defer redactAdminCommandError(query, &retErr, statementCredentials(ctx))
-	query = cyphertext.SourceFor(ctx, query).Text
+	view := statementBraceView(ctx, query)
+	query = view.text()
 	if e.dbManager == nil {
 		return nil, kind.failure(localization.CypherAdminDatabaseManagerUnavailable("DROP DATABASE"), localization.CypherCompositeDatabaseManagerUnavailable("DROP COMPOSITE DATABASE"), nil)
 	}
@@ -41,7 +42,7 @@ func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string,
 	invalidSyntax := func() error {
 		return kind.failure(localization.CypherAdminInvalidSyntax("DROP DATABASE"), localization.CypherCompositeDropInvalidSyntax(), nil)
 	}
-	at := findMultiWordKeywordIndex(query, "DROP", subject)
+	at := findMultiWordKeywordIndex(view, "DROP", subject)
 	if at < 0 {
 		return nil, invalidSyntax()
 	}
@@ -49,21 +50,23 @@ func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string,
 	if end == at {
 		return nil, invalidSyntax()
 	}
-	rawName := strings.TrimSpace(query[end:])
+	nameView := view.window(end, len(query)).trim()
+	rawName := nameView.text()
 	if rawName == "" {
 		return nil, kind.failure(localization.CypherAdminDatabaseNameExpected("DROP DATABASE"), localization.CypherCompositeDropDatabaseNameExpected(), nil)
 	}
 
 	ifExists := false
 	if kind == dropStandardDatabase {
-		if clause := findMultiWordKeywordIndex(rawName, "IF", "EXISTS"); clause >= 0 {
+		if clause := findMultiWordKeywordIndex(nameView, "IF", "EXISTS"); clause >= 0 {
 			// Validate the entire suffix before admitting any deletion.
 			clauseEnd := keywordEndAt(rawName, clause, "IF EXISTS")
 			if strings.TrimSpace(rawName[clauseEnd:]) != "" {
 				return nil, invalidSyntax()
 			}
 			ifExists = true
-			rawName = strings.TrimSpace(rawName[:clause])
+			nameView = nameView.window(0, clause).trim()
+			rawName = nameView.text()
 		}
 	}
 	name, err := unquoteBacktickIdentifier(rawName)

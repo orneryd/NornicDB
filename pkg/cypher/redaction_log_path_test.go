@@ -254,7 +254,7 @@ func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 // both parsers.
 func TestSlowQueryLog_ExtensionStatementKeepsStructureOnly(t *testing.T) {
 	query := "CREATE PROCEDURE zzproc.one() MODE READ AS RETURN 1 AS zzout"
-	if !isNornicExtensionStatement(query) {
+	if !isNornicExtensionStatement(originalBraceView(query)) {
 		t.Fatalf("%q is not an extension statement", query)
 	}
 	exec, logged := captureSlowQueryLog(t)

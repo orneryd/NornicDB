@@ -12,7 +12,7 @@ import (
 // very start of a subquery's import list belongs to the list; the list ends
 // at the next clause keyword (as when each keyword was scanned alone).
 func TestParseLeadingWithImportsClauseKeywordFirst(t *testing.T) {
-	vars, body, hasWith, err := parseLeadingWithImports("WITH MATCH (n) RETURN n")
+	vars, body, hasWith, err := parseLeadingWithImports(originalBraceView("WITH MATCH (n) RETURN n"))
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"MATCH (n)"}, vars)
@@ -31,9 +31,9 @@ func TestWithExpressionFailureSlotOutsideAStatement(t *testing.T) {
 // TestStartsWithKeywordsEmptyWord: an empty word matches nothing, as in
 // findMultiWordKeywordIndex.
 func TestStartsWithKeywordsEmptyWord(t *testing.T) {
-	require.False(t, startsWithKeywords("CREATE DATABASE x", "", "DATABASE"))
-	require.False(t, startsWithKeywords("CREATE DATABASE x", "CREATE", " "))
-	require.Equal(t, -1, findMultiWordKeywordIndex("CREATE DATABASE x", "", "DATABASE"))
+	require.False(t, startsWithKeywords(originalBraceView("CREATE DATABASE x"), "", "DATABASE"))
+	require.False(t, startsWithKeywords(originalBraceView("CREATE DATABASE x"), "CREATE", " "))
+	require.Equal(t, -1, findMultiWordKeywordIndex(originalBraceView("CREATE DATABASE x"), "", "DATABASE"))
 }
 
 // TestFirstKeywordIndexFromDefaultKeywordLimit: the keyword set is bounded.
@@ -42,7 +42,7 @@ func TestFirstKeywordIndexFromDefaultKeywordLimit(t *testing.T) {
 	for i := range keywords {
 		keywords[i] = "MATCH"
 	}
-	require.Panics(t, func() { firstKeywordIndexFromDefault("MATCH (n) RETURN n", 0, keywords...) })
+	require.Panics(t, func() { firstKeywordIndexFromDefault(originalBraceView("MATCH (n) RETURN n"), 0, keywords...) })
 }
 
 // recordingAccessRecorder records the entities a walk reports.

@@ -111,7 +111,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := parsedTestValue(exec.parseRelationshipPattern(ctx, tt.pattern))
+			result := parsedTestValue(exec.parseRelationshipPattern(ctx, originalBraceView(tt.pattern)))
 
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
@@ -134,7 +134,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 
 func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
 	exec := &StorageExecutor{}
-	pattern := parsedTestValue(exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->"))
+	pattern := parsedTestValue(exec.parseRelationshipPattern(context.Background(), expressionBraceView("<-[:LIKES*3]->")))
 
 	if pattern.Direction != "both" {
 		t.Fatalf("expected bidirectional traversal, got %q", pattern.Direction)
@@ -182,7 +182,7 @@ func TestParseTraversalPattern(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.parseTraversalPattern(ctx, tt.pattern)
+			result := exec.parseTraversalPattern(ctx, originalBraceView(tt.pattern))
 			if result == nil {
 				t.Fatal("parseTraversalPattern returned nil")
 			}
@@ -314,7 +314,7 @@ func TestVariableLengthPaths(t *testing.T) {
 	// Parse a variable length pattern
 	ctx := context.Background()
 
-	pattern := parsedTestValue(exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->"))
+	pattern := parsedTestValue(exec.parseRelationshipPattern(ctx, expressionBraceView("-[*1..2:KNOWS]->")))
 
 	if pattern.MinHops != 1 {
 		t.Errorf("MinHops = %d, want 1", pattern.MinHops)
@@ -349,17 +349,17 @@ func TestDegreeFunctionsWithTraversal(t *testing.T) {
 	// Bob has: 1 incoming (from Alice), 2 outgoing (to Carol, to Dave)
 	nodes := map[string]*storage.Node{"n": bob}
 
-	inDegree := exec.evaluateExpressionWithContext(ctx, "inDegree(n)", nodes, nil)
+	inDegree := exec.evaluateExpressionWithContext(ctx, expressionBraceView("inDegree(n)"), nodes, nil)
 	if inDegree != int64(1) {
 		t.Errorf("inDegree(bob) = %v, want 1", inDegree)
 	}
 
-	outDegree := exec.evaluateExpressionWithContext(ctx, "outDegree(n)", nodes, nil)
+	outDegree := exec.evaluateExpressionWithContext(ctx, expressionBraceView("outDegree(n)"), nodes, nil)
 	if outDegree != int64(2) {
 		t.Errorf("outDegree(bob) = %v, want 2", outDegree)
 	}
 
-	totalDegree := exec.evaluateExpressionWithContext(ctx, "degree(n)", nodes, nil)
+	totalDegree := exec.evaluateExpressionWithContext(ctx, expressionBraceView("degree(n)"), nodes, nil)
 	if totalDegree != int64(3) {
 		t.Errorf("degree(bob) = %v, want 3", totalDegree)
 	}

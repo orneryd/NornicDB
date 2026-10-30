@@ -96,7 +96,7 @@ func QueryDiagnosticParameters(ctx context.Context, query string, params map[str
 		set = statementCredentials(ctx)
 		// A nil manager only disables the IF NOT EXISTS lookup; the same
 		// preparation grammar reads values, without applying the command.
-		_, _, _ = (&StorageExecutor{}).prepareCompositeCommand(ctx, query)
+		_, _, _ = (&StorageExecutor{}).prepareCompositeCommand(ctx, statementBraceView(ctx, query))
 	}
 	return observability.RedactValue(params, statementCredentialValues(query, set)...).(map[string]any)
 }

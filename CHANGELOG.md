@@ -270,6 +270,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. This prevents new corruption; it cannot repair data already corrupted
   by an older binary during cross-store recovery.
 
+- Reject malformed map entries (`{a}`, `{1}`, `{.a}` outside a projection) as syntax errors before a statement runs, also when it produces no rows, under EXPLAIN, in CALL/EXISTS/COUNT/COLLECT bodies, UNION parts and Composite (Fabric) statements. Valid map projections such as `n{.a, b, c: 3}` are accepted, and comments around CALL import lists no longer change how a brace is read.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`

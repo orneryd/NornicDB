@@ -6,7 +6,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func isOrdinarySchemaDDL(query string) bool {
+func isOrdinarySchemaDDL(query braceView) bool {
 	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
 		if startsWithKeywords(query, "CREATE", command) {
 			return true

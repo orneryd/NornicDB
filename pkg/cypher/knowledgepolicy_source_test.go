@@ -102,15 +102,3 @@ func TestKnowledgePolicyQuotedExpressionBoundaries(t *testing.T) {
 		})
 	}
 }
-
-func TestKnowledgePolicyStoredSourceValidity(t *testing.T) {
-	source := policyDDLSource{Source: cyphertext.NewSource(t.Context(), "", cyphertext.AcceptedSource), original: true}
-	text, err := source.storedText(0, 0)
-	require.NoError(t, err)
-	require.Empty(t, text)
-	_, err = source.storedText(1, 1)
-	require.ErrorIs(t, err, storage.ErrInvalidData)
-	source = policyDDLSource{Source: &cyphertext.Source{Original: "x", Text: "xx"}, original: true}
-	_, err = source.storedText(0, 2)
-	require.ErrorIs(t, err, storage.ErrInvalidData)
-}

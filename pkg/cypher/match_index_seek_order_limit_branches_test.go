@@ -34,7 +34,7 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_person_rank FOR (n:Person) ON (n.rank)", nil)
 	require.NoError(t, err)
 
-	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "n.rank IS NOT NULL AND n.active = true", "n.rank DESC", 5, indexOrderGeneral)
+	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, expressionBraceView("n.rank IS NOT NULL AND n.active = true"), expressionBraceView("n.rank DESC"), 5, indexOrderGeneral)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 5)
@@ -42,12 +42,12 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 		require.EqualValues(t, 9-i, node.Properties["rank"])
 	}
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 3, indexOrderGeneral)
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, originalBraceView(""), expressionBraceView("n.rank DESC"), 3, indexOrderGeneral)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 0, indexOrderGeneral)
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, originalBraceView(""), expressionBraceView("n.rank DESC"), 0, indexOrderGeneral)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)
@@ -71,19 +71,19 @@ func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.score DESC", 2, indexOrderExplicitNotNull)
+	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, expressionBraceView("n.score IS NOT NULL"), expressionBraceView("n.score DESC"), 2, indexOrderExplicitNotNull)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 2)
 	require.EqualValues(t, 14, nodes[0].Properties["score"])
 	require.EqualValues(t, 12, nodes[1].Properties["score"])
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexNotNull(nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL")
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexNotNull(nodePatternInfo{variable: "n", labels: []string{"Item"}}, expressionBraceView("n.score IS NOT NULL"))
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 3)
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.id DESC", 2, indexOrderExplicitNotNull)
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, expressionBraceView("n.score IS NOT NULL"), expressionBraceView("n.id DESC"), 2, indexOrderExplicitNotNull)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)

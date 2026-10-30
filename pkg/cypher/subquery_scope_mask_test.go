@@ -14,9 +14,9 @@ func TestSubqueryScopeMaskPreservesOperandKinds(t *testing.T) {
 		{"collect", "(COLLECT { MATCH (x) RETURN x } = [] AND (a)-->(b))"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			masked := maskSubqueryBodies(tc.expression)
+			masked := maskSubqueryBodies(originalBraceView(tc.expression))
 			require.Len(t, masked, len(tc.expression))
-			require.Equal(t, []string{"a", "b"}, extractNodeVariables(masked))
+			require.Equal(t, []string{"a", "b"}, extractNodeVariables(originalBraceView(masked)))
 		})
 	}
 	for _, expression := range []string{
@@ -24,6 +24,6 @@ func TestSubqueryScopeMaskPreservesOperandKinds(t *testing.T) {
 		"'EXISTS { MATCH (n) }'", "`count` {.a}",
 		`"COUNT { MATCH (n) }"`, "EXISTS { MATCH (n)",
 	} {
-		require.Equal(t, expression, maskSubqueryBodies(expression))
+		require.Equal(t, expression, maskSubqueryBodies(originalBraceView(expression)))
 	}
 }

@@ -60,7 +60,7 @@ func TestTemporalFunctionCallErrors(t *testing.T) {
 	// The context evaluator reports the same error through the statement's
 	// failure slot.
 	failureCtx := withExpressionFailureSlot(context.Background())
-	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, "date.truncate('day', 'x')", nil, nil))
+	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, expressionBraceView("date.truncate('day', 'x')"), nil, nil))
 	require.Contains(t, statusText(getExpressionFailure(failureCtx)), "Neo.ClientError.Procedure.ProcedureCallFailed")
 
 	require.Equal(t, "NO_VALUE", neo4jProvidedValue(nil))
@@ -107,7 +107,8 @@ func TestSplitWithDelimiterList(t *testing.T) {
 // are null, not errors.
 func TestTemporalCallDefensiveReturns(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	eval := func(expression string) (interface{}, bool, error) {
+	eval := func(expressionView braceView) (interface{}, bool, error) {
+		expression := expressionView.text()
 		value, resolved := parseLiteralValueFromComputedRow(expression)
 		return value, resolved, nil
 	}
@@ -118,7 +119,7 @@ func TestTemporalCallDefensiveReturns(t *testing.T) {
 		"date.realtime(1)",
 		"date.realtime('Not/AZone')",
 	} {
-		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, expression)
+		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, originalBraceView(expression))
 		require.True(t, handled, expression)
 		require.NoError(t, err, expression)
 		require.Nil(t, value, expression)

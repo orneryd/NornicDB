@@ -42,25 +42,26 @@ func countKeywordOccurrences(upper, keyword string) int {
 
 // lastKeywordIndexBefore returns the last occurrence of keyword before endIdx.
 // It uses keyword-aware scanning and returns -1 when not found.
-func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
+func lastKeywordIndexBefore(view braceView, keyword string, endIdx int) int {
+	query := view.text()
 	if endIdx <= 0 {
 		return -1
 	}
 	if endIdx > len(query) {
 		endIdx = len(query)
 	}
-	segment := query[:endIdx]
+	segment := view.window(0, endIdx)
 	pos := -1
 	search := 0
 	for {
-		rel := findKeywordIndex(segment[search:], keyword)
+		rel := findKeywordIndex(segment.window(search, len(segment.text())), keyword)
 		if rel < 0 {
 			break
 		}
 		found := search + rel
 		pos = found
 		search = found + len(keyword)
-		if search >= len(segment) {
+		if search >= len(segment.text()) {
 			break
 		}
 	}
@@ -68,51 +69,24 @@ func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
 }
 
 // splitMatchClauses splits the query into individual MATCH clause patterns
-func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
-	var clauses []string
-
-	// Find the end of MATCH patterns (before WHERE or RETURN)
+func splitMatchClauses(view braceView, whereIdx, returnIdx int) []braceView {
+	var clauses []braceView
 	endIdx := returnIdx
 	if whereIdx > 0 && whereIdx < returnIdx {
 		endIdx = whereIdx
 	}
-
-	matchPart := cypher[5:endIdx] // Skip first "MATCH"
-
-	// Split by subsequent MATCH keywords
-	parts := strings.Split(upperASCII(matchPart), "MATCH")
-	offset := 5 // Start after first MATCH
-
-	for i, p := range parts {
-		if strings.TrimSpace(p) == "" {
-			continue
-		}
-		// Find the actual length in original case
-		pattern := strings.TrimSpace(cypher[offset : offset+len(p)])
-		clauses = append(clauses, pattern)
-		offset += len(p)
-		if i < len(parts)-1 {
-			offset += 5 // Skip "MATCH"
-		}
-	}
-
-	// Fix: Re-split using findKeywordIndex for accuracy
-	clauses = clauses[:0]
-	start := 5 // After first MATCH
-	searchStart := start
+	start, searchStart := len("MATCH"), len("MATCH")
 	for {
-		nextMatch := findKeywordIndex(cypher[searchStart:], "MATCH")
-		if nextMatch == -1 || searchStart+nextMatch >= endIdx {
-			// No more MATCH - take everything to end
-			clauses = append(clauses, strings.TrimSpace(cypher[start:endIdx]))
+		nextMatch := findKeywordIndex(view.window(searchStart, len(view.text())), "MATCH")
+		if nextMatch < 0 || searchStart+nextMatch >= endIdx {
+			clauses = append(clauses, view.window(start, endIdx).trim())
 			break
 		}
-		pos := searchStart + nextMatch
-		clauses = append(clauses, strings.TrimSpace(cypher[start:pos]))
-		start = pos + 5 // Skip "MATCH"
-		searchStart = pos + 5
+		position := searchStart + nextMatch
+		clauses = append(clauses, view.window(start, position).trim())
+		start = position + len("MATCH")
+		searchStart = start
 	}
-
 	return clauses
 }
 
@@ -138,12 +112,12 @@ type relationshipBinding map[string]interface{}
 // relationship-binding slice is index-aligned with the returned bindings and
 // carries forward any relationship bound earlier in the chain plus any
 // relationship variable bound by this clause's own pattern.
-func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
+func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern braceView, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
 	var newBindings []binding
 	var newRelBindings []relationshipBinding
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
 	// traversal; only a lone node pattern is matched as a node.
-	isRelationshipPattern := containsRelationshipPattern(pattern)
+	isRelationshipPattern := containsRelationshipPattern(pattern.text())
 
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
@@ -365,7 +339,7 @@ func edgeRelationshipBindings(bindings relationshipBinding) map[string]*storage.
 // directly with plain []binding for queries that bind no relationship
 // variable. See filterBindingsByWhereWithRels for the relationship-aware
 // variant used by executeMultiMatch.
-func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
+func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause braceView, params map[string]interface{}) []binding {
 	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	result := make([]binding, 0, len(bindings))
 
@@ -389,7 +363,7 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // the duration of the WHERE check only — see bindingWithRelView. The real
 // *storage.Edge values (needed for RETURN/DELETE) are returned separately
 // and never replaced by the view.
-func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
+func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause braceView, params map[string]interface{}) ([]binding, []relationshipBinding) {
 	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	resultBindings := make([]binding, 0, len(bindings))
 	resultRels := make([]relationshipBinding, 0, len(bindings))
@@ -435,12 +409,13 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 }
 
 // evaluateBindingWhere evaluates WHERE clause against a binding
-func (e *StorageExecutor) evaluateBindingWhere(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingWhere(ctx context.Context, b binding, whereClause braceView, params map[string]interface{}) bool {
 	return e.evaluateBindingWhereGeneric(ctx, b, whereClause, params)
 }
 
-func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, params map[string]interface{}) interface{} {
-	s := strings.TrimSpace(raw)
+func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw braceView, params map[string]interface{}) interface{} {
+	raw = raw.trim()
+	s := raw.text()
 	if strings.HasPrefix(s, "$") {
 		name := strings.TrimSpace(strings.TrimPrefix(s, "$"))
 		if params != nil {
@@ -449,7 +424,7 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 			}
 		}
 	}
-	value, err := e.parseValue(ctx, s)
+	value, err := e.parseValue(ctx, raw)
 	recordExpressionFailure(ctx, err)
 	return value
 }
@@ -459,23 +434,25 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 // counterpart produced by executeFirstMatch/executeChainedMatch); pass nil
 // when the row binds no relationship variable.
 func (e *StorageExecutor) resolveBindingItemWithRelationships(ctx context.Context, item returnItem, b binding, rels relationshipBinding) interface{} {
-	expr := strings.TrimSpace(item.expr)
+	view := item.view.trim()
+	expr := view.text()
 	if expr == "" {
 		return nil
 	}
-	return e.resolveBindingExprWithRelationships(ctx, expr, b, rels)
+	return e.resolveBindingExprWithRelationships(ctx, view, b, rels)
 }
 
 func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
 	return e.resolveBindingItemWithRelationships(ctx, item, b, relationshipBindingFromEdges(rels))
 }
 
-func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr braceView, b binding, rels map[string]*storage.Edge) interface{} {
 	return e.resolveBindingExprWithRelationships(ctx, expr, b, relationshipBindingFromEdges(rels))
 }
 
-func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Context, expr string, b binding, rels relationshipBinding) interface{} {
-	expr = strings.TrimSpace(expr)
+func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Context, view braceView, b binding, rels relationshipBinding) interface{} {
+	view = view.trim()
+	expr := view.text()
 	if expr == "" {
 		return nil
 	}
@@ -484,11 +461,11 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
-			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), node)
+			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil, nil).Context, node)
 			return value
 		}
 		if edge, ok := rels[inner].(*storage.Edge); ok && edge != nil {
-			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), edge)
+			value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil, nil).Context, edge)
 			return value
 		}
 		return nil
@@ -496,14 +473,14 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
 	if strings.HasPrefix(upperASCII(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
-		return e.evaluateCoalesceInContext(expr, b, edgeRelationshipBindings(rels), nil)
+		return e.evaluateCoalesceInContext(view, b, edgeRelationshipBindings(rels), nil)
 	}
 
 	// Literal value
 	if strings.HasPrefix(expr, "'") || strings.HasPrefix(expr, "\"") ||
 		strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false") ||
 		strings.EqualFold(expr, "null") || isNumericLiteral(expr) {
-		value, err := e.parseValue(ctx, expr)
+		value, err := e.parseValue(ctx, view)
 		recordExpressionFailure(ctx, err)
 		return value
 	}
@@ -545,7 +522,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	// paths. It already accepts a relationship map (previously always passed
 	// nil here), so expressions like count(rel) / collect(rel.prop) resolve
 	// correctly once rels is populated.
-	if val := e.evaluateExpressionWithContext(ctx, expr, b, edgeRelationshipBindings(rels)); val != nil {
+	if val := e.evaluateExpressionWithContext(ctx, view, b, edgeRelationshipBindings(rels)); val != nil {
 		return val
 	}
 
@@ -583,7 +560,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
-	whereClause string,
+	whereClause braceView,
 	limit int,
 ) ([]*storage.Node, error) {
 	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
@@ -598,7 +575,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
-	whereClause string,
+	whereClause braceView,
 	limit int,
 	projection []string,
 ) ([]*storage.Node, error) {
@@ -623,7 +600,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
-	whereClause string,
+	whereClause braceView,
 	limit int,
 	projection []string,
 	collected *[]*storage.Node,
@@ -635,7 +612,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	hideSystemNodes := shouldHideSystemNodes(store)
 	visited := 0
 	var whereFilter FilterFunc
-	if strings.TrimSpace(whereClause) != "" {
+	if !whereClause.empty() {
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
@@ -707,7 +684,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
-	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
+	if limit > 0 && len(labels) == 1 && len(properties) == 0 && whereClause.trim().empty() {
 		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
 		if err != nil {
 			return err
@@ -846,7 +823,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	if len(properties) > 0 {
 		nodes = e.filterNodesByProperties(nodes, properties)
 	}
-	if strings.TrimSpace(whereClause) != "" {
+	if !whereClause.trim().empty() {
 		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
 	}
 	if limit > 0 && len(nodes) > limit {
@@ -877,9 +854,9 @@ func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error
 // (parameter, literal or bound value; parseSimpleIndexedEquality). Over-
 // approximating the WHERE is safe because the caller still evaluates it on
 // every node the scan returns.
-func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
-	if clause == "" || strings.TrimSpace(variable) == "" {
+func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable string, whereClause braceView) map[string]interface{} {
+	clause := unwrapOuterView(whereClause.trim())
+	if clause.empty() || strings.TrimSpace(variable) == "" {
 		return properties
 	}
 	required := make(map[string]interface{}, len(properties)+1)
@@ -887,7 +864,7 @@ func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, p
 		required[key] = value
 	}
 	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
-		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
+		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterView(conjunct.trim()))
 		if !ok {
 			continue
 		}
@@ -943,12 +920,12 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 		variable string
 		nodes    []*storage.Node
 	},
-	whereClause string,
+	whereClause braceView,
 ) []struct {
 	variable string
 	nodes    []*storage.Node
 } {
-	if len(patternMatches) < 2 || strings.TrimSpace(whereClause) == "" {
+	if len(patternMatches) < 2 || whereClause.trim().empty() {
 		return patternMatches
 	}
 
@@ -963,11 +940,11 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 	nullConstraints := map[string]cartesianNullConstraint{}
 	eqConstraints := make([]cartesianEqConstraint, 0, 2)
 	for _, term := range splitTopLevelAndConjuncts(whereClause) {
-		term = strings.TrimSpace(term)
-		if term == "" {
+		term = term.trim()
+		if term.empty() {
 			continue
 		}
-		if v, p, vals, ok := parseCartesianInListTerm(term); ok {
+		if v, p, vals, ok := parseCartesianInListTerm(term.text()); ok {
 			c := inConstraints[v]
 			if c.prop == "" {
 				c.prop = p
@@ -980,7 +957,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			inConstraints[v] = c
 			continue
 		}
-		if v, p, expectNotNull, ok := parseCartesianNullTerm(term); ok {
+		if v, p, expectNotNull, ok := parseCartesianNullTerm(term.text()); ok {
 			key := v + "|" + p
 			c := nullConstraints[key]
 			if c.hasValue && c.expectNotNull != expectNotNull {
@@ -992,7 +969,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			nullConstraints[key] = c
 			continue
 		}
-		if lv, lp, rv, rp, offset, ok := parseCartesianVarPropEqualityTerm(term); ok {
+		if lv, lp, rv, rp, offset, ok := parseCartesianVarPropEqualityTerm(term.text()); ok {
 			eqConstraints = append(eqConstraints, cartesianEqConstraint{
 				leftVar:   lv,
 				leftProp:  lp,
@@ -1160,9 +1137,10 @@ func parseCartesianVarProp(expr string) (string, string, bool) {
 	return v, property, true
 }
 
-func parseCartesianSingleNodeComparisonTerm(term string) (string, bool) {
-	clause := strings.TrimSpace(term)
-	scan, comparison := scanComparisonChain(clause)
+func parseCartesianSingleNodeComparisonTerm(term braceView) (string, bool) {
+	term = term.trim()
+	clause := term.text()
+	scan, comparison := scanComparisonChain(term)
 	if !comparison || scan.count != 1 {
 		return "", false
 	}
@@ -1397,8 +1375,8 @@ func filterNodesByNullConstraint(nodes []*storage.Node, prop string, expectNotNu
 }
 
 // evaluateWhereForContext evaluates a WHERE clause against a node context
-func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
-	if strings.TrimSpace(whereClause) == "" {
+func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause braceView, nodes map[string]*storage.Node) bool {
+	if whereClause.trim().empty() {
 		return true
 	}
 	predicate := e.newBindingFilterPredicate(ctx, whereClause, nil)
@@ -1409,18 +1387,18 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 // current bindings using the same parser and traversal implementation as a
 // MATCH clause. The second return value distinguishes a valid pattern that did
 // not match from an expression that is not a relationship pattern.
-func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
+func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause braceView, nodes map[string]*storage.Node) (bool, bool) {
 	return e.evaluateRowRelationshipPattern(ctx, clause, entityRow(ctx, nodes, nil))
 }
 
 // Every predicate adapter passes its complete row here, including scalar,
 // relationship and node bindings. Parsing consumes the same prepared values
 // as MATCH, instead of evaluating a node-only view during recognition.
-func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, clause string, values map[string]interface{}) (bool, bool) {
-	if !isRelationshipPatternOperand(strings.TrimSpace(clause)) {
+func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, clause braceView, values map[string]interface{}) (bool, bool) {
+	if !isRelationshipPatternOperand(clause.trim().text()) {
 		return false, false
 	}
-	rowCtx, pattern, err := e.bindPatternProperties(ctx, strings.TrimSpace(clause), values)
+	rowCtx, pattern, err := e.bindPatternProperties(ctx, clause.trim(), values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true
@@ -1438,17 +1416,17 @@ func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, cl
 // (isRelationshipPatternOperand) is a pattern: a parenthesised expression
 // whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
 // not one.
-func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
+func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause braceView) (*TraversalMatch, bool) {
 	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPattern)
 }
 
-func (e *StorageExecutor) parseBoundRelationshipPatternStructure(ctx context.Context, clause string) (*TraversalMatch, bool) {
+func (e *StorageExecutor) parseBoundRelationshipPatternStructure(ctx context.Context, clause braceView) (*TraversalMatch, bool) {
 	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPatternStructure)
 }
 
-func readBoundRelationshipPattern(ctx context.Context, clause string, read func(context.Context, string) *TraversalMatch) (*TraversalMatch, bool) {
-	pattern := strings.TrimSpace(clause)
-	if !isRelationshipPatternOperand(pattern) {
+func readBoundRelationshipPattern(ctx context.Context, clause braceView, read func(context.Context, braceView) *TraversalMatch) (*TraversalMatch, bool) {
+	pattern := clause.trim()
+	if !isRelationshipPatternOperand(pattern.text()) {
 		return nil, false
 	}
 

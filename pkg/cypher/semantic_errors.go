@@ -94,17 +94,19 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	view := cyphertext.NewSource(ctx, source, stage)
+	input := cyphertext.NewSource(ctx, source, stage)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if view.Err == nil {
-		source = view.Text
-		if err := malformedCallScopeError(ctx, source); err != nil {
+	// A statement that failed normalization keeps its lexical reading only.
+	statement := braceView{source: input}
+	if input.Err == nil {
+		statement = sourceStatementView(input)
+		if err := malformedCallScopeError(ctx, statement); err != nil {
 			return err
 		}
 	}
-	if invalidRelationshipPattern(source) {
+	if invalidRelationshipPattern(statement) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
 	}
 	var localized *localization.LocalizedError

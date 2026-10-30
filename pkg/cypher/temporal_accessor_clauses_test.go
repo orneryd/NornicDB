@@ -59,16 +59,16 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 						require.Equal(t, [][]interface{}{{want[index]}}, result.Rows, query)
 					}
 					// Both evaluators read the accessor alike.
-					require.Equal(t, want[index], exec.evaluateExpressionWithContext(ctx, call, nil, nil), call)
-					value, ok, err := exec.evaluateRowValue(call, nil)
+					require.Equal(t, want[index], exec.evaluateExpressionWithContext(ctx, originalBraceView(call), nil, nil), call)
+					value, ok, err := exec.evaluateRowValue(originalBraceView(call), nil)
 					require.NoError(t, err, call)
 					require.True(t, ok, call)
 					require.Equal(t, want[index], value, call)
 				}
 			}
 			// A value that isn't temporal gives null in both.
-			require.Nil(t, exec.evaluateExpressionWithContext(ctx, "date.year(1)", nil, nil))
-			value, ok, err := exec.evaluateRowValue("date.year(1)", nil)
+			require.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("date.year(1)"), nil, nil))
+			value, ok, err := exec.evaluateRowValue(expressionBraceView("date.year(1)"), nil)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Nil(t, value)
@@ -78,13 +78,13 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 	// time is 0001-01-01T00:00:00Z).
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors_min"))
 	for _, call := range []string{"date.year('0001-01-01')", "datetime.year('0001-01-01T00:00:00Z')", "date.day('0001-01-01')"} {
-		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(context.Background(), call, nil, nil), call)
-		value, ok, err := exec.evaluateRowValue(call, nil)
+		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(context.Background(), originalBraceView(call), nil, nil), call)
+		value, ok, err := exec.evaluateRowValue(originalBraceView(call), nil)
 		require.NoError(t, err, call)
 		require.True(t, ok, call)
 		require.Equal(t, int64(1), value, call)
 	}
-	require.Nil(t, exec.evaluateExpressionWithContext(context.Background(), "date.year('not a date')", nil, nil))
+	require.Nil(t, exec.evaluateExpressionWithContext(context.Background(), expressionBraceView("date.year('not a date')"), nil, nil))
 	// A component that isn't an accessor is not one (date.truncate is a
 	// function of its own; the unknown-function check rejects the rest).
 	value, known := temporalComponent("truncate", "2024-03-15")

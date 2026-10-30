@@ -19,7 +19,7 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	for _, key := range []string{"present", "missing", "present"} {
 		ctx := withExpressionFailureSlot(withParams(context.Background(), map[string]any{"key": key}))
-		value := e.evaluateExpressionWithContextFullFunctions(ctx, "exists((n)-[:REL {key:$key}]->())", nodes, nil, nil, nil, nil, 0)
+		value := e.evaluateExpressionWithContextFullFunctions(ctx, expressionBraceView("exists((n)-[:REL {key:$key}]->())"), nodes, nil, nil, nil, nil, 0)
 		require.NoError(t, getExpressionFailure(ctx))
 		require.Equal(t, key == "present", value)
 	}
@@ -30,9 +30,9 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 func TestExistsSubqueryEvaluationOwnerCompiledContextAndErrors(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "exists_compiled"))
 	expression := "COLLECT { RETURN 1 / 0 AS invalid }"
-	root, _ := (&rowValueCompiler{}).compile(expression)
+	root, _ := (&rowValueCompiler{}).compile(originalBraceView(expression))
 	row := map[string]any{}
-	want, wantOK, wantErr := e.evaluateRowValueText(expression, row)
+	want, wantOK, wantErr := e.evaluateRowValueText(originalBraceView(expression), row)
 	value, resolved, err := root.eval(e, row, nil)
 	require.Equal(t, want, value)
 	require.Equal(t, wantOK, resolved)
@@ -54,7 +54,7 @@ func TestExistsSubqueryEvaluationOwnerMemoryBudget(t *testing.T) {
 		tracker := newTestMemoryTracker("exists_budget")
 		t.Cleanup(tracker.end)
 		ctx := withExpressionFailureSlot(context.WithValue(context.Background(), memoryScopeKey{}, &tracker.root))
-		value, resolved, evalErr := e.rowSubqueryValue(ctx, "EXISTS", "MATCH (s:Source {id:key})", map[string]any{"key": "present"})
+		value, resolved, evalErr := e.rowSubqueryValue(ctx, "EXISTS", originalBraceView("MATCH (s:Source {id:key})"), map[string]any{"key": "present"})
 		require.NoError(t, evalErr)
 		require.True(t, resolved)
 		if limit == 1 {

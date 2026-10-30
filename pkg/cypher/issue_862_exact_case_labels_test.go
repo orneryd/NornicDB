@@ -142,7 +142,7 @@ func TestIssue862RelationshipTypeFiltersAreCaseSensitive(t *testing.T) {
 func TestIssue862ContractNameKeepsLabelCase(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	for _, label := range []string{"Person", "person"} {
-		parsed, err := exec.parseCreateConstraintContractDDL("CREATE CONSTRAINT FOR (n:" + label + ") REQUIRE { n.id IS UNIQUE }")
+		parsed, err := exec.parseCreateConstraintContractDDL(originalBraceView("CREATE CONSTRAINT FOR (n:" + label + ") REQUIRE { n.id IS UNIQUE }"))
 		require.NoError(t, err)
 		require.Equal(t, "constraint_"+label+"_contract", parsed.name)
 	}

@@ -2,15 +2,12 @@ package cypher
 
 import (
 	"context"
-	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // parseSetMergeMapLiteralStrict parses an inline map literal used by SET +=.
 // Unlike permissive property parsing helpers, this enforces Cypher semantics:
 // malformed maps must return an error instead of becoming an empty map/no-op.
-func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s string) (map[string]interface{}, error) {
+func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s braceView) (map[string]interface{}, error) {
 	if err := validateMapLiteralSyntax(s); err != nil {
 		return nil, err
 	}
@@ -19,12 +16,14 @@ func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s s
 
 // parseSetMergeMapExpressionsStrict validates an inline SET += map while
 // preserving each value expression for evaluation against an individual row.
-func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
+func parseSetMergeMapExpressionsStrict(view braceView) (map[string]string, error) {
 	expressions := make(map[string]string)
-	if err := forEachMapEntry(s, mapSourceText, func(key, value string) {
-		expressions[key] = value
-	}); err != nil {
+	entries, err := view.requireKeyedEntries()
+	if err != nil {
 		return nil, err
+	}
+	for _, entry := range entries {
+		expressions[entry.key()] = entry.value.text()
 	}
 	return expressions, nil
 }
@@ -32,46 +31,10 @@ func parseSetMergeMapExpressionsStrict(s string) (map[string]string, error) {
 // validateMapLiteralSyntax checks a map literal with the strict grammar of
 // parseSetMergeMapExpressionsStrict without building anything (hot CREATE
 // paths validate every row's property map).
-func validateMapLiteralSyntax(s string) error {
-	return forEachMapEntry(s, mapSourceText, func(string, string) {})
+func validateMapLiteralSyntax(view braceView) error {
+	_, err := view.requireKeyedEntries()
+	return err
 }
 
-type mapEntryText uint8
-
-const (
-	mapSourceText mapEntryText = iota
-	mapCodeText
-)
-
-// forEachMapEntry validates map structure over the canonical Cypher token
-// reader. It owns map grammar, not quotation, comments or delimiter scanning.
-func forEachMapEntry(s string, source mapEntryText, entry func(key, value string)) error {
-	if source == mapSourceText {
-		s = StripComments(s)
-	}
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapLiteralEnclosureRequired())
-	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	var buffer [8]string
-	for _, pair := range appendTopLevelCommaParts(buffer[:0], inner, true) {
-		if pair == "" {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapEntryEmpty())
-		}
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapEntryInvalid(pair))
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		if key == "" {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapKeyEmpty())
-		}
-		value := strings.TrimSpace(pair[colonIdx+1:])
-		if value == "" {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapValueEmpty(key))
-		}
-		entry(key, value)
-	}
-	return nil
-}
+// forEachMapEntry consumes the brace owner's parsed entries. It adapts key
+// values for property storage; it owns no entry or separator grammar.

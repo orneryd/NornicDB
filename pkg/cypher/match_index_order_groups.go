@@ -9,9 +9,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property, where string) bool {
-	for _, term := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(where))) {
-		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterParens(strings.TrimSpace(term)))
+func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property string, where braceView) bool {
+	for _, term := range splitTopLevelAndConjuncts(unwrapOuterView(where)) {
+		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterView(term))
 		if ok && strings.EqualFold(required, property) {
 			return true
 		}
@@ -43,7 +43,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // only the best limit nodes are retained while every boundary tie is examined.
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
 // match.
-func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where braceView, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
@@ -56,7 +56,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	nodes := make([]*storage.Node, 0, limit)
 	var filter func(*storage.Node) bool
-	if strings.TrimSpace(where) != "" {
+	if !where.empty() {
 		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
 	}
 	var visitErr error

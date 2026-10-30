@@ -36,13 +36,13 @@ func TestWhereLabelDisjunction(t *testing.T) {
 		{"n:Code AND n:Document", nil},                             // conjunction
 		{"(n:Code) OR (n:Document)", []string{"Code", "Document"}}, // each side in parentheses
 	} {
-		labels, ok := whereLabelDisjunction("n", tc.term)
+		labels, ok := whereLabelDisjunction("n", originalBraceView(tc.term))
 		require.Equal(t, tc.labels != nil, ok, tc.term)
 		require.Equal(t, tc.labels, labels, tc.term)
 	}
-	_, ok := whereLabelDisjunction("", ":Code")
+	_, ok := whereLabelDisjunction("", originalBraceView(":Code"))
 	require.False(t, ok, "an anonymous pattern has no variable to test")
-	labels, ok := whereLabelDisjunction("`my n`", "`my n`:Code OR `my n`:Document")
+	labels, ok := whereLabelDisjunction("`my n`", expressionBraceView("`my n`:Code OR `my n`:Document"))
 	require.True(t, ok)
 	require.Equal(t, []string{"Code", "Document"}, labels)
 }

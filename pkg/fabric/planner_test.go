@@ -464,7 +464,7 @@ func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
 	if err != nil || !hasUse {
 		t.Fatalf("unexpected result: hasUse=%v err=%v", hasUse, err)
 	}
-	if !use.IsDynamic() || use.Function != "graph.byName" || len(use.Args) != 1 || use.Args[0] != "'tenant_a'" {
+	if !use.IsDynamic() || use.Function != "graph.byName" || len(use.Arguments) != 1 || use.Arguments[0].Text != "'tenant_a'" {
 		t.Fatalf("unexpected dynamic reference: %+v", use)
 	}
 	if remaining != "MATCH (n) RETURN n" {

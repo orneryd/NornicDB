@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"sort"
@@ -307,7 +306,9 @@ const (
 
 // expressionTextAccepted owns shared pattern/map-projection exclusion and the
 // whole-operand grammar required by subscript and static operand validation.
-func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
+func expressionTextAccepted(view braceView, policy expressionTextPolicy) bool {
+	view = view.trim()
+	text := view.text()
 	text = strings.TrimSpace(text)
 	if text == "" && policy == expressionTextOperand {
 		return false
@@ -317,7 +318,7 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
 		return policy == expressionTextOperand
 	}
-	if strings.HasPrefix(text, "{") && cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter) == len(text)-1 {
+	if enclosingMapText(view) {
 		return policy == expressionTextOperand
 	}
 	// -[1] is a unary minus of a list, not a relationship.
@@ -335,20 +336,11 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 	}
 	// A brace after a variable (n {k: 1}) is a map projection; after a
 	// keyword (t AND {a: 2}) it opens a map literal.
-	for brace := strings.IndexByte(text, '{'); brace > 0; {
-		before := strings.TrimSpace(text[:brace])
-		word := len(before)
-		for word > 0 && cyphertext.NamePartAt(before, word-1) {
-			word--
-		}
-		if word < len(before) && !isCypherKeyword(before[word:]) {
+	scanner := newBraceFactScanner(view, 0)
+	for token, ok := scanner.next(); ok; token, ok = scanner.next() {
+		if token.Is(text, "{") && scanner.kind() == projectionBrace {
 			return false
 		}
-		next := strings.IndexByte(text[brace+1:], '{')
-		if next < 0 {
-			break
-		}
-		brace += next + 1
 	}
 	if policy == expressionTextOperator {
 		return true
@@ -357,7 +349,7 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 		return true
 	}
 	if text[0] == '-' || text[0] == '+' {
-		return expressionTextAccepted(text[1:], expressionTextOperand)
+		return expressionTextAccepted(view.window(1, len(text)), expressionTextOperand)
 	}
 	if text[0] == '$' {
 		return simpleSemanticIdentifier(text[1:]) != ""
@@ -372,8 +364,8 @@ func expressionTextAccepted(text string, policy expressionTextPolicy) bool {
 		return true
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
-		if left, right, _, arithmetic := splitRowArithmeticTier(text, tier); arithmetic {
-			return expressionTextAccepted(left, expressionTextOperand) && expressionTextAccepted(right, expressionTextOperand)
+		if operator, _, arithmetic := rowArithmeticTierOperator(text, tier); arithmetic {
+			return expressionTextAccepted(view.window(0, operator), expressionTextOperand) && expressionTextAccepted(view.window(operator+1, len(text)), expressionTextOperand)
 		}
 	}
 	return false

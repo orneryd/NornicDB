@@ -98,7 +98,7 @@ func TestRule73SelectionForms(t *testing.T) {
 			// Warm only text accepted through the real public query first. Register a
 			// body-independent full text too, to attack exact/canonical/upper metadata.
 			if form != "colon_use" {
-				if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
+				if err := root.validateSyntax(context.Background(), originalBraceView(query), false, syntaxStatement); err != nil {
 					t.Fatal(err)
 				}
 				root.cachedUpperQuery(query)

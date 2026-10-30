@@ -32,14 +32,14 @@ func toFloat64Slice(v interface{}) ([]float64, bool) {
 // This prevents matching substrings like "RemoveReturn" when searching for "RETURN".
 // Also prevents matching labels like ":Return" as keywords.
 // Returns -1 if not found.
-func findKeywordIndex(s, keyword string) int {
-	return keywordIndex(s, keyword)
+func findKeywordIndex(view braceView, keyword string) int {
+	return keywordIndex(view, keyword)
 }
 
 // containsKeywordOutsideStrings checks if a keyword exists in the string but NOT inside
 // string literals. This prevents matching keywords inside user data content.
-func containsKeywordOutsideStrings(s, keyword string) bool {
-	return findKeywordIndex(s, keyword) != -1
+func containsKeywordOutsideStrings(view braceView, keyword string) bool {
+	return findKeywordIndex(view, keyword) != -1
 }
 
 // containsOutsideStrings checks if a substring exists in the string but NOT inside
@@ -186,7 +186,8 @@ func extractPolygonPoints(geom map[string]interface{}) []interface{} {
 // secondWord) == 0, checked at the start of s instead of by scanning all of
 // it (whitespace between the words; word boundaries; the first word not
 // used as a name, clauseKeywordUsedAsName).
-func startsWithKeywords(s, firstWord, secondWord string) bool {
+func startsWithKeywords(view braceView, firstWord, secondWord string) bool {
+	s := view.text()
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
 	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
 	if firstStart >= firstEnd || secondStart >= secondEnd {
@@ -198,7 +199,7 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 	}
 	// (An operator WITH, as in STARTS WITH, needs a word before it, so
 	// it can't start the statement.)
-	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
+	if clauseKeywordUsedAsName(view, 0, afterFirst, firstWord[firstStart:firstEnd]) {
 		return false
 	}
 	j, unfinished := cyphertext.GapEnd(s, afterFirst)
@@ -219,8 +220,9 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 //   - secondWord: Second word of the keyword (e.g., "DATABASES")
 //
 // Returns the position of the first word if the multi-word keyword is found, -1 otherwise.
-func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
-	opts := defaultKeywordScanOpts()
+func findMultiWordKeywordIndex(view braceView, firstWord, secondWord string) int {
+	s := view.text()
+	opts := defaultKeywordScanOpts(view)
 
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
 	secondStart, secondEnd := trimKeywordWSBounds(secondWord)

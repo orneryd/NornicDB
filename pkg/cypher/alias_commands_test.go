@@ -41,7 +41,7 @@ func TestAliasCommands_ShowAliasesConsumesCommandHead(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 			// The statement boundary can refuse a second statement first. Also
 			// exercise the listing owner directly, including that same suffix.
-			result, err = exec.executeShowAliases(ctx, showCommandHead(strings.ReplaceAll(c.Statement, "$db", "tenant-a")))
+			result, err = exec.executeShowAliases(ctx, showCommandHead(originalBraceView(strings.ReplaceAll(c.Statement, ".text()$db", "tenant-a"))).text())
 			require.Nil(t, result)
 			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 			var typed *localization.LocalizedError

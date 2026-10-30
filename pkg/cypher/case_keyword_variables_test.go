@@ -116,6 +116,6 @@ func TestCaseKeywordAtReadsWordsByContext(t *testing.T) {
 		{"CASE when WHEN 1 THEN 2 END", "WHEN", 2, true},
 	} {
 		index := at(c.text, c.word, c.nth)
-		require.Equal(t, c.keyword, caseKeywordAt(c.text, index, c.word), "%s: %s #%d", c.text, c.word, c.nth)
+		require.Equal(t, c.keyword, caseKeywordAt(originalBraceView(c.text), index, c.word), "%s: %s #%d", c.text, c.word, c.nth)
 	}
 }

@@ -13,8 +13,9 @@ type matchWithStage struct {
 	withClause  string
 }
 
-func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
-	query := strings.TrimSpace(cypher)
+func parseMatchWithStages(view braceView) ([]matchWithStage, string, bool) {
+	view = view.trim()
+	query := view.text()
 	upper := upperASCII(query)
 	if !strings.HasPrefix(upper, "MATCH ") {
 		return nil, "", false
@@ -23,7 +24,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	var stages []matchWithStage
 	pos := 0
 	for {
-		matchIdxRel := findKeywordIndexInContext(query[pos:], "MATCH")
+		matchIdxRel := findKeywordIndexInContext(view.window(pos, len(query)), "MATCH")
 		if matchIdxRel < 0 {
 			return nil, "", false
 		}
@@ -32,7 +33,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		withIdxRel := findKeywordIndexInContext(query[matchIdx:], "WITH")
+		withIdxRel := findKeywordIndexInContext(view.window(matchIdx, len(query)), "WITH")
 		if withIdxRel < 0 {
 			return nil, "", false
 		}
@@ -42,8 +43,8 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		nextMatchRel := findKeywordIndexInContext(query[withIdx:], "MATCH")
-		nextReturnRel := findKeywordIndexInContext(query[withIdx:], "RETURN")
+		nextMatchRel := findKeywordIndexInContext(view.window(withIdx, len(query)), "MATCH")
+		nextReturnRel := findKeywordIndexInContext(view.window(withIdx, len(query)), "RETURN")
 		if nextReturnRel < 0 {
 			return nil, "", false
 		}
@@ -73,15 +74,17 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	}
 }
 
-func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause string) ([]*storage.Node, string, error) {
-	trimmed := strings.TrimSpace(clause)
+func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clauseView braceView) ([]*storage.Node, string, error) {
+	clause := clauseView.text()
+	trimmed := clauseView.trim()
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	patternPart := trimmed
-	whereClause := ""
+	whereView := trimmed.window(0, 0)
 	if whereIdx > 0 {
-		patternPart = strings.TrimSpace(trimmed[:whereIdx])
-		whereClause = strings.TrimSpace(trimmed[whereIdx+5:])
+		patternPart = trimmed.window(0, whereIdx).trim()
+		whereView = trimmed.window(whereIdx+5, len(trimmed.text())).trim()
 	}
+	whereClause := whereView.text()
 
 	pattern, parseErr := e.parseNodePattern(ctx, patternPart)
 	if parseErr != nil {
@@ -98,7 +101,7 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		return nil, "", err
 	}
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)
+		nodes = e.filterNodesByWhereClause(ctx, nodes, whereView, pattern.variable)
 	}
 	return nodes, pattern.variable, nil
 }

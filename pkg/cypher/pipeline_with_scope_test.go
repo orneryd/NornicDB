@@ -10,7 +10,7 @@ import (
 func TestPipelineWithProjectionDoesNotAllocatePredicateScope(t *testing.T) {
 	executor := &StorageExecutor{}
 	ctx := context.Background()
-	plan, ok := parsePipelineRowWith(t.Context(), "WITH a AS b")
+	plan, ok := parsePipelineRowWith(t.Context(), originalBraceView("WITH a AS b"))
 	if !ok {
 		t.Fatal("projection must use the shared row operator")
 	}

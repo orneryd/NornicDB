@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -62,7 +63,8 @@ func scalarAdmissionVisitor(shape *scalarExpressionSyntax) cypherantlr.SyntaxVis
 			recordAggregate(node.Code())
 		case cypherantlr.CypherParserRULE_functionInvocation:
 			text := node.Code()
-			if _, _, _, aggregate := parsePipelineAggregate(text); aggregate {
+			// The shape is cached by text, so the call is read as a new input.
+			if _, _, _, aggregate := parsePipelineAggregate(expressionInputView(text, cyphertext.AcceptedSource)); aggregate {
 				recordAggregate(text)
 			}
 		}
@@ -73,6 +75,15 @@ func scalarAdmissionVisitor(shape *scalarExpressionSyntax) cypherantlr.SyntaxVis
 // classifyTransactionalBatchExpression is the single semantic admission point
 // for execution and EXPLAIN. The shared type checker propagates parameter list
 // element types; union results such as CASE and coalesce remain runtime values.
+// batchExpressionView is the size expression in its statement's carried view;
+// the implicit default has no written node and is a generated literal input.
+func batchExpressionView(ctx context.Context, spec *transactionBatchSpec) braceView {
+	if node, found := spec.ExpressionSyntax(); found {
+		return statementBraceView(ctx, node.Source()).code(node)
+	}
+	return expressionInputView(spec.Expression, cyphertext.AcceptedSource)
+}
+
 func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Context, spec *transactionBatchSpec, params map[string]interface{}) error {
 	var shape scalarExpressionSyntax
 	var err error
@@ -87,11 +98,12 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 		}
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", err.Error())
 	}
-	if shape.forbidden || len(expressionFreeVariables(spec.Expression)) != 0 {
+	expression := batchExpressionView(ctx, spec)
+	if shape.forbidden || len(expressionFreeVariables(expression)) != 0 {
 		return callBatchSizeError(spec.Expression, "Neo.ClientError.Statement.SyntaxError")
 	}
 	checker := staticOperatorChecker{scope: staticTypeScope{cypher25: cypherVersionFromContext(ctx) == "25"}}
-	operand, err := checker.check(spec.Expression)
+	operand, err := checker.check(expression)
 	if err != nil {
 		return err
 	}
@@ -100,7 +112,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 	}
 	if params != nil {
 		checker.params = params
-		operand, err = checker.check(spec.Expression)
+		operand, err = checker.check(expression)
 		if err != nil {
 			return err
 		}

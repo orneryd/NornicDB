@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"errors"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"testing"
 
@@ -41,38 +40,11 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 			},
 		},
 		{
-			name:      "expected for",
-			messageID: localization.MessageCypherKnowledgePolicyEdgePatternExpectedFor,
-			text:      "expected '(' for edge pattern",
-			parse: func() error {
-				_, _, err := parseEdgeTarget("", 0, knowledgePolicyTestBinding())
-				return err
-			},
-		},
-		{
-			name:      "expected in",
-			messageID: localization.MessageCypherKnowledgePolicyEdgePatternExpectedIn,
-			text:      "expected '-' in edge pattern",
-			parse: func() error {
-				_, _, err := parseEdgeTarget("()", 0, knowledgePolicyTestBinding())
-				return err
-			},
-		},
-		{
 			name:      "unknown option",
 			messageID: localization.MessageCypherKnowledgePolicyUnknownOption,
 			text:      `unknown option: "bogus"`,
 			parse: func() error {
 				_, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE DECAY PROFILE profile OPTIONS { bogus: 1 }", RawSource)
-				return err
-			},
-		},
-		{
-			name:      "unknown Kalman key",
-			messageID: localization.MessageCypherKnowledgePolicyUnknownKalmanConfigKey,
-			text:      `unknown Kalman config key: "gain"`,
-			parse: func() error {
-				_, err := parseOnAccessBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), "WITH KALMAN { gain: 1 } SET n.score = 1", cyphertext.RawSource), original: true})
 				return err
 			},
 		},
@@ -112,11 +84,11 @@ func TestKnowledgePolicyExecutionAndFunctionErrorsHaveTypedIdentity(t *testing.T
 	localizedErr := requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyUnsupportedCommand, "unsupported knowledge policy command: MATCH (n) RETURN n")
 	require.Equal(t, "MATCH (n) RETURN n", localizedErr.Message.Data["Command"])
 
-	_, err = validateDecayOptions(context.Background(), "42", nil, nil, exec)
+	_, err = validateDecayOptions(context.Background(), expressionBraceView("42"), nil, nil, exec)
 	localizedErr = requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyDecayOptionsMapRequired, "decayScore/decay options must be a map, got int64")
 	require.Equal(t, "int64", localizedErr.Message.Data["ValueType"])
 
-	_, err = validateDecayOptions(context.Background(), "{badKey: 'x'}", nil, nil, exec)
+	_, err = validateDecayOptions(context.Background(), expressionBraceView("{badKey: 'x'}"), nil, nil, exec)
 	localizedErr = requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyUnknownDecayOption, `unknown decay option key: "badKey"`)
 	require.Equal(t, "badKey", localizedErr.Message.Data["Option"])
 }

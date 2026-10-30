@@ -1,4 +1,4 @@
-package cypher
+package antlr
 
 import (
 	"testing"

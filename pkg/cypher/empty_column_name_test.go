@@ -53,6 +53,6 @@ func TestColumnNamesOnEveryRoute(t *testing.T) {
 	require.Empty(t, result.Rows)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 
-	_, ok := callTailWithProjectionColumns(t.Context(), "WITH a,,b")
+	_, ok := callTailWithProjectionColumns(t.Context(), originalBraceView("WITH a,,b"))
 	require.False(t, ok)
 }

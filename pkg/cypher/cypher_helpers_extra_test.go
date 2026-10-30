@@ -341,7 +341,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	mutation := "MERGE (t:TranslatedText {translationId: row.translationId, language: row.language}) ON CREATE SET t.translatedText = row.translatedText ON MATCH SET t.translatedText = row.translatedText"
 
-	plan := exec.cachedUnwindMergeChainPlan(t.Context(), mutation)
+	plan := exec.cachedUnwindMergeChainPlan(t.Context(), originalBraceView(mutation))
 	require.True(t, plan.supported)
 	require.NotNil(t, exec.unwindMergeChainPlanCache)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
@@ -349,7 +349,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	clone := exec.cloneWithStorage(exec.storage)
 	require.Same(t, exec.unwindMergeChainPlanCache, clone.unwindMergeChainPlanCache)
 
-	clonedPlan := clone.cachedUnwindMergeChainPlan(t.Context(), mutation)
+	clonedPlan := clone.cachedUnwindMergeChainPlan(t.Context(), originalBraceView(mutation))
 	assert.Equal(t, plan, clonedPlan)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
 	assert.Len(t, clone.unwindMergeChainPlanCache.plans, 1)
@@ -360,11 +360,11 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 	nodes := map[string]*storage.Node{
 		"n": {ID: "n1", Properties: map[string]interface{}{"name": "alice", "age": int64(42)}},
 	}
-	co := exec.evaluateCoalesceInContext("COALESCE(n.missing, n.name, 'fallback')", nodes, nil, map[string]interface{}{})
+	co := exec.evaluateCoalesceInContext(expressionBraceView("COALESCE(n.missing, n.name, 'fallback')"), nodes, nil, map[string]interface{}{})
 	assert.Equal(t, "alice", co)
-	co2 := exec.evaluateCoalesceInContext("COALESCE(missing, 'fallback')", nodes, nil, map[string]interface{}{})
+	co2 := exec.evaluateCoalesceInContext(expressionBraceView("COALESCE(missing, 'fallback')"), nodes, nil, map[string]interface{}{})
 	assert.Equal(t, "fallback", co2)
-	assert.Nil(t, exec.evaluateCoalesceInContext("COALESCE(", nodes, nil, nil))
+	assert.Nil(t, exec.evaluateCoalesceInContext(expressionBraceView("COALESCE("), nodes, nil, nil))
 
 	ctx := context.Background()
 
@@ -374,14 +374,14 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 			{int64(7), nodes["n"]},
 		},
 	}
-	out, err := exec.projectTransactionReturn(ctx, input, "x AS val, n.name AS name")
+	out, err := exec.projectTransactionReturn(ctx, input, expressionBraceView("x AS val, n.name AS name"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"val", "name"}, out.Columns)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(7), out.Rows[0][0])
 	require.Equal(t, "alice", out.Rows[0][1])
 
-	empty, err := exec.projectTransactionReturn(ctx, input, "")
+	empty, err := exec.projectTransactionReturn(ctx, input, originalBraceView(""))
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "x"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)
@@ -446,14 +446,14 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 	ctx := context.Background()
 
 	eval := func(expr string) interface{} {
-		return exec.evaluateExpressionWithContextFullOperators(ctx, expr, strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
+		return exec.evaluateExpressionWithContextFullOperators(ctx, originalBraceView(expr), strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
 	}
 
 	assert.Equal(t, false, eval("NOT true"))
 	assert.Equal(t, true, eval("5 BETWEEN 1 AND 10"))
 	// Unsupported syntax is an evaluation error, never a string value.
 	invalidCtx := withExpressionFailureSlot(context.Background())
-	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(invalidCtx, "5 BETWEEN 1", "5 between 1", nodes, nil, nil, nil, nil, 0))
+	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(invalidCtx, expressionBraceView("5 BETWEEN 1"), "5 between 1", nodes, nil, nil, nil, nil, 0))
 	require.Error(t, getExpressionFailure(invalidCtx))
 	assert.Equal(t, true, eval("1 = 1 AND 2 = 2"))
 	assert.Equal(t, true, eval("1 = 2 OR 2 = 2"))
@@ -611,7 +611,7 @@ func TestCypherHelpers_ParserMarkersAndUnwindHelpers(t *testing.T) {
 	assert.True(t, hasOuterParens("(')')"))
 	assert.False(t, hasOuterParens("('x') + ('y')"))
 	assert.True(t, hasOuterParens("((\"(\") + (')'))"))
-	assert.Equal(t, "$x", normalizeUnwindExpression(" ( ($x) ) "))
+	assert.Equal(t, "$x", normalizeUnwindExpression(originalBraceView(" ( ($x) ) ")))
 
 	assert.Nil(t, coerceToUnwindItems(nil))
 	assert.Equal(t, []interface{}{"a", "b"}, coerceToUnwindItems([]string{"a", "b"}))
@@ -692,11 +692,11 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid pattern branch for executeMatchWithRelationshipsWithPathSeeded.
-	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
+	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), expressionBraceView("this is not a pattern"), originalBraceView(""), []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
 	require.Error(t, err)
 
 	// Valid traversal branch.
-	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
+	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), originalBraceView("(a:A)-[r:KNOWS]->(b:B)"), originalBraceView(""), []returnItem{
 		{expr: "a.name", alias: "aName"},
 		{expr: "b.name", alias: "bName"},
 	}, nil, nil, "", nil, -1)
@@ -705,7 +705,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 
 	// Cover traverseGraphParallel directly with explicit worker config.
 	ctx := context.Background()
-	match := exec.parseTraversalPattern(ctx, "(a:A)-[r:KNOWS]->(b:B)")
+	match := exec.parseTraversalPattern(ctx, originalBraceView("(a:A)-[r:KNOWS]->(b:B)"))
 	require.NotNil(t, match)
 	startNodes, err := eng.GetNodesByLabel("A")
 	require.NoError(t, err)
@@ -1306,17 +1306,17 @@ func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score >= 9 AND age = 30", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "name = 'alice' OR age < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <> 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age != 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score > 9", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <= 30", values))
-	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "score > 99", values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("score >= 9 AND age = 30"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("name = 'alice' OR age < 10"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("age <> 99"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("age != 99"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("score > 9"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("score < 10"), values))
+	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("age <= 30"), values))
+	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("score > 99"), values))
 	// The shared predicate owner drops rows for unrecognized predicate text
 	// instead of the legacy permissive pass-through that admitted every row.
-	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "unsupported-clause", values))
+	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, expressionBraceView("unsupported-clause"), values))
 }
 
 func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
@@ -1332,28 +1332,28 @@ func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "(n.age = 30)"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "NOT n.age = 99"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "'a' IN n.tags"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name IS NOT NULL"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NOT NULL"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NULL"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "id(n) = 'n-123'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age >= 30"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age <= 30"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age > 29"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age < 31"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name =~ 'a.*'"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", ""))            // empty where clause includes
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", originalBraceView("(n.age = 30)")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age = 30 AND n.name = 'alice'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age = 99 OR n.name = 'alice'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("NOT n.age = 99")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.bio CONTAINS 'hello'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.name STARTS WITH 'ali'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.name ENDS WITH 'ice'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("'a' IN n.tags")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.name IS NOT NULL")))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.missing IS NOT NULL")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.missing IS NULL")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("id(n) = 'n-123'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("elementId(n) = 'n-123'")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age >= 30")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age <= 30")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age > 29")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age < 31")))
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.name =~ 'a.*'")))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("n.age = 99")))
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("x.age = 30"))) // wrong variable branch
+	assert.True(t, exec.evaluateWhere(ctx, node, "n", originalBraceView("")))              // empty where clause includes
+	assert.False(t, exec.evaluateWhere(ctx, node, "n", expressionBraceView("MALFORMED")))  // malformed non-empty clause excludes
 }
 
 func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {
@@ -1503,7 +1503,7 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 
 	ctx := context.Background()
 	// map-literal parser should normalize quoted/backticked keys and evaluate known values.
-	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true}", nodes, rels, nil, nil, nil, 0)
+	out := exec.evaluateMapLiteralFull(ctx, expressionBraceView("{`k1`: n.name, 'k2': 3, \"k3\": true}"), nodes, rels, nil, nil, nil, 0)
 	assert.Equal(t, "alice", out["k1"])
 	assert.Equal(t, int64(3), out["k2"])
 	assert.Equal(t, true, out["k3"])
@@ -1511,7 +1511,7 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 	// No partial map escapes when an entry or the map syntax is invalid.
 	for _, expr := range []string{"{ok:1,badPair}", "not-a-map"} {
 		invalidCtx := withExpressionFailureSlot(ctx)
-		assert.Nil(t, exec.evaluateMapLiteralFull(invalidCtx, expr, nodes, rels, nil, nil, nil, 0))
+		assert.Nil(t, exec.evaluateMapLiteralFull(invalidCtx, originalBraceView(expr), nodes, rels, nil, nil, nil, 0))
 		require.Error(t, getExpressionFailure(invalidCtx))
 	}
 }
@@ -1524,21 +1524,21 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 
 	// isReturnEdgePropertyAggNameShape strictness.
 	assert.True(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
+		originalBraceView("MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt"),
 		"r",
 		"rating",
 	))
 	assert.False(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
+		originalBraceView("MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score"),
 		"r",
 		"rating",
 	))
 	assert.False(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
+		originalBraceView("MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score"),
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
+	assert.False(t, isReturnEdgePropertyAggNameShape(originalBraceView("RETURN p.name"), "r", "rating"))
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
@@ -1548,14 +1548,14 @@ func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *tes
 		ORDER BY orders DESC
 		LIMIT 10
 	`
-	returnIdx := findKeywordNotInBrackets(strings.ToUpper(query), " RETURN ")
+	returnIdx := findKeywordNotInBrackets(originalBraceView(strings.ToUpper(query)), " RETURN ")
 	if returnIdx < 0 {
-		returnIdx = findKeywordIndex(query, "RETURN")
+		returnIdx = findKeywordIndex(originalBraceView(query), "RETURN")
 	}
-	require.Equal(t, "orders DESC", extractMatchOrderByClause(query, returnIdx))
+	require.Equal(t, "orders DESC", extractMatchOrderByClause(originalBraceView(query), returnIdx))
 	queryNoOrder := `MATCH (o:Order)-[:ORDERS]->(p:Product) RETURN p`
-	returnIdx = findKeywordIndex(queryNoOrder, "RETURN")
-	require.Equal(t, "", extractMatchOrderByClause(queryNoOrder, returnIdx))
+	returnIdx = findKeywordIndex(originalBraceView(queryNoOrder), "RETURN")
+	require.Equal(t, "", extractMatchOrderByClause(originalBraceView(queryNoOrder), returnIdx))
 }
 
 func TestCypherHelpers_ExecuteCreateConstraint_TypeAndErrorBranches(t *testing.T) {
@@ -1691,9 +1691,9 @@ func TestCypherHelpers_MatchRowsHelpers_Branches(t *testing.T) {
 
 	ctx := context.Background()
 	// filterNodesByWhereClause branches.
-	all := exec.filterNodesByWhereClause(ctx, nodes, "", "n")
+	all := exec.filterNodesByWhereClause(ctx, nodes, originalBraceView(""), "n")
 	require.Len(t, all, 2)
-	filtered := exec.filterNodesByWhereClause(ctx, nodes, "n.a >= 3", "n")
+	filtered := exec.filterNodesByWhereClause(ctx, nodes, expressionBraceView("n.a >= 3"), "n")
 	require.Len(t, filtered, 1)
 	assert.Equal(t, storage.NodeID("n1"), filtered[0].ID)
 }
@@ -1711,17 +1711,17 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 	}
 
 	// Normal map literal with value substitution and list-comprehension transform.
-	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{person: name, age: age, relTypes: [r IN rels | type(r)]}", values))
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{person: name, age: age, relTypes: [r IN rels | type(r)]}"), values))
 	require.Equal(t, "alice", out["person"])
 	require.Equal(t, int64(30), out["age"])
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, out["relTypes"])
 
 	// Invalid/non-map/empty shapes are deterministic empties.
-	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "not-a-map", values)
+	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("not-a-map"), values)
 	assert.Error(t, parseErr)
-	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
+	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{}"), values)))
 	// Pair without colon should be skipped, not panic.
-	out, parseErr = exec.evaluateMapLiteralFromValues(context.Background(), "{good: age, badpair}", values)
+	out, parseErr = exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{good: age, badpair}"), values)
 	require.Error(t, parseErr)
 	require.Nil(t, out)
 }
@@ -2278,30 +2278,30 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	n3, err := eng.GetNode("n3")
 	require.NoError(t, err)
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", originalBraceView("(x)-[:KNOWS]->()")))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", originalBraceView("(n)-[:KNOWS]->()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", originalBraceView("(n)-[:LIKES]->()")))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", originalBraceView("(n)<-[:KNOWS]-()")))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", originalBraceView("(n)-[:ANY]-()")))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", originalBraceView("(n)-[:KNOWS]->()-[:LIKES]->()")))
 
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
+	assert.False(t, exec.checkChainedPattern(n1, "x", originalBraceView("(n)-[:KNOWS]->()-[:LIKES]->()"), ""))
+	assert.True(t, exec.checkChainedPattern(n1, "n", originalBraceView("(n:Person)-[:KNOWS]->()-[:LIKES]->()"), ""))
 
-	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
+	hops := exec.parseRelationshipHops(originalBraceView("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()"), "n")
 	require.Len(t, hops, 2)
 	assert.True(t, hops[0].outgoing)
 	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, hops[0].relTypes)
 	assert.True(t, hops[1].outgoing)
 	assert.ElementsMatch(t, []string{"LIKES"}, hops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)-[:BROKEN->()", "n"))
-	incomingHops := exec.parseRelationshipHops("(n)<-[:LIKES|FOLLOWS]-()<-[]-()", "n")
+	assert.Empty(t, exec.parseRelationshipHops(originalBraceView("(n)-[:BROKEN->()"), "n"))
+	incomingHops := exec.parseRelationshipHops(originalBraceView("(n)<-[:LIKES|FOLLOWS]-()<-[]-()"), "n")
 	require.Len(t, incomingHops, 2)
 	assert.False(t, incomingHops[0].outgoing)
 	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incomingHops[0].relTypes)
 	assert.False(t, incomingHops[1].outgoing)
 	assert.Empty(t, incomingHops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
+	assert.Empty(t, exec.parseRelationshipHops(originalBraceView("(n)<-[:BROKEN-()"), "n"))
 
 	assert.True(t, exec.traverseChain(n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
@@ -2412,7 +2412,7 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	// predicate evaluator compares it (#652).
 	row := map[string]interface{}{"n": a}
 	predicate := func(expression string, values map[string]interface{}) bool {
-		return exec.evaluateRowPredicate(context.Background(), expression, values)
+		return exec.evaluateRowPredicate(context.Background(), originalBraceView(expression), values)
 	}
 	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } = 1", row))
 	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 2", row))
@@ -2448,11 +2448,11 @@ func TestCypherHelpers_EvaluateWhereAsBooleanBranches(t *testing.T) {
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(21), "name": "alice"}}
 
 	ctx := context.Background()
-	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "n.age >= 21", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "n.missing", "n", node))
+	assert.True(t, exec.evaluateWhereAsBoolean(ctx, expressionBraceView("n.age >= 21"), "n", node))
+	assert.False(t, exec.evaluateWhereAsBoolean(ctx, expressionBraceView("n.missing"), "n", node))
 	for _, expression := range []string{"1", "0", "1.5", "0.0", "'x'"} {
 		predicateCtx := withExpressionFailureSlot(ctx)
-		assert.False(t, exec.evaluateWhereAsBoolean(predicateCtx, expression, "n", node))
+		assert.False(t, exec.evaluateWhereAsBoolean(predicateCtx, originalBraceView(expression), "n", node))
 		assert.ErrorContains(t, getExpressionFailure(predicateCtx), "Type mismatch: expected Boolean")
 	}
 }
@@ -2616,12 +2616,12 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	// Keyword detection should ignore quoted occurrences.
-	assert.Equal(t, -1, findKeywordIndexInContext("x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
-	assert.NotEqual(t, -1, findKeywordIndexInContext(" score > 0.1 ORDER BY score DESC", "ORDER"))
+	assert.Equal(t, -1, findKeywordIndexInContext(expressionBraceView("x = 'ORDER BY' and y = 'LIMIT'"), "ORDER"))
+	assert.NotEqual(t, -1, findKeywordIndexInContext(expressionBraceView(" score > 0.1 ORDER BY score DESC"), "ORDER"))
 
 	// A RETURN after YIELD starts the tail; the YIELD keeps its own WHERE,
 	// ORDER BY, SKIP and LIMIT, which come before it.
-	parsed := parseYieldClause(t.Context(), "CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
+	parsed := parseYieldClause(t.Context(), originalBraceView("CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id"))
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.items, 2)
 	assert.Equal(t, "node", parsed.items[0].name)
@@ -2632,12 +2632,12 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, "2", parsed.limit)
 	assert.False(t, parsed.misplacedWhere)
 	malformed := "CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s"
-	require.Nil(t, parseYieldClause(t.Context(), malformed), "the canonical reader declines malformed clause order")
+	require.Nil(t, parseYieldClause(t.Context(), originalBraceView(malformed)), "the canonical reader declines malformed clause order")
 	_, syntaxErr := exec.Execute(context.Background(), malformed, nil)
 	require.Error(t, syntaxErr)
 	requireStatusCode(t, syntaxErr, "Neo.ClientError.Statement.SyntaxError")
 	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
-	parsedPredicate := parseYieldClause(t.Context(), "CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
+	parsedPredicate := parseYieldClause(t.Context(), originalBraceView("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s"))
 	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)
 
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "user-1"}}
@@ -2750,7 +2750,7 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	assert.Empty(t, exec.extractVariableNamesFromPattern(t.Context(), "()-[:REL]->()"))
 
 	// No variable names branch.
-	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")
+	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH ()-[:REL]->()"))
 	require.NoError(t, err)
 	assert.Empty(t, matches)
 	assert.True(t, handled)
@@ -2765,7 +2765,7 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	matches, handled, err = exec.pipelineApplyMatch(
 		ctx,
 		[]pipelineRow{{}},
-		"MATCH (a:Person)-[:KNOWS]->(b:Person)",
+		originalBraceView("MATCH (a:Person)-[:KNOWS]->(b:Person)"),
 	)
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
@@ -2778,7 +2778,7 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	matches, handled, err = exec.pipelineApplyMatch(
 		ctx,
 		[]pipelineRow{{}},
-		"MATCH (a:Person)-[k:KNOWS]->(b:Person)",
+		originalBraceView("MATCH (a:Person)-[k:KNOWS]->(b:Person)"),
 	)
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
@@ -2801,14 +2801,14 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 	cols = exec.StatementColumns("MATCH (n)")
 	require.Empty(t, cols)
 
-	limit := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
+	limit := exec.analyzeLimitSkip(originalBraceView("MATCH (n) RETURN n SKIP 5 LIMIT 10"))
 	require.Equal(t, "10", limit.Arguments["limit"])
 	require.Equal(t, "5", limit.Arguments["skip"])
 	assert.Equal(t, int64(10), limit.EstimatedRows)
 	assert.Contains(t, limit.Description, "Limit to 10 rows")
 	assert.Contains(t, limit.Description, "skip 5")
 
-	skipOnly := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 2")
+	skipOnly := exec.analyzeLimitSkip(originalBraceView("MATCH (n) RETURN n SKIP 2"))
 	assert.Equal(t, int64(100), skipOnly.EstimatedRows)
 	assert.Equal(t, "2", skipOnly.Arguments["skip"])
 
@@ -2841,18 +2841,18 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractCreateVariableRefsBranches(t *testing.T) {
-	vars := extractCreateVariableRefs("CREATE (a)-[:KNOWS]->(b)")
+	vars := extractCreateVariableRefs(originalBraceView("CREATE (a)-[:KNOWS]->(b)"))
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
-	vars = extractCreateVariableRefs("CREATE (a)<-[:KNOWS]-(b)")
+	vars = extractCreateVariableRefs(originalBraceView("CREATE (a)<-[:KNOWS]-(b)"))
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
 	// Inline node definitions are not simple variable refs.
-	vars = extractCreateVariableRefs("CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})")
+	vars = extractCreateVariableRefs(originalBraceView("CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})"))
 	assert.Empty(t, vars)
 
 	// Mixed CREATE clauses deduplicate refs.
-	vars = extractCreateVariableRefs("CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)")
+	vars = extractCreateVariableRefs(originalBraceView("CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)"))
 	assert.ElementsMatch(t, []string{"a", "b", "c"}, vars)
 }
 
@@ -2930,10 +2930,10 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Helper branches.
-	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses("n += $props SET n.x = 1 SET n.y = 2"))
-	assert.Equal(t, -1, firstPostSetClauseIndex("n.x = 1, n.y = 2"))
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 RETURN n"), 0)
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 UNWIND [1] AS x RETURN x"), 0)
+	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses(expressionBraceView("n += $props SET n.x = 1 SET n.y = 2")))
+	assert.Equal(t, -1, firstPostSetClauseIndex(expressionBraceView("n.x = 1, n.y = 2")))
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(expressionBraceView("n.x = 1 RETURN n")), 0)
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(expressionBraceView("n.x = 1 UNWIND [1] AS x RETURN x")), 0)
 }
 
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {
@@ -3110,7 +3110,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 // subquery evaluator (rowSubqueryValue).
 func subqueryCount(t *testing.T, exec *StorageExecutor, node *storage.Node, variable, body string) int64 {
 	t.Helper()
-	value, ok, err := exec.rowSubqueryValue(context.Background(), "COUNT", body, map[string]interface{}{variable: node})
+	value, ok, err := exec.rowSubqueryValue(context.Background(), "COUNT", originalBraceView(body), map[string]interface{}{variable: node})
 	require.NoError(t, err)
 	require.True(t, ok)
 	count, _ := value.(int64)

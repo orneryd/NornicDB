@@ -58,7 +58,7 @@ func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T
 
 func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
 	query := "WITH a, collect({k: b, t: c}) AS rows USE translations.txr MATCH (n) RETURN n"
-	idx := findLeadingWithEndLocal(query)
+	idx := findLeadingWithEndLocal(originalBraceView(query))
 	if idx <= 0 {
 		t.Fatalf("expected positive with-end index, got %d", idx)
 	}

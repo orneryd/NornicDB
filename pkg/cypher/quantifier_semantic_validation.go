@@ -9,8 +9,9 @@ import (
 // validateStaticQuantifierTypes rejects predicates that apply numeric
 // operators to statically non-numeric list elements. This is a compile-time
 // Cypher type error rather than a null-producing runtime expression.
-func validateStaticQuantifierTypes(cypher string) error {
-	options := defaultKeywordScanOpts()
+func validateStaticQuantifierTypes(view braceView) error {
+	cypher := view.text()
+	options := defaultKeywordScanOpts(view)
 	options.SkipParens = false
 	options.SkipBrackets = false
 	options.SkipBraces = false
@@ -29,7 +30,7 @@ func validateStaticQuantifierTypes(cypher string) error {
 			if close < 0 {
 				continue
 			}
-			if err := validateStaticQuantifierCall(cypher[open+1 : close]); err != nil {
+			if err := validateStaticQuantifierCall(view.window(open+1, close)); err != nil {
 				return err
 			}
 		}
@@ -37,19 +38,21 @@ func validateStaticQuantifierTypes(cypher string) error {
 	return nil
 }
 
-func validateStaticQuantifierCall(inner string) error {
-	inner = StripComments(inner)
-	inIndex := findKeywordIndexInContext(inner, "IN")
+func validateStaticQuantifierCall(view braceView) error {
+	view.source = astWithoutComments(view.source)
+	inner := view.text()
+	inIndex := findKeywordIndexInContext(view, "IN")
 	if inIndex <= 0 {
 		return nil
 	}
-	rest := inner[inIndex+len("IN"):]
-	whereIndex := findKeywordIndexInContext(rest, "WHERE")
+	restView := view.window(inIndex+len("IN"), len(inner))
+	rest := restView.text()
+	whereIndex := findKeywordIndexInContext(restView, "WHERE")
 	if whereIndex < 0 {
 		return nil
 	}
 	variable := strings.TrimSpace(StripComments(inner[:inIndex]))
-	listExpression := strings.TrimSpace(StripComments(rest[:whereIndex]))
+	listExpression := view.window(inIndex+len("IN"), inIndex+len("IN")+whereIndex).trim()
 	predicate := strings.TrimSpace(rest[whereIndex+len("WHERE"):])
 	if !cyphertext.IsIdentifier(variable) || !quantifierPredicateRequiresNumbers(predicate, variable) {
 		return nil

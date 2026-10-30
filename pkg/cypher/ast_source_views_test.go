@@ -56,7 +56,7 @@ func TestASTSourceNestedCommentsAndMergeActions(t *testing.T) {
 	// The canonical MERGE owner exposes extents for the same parsed products.
 	body := `  (n) ON CREATE SET n.p=1 ON MATCH SET n.p=2 ON CREATE SET n.p=3  `
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body, &spans)
+	parts := splitMergeClauseActions(originalBraceView(body), &spans)
 	require.Equal(t, parts.pattern, body[spans.pattern.Start:spans.pattern.End])
 	for group, actions := range []mergeActionClauses{parts.onCreate, parts.onMatch} {
 		groupSpans := spans.onCreate
@@ -83,7 +83,7 @@ func TestASTCommentProjectionNoCommentAllocations(t *testing.T) {
 func TestASTMergeActionOverflowExtents(t *testing.T) {
 	body := "(n:`π😀`) ON CREATE SET n.p='ON MATCH SET' ON MATCH SET n.p=2 ON CREATE SET n.p=3 ON MATCH SET n.p=4 ON CREATE SET n.p=5 ON MATCH SET n.p=6 ON CREATE SET n.p=7 ON MATCH SET n.p=8"
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body, &spans)
+	parts := splitMergeClauseActions(originalBraceView(body), &spans)
 	expected := [][]string{{"SET n.p='ON MATCH SET'", "SET n.p=3", "SET n.p=5", "SET n.p=7"}, {"SET n.p=2", "SET n.p=4", "SET n.p=6", "SET n.p=8"}}
 	for group, wants := range expected {
 		actions, extents := parts.onCreate, spans.onCreate

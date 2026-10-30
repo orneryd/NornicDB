@@ -228,10 +228,10 @@ func TestLogicalOperatorsPredicateReading(t *testing.T) {
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "logical_conditions"))
 	ctx := withExpressionFailureSlot(withValueBindings(context.Background(), map[string]interface{}{"f": false, "i": int64(1), "l": []interface{}{int64(1), nil}}))
-	require.False(t, exec.evaluateCondition(ctx, "2 IN l", nil, nil))
-	require.Nil(t, exec.conditionValue(ctx, "2 IN l", nil, nil))
+	require.False(t, exec.evaluateCondition(ctx, expressionBraceView("2 IN l"), nil, nil))
+	require.Nil(t, exec.conditionValue(ctx, expressionBraceView("2 IN l"), nil, nil))
 	require.NoError(t, getExpressionFailure(ctx))
-	require.False(t, exec.evaluateCondition(ctx, "f OR i", nil, nil))
+	require.False(t, exec.evaluateCondition(ctx, expressionBraceView("f OR i"), nil, nil))
 	code, _ := nornicerrors.Neo4jStatus(getExpressionFailure(ctx))
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 
@@ -261,7 +261,8 @@ func TestLogicalOperatorsPredicateReading(t *testing.T) {
 func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 	failed := errors.New("/ by zero")
 	values := map[string]interface{}{"t": true, "f": false, "i": int64(1)}
-	eval := func(operand string) (interface{}, bool, error) {
+	eval := func(operandView braceView) (interface{}, bool, error) {
+		operand := operandView.text()
 		if operand == "boom" {
 			return nil, true, failed
 		}
@@ -280,13 +281,13 @@ func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 		{"boom XOR f", nil, failed},
 		{"t XOR boom", nil, failed},
 	} {
-		value, logical, ok, err := evaluateLogicalExpression(testCase.expr, eval)
+		value, logical, ok, err := evaluateLogicalExpression(originalBraceView(testCase.expr), eval)
 		require.True(t, logical, testCase.expr)
 		require.True(t, ok, testCase.expr)
 		require.Equal(t, testCase.want, value, testCase.expr)
 		require.Equal(t, testCase.err, err, testCase.expr)
 	}
-	_, logical, ok, _ := evaluateLogicalExpression("t AND unknown", eval)
+	_, logical, ok, _ := evaluateLogicalExpression(expressionBraceView("t AND unknown"), eval)
 	require.True(t, logical)
 	require.False(t, ok)
 
@@ -296,14 +297,14 @@ func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "logical_holds"))
 	ctx := withExpressionFailureSlot(withValueBindings(context.Background(), map[string]interface{}{"f": false, "i": int64(1)}))
-	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "f OR i", nil, nil, nil, nil, nil, 0))
+	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, expressionBraceView("f OR i"), nil, nil, nil, nil, nil, 0))
 	code, _ := nornicerrors.Neo4jStatus(getExpressionFailure(ctx))
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 
 	// A CASE WHEN the row evaluator can't read as a value (EXISTS { … })
 	// is evaluated as a predicate.
 	node := &storage.Node{ID: "lonely", Labels: []string{"C"}}
-	value, ok, err := exec.evaluateRowCaseExpression("CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", map[string]interface{}{"n": node})
+	value, ok, err := exec.evaluateRowCaseExpression(expressionBraceView("CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END"), map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(0), value)

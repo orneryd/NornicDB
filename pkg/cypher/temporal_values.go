@@ -292,16 +292,17 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // is false for any other expression. A call Neo4j rejects at run time
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
-func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), expression string) (result interface{}, handled bool, err error) {
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(braceView) (interface{}, bool, error), view braceView) (result interface{}, handled bool, err error) {
+	expression := view.text()
 	var argumentErr error
 	var lastArgument interface{}
 	argumentEvaluated := false
-	ctxEval := func(argument string) interface{} {
+	ctxEval := func(argument braceView) interface{} {
 		if argumentErr != nil {
 			return nil
 		}
 		value, resolved, evalErr := evaluate(argument)
-		value, argumentErr = checkedPropertyResult(ctx, argument, value, resolved, evalErr)
+		value, argumentErr = checkedPropertyResult(withBraceView(ctx, argument), argument.text(), value, resolved, evalErr)
 		argumentEvaluated, lastArgument = true, value
 		return value
 	}
@@ -325,17 +326,18 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 	if !ok {
 		return nil, false, nil
 	}
+	argumentView := view.functionArguments().trim()
 	kind := lowerASCII(name)
 	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
-		arguments := e.splitFunctionArgs(argument)
+		arguments := argumentView.commaViews()
 		if len(arguments) != 2 {
 			return nil, true, nil
 		}
-		leftExpression := strings.TrimSpace(arguments[0])
-		rightExpression := strings.TrimSpace(arguments[1])
+		leftExpression := arguments[0].trim()
+		rightExpression := arguments[1].trim()
 		left := ctxEval(leftExpression)
 		right := left
-		if rightExpression != leftExpression {
+		if rightExpression.text() != leftExpression.text() {
 			right = ctxEval(rightExpression)
 		}
 		if left == nil || right == nil {
@@ -344,7 +346,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 		if !isTemporalInstant(left) || !isTemporalInstant(right) {
 			return nil, true, temporalProcedureCallError("Between", left, right)
 		}
-		if leftExpression == rightExpression {
+		if leftExpression.text() == rightExpression.text() {
 			return &CypherDuration{}, true, nil
 		}
 		value, _ := durationBetweenTemporalValues(strings.TrimPrefix(kind, "duration."), left, right)
@@ -355,21 +357,21 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 			return nil, false, nil // A qualified plugin keeps its own handler.
 		}
 		kind = strings.TrimSuffix(kind, ".truncate")
-		arguments := e.splitFunctionArgs(argument)
+		arguments := argumentView.commaViews()
 		if len(arguments) < 1 || len(arguments) > 3 {
 			return nil, true, nil
 		}
-		unitValue := ctxEval(strings.TrimSpace(arguments[0]))
+		unitValue := ctxEval(arguments[0].trim())
 		var value interface{}
 		if len(arguments) == 1 {
 			value, _ = temporalClockValue(kind, e.temporalClockTime(ctx, "transaction"), "")
 		} else {
-			value = ctxEval(strings.TrimSpace(arguments[1]))
+			value = ctxEval(arguments[1].trim())
 		}
 		var fieldsValue interface{}
 		fields := map[string]interface{}{}
 		if len(arguments) == 3 {
-			fieldsValue = ctxEval(strings.TrimSpace(arguments[2]))
+			fieldsValue = ctxEval(arguments[2].trim())
 		}
 		unit, unitOK := unitValue.(string)
 		if fieldsValue != nil {
@@ -395,14 +397,14 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
-		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
-			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
-				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction {
+			if arguments := argumentView.commaViews(); len(arguments) == 2 {
+				value, err := constructTemporalWithPattern(kind, ctxEval(arguments[0].trim()), ctxEval(arguments[1].trim()))
 				return value, true, err
 			}
 		}
 		if clockFunction && argument != "" {
-			zoneID, valid := ctxEval(argument).(string)
+			zoneID, valid := ctxEval(argumentView).(string)
 			if !valid {
 				return nil, true, nil
 			}
@@ -418,7 +420,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 			value, _ := temporalClockValue(kind, e.temporalClockTime(ctx, clock), "")
 			return value, true, nil
 		}
-		value := ctxEval(argument)
+		value := ctxEval(argumentView)
 		if value == nil {
 			return nil, true, nil
 		}
@@ -444,12 +446,12 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 	case "datetime.fromepoch":
 		// Both arguments are integers, whatever the signature says: a float or
 		// null is ProcedureCallFailed, and the nanoseconds are of the second.
-		arguments := e.splitFunctionArgs(argument)
+		arguments := argumentView.commaViews()
 		if len(arguments) != 2 {
 			return nil, true, nil
 		}
-		secondsValue := ctxEval(strings.TrimSpace(arguments[0]))
-		nanosValue := ctxEval(strings.TrimSpace(arguments[1]))
+		secondsValue := ctxEval(arguments[0].trim())
+		nanosValue := ctxEval(arguments[1].trim())
 		seconds, secondsOK := cypherIntegerValue(secondsValue)
 		nanos, nanosOK := cypherIntegerValue(nanosValue)
 		if !secondsOK || !nanosOK {
@@ -461,7 +463,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 		}
 		return CypherDateTime{Time: time.Unix(seconds, nanos).UTC()}, true, nil
 	case "datetime.fromepochmillis":
-		millisValue := ctxEval(strings.TrimSpace(argument))
+		millisValue := ctxEval(argumentView)
 		millis, valid := cypherIntegerValue(millisValue)
 		if !valid {
 			return nil, true, temporalProcedureCallError("FromEpochMillis", millisValue)

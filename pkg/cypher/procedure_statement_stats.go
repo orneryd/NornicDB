@@ -1,6 +1,10 @@
 package cypher
 
-import "context"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
 
 type procedureStatementStatsKey struct{}
 type procedureStatementStats struct {
@@ -120,6 +124,12 @@ func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc regi
 	var release func()
 	e, release = e.bindExecutionReadScope(ctx)
 	defer release()
+	if view, carried := cyphertext.SourceView(ctx); carried && proc.User {
+		// A user procedure is external code: it observes the statement's
+		// carried product, not the CALL clause window its arguments were
+		// read from.
+		ctx = cyphertext.WithSourceView(ctx, view.StatementView())
+	}
 	totals := &procedureStatementStats{Context: ctx}
 	result, err := proc.Handler(totals, e, query, args)
 	if err == nil && (totals.stats != nil || totals.committed != nil) {

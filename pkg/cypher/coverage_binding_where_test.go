@@ -136,7 +136,7 @@ func TestCompileBindingInPredicate_AllBranches(t *testing.T) {
 
 	build := func(t *testing.T, expr, op string, negate bool) bindingWherePredicate {
 		t.Helper()
-		pred, ok := e.compileBindingInPredicate(expr, op, negate)
+		pred, ok := e.compileBindingInPredicate(originalBraceView(expr), op, negate)
 		require.True(t, ok, "compileBindingInPredicate failed for %q (op=%q)", expr, op)
 		return pred.predicate()
 	}
@@ -185,22 +185,22 @@ func TestCompileBindingInPredicate_AllBranches(t *testing.T) {
 	})
 
 	t.Run("bare $ on right rejected", func(t *testing.T) {
-		_, ok := e.compileBindingInPredicate("n.role IN $", " IN ", false)
+		_, ok := e.compileBindingInPredicate(expressionBraceView("n.role IN $"), " IN ", false)
 		require.False(t, ok)
 	})
 
 	t.Run("operator absent returns ok=false", func(t *testing.T) {
-		_, ok := e.compileBindingInPredicate("n.role = 'admin'", " IN ", false)
+		_, ok := e.compileBindingInPredicate(expressionBraceView("n.role = 'admin'"), " IN ", false)
 		require.False(t, ok)
 	})
 
 	t.Run("left resolver fails compile → predicate fails compile", func(t *testing.T) {
-		_, ok := e.compileBindingInPredicate("    IN [1, 2]", " IN ", false)
+		_, ok := e.compileBindingInPredicate(expressionBraceView("    IN [1, 2]"), " IN ", false)
 		require.False(t, ok)
 	})
 
 	t.Run("right resolver fails compile → predicate fails compile", func(t *testing.T) {
-		_, ok := e.compileBindingInPredicate("n.role IN garbage[]^_^", " IN ", false)
+		_, ok := e.compileBindingInPredicate(expressionBraceView("n.role IN garbage[]^_^"), " IN ", false)
 		require.False(t, ok)
 	})
 
@@ -256,39 +256,39 @@ func TestEvaluateBindingWhere_AndOrNotAndStringPredicates(t *testing.T) {
 	b := binding{"a": alice, "b": bob}
 
 	t.Run("empty clause is true", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, originalBraceView(""), nil))
 	})
 
 	t.Run("AND composition", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 30 AND b.age = 25", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 30 AND b.age = 99", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.age = 30 AND b.age = 25"), nil))
+		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.age = 30 AND b.age = 99"), nil))
 	})
 
 	t.Run("OR composition", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 99 OR b.age = 25", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 99 OR b.age = 99", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.age = 99 OR b.age = 25"), nil))
+		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.age = 99 OR b.age = 99"), nil))
 	})
 
 	t.Run("NOT inversion", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "NOT a.age = 99", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "NOT a.age = 30", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("NOT a.age = 99"), nil))
+		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("NOT a.age = 30"), nil))
 	})
 
 	t.Run("STARTS WITH literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name STARTS WITH 'Al'", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name STARTS WITH 'Bo'", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.name STARTS WITH 'Al'"), nil))
+		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.name STARTS WITH 'Bo'"), nil))
 	})
 
 	t.Run("ENDS WITH literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name ENDS WITH 'ice'", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.name ENDS WITH 'ice'"), nil))
 	})
 
 	t.Run("CONTAINS literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name CONTAINS 'lic'", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a.name CONTAINS 'lic'"), nil))
 	})
 
 	t.Run("identity comparison via <> between two node variables", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a <> b", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a <> a", nil))
+		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a <> b"), nil))
+		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, expressionBraceView("a <> a"), nil))
 	})
 }
